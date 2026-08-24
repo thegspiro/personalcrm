@@ -23,7 +23,7 @@ export function BottomNav() {
                 href={item.href}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "flex h-[4.25rem] flex-col items-center justify-center gap-1 text-[10px] font-medium transition-colors",
+                  "flex h-[4.25rem] min-w-0 flex-col items-center justify-center gap-1 text-[10px] font-medium transition-colors",
                   active ? "text-accent-11" : "text-muted-foreground",
                 )}
               >
@@ -35,7 +35,7 @@ export function BottomNav() {
                 >
                   <Icon name={item.icon} className="size-[18px]" />
                 </span>
-                {item.label}
+                <span className="max-w-full truncate px-0.5">{item.label}</span>
               </Link>
             </li>
           );

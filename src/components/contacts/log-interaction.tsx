@@ -1,0 +1,153 @@
+"use client";
+
+import * as React from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input, Textarea } from "@/components/ui/input";
+import { Field } from "@/components/ui/label";
+import {
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import { SubmitButton } from "@/components/form/submit-button";
+import { DateTimeField } from "@/components/form/date-field";
+import { TermChips, type TermOption } from "@/components/form/term-select";
+import { ContactPicker, type PickerContact } from "@/components/form/contact-picker";
+import { SENTIMENTS } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { createInteraction } from "@/server/actions/interactions";
+
+/**
+ * Log something that happened.
+ *
+ * The date defaults to now but is fully editable, including into the past —
+ * backdating here is a first-class action, not an edge case. Contact activity
+ * is recomputed server-side from full history, so logging an old coffee will
+ * not make it look like you spoke today.
+ */
+export function LogInteractionSheet({
+  open,
+  onOpenChange,
+  contacts,
+  types,
+  defaultContactIds = [],
+  defaultOccurredAt,
+  onLogged,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  contacts: PickerContact[];
+  types: TermOption[];
+  defaultContactIds?: string[];
+  defaultOccurredAt?: Date;
+  onLogged?: () => void;
+}) {
+  const router = useRouter();
+  const [error, setError] = React.useState<string>();
+  const [sentiment, setSentiment] = React.useState<number | null>(null);
+  const formRef = React.useRef<HTMLFormElement>(null);
+
+  async function onSubmit(form: FormData) {
+    if (sentiment !== null) form.set("sentiment", String(sentiment));
+
+    const result = await createInteraction(form);
+    if (!result.ok) {
+      setError(result.error ?? "Could not save that.");
+      return;
+    }
+
+    setError(undefined);
+    setSentiment(null);
+    formRef.current?.reset();
+    toast.success("Logged");
+    onOpenChange(false);
+    onLogged?.();
+    router.refresh();
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="lg:mx-auto lg:max-w-lg">
+        <form ref={formRef} action={onSubmit} className="flex min-h-0 flex-1 flex-col">
+          <SheetHeader>
+            <SheetTitle>Log an interaction</SheetTitle>
+            <SheetDescription>
+              Happened a while ago? Change the date — it won&apos;t affect who you&apos;re overdue with.
+            </SheetDescription>
+          </SheetHeader>
+
+          <SheetBody className="grid gap-3.5">
+            {error ? (
+              <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {error}
+              </p>
+            ) : null}
+
+            {defaultContactIds.length > 0 ? (
+              defaultContactIds.map((id) => (
+                <input key={id} type="hidden" name="contactIds" value={id} />
+              ))
+            ) : (
+              <ContactPicker name="contactIds" label="Who" contacts={contacts} required />
+            )}
+
+            <TermChips name="typeId" label="What" terms={types} allowEmpty={false} />
+
+            <DateTimeField name="occurredAt" label="When" defaultValue={defaultOccurredAt} />
+
+            <Field label="Title" htmlFor="title">
+              <Input id="title" name="title" placeholder="Coffee at Northside" />
+            </Field>
+
+            <Field label="Notes" htmlFor="notes">
+              <Textarea
+                id="notes"
+                name="notes"
+                rows={3}
+                placeholder="What did you talk about? Anything to remember?"
+              />
+            </Field>
+
+            <div className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">How did it go?</span>
+              <div className="flex gap-1.5">
+                {SENTIMENTS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={sentiment === option.value}
+                    onClick={() =>
+                      setSentiment((current) => (current === option.value ? null : option.value))
+                    }
+                    className={cn(
+                      "flex min-h-11 flex-1 flex-col items-center gap-0.5 rounded-lg border px-1 py-1.5 text-[10px] transition-colors",
+                      sentiment === option.value
+                        ? "border-accent-8 bg-accent-3 text-accent-11"
+                        : "border-border hover:bg-muted",
+                    )}
+                  >
+                    <span className="text-base leading-none">{option.emoji}</span>
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </SheetBody>
+
+          <SheetFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <SubmitButton className="flex-1">Log it</SubmitButton>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
+  );
+}

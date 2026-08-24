@@ -150,6 +150,29 @@ export const TAXONOMY_SEEDS: Record<TaxonomyKind, TaxonomySeed[]> = {
     { slug: "other", label: "Other", icon: "CircleDot", color: "slate" },
   ],
 
+LIFE_EVENT_TYPE: [
+    { slug: "new-job", label: "New job", icon: "Briefcase", color: "blue" },
+    { slug: "promotion", label: "Promotion", icon: "TrendingUp", color: "indigo" },
+    { slug: "left-job", label: "Left a job", icon: "LogOut", color: "slate" },
+    { slug: "started-business", label: "Started a business", icon: "Rocket", color: "violet" },
+    { slug: "retired", label: "Retired", icon: "Palmtree", color: "teal" },
+    { slug: "moved", label: "Moved", icon: "Truck", color: "cyan" },
+    { slug: "bought-home", label: "Bought a home", icon: "Home", color: "emerald" },
+    { slug: "graduated", label: "Graduated", icon: "GraduationCap", color: "amber" },
+    { slug: "started-school", label: "Started school", icon: "BookOpen", color: "yellow" },
+    { slug: "engaged", label: "Got engaged", icon: "Gem", color: "pink" },
+    { slug: "married", label: "Got married", icon: "Church", color: "rose" },
+    { slug: "separated", label: "Separated or divorced", icon: "HeartCrack", color: "slate" },
+    { slug: "new-baby", label: "New baby", icon: "Baby", color: "fuchsia" },
+    { slug: "new-pet", label: "New pet", icon: "PawPrint", color: "lime" },
+    { slug: "bereavement", label: "Loss in the family", icon: "Flower2", color: "slate" },
+    { slug: "illness", label: "Health event", icon: "HeartPulse", color: "red" },
+    { slug: "sobriety", label: "Got sober", icon: "Sparkles", color: "emerald" },
+    { slug: "big-trip", label: "Big trip", icon: "Plane", color: "sky" },
+    { slug: "award", label: "Award or recognition", icon: "Award", color: "amber" },
+    { slug: "other", label: "Other", icon: "CircleDot", color: "slate" },
+  ],
+
   GIFT_OCCASION: [
     { slug: "birthday", label: "Birthday", icon: "Cake", color: "pink" },
     { slug: "holiday", label: "Holiday", icon: "Gift", color: "red" },
@@ -173,6 +196,7 @@ export const TAXONOMY_KIND_LABELS: Record<TaxonomyKind, { title: string; descrip
   DATE_ACTIVITY_TYPE: { title: "Date activities", description: "What you did on a date." },
   MEETING_SOURCE: { title: "Meeting sources", description: "Where you met someone — apps included." },
   GIFT_OCCASION: { title: "Gift occasions", description: "Why a gift was given." },
+  LIFE_EVENT_TYPE: { title: "Life events", description: "Things that happen in someone's life." },
 };
 
 /** Ordered for the settings UI. */
@@ -185,6 +209,7 @@ export const TAXONOMY_KIND_ORDER: TaxonomyKind[] = [
   "CONTACT_METHOD_TYPE",
   "MEETING_SOURCE",
   "GIFT_OCCASION",
+  "LIFE_EVENT_TYPE",
   "DATING_STAGE",
   "DATE_ACTIVITY_TYPE",
 ];

@@ -1,0 +1,227 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
+import { prisma } from "@/server/db/client";
+import { recomputeContactActivity } from "@/server/services/contact-activity";
+import { snoozeUntil as snoozeDate } from "@/lib/cadence";
+import { slugify } from "@/lib/utils";
+import {
+  type ActionResult,
+  bool,
+  fail,
+  invalid,
+  num,
+  ok,
+  owner,
+  partialDate,
+  str,
+  strList,
+} from "./helpers";
+
+const nameSchema = z.object({
+  firstName: z.string().trim().min(1, "A first name is required.").max(120),
+  lastName: z.string().trim().max(120).optional(),
+});
+
+function revalidateContact(id?: string) {
+  revalidatePath("/");
+  revalidatePath("/people");
+  revalidatePath("/timeline");
+  if (id) revalidatePath(`/people/${id}`);
+}
+
+/** Assert a row belongs to the signed-in user before touching it. */
+async function assertOwnedContact(ownerId: string, contactId: string): Promise<boolean> {
+  const found = await prisma.contact.findFirst({
+    where: { id: contactId, ownerId },
+    select: { id: true },
+  });
+  return Boolean(found);
+}
+
+export async function createContact(form: FormData): Promise<ActionResult<{ id: string }>> {
+  const { ownerId } = await owner();
+
+  const parsed = nameSchema.safeParse({
+    firstName: str(form, "firstName"),
+    lastName: str(form, "lastName"),
+  });
+  if (!parsed.success) return invalid(parsed.error);
+
+  const birth = partialDate(form, "birthDate");
+  const met = partialDate(form, "metOn");
+  const cadenceDays = num(form, "cadenceDays");
+
+  const contact = await prisma.$transaction(async (tx) => {
+    const created = await tx.contact.create({
+      data: {
+        ownerId,
+        firstName: parsed.data.firstName,
+        lastName: parsed.data.lastName ?? null,
+        nickname: str(form, "nickname") ?? null,
+        pronouns: str(form, "pronouns") ?? null,
+        categoryId: str(form, "categoryId") ?? null,
+        occupation: str(form, "occupation") ?? null,
+        employer: str(form, "employer") ?? null,
+        city: str(form, "city") ?? null,
+        region: str(form, "region") ?? null,
+        country: str(form, "country") ?? null,
+        summary: str(form, "summary") ?? null,
+        howWeMet: str(form, "howWeMet") ?? null,
+        whereWeMet: str(form, "whereWeMet") ?? null,
+        meetingSourceId: str(form, "meetingSourceId") ?? null,
+        birthDate: birth?.date ?? null,
+        birthDatePrecision: birth?.precision ?? "DAY",
+        metOn: met?.date ?? null,
+        metOnPrecision: met?.precision ?? "DAY",
+        cadenceDays: cadenceDays && cadenceDays > 0 ? Math.round(cadenceDays) : null,
+        isFavorite: bool(form, "isFavorite"),
+        isRomantic: bool(form, "isRomantic"),
+      },
+    });
+
+    await applyTags(tx, ownerId, created.id, strList(form, "tags"));
+    // A new contact has no interactions, but this seeds nextTouchAt from their
+    // creation date so a cadence starts counting immediately.
+    await recomputeContactActivity(tx, [created.id]);
+    return created;
+  });
+
+  revalidateContact(contact.id);
+  return ok({ id: contact.id });
+}
+
+export async function updateContact(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  if (!id) return fail("Missing contact.");
+  if (!(await assertOwnedContact(ownerId, id))) return fail("Contact not found.");
+
+  const parsed = nameSchema.safeParse({
+    firstName: str(form, "firstName"),
+    lastName: str(form, "lastName"),
+  });
+  if (!parsed.success) return invalid(parsed.error);
+
+  const birth = partialDate(form, "birthDate");
+  const met = partialDate(form, "metOn");
+  const cadenceDays = num(form, "cadenceDays");
+
+  await prisma.$transaction(async (tx) => {
+    await tx.contact.update({
+      where: { id },
+      data: {
+        firstName: parsed.data.firstName,
+        lastName: parsed.data.lastName ?? null,
+        nickname: str(form, "nickname") ?? null,
+        pronouns: str(form, "pronouns") ?? null,
+        categoryId: str(form, "categoryId") ?? null,
+        occupation: str(form, "occupation") ?? null,
+        employer: str(form, "employer") ?? null,
+        city: str(form, "city") ?? null,
+        region: str(form, "region") ?? null,
+        country: str(form, "country") ?? null,
+        summary: str(form, "summary") ?? null,
+        howWeMet: str(form, "howWeMet") ?? null,
+        whereWeMet: str(form, "whereWeMet") ?? null,
+        meetingSourceId: str(form, "meetingSourceId") ?? null,
+        birthDate: birth?.date ?? null,
+        birthDatePrecision: birth?.precision ?? "DAY",
+        metOn: met?.date ?? null,
+        metOnPrecision: met?.precision ?? "DAY",
+        cadenceDays: cadenceDays && cadenceDays > 0 ? Math.round(cadenceDays) : null,
+        isFavorite: bool(form, "isFavorite"),
+        isRomantic: bool(form, "isRomantic"),
+      },
+    });
+
+    if (form.has("tags")) {
+      await tx.contactTag.deleteMany({ where: { contactId: id } });
+      await applyTags(tx, ownerId, id, strList(form, "tags"));
+    }
+
+    // The cadence may have changed, so nextTouchAt has to be re-derived.
+    await recomputeContactActivity(tx, [id]);
+  });
+
+  revalidateContact(id);
+  return ok();
+}
+
+/** Small field-level edits from the contact page, without a full form. */
+export async function patchContact(
+  id: string,
+  patch: {
+    cadenceDays?: number | null;
+    isFavorite?: boolean;
+    isArchived?: boolean;
+    isRomantic?: boolean;
+    summary?: string | null;
+  },
+): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  if (!(await assertOwnedContact(ownerId, id))) return fail("Contact not found.");
+
+  await prisma.$transaction(async (tx) => {
+    await tx.contact.update({ where: { id }, data: patch });
+    if (patch.cadenceDays !== undefined) {
+      await recomputeContactActivity(tx, [id]);
+    }
+  });
+
+  revalidateContact(id);
+  return ok();
+}
+
+/** Push someone off the reach-out list for a while without logging a fake contact. */
+export async function snoozeContact(id: string, days: number): Promise<ActionResult> {
+  const { ownerId, timezone } = await owner();
+  if (!(await assertOwnedContact(ownerId, id))) return fail("Contact not found.");
+  if (!Number.isFinite(days) || days <= 0) return fail("Pick how long to snooze for.");
+
+  await prisma.$transaction(async (tx) => {
+    await tx.contact.update({
+      where: { id },
+      data: { snoozedUntil: snoozeDate(Math.round(days), timezone) },
+    });
+    await recomputeContactActivity(tx, [id]);
+  });
+
+  revalidateContact(id);
+  return ok();
+}
+
+export async function deleteContact(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  if (!(await assertOwnedContact(ownerId, id))) return fail("Contact not found.");
+
+  await prisma.contact.delete({ where: { id } });
+  revalidateContact(id);
+  return ok();
+}
+
+export async function setContactArchived(id: string, archived: boolean): Promise<ActionResult> {
+  return patchContact(id, { isArchived: archived });
+}
+
+type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/** Attach tags by name, creating any that don't exist yet. */
+async function applyTags(tx: Tx, ownerId: string, contactId: string, names: string[]) {
+  const unique = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
+  for (const name of unique) {
+    const slug = slugify(name);
+    if (!slug) continue;
+    const tag = await tx.tag.upsert({
+      where: { ownerId_slug: { ownerId, slug } },
+      create: { ownerId, name, slug },
+      update: {},
+    });
+    await tx.contactTag.upsert({
+      where: { contactId_tagId: { contactId, tagId: tag.id } },
+      create: { contactId, tagId: tag.id },
+      update: {},
+    });
+  }
+}

@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { logoutAction } from "@/server/actions/auth";
-import { initialsOf } from "@/lib/utils";
+import { cn, initialsOf } from "@/lib/utils";
 
 export function TopBar({
   name,
@@ -36,9 +36,17 @@ export function TopBar({
 
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border bg-background/85 px-4 backdrop-blur-lg safe-top lg:h-16 lg:px-6">
-      <h1 className="min-w-0 flex-1 truncate text-base font-semibold tracking-tight lg:text-lg">
+      {/* The sidebar carries the brand on desktop, so only show it here on
+          mobile unless the page supplies its own title. */}
+      <h1
+        className={cn(
+          "min-w-0 flex-1 truncate text-base font-semibold tracking-tight lg:text-lg",
+          !title && "lg:sr-only",
+        )}
+      >
         {title ?? "Personal CRM"}
       </h1>
+      {!title ? <div className="hidden flex-1 lg:block" /> : null}
 
       <Button
         variant="ghost"

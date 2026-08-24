@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { ACCOUNT, FIRST_NAME, ensureSignedIn, signIn } from "./helpers";
+import { ACCOUNT, FIRST_NAME, ensureSignedIn, signOut } from "./helpers";
 
 test("a signed-out visitor is sent to the login page", async ({ page }) => {
   await page.goto("/");
@@ -7,6 +7,8 @@ test("a signed-out visitor is sent to the login page", async ({ page }) => {
 });
 
 test("the wrong password is rejected", async ({ page }) => {
+  await ensureSignedIn(page);
+  await signOut(page);
   await page.goto("/login");
   await page.getByLabel("Email").fill(ACCOUNT.email);
   await page.getByLabel("Password").fill("definitely-the-wrong-one");
@@ -17,6 +19,8 @@ test("the wrong password is rejected", async ({ page }) => {
 });
 
 test("an unknown email gets the same message as a wrong password", async ({ page }) => {
+  await ensureSignedIn(page);
+  await signOut(page);
   await page.goto("/login");
   await page.getByLabel("Email").fill("nobody-at-all@example.com");
   await page.getByLabel("Password").fill(ACCOUNT.password);
@@ -26,7 +30,7 @@ test("an unknown email gets the same message as a wrong password", async ({ page
 });
 
 test("signing in lands on the dashboard and signing out ends the session", async ({ page }) => {
-  await signIn(page);
+  await ensureSignedIn(page);
   await expect(page.getByText(`Hi ${FIRST_NAME}`)).toBeVisible();
 
   await page.getByRole("button", { name: "Account menu" }).click();

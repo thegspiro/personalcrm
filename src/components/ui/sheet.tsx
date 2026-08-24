@@ -38,8 +38,8 @@ export function SheetContent({
       <SheetOverlay />
       <DrawerPrimitive.Content
         className={cn(
-          "fixed inset-x-0 bottom-0 z-50 flex max-h-[92dvh] flex-col rounded-t-2xl border-t border-border bg-popover",
-          "outline-none safe-bottom",
+          "fixed inset-x-0 bottom-0 z-50 flex max-h-[92dvh] flex-col overflow-hidden",
+          "rounded-t-2xl border-t border-border bg-popover outline-none safe-bottom",
           className,
         )}
         {...props}
@@ -54,17 +54,25 @@ export function SheetContent({
 }
 
 export function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
-  return <div className={cn("grid gap-1 px-4 pb-3 pt-4", className)} {...props} />;
+  return <div className={cn("shrink-0 grid gap-1 px-4 pb-3 pt-4", className)} {...props} />;
 }
 
 export function SheetBody({ className, ...props }: React.ComponentProps<"div">) {
-  return <div className={cn("min-h-0 flex-1 overflow-y-auto px-4 pb-4", className)} {...props} />;
+  return (
+    <div
+      className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4", className)}
+      {...props}
+    />
+  );
 }
 
 export function SheetFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("flex gap-2 border-t border-border bg-popover px-4 py-3", className)}
+      className={cn(
+        "shrink-0 flex gap-2 border-t border-border bg-popover px-4 py-3",
+        className,
+      )}
       {...props}
     />
   );

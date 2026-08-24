@@ -58,6 +58,7 @@ model User {
   customFieldValues    CustomFieldValue[]
   notificationChannels NotificationChannel[]
   reminderLogs         ReminderLog[]
+  lifeEvents           LifeEvent[]
 }
 
 model Session {
@@ -112,6 +113,7 @@ enum TaxonomyKind {
   DATE_ACTIVITY_TYPE
   MEETING_SOURCE
   GIFT_OCCASION
+  LIFE_EVENT_TYPE
 }
 
 model TaxonomyTerm {
@@ -141,6 +143,7 @@ model TaxonomyTerm {
   interactions            Interaction[]     @relation("InteractionType")
   facts                   Fact[]            @relation("FactCategory")
   importantDates          ImportantDate[]   @relation("ImportantDateType")
+  lifeEvents              LifeEvent[]       @relation("LifeEventType")
   relationships           Relationship[]    @relation("RelationshipType")
   romanticStages          RomanticProfile[] @relation("DatingStage")
   romanticSources         RomanticProfile[] @relation("DatingSource")
@@ -167,12 +170,13 @@ model Contact {
 
   categoryId String?
 
-  birthDate      DateTime? @db.Date
-  birthYearKnown Boolean   @default(true)
+  birthDate          DateTime?     @db.Date
+  birthDatePrecision DatePrecision @default(DAY)
 
-  howWeMet        String?   @db.Text
-  whereWeMet      String?   @db.VarChar(191)
-  metOn           DateTime? @db.Date
+  howWeMet        String?       @db.Text
+  whereWeMet      String?       @db.VarChar(191)
+  metOn           DateTime?     @db.Date
+  metOnPrecision  DatePrecision @default(DAY)
   meetingSourceId String?
 
   occupation String? @db.VarChar(191)
@@ -206,6 +210,7 @@ model Contact {
   participations  InteractionParticipant[]
   facts           Fact[]
   importantDates  ImportantDate[]
+  lifeEvents      LifeEvent[]
   ideas           Idea[]
   tasks           Task[]
   gifts           Gift[]
@@ -375,6 +380,18 @@ enum DateRecurrence {
   MONTHLY
 }
 
+/// How much of a date is actually known.
+///
+/// Backfilled history is often partial — "she moved to Austin in 2019" should
+/// stay 2019 rather than being stored as January 1st and later read as fact.
+/// MONTH_DAY covers the birthday whose year nobody remembers.
+enum DatePrecision {
+  DAY
+  MONTH
+  YEAR
+  MONTH_DAY
+}
+
 model ImportantDate {
   id                 String         @id @default(cuid())
   ownerId            String
@@ -382,7 +399,7 @@ model ImportantDate {
   typeId             String?
   label              String         @db.VarChar(191)
   date               DateTime       @db.Date
-  yearKnown          Boolean        @default(true)
+  precision          DatePrecision  @default(DAY)
   recurrence         DateRecurrence @default(ANNUAL)
   /// JSON array of ints, e.g. [30, 7, 0]. Null falls back to the user default.
   reminderDaysBefore Json?
@@ -395,6 +412,37 @@ model ImportantDate {
   type    TaxonomyTerm? @relation("ImportantDateType", fields: [typeId], references: [id], onDelete: SetNull)
 
   @@index([contactId])
+  @@index([ownerId, date])
+  @@index([typeId])
+}
+
+/// Something that happened to a person, on their timeline rather than yours.
+///
+/// Distinct from Interaction (something you did together, so you were there)
+/// and ImportantDate (a recurring thing you want reminding about). "Her father
+/// died in 2019" is context, not an anniversary you want a notification for.
+model LifeEvent {
+  id           String         @id @default(cuid())
+  ownerId      String
+  contactId    String
+  typeId       String?
+  title        String         @db.VarChar(191)
+  description  String?        @db.Text
+  date         DateTime       @db.Date
+  precision    DatePrecision  @default(DAY)
+  /// Set for events that span a period, e.g. lived somewhere 2015-2019.
+  endDate      DateTime?      @db.Date
+  endPrecision DatePrecision?
+  /// Pinned to the top of the contact's profile.
+  isMilestone  Boolean        @default(false)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  owner   User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  type    TaxonomyTerm? @relation("LifeEventType", fields: [typeId], references: [id], onDelete: SetNull)
+
+  @@index([contactId, date])
   @@index([ownerId, date])
   @@index([typeId])
 }

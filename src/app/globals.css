@@ -253,20 +253,6 @@
     outline-offset: 2px;
   }
 
-  input,
-  textarea,
-  select {
-    /* iOS zooms the viewport on focus below 16px. */
-    font-size: max(16px, 1rem);
-  }
-
-  @media (min-width: 640px) {
-    input,
-    textarea,
-    select {
-      font-size: 0.875rem;
-    }
-  }
 }
 
 @layer utilities {
@@ -301,6 +287,20 @@
   .tap {
     min-height: 44px;
     min-width: 44px;
+  }
+}
+
+/*
+ * Mobile browsers zoom the page in when a focused field's font-size is below
+ * 16px, and they do not zoom back out afterwards. This rule is deliberately
+ * unlayered: declarations outside @layer beat every layered utility, so a
+ * `text-sm` on an input cannot reintroduce the problem.
+ */
+@media (max-width: 639px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    font-size: 16px;
   }
 }
 

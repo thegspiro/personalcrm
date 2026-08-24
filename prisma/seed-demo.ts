@@ -358,5 +358,36 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
     });
   }
 
+// ---- Life events (deliberately at mixed precision) ----------------------
+  const lifeEventSeeds: Array<[string, string, string, string, "DAY" | "MONTH" | "YEAR", string?]> = [
+    ["Sarah", "new-job", "Started at Virginia Hospital Center", "2021-09-01", "MONTH"],
+    ["Sarah", "moved", "Moved to Arlington", "2019-01-01", "YEAR", "Left the Richmond place after the split."],
+    ["Marcus", "graduated", "Finished his masters", "2018-05-19", "DAY"],
+    ["Marcus", "moved", "Bought the Falls Church house", "2022-03-01", "MONTH"],
+    ["Priya", "promotion", "Made senior PM", "2024-01-01", "YEAR"],
+    ["Jenna", "started-business", "Went freelance", "2023-06-01", "MONTH", "Left the agency after six years."],
+    ["Dad", "retired", "Retired from the county", "2020-01-01", "YEAR"],
+    ["Elena", "new-job", "Joined the Alexandria practice", "2023-11-01", "MONTH"],
+    ["Elena", "new-pet", "Adopted Miso", "2015-01-01", "YEAR", "Eleven years old and still hates everyone."],
+    ["Devon", "moved", "Moved to Petworth", "2024-08-01", "MONTH"],
+  ];
+
+  for (const [person, type, title, dateKey, precision, description] of lifeEventSeeds) {
+    const contactId = contactIds.get(person);
+    if (!contactId) continue;
+    const [year, month, day] = dateKey.split("-").map(Number);
+    await prisma.lifeEvent.create({
+      data: {
+        ownerId,
+        contactId,
+        typeId: term("LIFE_EVENT_TYPE", type),
+        title,
+        description: description ?? null,
+        date: dateOnly(year, month, day),
+        precision,
+      },
+    });
+  }
+
   console.log(`  demo data created for ${DEMO_EMAIL}`);
 }
