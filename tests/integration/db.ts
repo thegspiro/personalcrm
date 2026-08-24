@@ -34,6 +34,8 @@ const TABLES = [
   "Idea",
   "Task",
   "Gift",
+  "Debt",
+  "DietaryNeed",
   "Flag",
   "RomanticProfile",
   "Relationship",
