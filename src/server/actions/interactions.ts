@@ -89,6 +89,7 @@ export async function createInteraction(
         location: str(form, "location") ?? null,
         durationMinutes: duration && duration > 0 ? Math.round(duration) : null,
         sentiment: sentiment === undefined ? null : clampSentiment(sentiment),
+        reachedOutBy: reachedOutByOf(str(form, "reachedOutBy")),
         participants: { create: contactIds.map((contactId) => ({ contactId })) },
       },
     });
@@ -140,6 +141,7 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
         location: str(form, "location") ?? null,
         durationMinutes: duration && duration > 0 ? Math.round(duration) : null,
         sentiment: sentiment === undefined ? null : clampSentiment(sentiment),
+        reachedOutBy: reachedOutByOf(str(form, "reachedOutBy")),
       },
     });
 
@@ -199,4 +201,8 @@ export async function deleteInteraction(id: string): Promise<ActionResult> {
 
 function clampSentiment(value: number): number {
   return Math.max(-2, Math.min(2, Math.round(value)));
+}
+
+function reachedOutByOf(value?: string): "UNSPECIFIED" | "ME" | "THEM" | "MUTUAL" {
+  return value === "ME" || value === "THEM" || value === "MUTUAL" ? value : "UNSPECIFIED";
 }
