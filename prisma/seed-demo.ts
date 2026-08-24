@@ -183,13 +183,14 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
     title: string;
     notes?: string;
     sentiment?: number;
+    reachedOutBy?: "ME" | "THEM" | "MUTUAL";
   }> = [
-    { person: "Mom", type: "call", daysAgo: 2, title: "Sunday catch-up", notes: "Garden is taking over the back fence. Dad's knee is better.", sentiment: 1 },
-    { person: "Marcus", type: "drinks", daysAgo: 5, title: "Beers at Dogwood", notes: "He's interviewing at a firm in Ballston. Nervous but excited.", sentiment: 2 },
-    { person: "Dad", type: "call", daysAgo: 9, title: "Checked in about the car", sentiment: 1 },
-    { person: "Jenna", type: "coffee", daysAgo: 12, title: "Coffee downtown", notes: "Showed me the rebrand work. Asked about hiking in the fall.", sentiment: 1 },
-    { person: "Sarah", type: "text", daysAgo: 26, title: "Long text thread", notes: "She's stressed about night shifts.", sentiment: 0 },
-    { person: "Devon", type: "event", daysAgo: 33, title: "Trivia night", sentiment: 1 },
+    { person: "Mom", type: "call", daysAgo: 2, title: "Sunday catch-up", notes: "Garden is taking over the back fence. Dad's knee is better.", sentiment: 1, reachedOutBy: "THEM" },
+    { person: "Marcus", type: "drinks", daysAgo: 5, title: "Beers at Dogwood", notes: "He's interviewing at a firm in Ballston. Nervous but excited.", sentiment: 2, reachedOutBy: "ME" },
+    { person: "Dad", type: "call", daysAgo: 9, title: "Checked in about the car", sentiment: 1, reachedOutBy: "ME" },
+    { person: "Jenna", type: "coffee", daysAgo: 12, title: "Coffee downtown", notes: "Showed me the rebrand work. Asked about hiking in the fall.", sentiment: 1, reachedOutBy: "THEM" },
+    { person: "Sarah", type: "text", daysAgo: 26, title: "Long text thread", notes: "She's stressed about night shifts.", sentiment: 0, reachedOutBy: "ME" },
+    { person: "Devon", type: "event", daysAgo: 33, title: "Trivia night", sentiment: 1, reachedOutBy: "MUTUAL" },
     { person: "Priya", type: "meal", daysAgo: 71, title: "Lunch after the offsite", sentiment: 1 },
     { person: "Tom", type: "ran-into", daysAgo: 140, title: "Chatted in the driveway", sentiment: 0 },
   ];
@@ -205,6 +206,7 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
         title: s.title,
         notes: s.notes ?? null,
         sentiment: s.sentiment ?? null,
+        reachedOutBy: s.reachedOutBy ?? "UNSPECIFIED",
         participants: { create: [{ contactId }] },
       },
     });
@@ -269,7 +271,6 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
 
   // ---- Facts, ideas, tasks, gifts, flags, relationships -------------------
   const factSeeds: Array<[string, string, string, number]> = [
-    ["Sarah", "food-drink", "Allergic to shellfish — genuinely, not a preference.", 2],
     ["Sarah", "work", "Works nights at Virginia Hospital Center, pediatric ward.", 1],
     ["Sarah", "hobby", "Been learning bread baking. Obsessed with sourdough starter.", 1],
     ["Marcus", "family", "Younger sister Dana lives in Denver, they're close.", 1],
@@ -278,7 +279,6 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
     ["Mom", "health", "Cardiologist follow-up every March.", 2],
     ["Dad", "hobby", "Restoring a '72 BMW 2002. Ask about the carburetor saga.", 1],
     ["Jenna", "media", "Loves anything Tana French. Recommend her the new one.", 1],
-    ["Elena", "food-drink", "Vegetarian, but eats fish occasionally.", 2],
     ["Elena", "pet", "Cat named Miso, 11 years old, deeply unfriendly.", 1],
     ["Elena", "family", "Two older brothers, both in Texas. Very close to her mom.", 1],
     ["Devon", "logistics", "Works Thursday through Sunday nights — only free early week.", 2],
@@ -324,6 +324,26 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
       },
     });
   }
+
+  await prisma.dietaryNeed.createMany({
+    data: [
+      { ownerId, contactId: contactIds.get("Marcus")!, kind: "ALLERGY", label: "Shellfish", notes: "Carries a pen. Ask before anywhere with a raw bar.", carriesEpinephrine: true },
+      { ownerId, contactId: contactIds.get("Sarah")!, kind: "INTOLERANCE", label: "Dairy", notes: "Fine with hard cheese, not with cream." },
+      { ownerId, contactId: contactIds.get("Priya")!, kind: "PREFERENCE", label: "Vegetarian" },
+      { ownerId, contactId: contactIds.get("Mom")!, kind: "MEDICAL", label: "Low sodium", notes: "Blood pressure — since the spring." },
+      { ownerId, contactId: contactIds.get("Elena")!, kind: "PREFERENCE", label: "Vegetarian", notes: "Eats fish occasionally." },
+    ] as Prisma.DietaryNeedCreateManyInput[],
+  });
+
+  await prisma.debt.createMany({
+    data: [
+      { ownerId, contactId: contactIds.get("Marcus")!, direction: "THEY_OWE_ME", description: "Covered his half of the tab", amountCents: 4200, incurredOn: dateOnly(2026, 7, 18) },
+      { ownerId, contactId: contactIds.get("Marcus")!, direction: "I_OWE_THEM", description: "He got the concert tickets", amountCents: 9000, incurredOn: dateOnly(2026, 8, 2) },
+      // No sum: the case a money-only model would have missed entirely.
+      { ownerId, contactId: contactIds.get("Tom")!, direction: "THEY_OWE_ME", description: "My cordless drill", incurredOn: dateOnly(2026, 5, 9) },
+      { ownerId, contactId: contactIds.get("Jenna")!, direction: "THEY_OWE_ME", description: "Spotted her for the deposit", amountCents: 15000, incurredOn: dateOnly(2026, 3, 1), settledOn: dateOnly(2026, 4, 12) },
+    ] as Prisma.DebtCreateManyInput[],
+  });
 
   await prisma.gift.createMany({
     data: [
