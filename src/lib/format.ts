@@ -76,6 +76,19 @@ export function sentimentLabel(value: number | null | undefined): string | null 
   return SENTIMENTS.find((s) => s.value === value)?.label ?? null;
 }
 
+/**
+ * Who made the first move, for the timeline meta row.
+ *
+ * Returns null for UNSPECIFIED — most interactions ever logged carry it, and a
+ * row reading "not noted" on every line is noise standing in for information.
+ */
+export function reachedOutByLabel(value: string | null | undefined): string | null {
+  if (value === "ME") return "You got in touch";
+  if (value === "THEM") return "They got in touch";
+  if (value === "MUTUAL") return "Mutual";
+  return null;
+}
+
 export function formatMoney(cents: number | null | undefined, currency = "USD"): string | null {
   if (cents === null || cents === undefined) return null;
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);

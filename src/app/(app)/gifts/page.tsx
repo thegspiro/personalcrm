@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { getUserContext } from "@/server/user/context";
 import { prisma } from "@/server/db/client";
+import { privacyScope, viaContactPrivacyWhere } from "@/server/privacy/filter";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/nav/icon";
@@ -13,9 +14,12 @@ export const dynamic = "force-dynamic";
 
 export default async function GiftsPage() {
   const { user } = await getUserContext();
+  const scope = await privacyScope();
 
   const gifts = await prisma.gift.findMany({
-    where: { ownerId: user.id },
+    // A gift names the person it is for, so listing one bought for a private
+    // contact discloses that contact while the lock is closed.
+    where: { ownerId: user.id, ...viaContactPrivacyWhere(scope) },
     include: {
       occasion: true,
       contact: { select: { id: true, firstName: true, lastName: true } },
