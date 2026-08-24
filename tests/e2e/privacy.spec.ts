@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { createContact, ensureSignedIn } from "./helpers";
+import { createContact, ensureSignedIn, openPrivacySettings } from "./helpers";
 
 /**
  * The secondary lock, tested for what it actually has to do: withhold data.
@@ -17,7 +17,7 @@ const secretName = () => `Secret ${test.info().project.name} ${STAMP}`;
 
 test("set a PIN and switch the lock on", async ({ page }) => {
   await ensureSignedIn(page);
-  await page.goto("/settings");
+  await openPrivacySettings(page);
 
   // Be honest in the UI about what this protects against.
   await expect(page.getByText(/doesn't encrypt anything/i)).toBeVisible();
@@ -61,7 +61,7 @@ test("a private contact is withheld from the response while locked", async ({ pa
   const beforeLock = await (await page.request.get("/people")).text();
   expect(beforeLock).toContain(name);
 
-  await page.goto("/settings");
+  await openPrivacySettings(page);
   await page.getByRole("button", { name: "Lock now" }).click();
   await page.waitForURL("/");
 
@@ -112,7 +112,7 @@ test("the right PIN unlocks and returns you where you were headed", async ({ pag
 
 test("hiding the module removes it from navigation and blocks the route", async ({ page }) => {
   await ensureSignedIn(page);
-  await page.goto("/settings");
+  await openPrivacySettings(page);
   await page.getByRole("switch", { name: /Hide the dating module/ }).click();
   await expect(page.getByRole("switch", { name: /Hide the dating module/ })).toBeChecked();
 
@@ -126,7 +126,7 @@ test("hiding the module removes it from navigation and blocks the route", async 
 
   // Put it back: a test that leaves a global setting on becomes a trap for
   // everything that runs after it.
-  await page.goto("/settings");
+  await openPrivacySettings(page);
   await page.getByRole("switch", { name: /Hide the dating module/ }).click();
   await expect(page.getByRole("switch", { name: /Hide the dating module/ })).not.toBeChecked();
 });
@@ -152,7 +152,7 @@ test("dating writes are refused while locked, not just hidden", async ({ page })
 
   // Close the lock, then confirm the write path is gone rather than merely
   // invisible: the section is not rendered at all.
-  await page.goto("/settings");
+  await openPrivacySettings(page);
   await page.getByRole("button", { name: "Lock now" }).click();
   await page.waitForURL("/");
 
@@ -167,7 +167,7 @@ test("dating writes are refused while locked, not just hidden", async ({ page })
 
 test("cleaning up: unhide and remove the PIN", async ({ page }) => {
   await ensureSignedIn(page);
-  await page.goto("/settings");
+  await openPrivacySettings(page);
 
   await page.getByLabel("Remove the PIN").fill(PIN);
   await page.getByRole("button", { name: "Remove PIN" }).click();

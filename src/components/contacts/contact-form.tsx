@@ -10,6 +10,10 @@ import { Field } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { SubmitButton } from "@/components/form/submit-button";
+import {
+  CustomFieldInputs,
+  type RenderableField,
+} from "@/components/custom-fields/field-renderer";
 import { DateField } from "@/components/form/date-field";
 import { TermChips, TermSelect, type TermOption } from "@/components/form/term-select";
 import { CADENCE_PRESETS } from "@/lib/cadence";
@@ -44,11 +48,14 @@ export function ContactForm({
   meetingSources,
   contact,
   defaultCadenceDays,
+  customFields = [],
 }: {
   categories: TermOption[];
   meetingSources: TermOption[];
   contact?: ContactFormValues;
   defaultCadenceDays?: number | null;
+  /** Fields you defined yourself, already scoped to this contact's category. */
+  customFields?: RenderableField[];
 }) {
   const router = useRouter();
   const [state, setState] = React.useState<ActionResult<{ id: string }>>({ ok: true });
@@ -238,6 +245,17 @@ export function ContactForm({
           />
         </CardContent>
       </Card>
+
+      {customFields.length > 0 ? (
+        <Card>
+          <CardContent className="grid gap-3.5 pt-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Your own fields
+            </p>
+            <CustomFieldInputs fields={customFields} errors={state.fieldErrors} />
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="flex gap-2 pb-2">
         <SubmitButton className="flex-1">{editing ? "Save changes" : "Add person"}</SubmitButton>

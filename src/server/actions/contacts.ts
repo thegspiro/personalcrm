@@ -4,6 +4,11 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/server/db/client";
 import { recomputeContactActivity } from "@/server/services/contact-activity";
+import {
+  customFieldFailure,
+  deleteCustomFieldValues,
+  saveCustomFieldValuesOrThrow,
+} from "@/server/services/custom-field-values";
 import { snoozeUntil as snoozeDate } from "@/lib/cadence";
 import { slugify } from "@/lib/utils";
 import {
@@ -53,7 +58,11 @@ export async function createContact(form: FormData): Promise<ActionResult<{ id: 
   const met = partialDate(form, "metOn");
   const cadenceDays = num(form, "cadenceDays");
 
-  const contact = await prisma.$transaction(async (tx) => {
+  // Wrapped so an invalid custom field aborts the whole create: a contact that
+  // saves while one of its fields silently doesn't is worse than a failure.
+  let contact: { id: string };
+  try {
+    contact = await prisma.$transaction(async (tx) => {
     const created = await tx.contact.create({
       data: {
         ownerId,
@@ -82,11 +91,17 @@ export async function createContact(form: FormData): Promise<ActionResult<{ id: 
     });
 
     await applyTags(tx, ownerId, created.id, strList(form, "tags"));
+    await saveCustomFieldValuesOrThrow(tx, ownerId, "CONTACT", created.id, form);
     // A new contact has no interactions, but this seeds nextTouchAt from their
     // creation date so a cadence starts counting immediately.
     await recomputeContactActivity(tx, [created.id]);
     return created;
-  });
+    });
+  } catch (error) {
+    const failure = customFieldFailure(error);
+    if (failure) return failure;
+    throw error;
+  }
 
   revalidateContact(contact.id);
   return ok({ id: contact.id });
@@ -108,7 +123,8 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
   const met = partialDate(form, "metOn");
   const cadenceDays = num(form, "cadenceDays");
 
-  await prisma.$transaction(async (tx) => {
+  try {
+    await prisma.$transaction(async (tx) => {
     await tx.contact.update({
       where: { id },
       data: {
@@ -141,9 +157,15 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
       await applyTags(tx, ownerId, id, strList(form, "tags"));
     }
 
+    await saveCustomFieldValuesOrThrow(tx, ownerId, "CONTACT", id, form);
     // The cadence may have changed, so nextTouchAt has to be re-derived.
     await recomputeContactActivity(tx, [id]);
-  });
+    });
+  } catch (error) {
+    const failure = customFieldFailure(error);
+    if (failure) return failure;
+    throw error;
+  }
 
   revalidateContact(id);
   return ok();
@@ -196,7 +218,26 @@ export async function deleteContact(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
   if (!(await assertOwnedContact(ownerId, id))) return fail("Contact not found.");
 
-  await prisma.contact.delete({ where: { id } });
+  await prisma.$transaction(async (tx) => {
+    // Custom field values key off a plain entityId with no foreign key, so
+    // nothing cascades them away. The contact's interactions and dates go with
+    // it, so their values have to be swept in the same breath.
+    const [interactions, dates] = await Promise.all([
+      tx.interaction.findMany({
+        where: { ownerId, participants: { some: { contactId: id } } },
+        select: { id: true },
+      }),
+      tx.dateEntry.findMany({ where: { ownerId, contactId: id }, select: { id: true } }),
+    ]);
+    await deleteCustomFieldValues(tx, ownerId, [
+      { entity: "CONTACT", entityIds: [id] },
+      { entity: "ROMANTIC", entityIds: [id] },
+      { entity: "INTERACTION", entityIds: interactions.map((row) => row.id) },
+      { entity: "DATE_ENTRY", entityIds: dates.map((row) => row.id) },
+    ]);
+    await tx.contact.delete({ where: { id } });
+  });
+
   revalidateContact(id);
   return ok();
 }

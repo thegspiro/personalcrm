@@ -9,6 +9,11 @@ import {
   resequenceDateEntries,
 } from "@/server/services/contact-activity";
 import {
+  customFieldFailure,
+  deleteCustomFieldValues,
+  saveCustomFieldValuesOrThrow,
+} from "@/server/services/custom-field-values";
+import {
   type ActionResult,
   fail,
   instant,
@@ -71,7 +76,9 @@ export async function createInteraction(
   const sentiment = num(form, "sentiment");
   const duration = num(form, "durationMinutes");
 
-  const interaction = await prisma.$transaction(async (tx) => {
+  let interaction: { id: string };
+  try {
+    interaction = await prisma.$transaction(async (tx) => {
     const created = await tx.interaction.create({
       data: {
         ownerId,
@@ -86,9 +93,15 @@ export async function createInteraction(
       },
     });
 
+    await saveCustomFieldValuesOrThrow(tx, ownerId, "INTERACTION", created.id, form);
     await recomputeContactActivity(tx, contactIds);
     return created;
-  });
+    });
+  } catch (error) {
+    const failure = customFieldFailure(error);
+    if (failure) return failure;
+    throw error;
+  }
 
   revalidateFor(contactIds);
   return ok({ id: interaction.id });
@@ -163,6 +176,15 @@ export async function deleteInteraction(id: string): Promise<ActionResult> {
   const affected = await prisma.$transaction(async (tx) => {
     // Read participants before the cascade removes them.
     const contactIds = await participantsOf(tx, [id]);
+    // A DateEntry cascades from its interaction, so sweep both sets of values.
+    const dates = await tx.dateEntry.findMany({
+      where: { interactionId: id },
+      select: { id: true },
+    });
+    await deleteCustomFieldValues(tx, ownerId, [
+      { entity: "INTERACTION", entityIds: [id] },
+      { entity: "DATE_ENTRY", entityIds: dates.map((row) => row.id) },
+    ]);
     await tx.interaction.delete({ where: { id } });
     // Deleting the most recent interaction has to roll last-contact back to the
     // one before it, not leave it pointing at something that no longer exists.

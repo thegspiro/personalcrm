@@ -16,6 +16,10 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { SubmitButton } from "@/components/form/submit-button";
+import {
+  CollapsibleCustomFields,
+  type RenderableField,
+} from "@/components/custom-fields/field-renderer";
 import { DateTimeField } from "@/components/form/date-field";
 import { TermChips, type TermOption } from "@/components/form/term-select";
 import { ContactPicker, type PickerContact } from "@/components/form/contact-picker";
@@ -39,6 +43,7 @@ export function LogInteractionSheet({
   defaultContactIds = [],
   defaultOccurredAt,
   onLogged,
+  customFields = [],
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -47,6 +52,8 @@ export function LogInteractionSheet({
   defaultContactIds?: string[];
   defaultOccurredAt?: Date;
   onLogged?: () => void;
+  /** Your own interaction fields — collapsed, so logging stays fast. */
+  customFields?: RenderableField[];
 }) {
   const router = useRouter();
   const [error, setError] = React.useState<string>();
@@ -138,6 +145,8 @@ export function LogInteractionSheet({
                 ))}
               </div>
             </div>
+
+            <CollapsibleCustomFields fields={customFields} />
           </SheetBody>
 
           <SheetFooter>

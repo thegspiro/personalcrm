@@ -7,6 +7,8 @@ import { listTermsByKind } from "@/server/taxonomy/queries";
 import { listDateEntries } from "@/server/queries/dating";
 import { canSeeDating } from "@/server/privacy/filter";
 import { getContactFamily, listHouseholdOptions } from "@/server/queries/family";
+import { fieldsFor } from "@/server/queries/custom-fields";
+import { CustomFieldValues } from "@/components/custom-fields/field-values";
 import { familyMeta } from "@/lib/family";
 import { FamilySection, ContactHouseholdsSection } from "@/components/family/family-section";
 import { SuggestionList } from "@/components/family/suggestions";
@@ -56,7 +58,16 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
   // have put the dates and notes into the payload sent to the browser.
   const showDating = contact.isRomantic && (await canSeeDating(prefs.hideDating));
 
-  const [terms, timeline, contactOptions, dateEntries, family, allHouseholds] = await Promise.all([
+  const [
+    terms,
+    timeline,
+    contactOptions,
+    dateEntries,
+    family,
+    allHouseholds,
+    customFields,
+    interactionFields,
+  ] = await Promise.all([
     listTermsByKind(user.id, [
       "INTERACTION_TYPE",
       "FACT_CATEGORY",
@@ -73,6 +84,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     showDating ? listDateEntries(user.id, id) : Promise.resolve([]),
     getContactFamily(user.id, id),
     listHouseholdOptions(user.id),
+    fieldsFor(user.id, "CONTACT", id, { categoryId: contact.categoryId }),
+    fieldsFor(user.id, "INTERACTION", null),
   ]);
 
   // Family relationships get their own section, so "Connected people" is left
@@ -99,6 +112,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                 }
               : null,
           }}
+          interactionFields={interactionFields}
           cadence={{
             status: cadenceStatus(contact.nextTouchAt, timezone),
             message: cadenceMessage(daysUntilTouch(contact.nextTouchAt, timezone)),
@@ -275,6 +289,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             priority: task.priority,
           }))}
         />
+
+        <CustomFieldValues fields={customFields} editHref={`/people/${contact.id}/edit`} />
 
         <FamilySection
           contactId={contact.id}

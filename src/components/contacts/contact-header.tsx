@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LogInteractionSheet } from "./log-interaction";
+import type { RenderableField } from "@/components/custom-fields/field-renderer";
 import type { TermOption } from "@/components/form/term-select";
 import type { PickerContact } from "@/components/form/contact-picker";
 import { cadenceMessage, termColorClasses } from "@/lib/format";
@@ -37,6 +38,7 @@ export function ContactHeader({
   cadence,
   interactionTypes,
   contacts,
+  interactionFields = [],
 }: {
   contact: {
     id: string;
@@ -61,6 +63,8 @@ export function ContactHeader({
   cadence: { status: string; message: string | null; lastSeen: string | null };
   interactionTypes: TermOption[];
   contacts: PickerContact[];
+  /** Your own interaction fields, for the log sheet. */
+  interactionFields?: RenderableField[];
 }) {
   const router = useRouter();
   const [logging, setLogging] = React.useState(false);
@@ -273,6 +277,7 @@ export function ContactHeader({
         contacts={contacts}
         types={interactionTypes}
         defaultContactIds={[contact.id]}
+        customFields={interactionFields}
       />
     </div>
   );

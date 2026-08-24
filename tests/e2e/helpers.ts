@@ -94,3 +94,15 @@ export async function createContact(page: Page, firstName: string): Promise<stri
   await page.getByRole("heading", { name: firstName, level: 2 }).waitFor();
   return page.url();
 }
+
+/**
+ * Open the privacy section of settings.
+ *
+ * Settings is tabbed, so landing on /settings is no longer enough to see the
+ * privacy controls.
+ */
+export async function openPrivacySettings(page: Page): Promise<void> {
+  await page.goto("/settings");
+  await page.getByRole("tab", { name: "Privacy" }).click();
+  await page.getByText(/doesn't encrypt anything/i).waitFor();
+}

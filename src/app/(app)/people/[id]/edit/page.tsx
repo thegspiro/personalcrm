@@ -4,6 +4,7 @@ import { getUserContext } from "@/server/user/context";
 import { getContact } from "@/server/queries/contacts";
 import { listTermsByKind } from "@/server/taxonomy/queries";
 import { ContactForm } from "@/components/contacts/contact-form";
+import { fieldsFor } from "@/server/queries/custom-fields";
 import { plainDateFromDb, plainDateKey } from "@/lib/dates";
 import { displayName } from "@/lib/utils";
 
@@ -17,7 +18,10 @@ export default async function EditContactPage({ params }: { params: Promise<{ id
   const contact = await getContact(user.id, id);
   if (!contact) notFound();
 
-  const terms = await listTermsByKind(user.id, ["CONTACT_CATEGORY", "MEETING_SOURCE"]);
+  const [terms, customFields] = await Promise.all([
+    listTermsByKind(user.id, ["CONTACT_CATEGORY", "MEETING_SOURCE"]),
+    fieldsFor(user.id, "CONTACT", contact.id, { categoryId: contact.categoryId }),
+  ]);
 
   return (
     <div className="mx-auto grid w-full max-w-2xl gap-4">
@@ -49,6 +53,7 @@ export default async function EditContactPage({ params }: { params: Promise<{ id
           isFavorite: contact.isFavorite,
           isRomantic: contact.isRomantic,
         }}
+        customFields={customFields}
       />
     </div>
   );

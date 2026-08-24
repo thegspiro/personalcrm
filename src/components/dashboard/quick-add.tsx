@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { LogInteractionSheet } from "@/components/contacts/log-interaction";
 import type { TermOption } from "@/components/form/term-select";
 import type { PickerContact } from "@/components/form/contact-picker";
+import type { RenderableField } from "@/components/custom-fields/field-renderer";
 
 /**
  * The one-tap entry point. Sits at the top of the dashboard on mobile, where
@@ -15,9 +16,11 @@ import type { PickerContact } from "@/components/form/contact-picker";
 export function QuickAddWidget({
   contacts,
   types,
+  customFields = [],
 }: {
   contacts: PickerContact[];
   types: TermOption[];
+  customFields?: RenderableField[];
 }) {
   const [logging, setLogging] = React.useState(false);
 
@@ -46,6 +49,7 @@ export function QuickAddWidget({
         onOpenChange={setLogging}
         contacts={contacts}
         types={types}
+        customFields={customFields}
       />
     </Card>
   );

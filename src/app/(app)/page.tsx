@@ -15,6 +15,7 @@ import {
   getUpcomingInteractions,
 } from "@/server/queries/dashboard";
 import { QuickAddWidget } from "@/components/dashboard/quick-add";
+import { fieldsFor } from "@/server/queries/custom-fields";
 import {
   DatingPipelineWidget,
   IdeasWidget,
@@ -57,6 +58,7 @@ export default async function HomePage() {
     ideas,
     stats,
     datingSummary,
+    interactionFields,
   ] = await Promise.all([
     enabled.has("quick-add") ? listContactOptions(user.id) : [],
     enabled.has("quick-add") ? listTerms(user.id, "INTERACTION_TYPE") : [],
@@ -79,6 +81,7 @@ export default async function HomePage() {
     enabled.has("idea-bank") ? getOpenIdeas(user.id, settingFor("idea-bank", "limit", 6)) : [],
     enabled.has("stats") ? getStats(user.id, timezone) : null,
     enabled.has("dating-pipeline") && showDating ? getDatingSummary(user.id) : null,
+    enabled.has("quick-add") ? fieldsFor(user.id, "INTERACTION", null) : [],
   ]);
 
   const mapInteractions = (rows: typeof recent) =>
@@ -91,7 +94,13 @@ export default async function HomePage() {
     }));
 
   const widgets: Record<string, React.ReactNode> = {
-    "quick-add": <QuickAddWidget contacts={contacts} types={interactionTypes} />,
+    "quick-add": (
+      <QuickAddWidget
+        contacts={contacts}
+        types={interactionTypes}
+        customFields={interactionFields}
+      />
+    ),
     overdue: <OverdueWidget contacts={overdue} />,
     "upcoming-dates": <UpcomingDatesWidget dates={upcomingDates} />,
     "recent-interactions": (
