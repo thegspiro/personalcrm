@@ -91,15 +91,76 @@ export const TAXONOMY_SEEDS: Record<TaxonomyKind, TaxonomySeed[]> = {
     { slug: "other", label: "Other", icon: "Calendar", color: "slate" },
   ],
 
+  /**
+   * Relationship types. The family terms carry `metadata` the rest of the app
+   * reads instead of hardcoding slugs:
+   *
+   * - `family: true` puts the term in the Family section and the family tree.
+   * - `tier` groups it there: immediate · extended · in-law · step · chosen ·
+   *   former, the last being relationships that have ended without the person
+   *   leaving your life.
+   * - `generation` is the referent's generation relative to the subject —
+   *   positive is older ("B is A's parent" → +1), so the tree can band rows.
+   * - `role` is a stable semantic key. Inference (src/server/services/
+   *   family-suggestions.ts) matches on it, so renaming "Parent" to "Papá"
+   *   keeps working and a term the user invents simply gets no inference.
+   */
   RELATIONSHIP_TYPE: [
-    { slug: "partner", label: "Partner", inverse: "partner", icon: "Heart", color: "rose" },
-    { slug: "spouse", label: "Spouse", inverse: "spouse", icon: "Heart", color: "red" },
+    { slug: "partner", label: "Partner", inverse: "partner", icon: "Heart", color: "rose",
+      metadata: { family: true, tier: "immediate", generation: 0, role: "spouse" } },
+    { slug: "spouse", label: "Spouse", inverse: "spouse", icon: "Heart", color: "red",
+      metadata: { family: true, tier: "immediate", generation: 0, role: "spouse" } },
     { slug: "ex-partner", label: "Ex-partner", inverse: "ex-partner", icon: "HeartCrack", color: "slate" },
-    { slug: "parent", label: "Parent", inverse: "child", icon: "Users", color: "amber" },
-    { slug: "child", label: "Child", inverse: "parent", icon: "Baby", color: "amber" },
-    { slug: "sibling", label: "Sibling", inverse: "sibling", icon: "Users", color: "orange" },
-    { slug: "grandparent", label: "Grandparent", inverse: "grandchild", icon: "Users", color: "yellow" },
-    { slug: "grandchild", label: "Grandchild", inverse: "grandparent", icon: "Users", color: "yellow" },
+    { slug: "parent", label: "Parent", inverse: "child", icon: "Users", color: "amber",
+      metadata: { family: true, tier: "immediate", generation: 1, role: "parent" } },
+    { slug: "child", label: "Child", inverse: "parent", icon: "Baby", color: "amber",
+      metadata: { family: true, tier: "immediate", generation: -1, role: "child" } },
+    { slug: "sibling", label: "Sibling", inverse: "sibling", icon: "Users", color: "orange",
+      metadata: { family: true, tier: "immediate", generation: 0, role: "sibling" } },
+    { slug: "grandparent", label: "Grandparent", inverse: "grandchild", icon: "Users", color: "yellow",
+      metadata: { family: true, tier: "extended", generation: 2, role: "grandparent" } },
+    { slug: "grandchild", label: "Grandchild", inverse: "grandparent", icon: "Users", color: "yellow",
+      metadata: { family: true, tier: "extended", generation: -2, role: "grandchild" } },
+    { slug: "aunt-uncle", label: "Aunt / uncle", inverse: "niece-nephew", icon: "Users", color: "amber",
+      metadata: { family: true, tier: "extended", generation: 1, role: "aunt-uncle" } },
+    { slug: "niece-nephew", label: "Niece / nephew", inverse: "aunt-uncle", icon: "Baby", color: "amber",
+      metadata: { family: true, tier: "extended", generation: -1, role: "niece-nephew" } },
+    { slug: "cousin", label: "Cousin", inverse: "cousin", icon: "Users", color: "orange",
+      metadata: { family: true, tier: "extended", generation: 0, role: "cousin" } },
+    { slug: "parent-in-law", label: "Parent-in-law", inverse: "child-in-law", icon: "Users", color: "teal",
+      metadata: { family: true, tier: "inlaw", generation: 1, role: "parent-in-law" } },
+    { slug: "child-in-law", label: "Child-in-law", inverse: "parent-in-law", icon: "Users", color: "teal",
+      metadata: { family: true, tier: "inlaw", generation: -1, role: "child-in-law" } },
+    { slug: "sibling-in-law", label: "Sibling-in-law", inverse: "sibling-in-law", icon: "Users", color: "teal",
+      metadata: { family: true, tier: "inlaw", generation: 0, role: "sibling-in-law" } },
+    { slug: "stepparent", label: "Stepparent", inverse: "stepchild", icon: "Users", color: "lime",
+      metadata: { family: true, tier: "step", generation: 1, role: "stepparent" } },
+    { slug: "stepchild", label: "Stepchild", inverse: "stepparent", icon: "Baby", color: "lime",
+      metadata: { family: true, tier: "step", generation: -1, role: "stepchild" } },
+    { slug: "stepsibling", label: "Stepsibling", inverse: "stepsibling", icon: "Users", color: "lime",
+      metadata: { family: true, tier: "step", generation: 0, role: "stepsibling" } },
+    { slug: "half-sibling", label: "Half-sibling", inverse: "half-sibling", icon: "Users", color: "lime",
+      metadata: { family: true, tier: "step", generation: 0, role: "half-sibling" } },
+    { slug: "godparent", label: "Godparent", inverse: "godchild", icon: "Sparkles", color: "violet",
+      metadata: { family: true, tier: "chosen", generation: 1, role: "godparent" } },
+    { slug: "godchild", label: "Godchild", inverse: "godparent", icon: "Sparkles", color: "violet",
+      metadata: { family: true, tier: "chosen", generation: -1, role: "godchild" } },
+    { slug: "chosen-family", label: "Chosen family", inverse: "chosen-family", icon: "HeartHandshake", color: "fuchsia",
+      metadata: { family: true, tier: "chosen", generation: 0, role: "chosen-family" } },
+    { slug: "ex-spouse", label: "Ex-spouse", inverse: "ex-spouse", icon: "HeartCrack", color: "slate",
+      metadata: { family: true, tier: "former", generation: 0, role: "ex-spouse" } },
+    { slug: "ex-parent-in-law", label: "Ex-parent-in-law", inverse: "ex-child-in-law", icon: "Users", color: "slate",
+      metadata: { family: true, tier: "former", generation: 1, role: "ex-parent-in-law" } },
+    { slug: "ex-child-in-law", label: "Ex-child-in-law", inverse: "ex-parent-in-law", icon: "Users", color: "slate",
+      metadata: { family: true, tier: "former", generation: -1, role: "ex-child-in-law" } },
+    { slug: "ex-sibling-in-law", label: "Ex-sibling-in-law", inverse: "ex-sibling-in-law", icon: "Users", color: "slate",
+      metadata: { family: true, tier: "former", generation: 0, role: "ex-sibling-in-law" } },
+    { slug: "ex-stepparent", label: "Ex-stepparent", inverse: "ex-stepchild", icon: "Users", color: "slate",
+      metadata: { family: true, tier: "former", generation: 1, role: "ex-stepparent" } },
+    { slug: "ex-stepchild", label: "Ex-stepchild", inverse: "ex-stepparent", icon: "Users", color: "slate",
+      metadata: { family: true, tier: "former", generation: -1, role: "ex-stepchild" } },
+    { slug: "ex-stepsibling", label: "Ex-stepsibling", inverse: "ex-stepsibling", icon: "Users", color: "slate",
+      metadata: { family: true, tier: "former", generation: 0, role: "ex-stepsibling" } },
     { slug: "friend", label: "Friend", inverse: "friend", icon: "Users", color: "violet" },
     { slug: "roommate", label: "Roommate", inverse: "roommate", icon: "Home", color: "emerald" },
     { slug: "coworker", label: "Coworker", inverse: "coworker", icon: "Briefcase", color: "blue" },

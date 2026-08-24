@@ -12,10 +12,18 @@ export const PRIMARY_NAV: NavItem[] = [
   { href: "/people", label: "People", icon: "Users", match: ["/people"] },
   { href: "/timeline", label: "Timeline", icon: "History", match: ["/timeline"] },
   { href: "/dating", label: "Dating", icon: "Heart", match: ["/dating"] },
-  { href: "/more", label: "More", icon: "Menu", match: ["/more", "/settings", "/tasks", "/ideas", "/gifts"] },
+  {
+    href: "/more",
+    label: "More",
+    icon: "Menu",
+    match: ["/more", "/settings", "/tasks", "/ideas", "/gifts", "/family"],
+  },
 ];
 
+// The bottom bar's five slots are full, so Family lives here — reachable from
+// the sidebar on a desktop and from /more on a phone.
 export const SECONDARY_NAV: NavItem[] = [
+  { href: "/family", label: "Family", icon: "Home", match: ["/family"] },
   { href: "/tasks", label: "Follow-ups", icon: "CircleCheck" },
   { href: "/ideas", label: "Ideas", icon: "Lightbulb" },
   { href: "/gifts", label: "Gifts", icon: "Gift" },

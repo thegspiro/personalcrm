@@ -80,6 +80,12 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
     { firstName: "Tom", lastName: "Hargrove", category: "neighbor", cadenceDays: 90, lastDaysAgo: 140, occupation: "Retired", city: "Falls Church", howWeMet: "He lent me a ladder the week I moved in.", meetingSource: "neighborhood" },
     { firstName: "Dr. Alice", lastName: "Nakamura", category: "professional", cadenceDays: null, lastDaysAgo: 200, occupation: "Dentist", city: "Arlington" },
     { firstName: "Devon", lastName: "Price", category: "friend", cadenceDays: 30, lastDaysAgo: 33, birth: [1992, 9, 8], occupation: "Bartender", city: "Washington", howWeMet: "Trivia night regulars.", meetingSource: "event" },
+    // Extended family, so /family has more than one generation to band and the
+    // suggestion engine has something real to infer from.
+    { firstName: "Walter", lastName: "", category: "family", cadenceDays: 30, lastDaysAgo: 40, birth: [1936, 2, 11], occupation: "Retired machinist", city: "Richmond" },
+    { firstName: "Ruth", lastName: "", category: "family", cadenceDays: 21, lastDaysAgo: 18, birth: [1939, 10, 4], city: "Richmond", favorite: true },
+    { firstName: "Ray", lastName: "", category: "family", cadenceDays: 60, lastDaysAgo: 64, birth: [1958, 7, 30], occupation: "Long-haul driver", city: "Roanoke" },
+    { firstName: "Kayla", lastName: "", category: "family", cadenceDays: 45, lastDaysAgo: 51, birth: [1995, 3, 22], occupation: "Physical therapist", city: "Roanoke" },
   ];
 
   const romantics: Array<
@@ -342,6 +348,12 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
     ["Mom", "Dad", "spouse"],
     ["Dad", "Marcus", "friend"],
     ["Jenna", "Marcus", "friend"],
+    // Deliberately partial: Dad's side is recorded, Mom's in-law links and
+    // Dad's niece are not, so the suggestion cards have work to do.
+    ["Dad", "Walter", "parent"],
+    ["Dad", "Ruth", "parent"],
+    ["Dad", "Ray", "sibling"],
+    ["Kayla", "Ray", "parent"],
   ];
   for (const [from, to, slug] of relSeeds) {
     const fromId = contactIds.get(from);
@@ -355,6 +367,24 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
         { ownerId, fromContactId: fromId, toContactId: toId, typeId: typeTerm.id, pairId },
         { ownerId, fromContactId: toId, toContactId: fromId, typeId: inverseId, pairId },
       ],
+    });
+  }
+
+  // ---- Households -------------------------------------------------------
+  const householdSeeds: Array<[string, string | null, Array<[string, string | null]>]> = [
+    ["Mom and Dad's place", "Sunday lunch, most weeks.", [["Mom", null], ["Dad", null]]],
+    ["Richmond grandparents", null, [["Ruth", "Gran"], ["Walter", "Grandad"]]],
+    ["Ray's house", null, [["Ray", null], ["Kayla", null]]],
+  ];
+  for (const [name, notes, members] of householdSeeds) {
+    const rows = members
+      .map(([who, role], index) => ({ contactId: contactIds.get(who), role, sortOrder: index }))
+      .filter((row): row is { contactId: string; role: string | null; sortOrder: number } =>
+        Boolean(row.contactId),
+      );
+    if (rows.length === 0) continue;
+    await prisma.household.create({
+      data: { ownerId, name, notes, members: { create: rows } },
     });
   }
 

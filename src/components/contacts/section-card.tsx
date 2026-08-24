@@ -38,7 +38,7 @@ export function SectionCard({
   const [adding, setAdding] = React.useState(false);
 
   return (
-    <section className="rounded-xl border border-border bg-card">
+    <section className="min-w-0 rounded-xl border border-border bg-card">
       <div className="flex items-center gap-2 px-4 py-3">
         <button
           type="button"
@@ -78,7 +78,7 @@ export function SectionCard({
       </div>
 
       {open ? (
-        <div className="grid gap-2.5 px-4 pb-4">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-2.5 px-4 pb-4">
           {adding && form ? (
             <div className="rounded-lg border border-dashed border-border p-3">
               {form(() => setAdding(false))}

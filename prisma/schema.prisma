@@ -68,6 +68,8 @@ model User {
   notificationChannels NotificationChannel[]
   reminderLogs         ReminderLog[]
   lifeEvents           LifeEvent[]
+  households           Household[]
+  familyDismissals     FamilySuggestionDismissal[]
 }
 
 model Session {
@@ -241,8 +243,11 @@ model Contact {
   flags           Flag[]
   dateEntries     DateEntry[]
   romanticProfile RomanticProfile?
-  relationsFrom   Relationship[]           @relation("RelationshipFrom")
-  relationsTo     Relationship[]           @relation("RelationshipTo")
+  households      HouseholdMember[]
+  dismissalsA     FamilySuggestionDismissal[] @relation("DismissalA")
+  dismissalsB     FamilySuggestionDismissal[] @relation("DismissalB")
+  relationsFrom   Relationship[]              @relation("RelationshipFrom")
+  relationsTo     Relationship[]              @relation("RelationshipTo")
 
   @@index([ownerId, isArchived, lastName])
   @@index([ownerId, isArchived, firstName])
@@ -473,6 +478,60 @@ model LifeEvent {
   @@index([contactId, date])
   @@index([ownerId, date])
   @@index([typeId])
+}
+
+/// A named group of people who belong together — "The Whitfields", "Mum and
+/// Dad's place". Deliberately explicit rather than derived from who shares an
+/// address: adult children, separations and multi-generation homes all break
+/// that guess.
+model Household {
+  id        String   @id @default(cuid())
+  ownerId   String
+  name      String   @db.VarChar(191)
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner   User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  members HouseholdMember[]
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+}
+
+model HouseholdMember {
+  householdId String
+  contactId   String
+  /// Optional label within the household: "Mum", "eldest", "the dog".
+  role        String? @db.VarChar(96)
+  sortOrder   Int     @default(0)
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([householdId, contactId])
+  @@index([contactId])
+}
+
+/// A pair you have told the app to stop suggesting a relationship for.
+///
+/// Stored rather than kept in client state: a dismissal that reappears next
+/// time you open the page is worse than no dismissal at all. Held as an
+/// unordered pair (smaller id first) so it survives whichever way round the
+/// suggestion is phrased.
+model FamilySuggestionDismissal {
+  ownerId     String
+  aContactId  String
+  bContactId  String
+  dismissedAt DateTime @default(now())
+
+  owner    User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  aContact Contact @relation("DismissalA", fields: [aContactId], references: [id], onDelete: Cascade)
+  bContact Contact @relation("DismissalB", fields: [bContactId], references: [id], onDelete: Cascade)
+
+  @@id([ownerId, aContactId, bContactId])
+  @@index([aContactId])
+  @@index([bContactId])
 }
 
 enum IdeaStatus {

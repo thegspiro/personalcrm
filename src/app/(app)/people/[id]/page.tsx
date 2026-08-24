@@ -6,6 +6,10 @@ import { buildTimeline } from "@/server/queries/timeline";
 import { listTermsByKind } from "@/server/taxonomy/queries";
 import { listDateEntries } from "@/server/queries/dating";
 import { canSeeDating } from "@/server/privacy/filter";
+import { getContactFamily, listHouseholdOptions } from "@/server/queries/family";
+import { familyMeta } from "@/lib/family";
+import { FamilySection, ContactHouseholdsSection } from "@/components/family/family-section";
+import { SuggestionList } from "@/components/family/suggestions";
 import {
   DateLogSection,
   FlagsSection,
@@ -52,7 +56,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
   // have put the dates and notes into the payload sent to the browser.
   const showDating = contact.isRomantic && (await canSeeDating(prefs.hideDating));
 
-  const [terms, timeline, contactOptions, dateEntries] = await Promise.all([
+  const [terms, timeline, contactOptions, dateEntries, family, allHouseholds] = await Promise.all([
     listTermsByKind(user.id, [
       "INTERACTION_TYPE",
       "FACT_CATEGORY",
@@ -67,7 +71,15 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     buildTimeline(user.id, timezone, { contactId: id, take: 40 }),
     listContactOptions(user.id),
     showDating ? listDateEntries(user.id, id) : Promise.resolve([]),
+    getContactFamily(user.id, id),
+    listHouseholdOptions(user.id),
   ]);
+
+  // Family relationships get their own section, so "Connected people" is left
+  // holding the friends, colleagues and neighbours it is actually useful for.
+  const familyTypes = terms.RELATIONSHIP_TYPE.filter((term) => familyMeta(term) !== null);
+  const otherTypes = terms.RELATIONSHIP_TYPE.filter((term) => familyMeta(term) === null);
+  const familyTermIds = new Set(familyTypes.map((term) => term.id));
 
   const today = calendarDateInTz(new Date(), timezone);
   const daysSince = daysSinceLastInteraction(contact.lastInteractionAt, timezone);
@@ -264,18 +276,55 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           }))}
         />
 
+        <FamilySection
+          contactId={contact.id}
+          tiers={family.tiers.map((group) => ({
+            tier: group.tier,
+            links: group.links.map((link) => ({
+              id: link.id,
+              person: link.person,
+              term: link.term,
+              notes: link.notes,
+              canEnd: link.canEnd,
+            })),
+          }))}
+          familyTypes={familyTypes}
+          contacts={contactOptions}
+        />
+
+        <SuggestionList
+          suggestions={family.suggestions.map((suggestion) => ({
+            subjectId: suggestion.subjectId,
+            personId: suggestion.personId,
+            subjectName: displayName(suggestion.subject),
+            personName: displayName(suggestion.person),
+            reason: suggestion.reason,
+            termId: suggestion.termId,
+            termLabel: suggestion.termLabel,
+          }))}
+          types={familyTypes}
+        />
+
+        <ContactHouseholdsSection
+          contactId={contact.id}
+          households={family.households}
+          allHouseholds={allHouseholds}
+        />
+
         <RelationshipsSection
           contactId={contact.id}
-          relationships={contact.relationsFrom.map((relationship) => ({
-            id: relationship.id,
-            type: {
-              label: relationship.type.label,
-              icon: relationship.type.icon,
-              color: relationship.type.color,
-            },
-            other: relationship.toContact,
-          }))}
-          types={terms.RELATIONSHIP_TYPE}
+          relationships={contact.relationsFrom
+            .filter((relationship) => !familyTermIds.has(relationship.type.id))
+            .map((relationship) => ({
+              id: relationship.id,
+              type: {
+                label: relationship.type.label,
+                icon: relationship.type.icon,
+                color: relationship.type.color,
+              },
+              other: relationship.toContact,
+            }))}
+          types={otherTypes}
           contacts={contactOptions}
         />
 

@@ -37,6 +37,9 @@ const TABLES = [
   "Flag",
   "RomanticProfile",
   "Relationship",
+  "HouseholdMember",
+  "Household",
+  "FamilySuggestionDismissal",
   "ContactTag",
   "ContactMethod",
   "Address",
@@ -54,12 +57,20 @@ const TABLES = [
   "AppSetting",
 ];
 
+/**
+ * Truncate everything.
+ *
+ * Batched through `$transaction` so all of it runs on one connection:
+ * FOREIGN_KEY_CHECKS is a session variable, and with a pool the disable and
+ * the truncates can otherwise land on different connections — which fails the
+ * moment two tables reference each other.
+ */
 export async function reset(): Promise<void> {
-  await prisma.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS = 0");
-  for (const table of TABLES) {
-    await prisma.$executeRawUnsafe(`TRUNCATE TABLE \`${table}\``);
-  }
-  await prisma.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS = 1");
+  await prisma.$transaction([
+    prisma.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS = 0"),
+    ...TABLES.map((table) => prisma.$executeRawUnsafe(`TRUNCATE TABLE \`${table}\``)),
+    prisma.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS = 1"),
+  ]);
 }
 
 let counter = 0;

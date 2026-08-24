@@ -16,6 +16,7 @@ const ROUTES = [
   "/timeline",
   "/dating",
   "/dating/compare",
+  "/family",
   "/tasks",
   "/ideas",
   "/gifts",
@@ -86,4 +87,53 @@ test("a contact with a very long name does not widen the page", async ({ page })
 
   // The name is still shown, just truncated rather than pushing the page wide.
   await expect(page.getByRole("heading", { name, level: 2 })).toBeVisible();
+});
+
+test("family sections and suggestions do not widen the page", async ({ page }) => {
+  await ensureSignedIn(page);
+
+  // Long names in a family the app can reason about: the suggestion card shows
+  // a truncating name *and* a sentence naming three people, which is where the
+  // contact page last blew its width. A bare contact never exercised this.
+  const stamp = Date.now().toString(36);
+  const gran = `Wilhelmina Featherstonehaugh ${stamp}`;
+  const parent = `Bartholomew Featherstonehaugh ${stamp}`;
+  const child = `Persephone Featherstonehaugh ${stamp}`;
+
+  await createContact(page, gran);
+  const parentUrl = await createContact(page, parent);
+  const childUrl = await createContact(page, child);
+
+  const family = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Add a relative" }) });
+
+  for (const [url, relative] of [
+    [parentUrl, gran],
+    [childUrl, parent],
+  ] as const) {
+    await page.goto(url);
+    await family.getByRole("button", { name: "Add a relative" }).click();
+    await family.getByLabel("Search people").fill(relative);
+    await family.getByRole("button", { name: new RegExp(relative) }).click();
+    await family.getByLabel("Is their…").selectOption({ label: "Parent" });
+    await family.getByRole("button", { name: "Link", exact: true }).click();
+    await expect(family.getByRole("link", { name: relative })).toBeVisible();
+  }
+
+  // The youngest now has a suggested grandparent, phrased with all three names
+  // in one sentence — the widest string the family UI ever renders.
+  await page.goto(childUrl);
+  await expect(page.getByText("Possible relatives")).toBeVisible();
+  await expect(page.getByText(new RegExp(`${gran}.*grandparent`))).toBeVisible();
+
+  const contactResult = await overflow(page);
+  expect(contactResult.offenders, "overflowing elements on a contact page").toEqual([]);
+  expect(contactResult.scrollWidth).toBeLessThanOrEqual(contactResult.clientWidth);
+
+  await page.goto("/family");
+  await page.waitForLoadState("load");
+  const familyResult = await overflow(page);
+  expect(familyResult.offenders, "overflowing elements on /family").toEqual([]);
+  expect(familyResult.scrollWidth).toBeLessThanOrEqual(familyResult.clientWidth);
 });

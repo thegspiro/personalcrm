@@ -2,8 +2,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
 import { cn, displayName } from "@/lib/utils";
 import { Icon } from "@/components/nav/icon";
 import { Badge } from "@/components/ui/badge";
@@ -15,10 +13,10 @@ import { DateField } from "@/components/form/date-field";
 import { TermChips, TermSelect, type TermOption } from "@/components/form/term-select";
 import { ContactPicker, type PickerContact } from "@/components/form/contact-picker";
 import { SectionCard, SectionEmpty, SectionRow } from "./section-card";
+import { useAction, useAddAction } from "@/components/form/use-action";
 import { formatPartialDate, formatPartialRange, type DatePrecision } from "@/lib/date-precision";
 import { formatMoney, termColorClasses } from "@/lib/format";
 import type { PlainDate } from "@/lib/dates";
-import type { ActionResult } from "@/server/actions/helpers";
 import {
   createFact,
   createGift,
@@ -37,44 +35,6 @@ import {
   setIdeaStatus,
   setTaskDone,
 } from "@/server/actions/details";
-
-/** Wraps an action so every section gets the same toast + refresh behaviour. */
-function useAction() {
-  const router = useRouter();
-  return React.useCallback(
-    async (run: () => Promise<ActionResult<unknown>>, successMessage?: string) => {
-      const result = await run();
-      if (!result.ok) {
-        toast.error(result.error ?? "Something went wrong.");
-        return false;
-      }
-      if (successMessage) toast.success(successMessage);
-      router.refresh();
-      return true;
-    },
-    [router],
-  );
-}
-
-/**
- * Wraps an add action so a successful submit collapses the panel. Leaving it
- * open with the typed text still sitting there makes the next click look like
- * it did nothing.
- */
-function useAddAction() {
-  const run = useAction();
-  return React.useCallback(
-    (
-      action: (form: FormData) => Promise<ActionResult<unknown>>,
-      close: () => void,
-      message?: string,
-    ) =>
-      async (form: FormData) => {
-        if (await run(() => action(form), message)) close();
-      },
-    [run],
-  );
-}
 
 // --- facts -----------------------------------------------------------------
 

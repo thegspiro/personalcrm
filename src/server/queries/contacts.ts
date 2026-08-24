@@ -151,7 +151,9 @@ const DETAIL_INCLUDE = {
   relationsFrom: {
     include: {
       type: true,
-      toContact: { select: { id: true, firstName: true, lastName: true, avatarPath: true } },
+      toContact: {
+        select: { id: true, firstName: true, lastName: true, avatarPath: true, isPrivate: true },
+      },
     },
   },
   romanticProfile: { include: { stage: true, source: true } },
@@ -173,6 +175,11 @@ export const getContact = cache(
     // otherwise ordinary person stays hidden.
     if (!scope.unlocked) {
       contact.facts = contact.facts.filter((fact) => !fact.isPrivate);
+      // A relationship names the person on the other end, so a private
+      // relative would otherwise be readable from an ordinary contact's page.
+      contact.relationsFrom = contact.relationsFrom.filter(
+        (relation) => !relation.toContact.isPrivate,
+      );
     }
     return contact;
   },

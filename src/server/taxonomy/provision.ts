@@ -1,5 +1,5 @@
 import type { Prisma, TaxonomyKind } from "@prisma/client";
-import { TAXONOMY_SEEDS } from "./defaults";
+import { TAXONOMY_SEEDS, type TaxonomySeed } from "./defaults";
 
 type Tx = Prisma.TransactionClient;
 
@@ -38,7 +38,47 @@ export async function provisionTaxonomies(tx: Tx, ownerId: string): Promise<void
     await tx.taxonomyTerm.createMany({ data: rows });
   }
 
+  await refreshSystemTermMetadata(tx, ownerId);
   await linkRelationshipInverses(tx, ownerId);
+}
+
+/**
+ * Backfill seed metadata onto system terms that predate it.
+ *
+ * provisionTaxonomies deliberately skips slugs that already exist, so an
+ * upgrade that adds metadata to an *existing* seed — as the family work did to
+ * `parent`, `sibling` and friends — would otherwise only reach new accounts.
+ *
+ * Only untouched system terms are considered, and keys already on the row win,
+ * so nothing the user has set is overwritten.
+ */
+export async function refreshSystemTermMetadata(tx: Tx, ownerId: string): Promise<void> {
+  const seeded = new Map<string, Record<string, unknown>>();
+  for (const [kind, seeds] of Object.entries(TAXONOMY_SEEDS) as [TaxonomyKind, TaxonomySeed[]][]) {
+    for (const seed of seeds) {
+      if (seed.metadata) seeded.set(`${kind}:${seed.slug}`, seed.metadata);
+    }
+  }
+
+  const terms = await tx.taxonomyTerm.findMany({
+    where: { ownerId, isSystem: true },
+    select: { id: true, kind: true, slug: true, metadata: true },
+  });
+
+  for (const term of terms) {
+    const seed = seeded.get(`${term.kind}:${term.slug}`);
+    if (!seed) continue;
+    const current =
+      term.metadata && typeof term.metadata === "object" && !Array.isArray(term.metadata)
+        ? (term.metadata as Record<string, unknown>)
+        : {};
+    const missing = Object.keys(seed).filter((key) => !(key in current));
+    if (missing.length === 0) continue;
+    await tx.taxonomyTerm.update({
+      where: { id: term.id },
+      data: { metadata: { ...seed, ...current } as Prisma.InputJsonValue },
+    });
+  }
 }
 
 /**
