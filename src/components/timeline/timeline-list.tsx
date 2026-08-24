@@ -7,7 +7,13 @@ import { cn, displayName } from "@/lib/utils";
 import { Icon } from "@/components/nav/icon";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
-import { timelineDateLabel, sentimentLabel, termColorClasses, timeOfDay } from "@/lib/format";
+import {
+  timelineDateLabel,
+  reachedOutByLabel,
+  sentimentLabel,
+  termColorClasses,
+  timeOfDay,
+} from "@/lib/format";
 import type { PlainDate } from "@/lib/dates";
 import type { TimelineEntry } from "@/server/queries/timeline";
 import { deleteInteraction } from "@/server/actions/interactions";
@@ -91,6 +97,9 @@ export function TimelineList({
                   <span>{timeOfDay(entry.occurredAt, timezone)}</span>
                 ) : null}
                 {entry.location ? <span className="truncate">{entry.location}</span> : null}
+                {reachedOutByLabel(entry.reachedOutBy) ? (
+                  <span>{reachedOutByLabel(entry.reachedOutBy)}</span>
+                ) : null}
                 {sentimentLabel(entry.sentiment) ? (
                   <span>{sentimentLabel(entry.sentiment)}</span>
                 ) : null}
