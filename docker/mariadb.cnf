@@ -1,0 +1,30 @@
+# MariaDB configuration for the bundled instance.
+#
+# Bound to loopback only: nothing outside the container can reach it, and the
+# app connects over 127.0.0.1. Tuned small — this is one person's contact list,
+# not a production OLTP server.
+[mariadbd]
+user                    = abc
+datadir                 = /config/db
+socket                  = /run/mysqld/mysqld.sock
+pid-file                = /run/mysqld/mysqld.pid
+bind-address            = 127.0.0.1
+port                    = 3306
+skip-name-resolve
+skip-external-locking
+
+character-set-server    = utf8mb4
+collation-server        = utf8mb4_unicode_ci
+
+innodb_buffer_pool_size = 128M
+innodb_log_file_size    = 48M
+innodb_flush_method     = O_DIRECT
+innodb_flush_log_at_trx_commit = 1
+max_connections         = 40
+table_open_cache        = 256
+
+log_error               = /config/logs/mariadb-error.log
+
+[client]
+socket                  = /run/mysqld/mysqld.sock
+default-character-set   = utf8mb4

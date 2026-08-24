@@ -1,0 +1,38 @@
+#!/command/with-contenv bash
+# Create the runtime user from PUID/PGID and make /config writable by it.
+# This is the Unraid convention: appdata is owned by nobody:users (99:100),
+# and the container must adopt that identity rather than run as root.
+set -euo pipefail
+
+PUID="${PUID:-99}"
+PGID="${PGID:-100}"
+
+if ! getent group "${PGID}" >/dev/null 2>&1; then
+    groupadd -o -g "${PGID}" abc
+fi
+GROUP_NAME="$(getent group "${PGID}" | cut -d: -f1)"
+
+if ! getent passwd abc >/dev/null 2>&1; then
+    useradd -o -u "${PUID}" -g "${PGID}" -M -d /config -s /usr/sbin/nologin abc
+else
+    usermod -o -u "${PUID}" -g "${PGID}" abc
+fi
+# mariadbd resolves `user = abc` from the config file, so the name must exist
+# even when PUID matches an account the base image already had.
+usermod -a -G "${GROUP_NAME}" abc 2>/dev/null || true
+
+mkdir -p /config/db /config/uploads /config/backups /config/logs /config/cache
+mkdir -p /run/mysqld
+
+# Recursive chown on every boot is slow once /config/db is large, so only fix
+# ownership when the top-level directory is actually wrong.
+current_owner="$(stat -c '%u:%g' /config)"
+if [[ "${current_owner}" != "${PUID}:${PGID}" ]]; then
+    echo "[init-perms] taking ownership of /config as ${PUID}:${PGID}"
+    chown -R "${PUID}:${PGID}" /config
+else
+    chown "${PUID}:${PGID}" /config/db /config/uploads /config/backups /config/logs /config/cache
+fi
+chown -R "${PUID}:${PGID}" /run/mysqld
+
+echo "[init-perms] running as uid=${PUID} gid=${PGID}, TZ=${TZ:-Etc/UTC}"

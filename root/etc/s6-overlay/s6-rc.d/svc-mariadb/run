@@ -1,0 +1,12 @@
+#!/command/with-contenv bash
+set -euo pipefail
+source /etc/s6-overlay/scripts/common.sh
+
+if using_external_database; then
+    # Nothing to supervise. s6 restarts a longrun that exits, so this parks the
+    # service instead of churning through restarts for the whole container life.
+    exec sleep infinity
+fi
+
+echo "[svc-mariadb] starting"
+exec s6-setuidgid abc mariadbd --defaults-file=/etc/mysql/personalcrm.cnf

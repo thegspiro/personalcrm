@@ -1,0 +1,83 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>personalcrm</Name>
+  <Repository>ghcr.io/thegspiro/personalcrm:latest</Repository>
+  <Registry>https://ghcr.io/thegspiro/personalcrm</Registry>
+  <Branch>
+    <Tag>latest</Tag>
+    <TagDescription>Latest stable release</TagDescription>
+  </Branch>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/thegspiro/personalcrm/issues</Support>
+  <Project>https://github.com/thegspiro/personalcrm</Project>
+  <Overview>
+    A personal CRM for the people in your life — not a sales tool.
+
+    Track contacts, log interactions, keep the things you want to remember about
+    someone, record important dates, and save conversation ideas for next time.
+    Keep-in-touch cadences surface who you are overdue to reach out to. An
+    optional dating layer adds a pipeline, a date log with ratings, green and red
+    flags, and compatibility notes for people you are seeing.
+
+    Mobile-first, designed for quick entry from a phone and bulk entry from a
+    desktop. MariaDB is built into the image, so this is a single container with
+    a single appdata path and no external database to set up.
+
+    First run: open the WebUI and create your account. Everything stays on your
+    server.
+  </Overview>
+  <Category>Productivity: Tools: Other:</Category>
+  <WebUI>http://[IP]:[PORT:3000]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/thegspiro/personalcrm/main/unraid/personalcrm.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/thegspiro/personalcrm/main/public/icon-512.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+
+  <Config Name="WebUI Port" Target="3000" Default="3000" Mode="tcp"
+          Description="Port for the web interface."
+          Type="Port" Display="always" Required="true" Mask="false">3000</Config>
+
+  <Config Name="Appdata" Target="/config" Default="/mnt/user/appdata/personalcrm" Mode="rw"
+          Description="Holds the MariaDB database, uploads, backups, and the generated secrets file. Back this up."
+          Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/personalcrm</Config>
+
+  <Config Name="PUID" Target="PUID" Default="99" Mode=""
+          Description="User ID the container runs as. 99 is the Unraid default (nobody)."
+          Type="Variable" Display="advanced" Required="true" Mask="false">99</Config>
+
+  <Config Name="PGID" Target="PGID" Default="100" Mode=""
+          Description="Group ID the container runs as. 100 is the Unraid default (users)."
+          Type="Variable" Display="advanced" Required="true" Mask="false">100</Config>
+
+  <Config Name="TZ" Target="TZ" Default="America/New_York" Mode=""
+          Description="Timezone, e.g. America/New_York. Reminders and 'overdue' calculations use it."
+          Type="Variable" Display="always" Required="true" Mask="false">America/New_York</Config>
+
+  <Config Name="App URL" Target="APP_URL" Default="" Mode=""
+          Description="Full external URL you reach the app on, e.g. https://crm.example.com. Used for links inside reminder notifications, and required for secure cookies behind HTTPS."
+          Type="Variable" Display="always" Required="false" Mask="false"/>
+
+  <Config Name="Disable signups" Target="DISABLE_SIGNUP" Default="false" Mode=""
+          Description="Set to true once your accounts exist to stop anyone else registering."
+          Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+
+  <Config Name="External database URL" Target="DATABASE_URL" Default="" Mode=""
+          Description="Optional. Leave empty to use the MariaDB built into this container. Set it to use your own server, e.g. mysql://user:password@192.168.1.10:3306/personalcrm"
+          Type="Variable" Display="advanced" Required="false" Mask="true"/>
+
+  <Config Name="Backup schedule" Target="BACKUP_CRON" Default="0 4 * * *" Mode=""
+          Description="Cron expression for the nightly database dump written to /config/backups. Empty disables it."
+          Type="Variable" Display="advanced" Required="false" Mask="false">0 4 * * *</Config>
+
+  <Config Name="Backup retention (days)" Target="BACKUP_RETENTION_DAYS" Default="14" Mode=""
+          Description="How long to keep database dumps in /config/backups."
+          Type="Variable" Display="advanced" Required="false" Mask="false">14</Config>
+</Container>
