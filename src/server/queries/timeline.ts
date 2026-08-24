@@ -42,6 +42,7 @@ export interface TimelineEntry {
   term?: { label: string; icon: string | null; color: string | null } | null;
   contacts: Array<{ id: string; firstName: string; lastName: string | null }>;
   sentiment?: number | null;
+  reachedOutBy?: string | null;
   location?: string | null;
   href: string;
 }
@@ -243,6 +244,7 @@ function interactionEntry(row: InteractionRow, timezone: string, now: Date): Tim
     term: row.type ? { label: row.type.label, icon: row.type.icon, color: row.type.color } : null,
     contacts,
     sentiment: row.sentiment,
+    reachedOutBy: row.reachedOutBy,
     location: row.location,
     href: contacts[0] ? `/people/${contacts[0].id}` : "/timeline",
   };
