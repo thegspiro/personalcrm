@@ -4,6 +4,7 @@ import type { PrivacyScope } from "./where";
 
 export {
   contactPrivacyWhere,
+  debtPrivacyWhere,
   factPrivacyWhere,
   interactionPrivacyWhere,
   viaContactPrivacyWhere,
