@@ -82,6 +82,55 @@ test("a private contact is withheld from the response while locked", async ({ pa
   await expect(page.getByRole("heading", { name: "Nothing here" })).toBeVisible();
 });
 
+test("a gift for a private contact is withheld from the gifts list while locked", async ({
+  page,
+}) => {
+  // Regression: /gifts queried by owner alone, so a gift named the private
+  // contact it was bought for and listed them while the lock was closed.
+  await ensureSignedIn(page);
+  const name = secretName();
+  const url = await createContact(page, name);
+  const gift = `Sable brush ${Date.now().toString(36)}`;
+
+  await page.goto("/unlock?next=/");
+  await page.getByLabel("PIN").fill(PIN);
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.waitForURL("/");
+
+  await page.goto(url);
+  await page.getByRole("button", { name: "Add a gift" }).click();
+  await page.getByLabel("What is it?").fill(gift);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText(gift)).toBeVisible();
+
+  await page.getByRole("button", { name: "Contact actions" }).click();
+  await page.getByRole("menuitem", { name: "Mark private" }).click();
+  await expect(page.getByText("Private", { exact: true })).toBeVisible();
+
+  expect(await (await page.request.get("/gifts")).text()).toContain(gift);
+
+  await openPrivacySettings(page);
+  await page.getByRole("button", { name: "Lock now" }).click();
+  await page.waitForURL("/");
+
+  // Raw HTML, for the same reason the contact list is checked this way: the row
+  // must never have left the database.
+  const html = await (await page.request.get("/gifts")).text();
+  expect(html).not.toContain(gift);
+  expect(html).not.toContain(name);
+
+  // Leave nothing private behind — a stray private contact switches offline
+  // caching off account-wide and fails the next project for no reason.
+  await page.goto("/unlock?next=/");
+  await page.getByLabel("PIN").fill(PIN);
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.waitForURL("/");
+  await page.goto(url);
+  await page.getByRole("button", { name: "Contact actions" }).click();
+  await page.getByRole("menuitem", { name: "Remove private mark" }).click();
+  await expect(page.getByText("Private", { exact: true })).toHaveCount(0);
+});
+
 test("locked routes redirect to the unlock screen", async ({ page }) => {
   await ensureSignedIn(page);
   await page.goto("/dating");
