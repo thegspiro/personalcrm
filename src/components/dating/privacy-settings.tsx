@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { purgeOfflineCaches } from "@/components/offline/offline";
 import { SubmitButton } from "@/components/form/submit-button";
 import type { ActionResult } from "@/server/actions/helpers";
 import {
@@ -155,7 +156,14 @@ export function PrivacySettings({
           />
 
           {pinSet && lockEnabled ? (
-            <form action={lockPrivacyAction}>
+            <form
+              action={lockPrivacyAction}
+              onSubmit={() => {
+                // Anything saved for offline reading was saved while unlocked.
+                // Leaving it behind would make the lock decorative.
+                purgeOfflineCaches();
+              }}
+            >
               <Button type="submit" size="sm" variant="outline">
                 <Lock />
                 Lock now

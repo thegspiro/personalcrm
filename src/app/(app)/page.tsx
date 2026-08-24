@@ -16,6 +16,8 @@ import {
 } from "@/server/queries/dashboard";
 import { QuickAddWidget } from "@/components/dashboard/quick-add";
 import { fieldsFor } from "@/server/queries/custom-fields";
+import { offlineCacheable } from "@/server/privacy/offline";
+import { CacheThisPage } from "@/components/offline/offline";
 import {
   DatingPipelineWidget,
   IdeasWidget,
@@ -36,6 +38,9 @@ export default async function HomePage() {
   // The dating widget is gated the same way the module is: hidden outright, or
   // withheld until the privacy lock is opened.
   const showDating = await canSeeDating(prefs.hideDating);
+  // The dating widget is the most sensitive thing on this page, so its
+  // presence rules out keeping a copy regardless of everything else.
+  const cacheable = !showDating && (await offlineCacheable(user.id));
 
   const layoutRow = await prisma.dashboardLayout.findUnique({ where: { userId: user.id } });
   const layout = normalizeDashboardLayout(layoutRow?.widgets).filter((entry) => entry.enabled);
@@ -139,6 +144,7 @@ export default async function HomePage() {
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
+      {cacheable ? <CacheThisPage /> : null}
       <div>
         <h2 className="text-lg font-semibold tracking-tight">
           Hi {user.name.split(" ")[0]}

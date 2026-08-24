@@ -173,7 +173,7 @@ test("quick add works with no API key configured", async ({ page }) => {
 
   // The default install: nothing configured, and the copy says the feature
   // still works.
-  await expect(page.getByText(/No key set, so this stays off/)).toBeVisible();
+  await expect(page.getByText(/Not configured, so this stays off/)).toBeVisible();
   await expect(page.getByRole("switch", { name: "Use smarter suggestions" })).toBeDisabled();
 
   await quickAdd(page, `call with ${SOLO()} yesterday`);

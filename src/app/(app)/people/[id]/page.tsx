@@ -8,6 +8,8 @@ import { listDateEntries } from "@/server/queries/dating";
 import { canSeeDating } from "@/server/privacy/filter";
 import { getContactFamily, listHouseholdOptions } from "@/server/queries/family";
 import { fieldsFor } from "@/server/queries/custom-fields";
+import { offlineCacheable } from "@/server/privacy/offline";
+import { CacheThisPage } from "@/components/offline/offline";
 import { CustomFieldValues } from "@/components/custom-fields/field-values";
 import { familyMeta } from "@/lib/family";
 import { FamilySection, ContactHouseholdsSection } from "@/components/family/family-section";
@@ -57,6 +59,10 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
   // Gate before fetching: withholding the section in the component would still
   // have put the dates and notes into the payload sent to the browser.
   const showDating = contact.isRomantic && (await canSeeDating(prefs.hideDating));
+  // This one person is the whole page, so their own marker decides it — plus
+  // the dating sections, which are the most sensitive thing here.
+  const cacheable =
+    !contact.isPrivate && !showDating && (await offlineCacheable(user.id));
 
   const [
     terms,
@@ -99,6 +105,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
+      {cacheable ? <CacheThisPage /> : null}
       <div className="grid min-w-0 gap-4 lg:col-span-2">
         <ContactHeader
           contact={{

@@ -1,13 +1,8 @@
 import "server-only";
-import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import { assistanceAvailable, getAiStatus, resolveApiKey } from "./config";
-import {
-  quickParse,
-  type ParseContact,
-  type QuickParseResult,
-} from "@/lib/quick-parse";
+import { assistanceAvailable, currentProviderConfig } from "./config";
+import { completeJson, verifyProvider, type ProviderConfig } from "./providers";
+import { quickParse, type QuickParseResult } from "@/lib/quick-parse";
 import { parsePlainDate } from "@/lib/dates";
 
 /**
@@ -15,8 +10,8 @@ import { parsePlainDate } from "@/lib/dates";
  *
  * This whole directory can be deleted and quick add keeps working —
  * `src/lib/quick-parse.ts` is the feature. This only helps with phrasing the
- * local parser reads badly, and only when you have switched it on and supplied
- * a key.
+ * local parser reads badly, and only when you have switched it on and pointed
+ * it at a model.
  *
  * Every failure path returns null so the local reading stands. An error
  * message where a decent guess would do is the wrong trade for something you
@@ -28,21 +23,12 @@ const QuickAddSchema = z.object({
    * Names as written in the line. Resolved to contacts on our side — the model
    * never sees or returns a database id, so it cannot address a row.
    */
-  people: z.array(z.string()).describe("Names of people mentioned, as written"),
-  typeSlug: z
-    .string()
-    .nullable()
-    .describe("Slug of the interaction type, from the supplied list, or null"),
-  date: z
-    .string()
-    .nullable()
-    .describe("The date as YYYY-MM-DD, or null if the line gives none"),
-  title: z.string().describe("A short title for the interaction"),
-  notes: z.string().nullable().describe("Any extra commentary, or null"),
+  people: z.array(z.string()).default([]),
+  typeSlug: z.string().nullable().default(null),
+  date: z.string().nullable().default(null),
+  title: z.string().default(""),
+  notes: z.string().nullable().default(null),
 });
-
-/** Give up rather than keep the user waiting on a box they could just type in. */
-const TIMEOUT_MS = 8_000;
 
 export async function assistedQuickParse(
   input: string,
@@ -52,52 +38,53 @@ export async function assistedQuickParse(
 ): Promise<QuickParseResult | null> {
   if (!(await assistanceAvailable())) return null;
 
-  const resolved = await resolveApiKey();
-  if (!resolved) return null;
-  const { model } = await getAiStatus();
+  const config = await currentProviderConfig();
+  if (!config) return null;
 
-  const client = new Anthropic({ apiKey: resolved.key, timeout: TIMEOUT_MS, maxRetries: 1 });
+  const raw = await completeJson(config, {
+    system: buildPrompt(context),
+    user: input,
+  });
+  if (raw === null) return null;
 
-  // The prompt carries the user's own taxonomy and contact names so the model
-  // resolves into their vocabulary rather than a generic one.
-  const typeList = context.types
-    .map((type) => `- ${type.slug}: ${type.label}`)
-    .join("\n");
-  const nameList = context.contacts
+  const parsed = QuickAddSchema.safeParse(raw);
+  // A model that answered with the wrong shape is no worse than one that did
+  // not answer: keep the local reading either way.
+  if (!parsed.success) return null;
+
+  return merge(parsed.data, fallback, context);
+}
+
+/**
+ * The instructions, carrying the user's own vocabulary.
+ *
+ * Their interaction-type slugs and contact names go in so the model resolves
+ * into *their* taxonomy rather than a generic one, and the output shape is
+ * spelled out because not every endpoint supports a structured-output mode.
+ */
+function buildPrompt(context: Parameters<typeof quickParse>[1]): string {
+  const types = context.types.map((type) => `${type.slug} (${type.label})`).join(", ");
+  const names = context.contacts
     .map((contact) => [contact.firstName, contact.lastName].filter(Boolean).join(" "))
-    .slice(0, 400)
+    .slice(0, 300)
     .join(", ");
-
   const today = context.now.toISOString().slice(0, 10);
 
-  try {
-    const response = await client.messages.parse({
-      model,
-      max_tokens: 1024,
-      output_config: {
-        effort: "low",
-        format: zodOutputFormat(QuickAddSchema),
-      },
-      system: [
-        "Extract the parts of a logged interaction from one line of text.",
-        `Today is ${today} in the timezone ${context.timeZone}. Resolve relative dates against that, and prefer the past — a bare weekday means the one just gone.`,
-        "Interaction types available (use the slug, or null if none fit):",
-        typeList || "- (none)",
-        nameList ? `Known people: ${nameList}` : "The user has no contacts recorded yet.",
-        "Return names exactly as they appear in the input. Do not invent people who are not mentioned.",
-      ].join("\n"),
-      messages: [{ role: "user", content: input }],
-    });
-
-    const parsed = response.parsed_output;
-    if (!parsed) return null;
-
-    return merge(parsed, fallback, context);
-  } catch {
-    // No network, a bad key, a rate limit, a timeout, a malformed response —
-    // all the same outcome: the local reading stands.
-    return null;
-  }
+  return [
+    "You extract the parts of a logged personal interaction from one line of text.",
+    "Reply with a single JSON object and nothing else — no prose, no code fences.",
+    "",
+    "Shape:",
+    '{"people":["name as written"],"typeSlug":"slug or null","date":"YYYY-MM-DD or null","title":"short title","notes":"extra commentary or null"}',
+    "",
+    `Today is ${today} in timezone ${context.timeZone}. Resolve relative dates against that.`,
+    "Prefer the past: a bare weekday means the one just gone, because people log things after they happen.",
+    "",
+    `Interaction type slugs available: ${types || "(none)"}`,
+    names ? `People already known: ${names}` : "The user has no contacts recorded yet.",
+    "",
+    "Return names exactly as they appear in the input. Never invent a person who is not mentioned.",
+  ].join("\n");
 }
 
 /**
@@ -113,12 +100,8 @@ function merge(
   fallback: QuickParseResult,
   context: Parameters<typeof quickParse>[1],
 ): QuickParseResult {
-  // Re-run the local matcher over just the names the model picked out. That
-  // reuses one matching rule instead of writing a second one that could drift.
-  const namesOnly = parsed.people.join(" and ");
-  const resolved = namesOnly
-    ? quickParse(namesOnly, { ...context, types: [] })
-    : null;
+  const namesOnly = parsed.people.filter(Boolean).join(" and ");
+  const resolved = namesOnly ? quickParse(namesOnly, { ...context, types: [] }) : null;
 
   const type =
     parsed.typeSlug === null
@@ -139,21 +122,9 @@ function merge(
   };
 }
 
-/** Shape check used by the settings screen to verify a pasted key works. */
-export async function verifyApiKey(key: string): Promise<{ ok: boolean; error?: string }> {
-  const client = new Anthropic({ apiKey: key, timeout: TIMEOUT_MS, maxRetries: 0 });
-  try {
-    await client.models.list({ limit: 1 });
-    return { ok: true };
-  } catch (error) {
-    if (error instanceof Anthropic.AuthenticationError) {
-      return { ok: false, error: "That key was rejected." };
-    }
-    if (error instanceof Anthropic.APIError) {
-      return { ok: false, error: `Anthropic returned ${error.status}.` };
-    }
-    return { ok: false, error: "Couldn't reach Anthropic to check the key." };
-  }
+/** Check a connection before storing it. */
+export async function verifyConnection(
+  config: ProviderConfig,
+): Promise<{ ok: boolean; error?: string }> {
+  return verifyProvider(config);
 }
-
-export type { ParseContact };

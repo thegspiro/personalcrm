@@ -6,6 +6,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ContactCard } from "@/components/contacts/contact-card";
 import { ContactFilters } from "@/components/contacts/contact-filters";
 import { getUserContext } from "@/server/user/context";
+import { offlineCacheable } from "@/server/privacy/offline";
+import { CacheThisPage } from "@/components/offline/offline";
 import { listContacts, type ContactSort } from "@/server/queries/contacts";
 import { listTerms } from "@/server/taxonomy/queries";
 
@@ -20,6 +22,7 @@ export default async function PeoplePage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { user, timezone } = await getUserContext();
+  const cacheable = await offlineCacheable(user.id);
   const params = await searchParams;
 
   const first = (key: string) => {
@@ -44,6 +47,7 @@ export default async function PeoplePage({
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
+      {cacheable ? <CacheThisPage /> : null}
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold tracking-tight">People</h2>

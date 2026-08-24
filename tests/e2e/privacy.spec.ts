@@ -165,13 +165,41 @@ test("dating writes are refused while locked, not just hidden", async ({ page })
   expect(html).not.toContain("Private notes");
 });
 
-test("cleaning up: unhide and remove the PIN", async ({ page }) => {
+test("cleaning up: unhide, unmark, and remove the PIN", async ({ page }) => {
   await ensureSignedIn(page);
   await openPrivacySettings(page);
 
   await page.getByLabel("Remove the PIN").fill(PIN);
   await page.getByRole("button", { name: "Remove PIN" }).click();
   await expect(page.getByText("PIN set")).toHaveCount(0);
+
+  // Unmark the contact too. A private contact left behind is not just untidy —
+  // it switches offline caching off for the whole account, so the next
+  // project's offline tests would fail for a reason that has nothing to do
+  // with them.
+  await page.goto(`/people?q=${encodeURIComponent(secretName())}`);
+  const link = page.getByRole("link", { name: new RegExp(secretName()) });
+  if ((await link.count()) > 0) {
+    await link.first().click();
+    await page.waitForURL(/\/people\/[a-z0-9]{20,}$/);
+    const url = page.url();
+    await page.getByRole("button", { name: "Contact actions" }).click();
+    const posted = page.waitForResponse(
+      (response) => response.request().method() === "POST",
+      { timeout: 15_000 },
+    );
+    await page.getByRole("menuitem", { name: "Remove private mark" }).click();
+    await posted.catch(() => {});
+    await expect
+      .poll(
+        async () => {
+          await page.goto(url);
+          return page.getByText("Private", { exact: true }).count();
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(0);
+  }
 
   // With no PIN the lock is off, so dating is reachable again.
   await page.goto("/dating");

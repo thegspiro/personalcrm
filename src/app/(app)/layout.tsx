@@ -7,6 +7,7 @@ import { listContactOptions } from "@/server/queries/contacts";
 import { listTerms } from "@/server/taxonomy/queries";
 import { fieldsFor } from "@/server/queries/custom-fields";
 import { QuickLogFab } from "@/components/nav/quick-log-fab";
+import { OfflineBanner, ServiceWorkerRegistrar } from "@/components/offline/offline";
 
 export const dynamic = "force-dynamic";
 
@@ -28,9 +29,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <div className="lg:pl-60">
         <TopBar name={user.name} email={user.email} hideDating={prefs.hideDating} />
         <main className="pb-nav mx-auto w-full max-w-5xl px-4 pt-4 lg:px-6 lg:pb-10">
+          {/* Rendered on the server, so it says how old this copy actually is
+              rather than when the browser noticed it was offline. */}
+          <OfflineBanner renderedAt={new Date().toISOString()} />
           {children}
         </main>
       </div>
+      <ServiceWorkerRegistrar />
       <QuickLogFab
         contacts={contacts}
         types={interactionTypes}

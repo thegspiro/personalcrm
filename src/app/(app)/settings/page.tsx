@@ -13,7 +13,8 @@ import { DashboardSettings } from "@/components/settings/dashboard-settings";
 import { TaxonomySettings } from "@/components/settings/taxonomy-settings";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { AiSettings } from "@/components/settings/ai-settings";
-import { AI_MODELS, getAiStatus } from "@/server/ai/config";
+import { getAiStatus } from "@/server/ai/config";
+import { PROVIDERS } from "@/server/ai/providers";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
@@ -99,11 +100,14 @@ export default async function SettingsPage() {
         quickadd={
           <AiSettings
             enabled={ai.enabled}
+            usable={ai.usable}
+            provider={ai.provider}
+            baseUrl={ai.baseUrl}
+            model={ai.model}
             hasKey={ai.hasKey}
             keySource={ai.keySource}
             keyHint={ai.keyHint}
-            model={ai.model}
-            models={AI_MODELS}
+            providers={PROVIDERS}
           />
         }
         privacy={
