@@ -9,6 +9,7 @@ const TABS = [
   { value: "fields", label: "Fields", icon: "SlidersHorizontal" },
   { value: "taxonomies", label: "Types", icon: "Tags" },
   { value: "dashboard", label: "Home", icon: "LayoutDashboard" },
+  { value: "quickadd", label: "Quick add", icon: "Zap" },
   { value: "privacy", label: "Privacy", icon: "Lock" },
 ] as const;
 
@@ -23,9 +24,10 @@ export function SettingsTabs({
   fields,
   taxonomies,
   dashboard,
+  quickadd,
   privacy,
 }: Record<(typeof TABS)[number]["value"], React.ReactNode>) {
-  const panels = { appearance, fields, taxonomies, dashboard, privacy };
+  const panels = { appearance, fields, taxonomies, dashboard, quickadd, privacy };
 
   return (
     <Tabs defaultValue="appearance" className="grid grid-cols-[minmax(0,1fr)] gap-4">

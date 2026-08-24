@@ -12,6 +12,8 @@ import { CustomFieldsSettings } from "@/components/settings/custom-fields-settin
 import { DashboardSettings } from "@/components/settings/dashboard-settings";
 import { TaxonomySettings } from "@/components/settings/taxonomy-settings";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
+import { AiSettings } from "@/components/settings/ai-settings";
+import { AI_MODELS, getAiStatus } from "@/server/ai/config";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
@@ -19,7 +21,7 @@ export const dynamic = "force-dynamic";
 export default async function SettingsPage() {
   const { user, prefs } = await getUserContext();
 
-  const [taxonomies, definitions, categories, layoutRow, valueCounts] = await Promise.all([
+  const [taxonomies, definitions, categories, layoutRow, valueCounts, ai] = await Promise.all([
     listTaxonomyAdmin(user.id),
     listAllFieldDefinitions(user.id),
     listTerms(user.id, "CONTACT_CATEGORY"),
@@ -29,6 +31,7 @@ export default async function SettingsPage() {
       where: { ownerId: user.id },
       _count: { _all: true },
     }),
+    getAiStatus(),
   ]);
 
   // Value counts drive the delete warning: deleting a field takes everything
@@ -93,6 +96,16 @@ export default async function SettingsPage() {
           />
         }
         dashboard={<DashboardSettings layout={normalizeDashboardLayout(layoutRow?.widgets)} />}
+        quickadd={
+          <AiSettings
+            enabled={ai.enabled}
+            hasKey={ai.hasKey}
+            keySource={ai.keySource}
+            keyHint={ai.keyHint}
+            model={ai.model}
+            models={AI_MODELS}
+          />
+        }
         privacy={
           <PrivacySettings
             pinSet={Boolean(user.privacyPinHash)}
