@@ -8,7 +8,9 @@ Mobile-first for reading and quick logging, comfortable on a desktop for bulk en
 
 ## Status
 
-Under active development. See [`docs/`](docs/) for deployment details.
+Under active development; nothing tagged as a release yet. See
+[`CHANGELOG.md`](CHANGELOG.md) for what has landed and [`docs/`](docs/) for
+everything else.
 
 ## Deploying
 
@@ -58,8 +60,8 @@ DATABASE_URL=mysql://user:password@dbhost:3306/personalcrm
 | Path | Contents |
 | --- | --- |
 | `db/` | MariaDB data directory |
-| `uploads/` | Avatars and photos |
-| `backups/` | Nightly database dumps |
+| `uploads/` | Avatars and photos (no upload path writes here yet) |
+| `backups/` | Created at boot; nothing writes here yet — [back up `/config` yourself](docs/deployment.md#backups) |
 | `logs/` | MariaDB error log |
 | `secrets.json` | Generated on first boot — session signing key and database password |
 
@@ -89,6 +91,9 @@ npm run dev
 
 End-to-end tests expect an instance at `http://127.0.0.1:3200`; override with `E2E_BASE_URL`.
 
+Setup, conventions and the rules that are not style preferences are in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## Architecture
 
 - **Next.js 15** (App Router) with React 19 and server actions — one codebase for UI and API
@@ -97,6 +102,19 @@ End-to-end tests expect an instance at `http://127.0.0.1:3200`; override with `E
 - **s6-overlay** supervises MariaDB and the app in one container and orders their startup
 
 Every "type" in the app — interaction types, fact categories, relationship types, dating stages — is a database row you can rename, recolor, reorder, or add to, not a hardcoded list.
+
+## Documentation
+
+| Document | For |
+| --- | --- |
+| [Architecture](docs/architecture.md) | Layering, request context, container startup |
+| [Data model](docs/data-model.md) | Every table, column, enum and migration |
+| [Server actions](docs/server-actions.md) | The write surface, action by action |
+| [Privacy](docs/privacy.md) | The PIN lock, offline caching, and where data can go |
+| [Configuration](docs/configuration.md) | Environment variables and `/config` |
+| [Deployment](docs/deployment.md) | Unraid, Docker, upgrades, backups, health |
+| [Testing](docs/testing.md) | The three suites and what a change must pass |
+| [Changelog](CHANGELOG.md) | What changed, when, and why |
 
 ## Licence
 
