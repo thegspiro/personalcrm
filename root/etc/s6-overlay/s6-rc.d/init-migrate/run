@@ -1,0 +1,16 @@
+#!/command/with-contenv bash
+# Apply any pending Prisma migrations before the app starts, so pulling a newer
+# image is all an upgrade takes.
+set -euo pipefail
+source /etc/s6-overlay/scripts/common.sh
+
+export_runtime_env
+
+echo "[init-migrate] applying migrations"
+cd /app
+if ! s6-setuidgid abc env DATABASE_URL="${DATABASE_URL}" \
+        node /app/prisma-cli/node_modules/prisma/build/index.js migrate deploy --schema /app/prisma/schema.prisma; then
+    echo "[init-migrate] migration failed — refusing to start the app against an out-of-date schema" >&2
+    exit 1
+fi
+echo "[init-migrate] schema up to date"

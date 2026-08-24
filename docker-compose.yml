@@ -1,0 +1,61 @@
+# Alternative deployment: the app in one container, MariaDB in another.
+#
+# The published image bundles MariaDB and needs none of this — use it when you
+# already run a database server and would rather back it up with everything else.
+#
+#   docker compose up -d
+#
+services:
+  personalcrm:
+    build: .
+    image: personalcrm:latest
+    container_name: personalcrm
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Setting DATABASE_URL switches the bundled MariaDB off.
+      DATABASE_URL: "mysql://personalcrm:${DB_PASSWORD:-changeme}@db:3306/personalcrm"
+      APP_URL: "${APP_URL:-http://localhost:3000}"
+      # Generate one with: openssl rand -base64 48
+      AUTH_SECRET: "${AUTH_SECRET:?set AUTH_SECRET in your .env file}"
+      PUID: "${PUID:-99}"
+      PGID: "${PGID:-100}"
+      TZ: "${TZ:-America/New_York}"
+      DISABLE_SIGNUP: "${DISABLE_SIGNUP:-false}"
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    volumes:
+      - ./config:/config
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+  db:
+    image: mariadb:11
+    container_name: personalcrm-db
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: personalcrm
+      MARIADB_USER: personalcrm
+      MARIADB_PASSWORD: "${DB_PASSWORD:-changeme}"
+      MARIADB_RANDOM_ROOT_PASSWORD: "yes"
+      TZ: "${TZ:-America/New_York}"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 6
+
+volumes:
+  db-data:

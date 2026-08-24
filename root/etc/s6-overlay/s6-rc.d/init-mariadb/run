@@ -1,0 +1,24 @@
+#!/command/with-contenv bash
+# Generate secrets on first boot and initialise the MariaDB data directory.
+set -euo pipefail
+
+source /etc/s6-overlay/scripts/common.sh
+
+ensure_secrets
+
+if using_external_database; then
+    echo "[init-mariadb] DATABASE_URL is set — using an external database, bundled MariaDB stays off"
+    exit 0
+fi
+
+if [[ ! -d /config/db/mysql ]]; then
+    echo "[init-mariadb] initialising a new database in /config/db (first run)"
+    s6-setuidgid abc mariadb-install-db \
+        --user=abc \
+        --datadir=/config/db \
+        --auth-root-authentication-method=socket \
+        --skip-test-db >/dev/null
+    echo "[init-mariadb] done"
+else
+    echo "[init-mariadb] existing database found in /config/db"
+fi

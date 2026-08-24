@@ -1,0 +1,346 @@
+import { notFound } from "next/navigation";
+import type { Metadata } from "next";
+import { getUserContext } from "@/server/user/context";
+import { getContact, listContactOptions } from "@/server/queries/contacts";
+import { buildTimeline } from "@/server/queries/timeline";
+import { listTermsByKind } from "@/server/taxonomy/queries";
+import { listDateEntries } from "@/server/queries/dating";
+import { canSeeDating } from "@/server/privacy/filter";
+import { getContactFamily, listHouseholdOptions } from "@/server/queries/family";
+import { familyMeta } from "@/lib/family";
+import { FamilySection, ContactHouseholdsSection } from "@/components/family/family-section";
+import { SuggestionList } from "@/components/family/suggestions";
+import {
+  DateLogSection,
+  FlagsSection,
+  RomanticSection,
+} from "@/components/dating/dating-sections";
+import { ContactHeader } from "@/components/contacts/contact-header";
+import {
+  DatesSection,
+  FactsSection,
+  GiftsSection,
+  IdeasSection,
+  LifeEventsSection,
+  RelationshipsSection,
+  TasksSection,
+} from "@/components/contacts/contact-sections";
+import { TimelineList } from "@/components/timeline/timeline-list";
+import { SectionCard } from "@/components/contacts/section-card";
+import { calendarDateInTz, plainDateFromDb, plainDateKey } from "@/lib/dates";
+import { cadenceMessage } from "@/lib/format";
+import { cadenceStatus, daysSinceLastInteraction, daysUntilTouch } from "@/lib/cadence";
+import { displayName } from "@/lib/utils";
+
+export const dynamic = "force-dynamic";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { user } = await getUserContext();
+  const { id } = await params;
+  const contact = await getContact(user.id, id);
+  return { title: contact ? displayName(contact) : "Person" };
+}
+
+export default async function ContactPage({ params }: { params: Promise<{ id: string }> }) {
+  const { user, prefs, timezone } = await getUserContext();
+  const { id } = await params;
+
+  const contact = await getContact(user.id, id);
+  if (!contact) notFound();
+
+  // Gate before fetching: withholding the section in the component would still
+  // have put the dates and notes into the payload sent to the browser.
+  const showDating = contact.isRomantic && (await canSeeDating(prefs.hideDating));
+
+  const [terms, timeline, contactOptions, dateEntries, family, allHouseholds] = await Promise.all([
+    listTermsByKind(user.id, [
+      "INTERACTION_TYPE",
+      "FACT_CATEGORY",
+      "DATE_TYPE",
+      "LIFE_EVENT_TYPE",
+      "RELATIONSHIP_TYPE",
+      "GIFT_OCCASION",
+      "DATING_STAGE",
+      "DATE_ACTIVITY_TYPE",
+      "MEETING_SOURCE",
+    ]),
+    buildTimeline(user.id, timezone, { contactId: id, take: 40 }),
+    listContactOptions(user.id),
+    showDating ? listDateEntries(user.id, id) : Promise.resolve([]),
+    getContactFamily(user.id, id),
+    listHouseholdOptions(user.id),
+  ]);
+
+  // Family relationships get their own section, so "Connected people" is left
+  // holding the friends, colleagues and neighbours it is actually useful for.
+  const familyTypes = terms.RELATIONSHIP_TYPE.filter((term) => familyMeta(term) !== null);
+  const otherTypes = terms.RELATIONSHIP_TYPE.filter((term) => familyMeta(term) === null);
+  const familyTermIds = new Set(familyTypes.map((term) => term.id));
+
+  const today = calendarDateInTz(new Date(), timezone);
+  const daysSince = daysSinceLastInteraction(contact.lastInteractionAt, timezone);
+
+  return (
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
+      <div className="grid min-w-0 gap-4 lg:col-span-2">
+        <ContactHeader
+          contact={{
+            ...contact,
+            birthDate: contact.birthDate ? plainDateFromDb(contact.birthDate) : null,
+            category: contact.category
+              ? {
+                  label: contact.category.label,
+                  icon: contact.category.icon,
+                  color: contact.category.color,
+                }
+              : null,
+          }}
+          cadence={{
+            status: cadenceStatus(contact.nextTouchAt, timezone),
+            message: cadenceMessage(daysUntilTouch(contact.nextTouchAt, timezone)),
+            lastSeen:
+              daysSince === null
+                ? null
+                : daysSince === 0
+                  ? "Spoke today"
+                  : daysSince === 1
+                    ? "Spoke yesterday"
+                    : `Last spoke ${daysSince} days ago`,
+          }}
+          interactionTypes={terms.INTERACTION_TYPE}
+          contacts={contactOptions}
+        />
+      </div>
+
+      <div className="grid min-w-0 gap-3">
+        <SectionCard title="Timeline" icon="History" count={timeline.length}>
+          <TimelineList
+            entries={timeline}
+            today={today}
+            timezone={timezone}
+            showContacts={false}
+            blurSensitive={prefs.blurPrivateNotes}
+            emptyTitle="Nothing logged yet"
+            emptyDescription="Log an interaction, or backfill what you remember."
+          />
+        </SectionCard>
+      </div>
+
+      <div className="grid min-w-0 gap-3">
+        {showDating ? (
+          <>
+            <RomanticSection
+              contactId={contact.id}
+              contactName={contact.firstName}
+              blurPrivate={prefs.blurPrivateNotes}
+              stages={terms.DATING_STAGE}
+              sources={terms.MEETING_SOURCE}
+              profile={
+                contact.romanticProfile
+                  ? {
+                      stageId: contact.romanticProfile.stageId,
+                      sourceId: contact.romanticProfile.sourceId,
+                      sourceDetail: contact.romanticProfile.sourceDetail,
+                      matchedOn: contact.romanticProfile.matchedOn
+                        ? plainDateKey(plainDateFromDb(contact.romanticProfile.matchedOn))
+                        : null,
+                      firstDateOn: contact.romanticProfile.firstDateOn
+                        ? plainDateKey(plainDateFromDb(contact.romanticProfile.firstDateOn))
+                        : null,
+                      endedOn: contact.romanticProfile.endedOn,
+                      endedReason: contact.romanticProfile.endedReason,
+                      retrospective: contact.romanticProfile.retrospective,
+                      birthYear: contact.romanticProfile.birthYear,
+                      heightCm: contact.romanticProfile.heightCm,
+                      distanceKm: contact.romanticProfile.distanceKm,
+                      livingSituation: contact.romanticProfile.livingSituation,
+                      relationshipStyle: contact.romanticProfile.relationshipStyle,
+                      wantsKids: contact.romanticProfile.wantsKids,
+                      hasKids: contact.romanticProfile.hasKids,
+                      religion: contact.romanticProfile.religion,
+                      politics: contact.romanticProfile.politics,
+                      smoking: contact.romanticProfile.smoking,
+                      drinking: contact.romanticProfile.drinking,
+                      mbti: contact.romanticProfile.mbti,
+                      enneagram: contact.romanticProfile.enneagram,
+                      exclusive: contact.romanticProfile.exclusive,
+                      overallRating: contact.romanticProfile.overallRating,
+                      chemistryScore: contact.romanticProfile.chemistryScore,
+                      privateNotes: contact.romanticProfile.privateNotes,
+                    }
+                  : null
+              }
+            />
+
+            <DateLogSection
+              contactId={contact.id}
+              blurPrivate={prefs.blurPrivateNotes}
+              activityTypes={terms.DATE_ACTIVITY_TYPE}
+              dates={dateEntries.map((entry) => ({
+                id: entry.id,
+                sequence: entry.sequence,
+                occurredAt: entry.interaction.occurredAt,
+                venue: entry.venue,
+                city: entry.city,
+                whoPaid: entry.whoPaid,
+                costCents: entry.costCents,
+                rating: entry.rating,
+                chemistry: entry.chemistry,
+                conversationQuality: entry.conversationQuality,
+                notes: entry.notes,
+                activityLabel: entry.activityType?.label ?? null,
+              }))}
+            />
+
+            <FlagsSection
+              contactId={contact.id}
+              blurPrivate={prefs.blurPrivateNotes}
+              flags={contact.flags.map((flag) => ({
+                id: flag.id,
+                kind: flag.kind,
+                text: flag.text,
+                severity: flag.severity,
+              }))}
+            />
+          </>
+        ) : null}
+
+        <FactsSection
+          contactId={contact.id}
+          facts={contact.facts.map((fact) => ({
+            id: fact.id,
+            content: fact.content,
+            importance: fact.importance,
+            isPrivate: fact.isPrivate,
+            category: fact.category
+              ? { label: fact.category.label, icon: fact.category.icon, color: fact.category.color }
+              : null,
+          }))}
+          categories={terms.FACT_CATEGORY}
+        />
+
+        <IdeasSection
+          contactId={contact.id}
+          ideas={contact.ideas.map((idea) => ({
+            id: idea.id,
+            content: idea.content,
+            status: idea.status,
+          }))}
+        />
+
+        <DatesSection
+          contactId={contact.id}
+          dates={contact.importantDates.map((item) => ({
+            id: item.id,
+            label: item.label,
+            date: plainDateFromDb(item.date),
+            precision: item.precision,
+            recurrence: item.recurrence,
+            type: item.type
+              ? { label: item.type.label, icon: item.type.icon, color: item.type.color }
+              : null,
+          }))}
+          types={terms.DATE_TYPE}
+        />
+
+        <LifeEventsSection
+          contactId={contact.id}
+          events={contact.lifeEvents.map((event) => ({
+            id: event.id,
+            title: event.title,
+            description: event.description,
+            date: plainDateFromDb(event.date),
+            precision: event.precision,
+            endDate: event.endDate ? plainDateFromDb(event.endDate) : null,
+            endPrecision: event.endPrecision,
+            isMilestone: event.isMilestone,
+            type: event.type
+              ? { label: event.type.label, icon: event.type.icon, color: event.type.color }
+              : null,
+          }))}
+          types={terms.LIFE_EVENT_TYPE}
+        />
+
+        <TasksSection
+          contactId={contact.id}
+          tasks={contact.tasks.map((task) => ({
+            id: task.id,
+            title: task.title,
+            dueDate: task.dueDate ? plainDateFromDb(task.dueDate) : null,
+            completedAt: task.completedAt,
+            priority: task.priority,
+          }))}
+        />
+
+        <FamilySection
+          contactId={contact.id}
+          tiers={family.tiers.map((group) => ({
+            tier: group.tier,
+            links: group.links.map((link) => ({
+              id: link.id,
+              person: link.person,
+              term: link.term,
+              notes: link.notes,
+              canEnd: link.canEnd,
+            })),
+          }))}
+          familyTypes={familyTypes}
+          contacts={contactOptions}
+        />
+
+        <SuggestionList
+          suggestions={family.suggestions.map((suggestion) => ({
+            subjectId: suggestion.subjectId,
+            personId: suggestion.personId,
+            subjectName: displayName(suggestion.subject),
+            personName: displayName(suggestion.person),
+            reason: suggestion.reason,
+            termId: suggestion.termId,
+            termLabel: suggestion.termLabel,
+          }))}
+          types={familyTypes}
+        />
+
+        <ContactHouseholdsSection
+          contactId={contact.id}
+          households={family.households}
+          allHouseholds={allHouseholds}
+        />
+
+        <RelationshipsSection
+          contactId={contact.id}
+          relationships={contact.relationsFrom
+            .filter((relationship) => !familyTermIds.has(relationship.type.id))
+            .map((relationship) => ({
+              id: relationship.id,
+              type: {
+                label: relationship.type.label,
+                icon: relationship.type.icon,
+                color: relationship.type.color,
+              },
+              other: relationship.toContact,
+            }))}
+          types={otherTypes}
+          contacts={contactOptions}
+        />
+
+        <GiftsSection
+          contactId={contact.id}
+          gifts={contact.gifts.map((gift) => ({
+            id: gift.id,
+            name: gift.name,
+            status: gift.status,
+            priceCents: gift.priceCents,
+            currency: gift.currency,
+            occasion: gift.occasion ? { label: gift.occasion.label } : null,
+          }))}
+          occasions={terms.GIFT_OCCASION}
+        />
+      </div>
+    </div>
+  );
+}

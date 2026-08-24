@@ -1,0 +1,888 @@
+// Personal CRM — data model
+//
+// Design notes:
+//  * Every user-owned row carries `ownerId` so all queries can be scoped in one
+//    place (see src/server/db/scope.ts). Rows that only ever exist beneath a
+//    Contact (methods, addresses, join rows) are scoped through their parent.
+//  * Anything a user might want to rename or add to is a `TaxonomyTerm` row,
+//    never a hardcoded enum. Enums are reserved for structural states that the
+//    application logic itself branches on.
+//  * The dating layer is an optional 1:1 `RomanticProfile` on a normal Contact,
+//    so someone can move between "dating" and "friend" without losing history.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Accounts & auth
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+  MEMBER
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique @db.VarChar(191)
+  name         String   @db.VarChar(191)
+  passwordHash String   @db.VarChar(255)
+  role         UserRole @default(MEMBER)
+  isActive     Boolean  @default(true)
+
+  /// Secondary lock over the dating module and anything marked private.
+  /// Deliberately a different secret from passwordHash: handing someone your
+  /// login should not hand them this.
+  privacyPinHash        String?   @db.VarChar(255)
+  /// Rate limiting lives on the user, not the session, so clearing cookies
+  /// does not reset a lockout.
+  privacyPinFailedCount Int       @default(0)
+  privacyPinFailedAt    DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  sessions             Session[]
+  preference           UserPreference?
+  dashboardLayout      DashboardLayout?
+  taxonomyTerms        TaxonomyTerm[]
+  contacts             Contact[]
+  tags                 Tag[]
+  relationships        Relationship[]
+  interactions         Interaction[]
+  facts                Fact[]
+  importantDates       ImportantDate[]
+  ideas                Idea[]
+  tasks                Task[]
+  gifts                Gift[]
+  romanticProfiles     RomanticProfile[]
+  dateEntries          DateEntry[]
+  flags                Flag[]
+  customFieldDefs      CustomFieldDefinition[]
+  customFieldValues    CustomFieldValue[]
+  notificationChannels NotificationChannel[]
+  reminderLogs         ReminderLog[]
+  lifeEvents           LifeEvent[]
+  households           Household[]
+  familyDismissals     FamilySuggestionDismissal[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique @db.VarChar(191)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  userAgent String?  @db.VarChar(255)
+  ip        String?  @db.VarChar(64)
+
+  /// When the privacy lock was last opened on this session. Unlock state is
+  /// kept server-side so the client cannot claim to be unlocked, and so it
+  /// dies with the session rather than lingering in a cookie.
+  privacyUnlockedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model UserPreference {
+  userId             String  @id
+  theme              String  @default("system") @db.VarChar(16)
+  accent             String  @default("violet") @db.VarChar(24)
+  density            String  @default("comfortable") @db.VarChar(16)
+  timezone           String  @default("America/New_York") @db.VarChar(64)
+  weekStartsOn       Int     @default(0)
+  defaultCadenceDays Int?
+  digestHour         Int     @default(8)
+  digestEnabled      Boolean @default(true)
+
+  /// Require the PIN before showing the dating module or anything private.
+  privacyLockEnabled Boolean  @default(false)
+  /// Hide the dating module from navigation and the dashboard entirely.
+  hideDating         Boolean  @default(false)
+  /// Blur private notes until tapped — a second, weaker layer for shoulder
+  /// surfing after the lock has already been opened.
+  blurPrivateNotes   Boolean  @default(true)
+  updatedAt          DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// Instance-wide key/value settings (e.g. whether first-run setup completed).
+model AppSetting {
+  key       String   @id @db.VarChar(96)
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Taxonomies — user-editable lists that back every "type" field in the app
+// ---------------------------------------------------------------------------
+
+enum TaxonomyKind {
+  CONTACT_CATEGORY
+  CONTACT_METHOD_TYPE
+  INTERACTION_TYPE
+  FACT_CATEGORY
+  DATE_TYPE
+  RELATIONSHIP_TYPE
+  DATING_STAGE
+  DATE_ACTIVITY_TYPE
+  MEETING_SOURCE
+  GIFT_OCCASION
+  LIFE_EVENT_TYPE
+}
+
+model TaxonomyTerm {
+  id        String       @id @default(cuid())
+  ownerId   String
+  kind      TaxonomyKind
+  slug      String       @db.VarChar(96)
+  label     String       @db.VarChar(96)
+  icon      String?      @db.VarChar(64)
+  color     String?      @db.VarChar(24)
+  sortOrder Int          @default(0)
+  isSystem  Boolean      @default(false)
+  isActive  Boolean      @default(true)
+  metadata  Json?
+  createdAt DateTime     @default(now())
+
+  /// For RELATIONSHIP_TYPE: the reciprocal term (parent <-> child, partner <-> partner).
+  inverseTermId String?
+  inverseTerm   TaxonomyTerm?  @relation("TermInverse", fields: [inverseTermId], references: [id], onDelete: SetNull)
+  inverseOf     TaxonomyTerm[] @relation("TermInverse")
+
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  contactsAsCategory      Contact[]         @relation("ContactCategory")
+  contactsAsMeetingSource Contact[]         @relation("ContactMeetingSource")
+  contactMethods          ContactMethod[]   @relation("ContactMethodType")
+  interactions            Interaction[]     @relation("InteractionType")
+  facts                   Fact[]            @relation("FactCategory")
+  importantDates          ImportantDate[]   @relation("ImportantDateType")
+  lifeEvents              LifeEvent[]       @relation("LifeEventType")
+  relationships           Relationship[]    @relation("RelationshipType")
+  romanticStages          RomanticProfile[] @relation("DatingStage")
+  romanticSources         RomanticProfile[] @relation("DatingSource")
+  dateEntries             DateEntry[]       @relation("DateActivityType")
+  gifts                   Gift[]            @relation("GiftOccasion")
+
+  @@unique([ownerId, kind, slug])
+  @@index([ownerId, kind, sortOrder])
+  @@index([inverseTermId])
+}
+
+// ---------------------------------------------------------------------------
+// People
+// ---------------------------------------------------------------------------
+
+model Contact {
+  id         String  @id @default(cuid())
+  ownerId    String
+  firstName  String  @db.VarChar(120)
+  lastName   String? @db.VarChar(120)
+  nickname   String? @db.VarChar(120)
+  pronouns   String? @db.VarChar(48)
+  avatarPath String? @db.VarChar(255)
+
+  categoryId String?
+
+  birthDate          DateTime?     @db.Date
+  birthDatePrecision DatePrecision @default(DAY)
+
+  howWeMet        String?       @db.Text
+  whereWeMet      String?       @db.VarChar(191)
+  metOn           DateTime?     @db.Date
+  metOnPrecision  DatePrecision @default(DAY)
+  meetingSourceId String?
+
+  occupation String? @db.VarChar(191)
+  employer   String? @db.VarChar(191)
+  city       String? @db.VarChar(120)
+  region     String? @db.VarChar(120)
+  country    String? @db.VarChar(120)
+  timezone   String? @db.VarChar(64)
+  summary    String? @db.Text
+
+  isFavorite Boolean @default(false)
+  isArchived Boolean @default(false)
+  isRomantic Boolean @default(false)
+  /// Hidden everywhere until the privacy lock is opened.
+  isPrivate  Boolean @default(false)
+
+  /// Keep-in-touch cadence in days. Null = no cadence tracking for this person.
+  cadenceDays       Int?
+  snoozedUntil      DateTime?
+  lastInteractionAt DateTime?
+  nextTouchAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner         User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  category      TaxonomyTerm? @relation("ContactCategory", fields: [categoryId], references: [id], onDelete: SetNull)
+  meetingSource TaxonomyTerm? @relation("ContactMeetingSource", fields: [meetingSourceId], references: [id], onDelete: SetNull)
+
+  methods         ContactMethod[]
+  addresses       Address[]
+  tags            ContactTag[]
+  participations  InteractionParticipant[]
+  facts           Fact[]
+  importantDates  ImportantDate[]
+  lifeEvents      LifeEvent[]
+  ideas           Idea[]
+  tasks           Task[]
+  gifts           Gift[]
+  flags           Flag[]
+  dateEntries     DateEntry[]
+  romanticProfile RomanticProfile?
+  households      HouseholdMember[]
+  dismissalsA     FamilySuggestionDismissal[] @relation("DismissalA")
+  dismissalsB     FamilySuggestionDismissal[] @relation("DismissalB")
+  relationsFrom   Relationship[]              @relation("RelationshipFrom")
+  relationsTo     Relationship[]              @relation("RelationshipTo")
+
+  @@index([ownerId, isArchived, lastName])
+  @@index([ownerId, isArchived, firstName])
+  @@index([ownerId, nextTouchAt])
+  @@index([ownerId, isRomantic, isArchived])
+  @@index([categoryId])
+  @@index([meetingSourceId])
+}
+
+model ContactMethod {
+  id        String  @id @default(cuid())
+  contactId String
+  typeId    String?
+  value     String  @db.VarChar(255)
+  label     String? @db.VarChar(96)
+  isPrimary Boolean @default(false)
+  sortOrder Int     @default(0)
+
+  contact Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  type    TaxonomyTerm? @relation("ContactMethodType", fields: [typeId], references: [id], onDelete: SetNull)
+
+  @@index([contactId])
+  @@index([typeId])
+}
+
+model Address {
+  id         String  @id @default(cuid())
+  contactId  String
+  label      String? @db.VarChar(96)
+  line1      String? @db.VarChar(191)
+  line2      String? @db.VarChar(191)
+  city       String? @db.VarChar(120)
+  region     String? @db.VarChar(120)
+  postalCode String? @db.VarChar(32)
+  country    String? @db.VarChar(120)
+  notes      String? @db.Text
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+}
+
+model Tag {
+  id        String   @id @default(cuid())
+  ownerId   String
+  name      String   @db.VarChar(96)
+  slug      String   @db.VarChar(96)
+  color     String?  @db.VarChar(24)
+  createdAt DateTime @default(now())
+
+  owner    User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contacts ContactTag[]
+
+  @@unique([ownerId, slug])
+  @@index([ownerId, name])
+}
+
+model ContactTag {
+  contactId String
+  tagId     String
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, tagId])
+  @@index([tagId])
+}
+
+model Relationship {
+  id            String  @id @default(cuid())
+  ownerId       String
+  fromContactId String
+  toContactId   String
+  typeId        String
+  notes         String? @db.Text
+  /// Shared between the two reciprocal rows so they can be created/removed together.
+  pairId        String  @db.VarChar(32)
+
+  owner       User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  fromContact Contact      @relation("RelationshipFrom", fields: [fromContactId], references: [id], onDelete: Cascade)
+  toContact   Contact      @relation("RelationshipTo", fields: [toContactId], references: [id], onDelete: Cascade)
+  type        TaxonomyTerm @relation("RelationshipType", fields: [typeId], references: [id], onDelete: Cascade)
+
+  @@unique([fromContactId, toContactId, typeId])
+  @@index([ownerId])
+  @@index([toContactId])
+  @@index([typeId])
+  @@index([pairId])
+}
+
+// ---------------------------------------------------------------------------
+// Activity
+// ---------------------------------------------------------------------------
+
+model Interaction {
+  id              String   @id @default(cuid())
+  ownerId         String
+  typeId          String?
+  occurredAt      DateTime
+  durationMinutes Int?
+  title           String?  @db.VarChar(191)
+  notes           String?  @db.Text
+  /// -2 rough .. 0 neutral .. +2 great
+  sentiment       Int?
+  location        String?  @db.VarChar(191)
+  /// Hidden everywhere until the privacy lock is opened.
+  isPrivate       Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  owner User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  type  TaxonomyTerm? @relation("InteractionType", fields: [typeId], references: [id], onDelete: SetNull)
+
+  participants InteractionParticipant[]
+  dateEntry    DateEntry?
+  sourcedFacts Fact[]                   @relation("FactSource")
+  ideasUsed    Idea[]                   @relation("IdeaUsedIn")
+
+  @@index([ownerId, occurredAt])
+  @@index([typeId])
+}
+
+model InteractionParticipant {
+  interactionId String
+  contactId     String
+
+  interaction Interaction @relation(fields: [interactionId], references: [id], onDelete: Cascade)
+  contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([interactionId, contactId])
+  @@index([contactId])
+}
+
+/// "Things to know" about a person.
+model Fact {
+  id                  String   @id @default(cuid())
+  ownerId             String
+  contactId           String
+  categoryId          String?
+  content             String   @db.Text
+  /// 0 = trivia, 1 = normal, 2 = important
+  importance          Int      @default(1)
+  /// Hidden everywhere until the privacy lock is opened.
+  isPrivate           Boolean  @default(false)
+  sourceInteractionId String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  owner             User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact           Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  category          TaxonomyTerm? @relation("FactCategory", fields: [categoryId], references: [id], onDelete: SetNull)
+  sourceInteraction Interaction?  @relation("FactSource", fields: [sourceInteractionId], references: [id], onDelete: SetNull)
+
+  @@index([contactId, importance])
+  @@index([ownerId])
+  @@index([categoryId])
+  @@index([sourceInteractionId])
+}
+
+enum DateRecurrence {
+  NONE
+  ANNUAL
+  MONTHLY
+}
+
+/// How much of a date is actually known.
+///
+/// Backfilled history is often partial — "she moved to Austin in 2019" should
+/// stay 2019 rather than being stored as January 1st and later read as fact.
+/// MONTH_DAY covers the birthday whose year nobody remembers.
+enum DatePrecision {
+  DAY
+  MONTH
+  YEAR
+  MONTH_DAY
+}
+
+model ImportantDate {
+  id                 String         @id @default(cuid())
+  ownerId            String
+  contactId          String
+  typeId             String?
+  label              String         @db.VarChar(191)
+  date               DateTime       @db.Date
+  precision          DatePrecision  @default(DAY)
+  recurrence         DateRecurrence @default(ANNUAL)
+  /// JSON array of ints, e.g. [30, 7, 0]. Null falls back to the user default.
+  reminderDaysBefore Json?
+  notes              String?        @db.Text
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  owner   User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  type    TaxonomyTerm? @relation("ImportantDateType", fields: [typeId], references: [id], onDelete: SetNull)
+
+  @@index([contactId])
+  @@index([ownerId, date])
+  @@index([typeId])
+}
+
+/// Something that happened to a person, on their timeline rather than yours.
+///
+/// Distinct from Interaction (something you did together, so you were there)
+/// and ImportantDate (a recurring thing you want reminding about). "Her father
+/// died in 2019" is context, not an anniversary you want a notification for.
+model LifeEvent {
+  id           String         @id @default(cuid())
+  ownerId      String
+  contactId    String
+  typeId       String?
+  title        String         @db.VarChar(191)
+  description  String?        @db.Text
+  date         DateTime       @db.Date
+  precision    DatePrecision  @default(DAY)
+  /// Set for events that span a period, e.g. lived somewhere 2015-2019.
+  endDate      DateTime?      @db.Date
+  endPrecision DatePrecision?
+  /// Pinned to the top of the contact's profile.
+  isMilestone  Boolean        @default(false)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  owner   User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  type    TaxonomyTerm? @relation("LifeEventType", fields: [typeId], references: [id], onDelete: SetNull)
+
+  @@index([contactId, date])
+  @@index([ownerId, date])
+  @@index([typeId])
+}
+
+/// A named group of people who belong together — "The Whitfields", "Mum and
+/// Dad's place". Deliberately explicit rather than derived from who shares an
+/// address: adult children, separations and multi-generation homes all break
+/// that guess.
+model Household {
+  id        String   @id @default(cuid())
+  ownerId   String
+  name      String   @db.VarChar(191)
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner   User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  members HouseholdMember[]
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+}
+
+model HouseholdMember {
+  householdId String
+  contactId   String
+  /// Optional label within the household: "Mum", "eldest", "the dog".
+  role        String? @db.VarChar(96)
+  sortOrder   Int     @default(0)
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([householdId, contactId])
+  @@index([contactId])
+}
+
+/// A pair you have told the app to stop suggesting a relationship for.
+///
+/// Stored rather than kept in client state: a dismissal that reappears next
+/// time you open the page is worse than no dismissal at all. Held as an
+/// unordered pair (smaller id first) so it survives whichever way round the
+/// suggestion is phrased.
+model FamilySuggestionDismissal {
+  ownerId     String
+  aContactId  String
+  bContactId  String
+  dismissedAt DateTime @default(now())
+
+  owner    User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  aContact Contact @relation("DismissalA", fields: [aContactId], references: [id], onDelete: Cascade)
+  bContact Contact @relation("DismissalB", fields: [bContactId], references: [id], onDelete: Cascade)
+
+  @@id([ownerId, aContactId, bContactId])
+  @@index([aContactId])
+  @@index([bContactId])
+}
+
+enum IdeaStatus {
+  OPEN
+  USED
+  ARCHIVED
+}
+
+/// Conversation starters / things to bring up next time.
+model Idea {
+  id                  String     @id @default(cuid())
+  ownerId             String
+  /// Null = a general idea not tied to one person.
+  contactId           String?
+  content             String     @db.Text
+  status              IdeaStatus @default(OPEN)
+  usedAt              DateTime?
+  usedInInteractionId String?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  owner             User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact           Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  usedInInteraction Interaction? @relation("IdeaUsedIn", fields: [usedInInteractionId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, status])
+  @@index([contactId, status])
+  @@index([usedInInteractionId])
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+}
+
+model Task {
+  id          String       @id @default(cuid())
+  ownerId     String
+  contactId   String?
+  title       String       @db.VarChar(191)
+  notes       String?      @db.Text
+  dueDate     DateTime?    @db.Date
+  completedAt DateTime?
+  priority    TaskPriority @default(NORMAL)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  owner   User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId, completedAt, dueDate])
+  @@index([contactId])
+}
+
+enum GiftStatus {
+  IDEA
+  RESERVED
+  PURCHASED
+  GIVEN
+}
+
+enum GiftDirection {
+  OUTGOING
+  INCOMING
+}
+
+model Gift {
+  id          String        @id @default(cuid())
+  ownerId     String
+  contactId   String
+  name        String        @db.VarChar(191)
+  description String?       @db.Text
+  url         String?       @db.VarChar(500)
+  priceCents  Int?
+  currency    String        @default("USD") @db.VarChar(8)
+  occasionId  String?
+  status      GiftStatus    @default(IDEA)
+  direction   GiftDirection @default(OUTGOING)
+  occurredOn  DateTime?     @db.Date
+  rating      Int?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  owner    User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact  Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  occasion TaxonomyTerm? @relation("GiftOccasion", fields: [occasionId], references: [id], onDelete: SetNull)
+
+  @@index([contactId, status])
+  @@index([ownerId, status])
+  @@index([occasionId])
+}
+
+// ---------------------------------------------------------------------------
+// Dating layer
+// ---------------------------------------------------------------------------
+
+enum KidsPreference {
+  UNKNOWN
+  WANTS
+  DOES_NOT_WANT
+  OPEN
+  HAS_AND_DONE
+}
+
+model RomanticProfile {
+  id        String @id @default(cuid())
+  ownerId   String
+  contactId String @unique
+
+  stageId      String?
+  sourceId     String?
+  sourceDetail String? @db.VarChar(191)
+
+  matchedOn     DateTime? @db.Date
+  firstDateOn   DateTime? @db.Date
+  endedOn       DateTime? @db.Date
+  endedReason   String?   @db.Text
+  /// The reflection — what you took from it. Kept apart from endedReason
+  /// because collapsing the two makes both of them worse.
+  retrospective String?   @db.Text
+
+  birthYear         Int?
+  heightCm          Int?
+  distanceKm        Int?
+  livingSituation   String?        @db.VarChar(191)
+  relationshipStyle String?        @db.VarChar(96)
+  wantsKids         KidsPreference @default(UNKNOWN)
+  hasKids           Boolean?
+  religion          String?        @db.VarChar(96)
+  politics          String?        @db.VarChar(96)
+  smoking           String?        @db.VarChar(48)
+  drinking          String?        @db.VarChar(48)
+  /// JSON array of love-language strings.
+  loveLanguages     Json?
+  mbti              String?        @db.VarChar(8)
+  enneagram         String?        @db.VarChar(16)
+
+  exclusive      Boolean @default(false)
+  /// 1-5
+  overallRating  Int?
+  /// 1-5
+  chemistryScore Int?
+
+  /// JSON array of { label, url } — dating app or social profiles.
+  profileLinks Json?
+  privateNotes String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner   User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  stage   TaxonomyTerm? @relation("DatingStage", fields: [stageId], references: [id], onDelete: SetNull)
+  source  TaxonomyTerm? @relation("DatingSource", fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, stageId])
+  @@index([sourceId])
+}
+
+enum WhoPaid {
+  UNSPECIFIED
+  ME
+  THEM
+  SPLIT
+}
+
+/// One dated outing. Always mirrored by an Interaction so it also lands in the
+/// unified timeline; the Interaction holds the shared fields (when, notes).
+model DateEntry {
+  id            String @id @default(cuid())
+  ownerId       String
+  contactId     String
+  interactionId String @unique
+
+  /// nth date with this person, maintained on write.
+  sequence            Int?
+  activityTypeId      String?
+  venue               String? @db.VarChar(191)
+  city                String? @db.VarChar(120)
+  whoPaid             WhoPaid @default(UNSPECIFIED)
+  costCents           Int?
+  /// 1-5
+  rating              Int?
+  /// 1-5
+  chemistry           Int?
+  /// 1-5
+  conversationQuality Int?
+  notes               String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact      Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  interaction  Interaction   @relation(fields: [interactionId], references: [id], onDelete: Cascade)
+  activityType TaxonomyTerm? @relation("DateActivityType", fields: [activityTypeId], references: [id], onDelete: SetNull)
+
+  @@index([contactId, sequence])
+  @@index([ownerId])
+  @@index([activityTypeId])
+}
+
+enum FlagKind {
+  GREEN
+  RED
+  DEALBREAKER
+}
+
+model Flag {
+  id        String    @id @default(cuid())
+  ownerId   String
+  contactId String
+  kind      FlagKind
+  text      String    @db.Text
+  /// 1 minor .. 3 major
+  severity  Int       @default(2)
+  noticedOn DateTime? @db.Date
+  createdAt DateTime  @default(now())
+
+  owner   User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId, kind])
+  @@index([ownerId, kind])
+}
+
+// ---------------------------------------------------------------------------
+// Customization
+// ---------------------------------------------------------------------------
+
+enum CustomFieldEntity {
+  CONTACT
+  ROMANTIC
+  INTERACTION
+  DATE_ENTRY
+}
+
+enum CustomFieldType {
+  TEXT
+  LONGTEXT
+  NUMBER
+  DATE
+  BOOLEAN
+  SELECT
+  MULTISELECT
+  URL
+}
+
+model CustomFieldDefinition {
+  id                   String            @id @default(cuid())
+  ownerId              String
+  entity               CustomFieldEntity
+  key                  String            @db.VarChar(96)
+  label                String            @db.VarChar(191)
+  description          String?           @db.VarChar(255)
+  fieldType            CustomFieldType
+  /// JSON array of option strings for SELECT / MULTISELECT.
+  options              Json?
+  /// JSON array of TaxonomyTerm ids (CONTACT_CATEGORY); null/empty = all.
+  appliesToCategoryIds Json?
+  sortOrder            Int               @default(0)
+  isActive             Boolean           @default(true)
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  owner  User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  values CustomFieldValue[]
+
+  @@unique([ownerId, entity, key])
+  @@index([ownerId, entity, sortOrder])
+}
+
+model CustomFieldValue {
+  id           String            @id @default(cuid())
+  ownerId      String
+  definitionId String
+  entityType   CustomFieldEntity
+  entityId     String            @db.VarChar(64)
+  value        Json?
+  updatedAt    DateTime          @updatedAt
+
+  owner      User                  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  definition CustomFieldDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+
+  @@unique([definitionId, entityId])
+  @@index([entityType, entityId])
+  @@index([ownerId])
+}
+
+model DashboardLayout {
+  userId    String   @id
+  /// JSON array of { id, enabled, settings? } in display order.
+  widgets   Json
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+enum NotificationChannelKind {
+  EMAIL
+  NTFY
+  GOTIFY
+  DISCORD
+  WEBHOOK
+}
+
+model NotificationChannel {
+  id        String                  @id @default(cuid())
+  ownerId   String
+  kind      NotificationChannelKind
+  name      String                  @db.VarChar(96)
+  /// Channel-specific settings (SMTP host, topic URL, webhook URL, ...).
+  config    Json
+  isEnabled Boolean                 @default(true)
+  createdAt DateTime                @default(now())
+  updatedAt DateTime                @updatedAt
+
+  owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  reminderLogs ReminderLog[]
+
+  @@index([ownerId, isEnabled])
+}
+
+enum ReminderEntity {
+  IMPORTANT_DATE
+  CADENCE
+  TASK
+  DIGEST
+}
+
+/// Dedupe ledger so a restart never re-sends a reminder.
+model ReminderLog {
+  id           String         @id @default(cuid())
+  ownerId      String
+  entityType   ReminderEntity
+  entityId     String         @db.VarChar(64)
+  scheduledFor DateTime       @db.Date
+  sentAt       DateTime       @default(now())
+  channelId    String?
+  ok           Boolean        @default(true)
+  error        String?        @db.Text
+
+  owner   User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  channel NotificationChannel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
+
+  @@unique([ownerId, entityType, entityId, scheduledFor])
+  @@index([ownerId, sentAt])
+  @@index([channelId])
+}

@@ -1,0 +1,14 @@
+#!/command/with-contenv bash
+set -euo pipefail
+source /etc/s6-overlay/scripts/common.sh
+
+export_runtime_env
+
+echo "[svc-app] listening on ${HOSTNAME:-0.0.0.0}:${PORT:-3000}"
+cd /app
+exec s6-setuidgid abc env \
+    DATABASE_URL="${DATABASE_URL}" \
+    AUTH_SECRET="${AUTH_SECRET}" \
+    APP_URL="${APP_URL:-}" \
+    NEXT_CACHE_DIR=/config/cache \
+    node server.js
