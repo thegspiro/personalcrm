@@ -20,7 +20,7 @@ export default async function TimelinePage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { user, timezone } = await getUserContext();
+  const { user, prefs, timezone } = await getUserContext();
   const params = await searchParams;
 
   const first = (key: string) => {
@@ -60,6 +60,7 @@ export default async function TimelinePage({
         entries={entries}
         today={today}
         timezone={timezone}
+        blurSensitive={prefs.blurPrivateNotes}
         emptyTitle="Nothing to show"
         emptyDescription="Log an interaction, or widen the filters."
       />

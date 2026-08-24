@@ -25,7 +25,12 @@ export function SectionCard({
   icon: string;
   count?: number;
   addLabel?: string;
-  form?: React.ReactNode;
+  /**
+   * Receives a `close` callback so the panel collapses once something has
+   * actually been added — leaving it open with the text still in it makes the
+   * next click look like it does nothing.
+   */
+  form?: (close: () => void) => React.ReactNode;
   defaultOpen?: boolean;
   children: React.ReactNode;
 }) {
@@ -75,7 +80,9 @@ export function SectionCard({
       {open ? (
         <div className="grid gap-2.5 px-4 pb-4">
           {adding && form ? (
-            <div className="rounded-lg border border-dashed border-border p-3">{form}</div>
+            <div className="rounded-lg border border-dashed border-border p-3">
+              {form(() => setAdding(false))}
+            </div>
           ) : null}
           {children}
         </div>

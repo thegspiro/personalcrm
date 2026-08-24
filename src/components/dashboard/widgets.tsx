@@ -275,10 +275,91 @@ export function StatsWidget({ stats }: { stats: DashboardStats }) {
   );
 }
 
-export function DatingPipelineWidget() {
+export interface DatingWidgetData {
+  active: number;
+  stageCounts: Array<{ label: string; icon: string | null; color: string | null; count: number }>;
+  quiet: Array<{ id: string; firstName: string; lastName: string | null; lastInteractionAt: Date | null }>;
+  upcoming: Array<{ id: string; title: string; occurredAt: Date; contactName: string }>;
+}
+
+export function DatingPipelineWidget({
+  data,
+  timezone,
+}: {
+  data: DatingWidgetData;
+  timezone: string;
+}) {
   return (
-    <WidgetShell title="Dating pipeline" icon="Heart" className="lg:col-span-2">
-      <Empty>The dating module lands in the next phase.</Empty>
+    <WidgetShell
+      title="Dating"
+      icon="Heart"
+      href="/dating"
+      hrefLabel="Open"
+      className="lg:col-span-2"
+      testId="widget-dating"
+    >
+      {data.active === 0 ? (
+        <Empty>Nobody in the pipeline right now.</Empty>
+      ) : (
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
+          <div className="flex min-w-0 flex-wrap gap-1.5">
+            {data.stageCounts.map((stage) => (
+              <span
+                key={stage.label}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
+                  termColorClasses(stage.color),
+                )}
+              >
+                <Icon name={stage.icon ?? "CircleDot"} className="size-3" />
+                {stage.label}
+                <span className="tabular-nums opacity-70">{stage.count}</span>
+              </span>
+            ))}
+          </div>
+
+          {data.upcoming.length > 0 ? (
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                Coming up
+              </p>
+              {data.upcoming.map((item) => (
+                <p key={item.id} className="flex min-w-0 items-center gap-2 text-sm">
+                  <Badge variant="outline">{relativeInstant(item.occurredAt, timezone)}</Badge>
+                  <span className="min-w-0 truncate">
+                    {item.contactName} — {item.title}
+                  </span>
+                </p>
+              ))}
+            </div>
+          ) : null}
+
+          {data.quiet.length > 0 ? (
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                Gone quiet
+              </p>
+              <div className="flex min-w-0 flex-wrap gap-1.5">
+                {data.quiet.map((person) => (
+                  <Link
+                    key={person.id}
+                    href={`/people/${person.id}`}
+                    className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    {displayName(person)}
+                    {person.lastInteractionAt ? (
+                      <span className="opacity-60">
+                        {" "}
+                        · {Math.round((Date.now() - person.lastInteractionAt.getTime()) / 86_400_000)}d
+                      </span>
+                    ) : null}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
     </WidgetShell>
   );
 }

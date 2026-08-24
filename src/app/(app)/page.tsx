@@ -3,6 +3,8 @@ import { normalizeDashboardLayout, WIDGET_REGISTRY, widgetSetting } from "@/lib/
 import { prisma } from "@/server/db/client";
 import { listContactOptions } from "@/server/queries/contacts";
 import { listTerms } from "@/server/taxonomy/queries";
+import { getDatingSummary } from "@/server/queries/dating";
+import { canSeeDating } from "@/server/privacy/filter";
 import {
   getOpenIdeas,
   getOpenTasks,
@@ -28,7 +30,11 @@ import { plainDateFromDb } from "@/lib/dates";
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const { user, timezone } = await getUserContext();
+  const { user, prefs, timezone } = await getUserContext();
+
+  // The dating widget is gated the same way the module is: hidden outright, or
+  // withheld until the privacy lock is opened.
+  const showDating = await canSeeDating(prefs.hideDating);
 
   const layoutRow = await prisma.dashboardLayout.findUnique({ where: { userId: user.id } });
   const layout = normalizeDashboardLayout(layoutRow?.widgets).filter((entry) => entry.enabled);
@@ -50,6 +56,7 @@ export default async function HomePage() {
     tasks,
     ideas,
     stats,
+    datingSummary,
   ] = await Promise.all([
     enabled.has("quick-add") ? listContactOptions(user.id) : [],
     enabled.has("quick-add") ? listTerms(user.id, "INTERACTION_TYPE") : [],
@@ -71,6 +78,7 @@ export default async function HomePage() {
     enabled.has("open-tasks") ? getOpenTasks(user.id, settingFor("open-tasks", "limit", 8)) : [],
     enabled.has("idea-bank") ? getOpenIdeas(user.id, settingFor("idea-bank", "limit", 6)) : [],
     enabled.has("stats") ? getStats(user.id, timezone) : null,
+    enabled.has("dating-pipeline") && showDating ? getDatingSummary(user.id) : null,
   ]);
 
   const mapInteractions = (rows: typeof recent) =>
@@ -114,7 +122,9 @@ export default async function HomePage() {
         }))}
       />
     ),
-    "dating-pipeline": <DatingPipelineWidget />,
+    "dating-pipeline": datingSummary ? (
+      <DatingPipelineWidget data={datingSummary} timezone={timezone} />
+    ) : null,
     stats: stats ? <StatsWidget stats={stats} /> : null,
   };
 

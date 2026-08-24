@@ -11,6 +11,7 @@ import { timelineDateLabel, sentimentLabel, termColorClasses, timeOfDay } from "
 import type { PlainDate } from "@/lib/dates";
 import type { TimelineEntry } from "@/server/queries/timeline";
 import { deleteInteraction } from "@/server/actions/interactions";
+import { PrivateText } from "@/components/dating/private-text";
 
 /**
  * The unified feed.
@@ -25,6 +26,7 @@ export function TimelineList({
   today,
   timezone,
   showContacts = true,
+  blurSensitive = false,
   emptyTitle = "Nothing here yet",
   emptyDescription,
 }: {
@@ -32,6 +34,8 @@ export function TimelineList({
   today: PlainDate;
   timezone: string;
   showContacts?: boolean;
+  /** Blur notes on dates, matching the contact page's date log. */
+  blurSensitive?: boolean;
   emptyTitle?: string;
   emptyDescription?: string;
 }) {
@@ -112,9 +116,15 @@ export function TimelineList({
               ) : null}
 
               {entry.detail ? (
-                <p className="mt-1 whitespace-pre-line text-xs text-muted-foreground">
-                  {entry.detail}
-                </p>
+                entry.sensitive && blurSensitive ? (
+                  <PrivateText className="mt-1 block whitespace-pre-line text-xs text-muted-foreground">
+                    {entry.detail}
+                  </PrivateText>
+                ) : (
+                  <p className="mt-1 whitespace-pre-line text-xs text-muted-foreground">
+                    {entry.detail}
+                  </p>
+                )
               ) : null}
             </div>
 

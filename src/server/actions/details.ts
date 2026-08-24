@@ -51,6 +51,7 @@ export async function createFact(form: FormData): Promise<ActionResult<{ id: str
       content,
       categoryId: str(form, "categoryId") ?? null,
       importance: clamp(num(form, "importance") ?? 1, 0, 2),
+      isPrivate: bool(form, "isPrivate"),
       sourceInteractionId: str(form, "sourceInteractionId") ?? null,
     },
   });

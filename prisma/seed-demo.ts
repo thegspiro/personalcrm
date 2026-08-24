@@ -389,5 +389,68 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
     });
   }
 
+// ---- Dating detail: ratings, notes, and one ended relationship ---------
+  const romanticDetail: Record<string, {
+    notes: string;
+    wantsKids: "UNKNOWN" | "WANTS" | "DOES_NOT_WANT" | "OPEN" | "HAS_AND_DONE";
+    style?: string;
+    living?: string;
+    distanceKm?: number;
+    religion?: string;
+    politics?: string;
+    drinking?: string;
+    mbti?: string;
+    endedReason?: string;
+    retrospective?: string;
+  }> = {
+    Elena: {
+      notes: "Easiest person to be quiet around that I've met in years. Slightly worried I'm the one doing all the planning.",
+      wantsKids: "OPEN",
+      style: "Monogamous",
+      living: "Own place, no roommates",
+      distanceKm: 12,
+      religion: "Lapsed Catholic",
+      politics: "Left",
+      drinking: "Socially",
+      mbti: "INFJ",
+    },
+    Nadia: {
+      notes: "Sharp and funny over text, harder to read in person. Might just be nerves.",
+      wantsKids: "UNKNOWN",
+      style: "Monogamous",
+      distanceKm: 8,
+      drinking: "Socially",
+    },
+    Claire: {
+      notes: "Genuinely lovely. Just nothing there.",
+      wantsKids: "WANTS",
+      distanceKm: 22,
+      endedReason: "She's moving back to Portland in the spring, and neither of us wanted to pretend otherwise.",
+      retrospective: "I knew by the second date and let it run three more anyway. Say the thing sooner next time.",
+    },
+  };
+
+  for (const [name, detail] of Object.entries(romanticDetail)) {
+    const contactId = contactIds.get(name);
+    if (!contactId) continue;
+    await prisma.romanticProfile.update({
+      where: { contactId },
+      data: {
+        privateNotes: detail.notes,
+        wantsKids: detail.wantsKids,
+        relationshipStyle: detail.style ?? null,
+        livingSituation: detail.living ?? null,
+        distanceKm: detail.distanceKm ?? null,
+        religion: detail.religion ?? null,
+        politics: detail.politics ?? null,
+        drinking: detail.drinking ?? null,
+        mbti: detail.mbti ?? null,
+        endedReason: detail.endedReason ?? null,
+        retrospective: detail.retrospective ?? null,
+        endedOn: detail.endedReason ? dateOnly(2026, 2, 14) : null,
+      },
+    });
+  }
+
   console.log(`  demo data created for ${DEMO_EMAIL}`);
 }

@@ -1,6 +1,12 @@
 import "server-only";
 import { prisma } from "@/server/db/client";
 import {
+  contactPrivacyWhere,
+  interactionPrivacyWhere,
+  privacyScope,
+  viaContactPrivacyWhere,
+} from "@/server/privacy/filter";
+import {
   type PlainDate,
   addPlainDays,
   calendarDateInTz,
@@ -35,12 +41,14 @@ export async function getOverdueContacts(
   const now = new Date();
   const today = calendarDateInTz(now, timezone);
 
+  const privacy = await privacyScope();
   const rows = await prisma.contact.findMany({
     where: {
       ownerId,
       isArchived: false,
       cadenceDays: { not: null },
       nextTouchAt: { not: null, lte: now },
+      ...contactPrivacyWhere(privacy),
     },
     select: {
       id: true,
@@ -93,8 +101,12 @@ export async function getUpcomingDates(
   const today = calendarDateInTz(new Date(), timezone);
   const horizon = addPlainDays(today, windowDays);
 
+  const privacy = await privacyScope();
   const rows = await prisma.importantDate.findMany({
-    where: { ownerId, contact: { isArchived: false } },
+    where: {
+      ownerId,
+      contact: { isArchived: false, ...(privacy.unlocked ? {} : { isPrivate: false }) },
+    },
     include: {
       type: true,
       contact: { select: { id: true, firstName: true, lastName: true } },
@@ -129,8 +141,9 @@ export async function getUpcomingDates(
 }
 
 export async function getRecentInteractions(ownerId: string, limit = 8) {
+  const privacy = await privacyScope();
   return prisma.interaction.findMany({
-    where: { ownerId, occurredAt: { lte: new Date() } },
+    where: { ownerId, occurredAt: { lte: new Date() }, ...interactionPrivacyWhere(privacy) },
     include: {
       type: true,
       participants: {
@@ -143,8 +156,9 @@ export async function getRecentInteractions(ownerId: string, limit = 8) {
 }
 
 export async function getUpcomingInteractions(ownerId: string, limit = 5) {
+  const privacy = await privacyScope();
   return prisma.interaction.findMany({
-    where: { ownerId, occurredAt: { gt: new Date() } },
+    where: { ownerId, occurredAt: { gt: new Date() }, ...interactionPrivacyWhere(privacy) },
     include: {
       type: true,
       participants: {
@@ -157,8 +171,9 @@ export async function getUpcomingInteractions(ownerId: string, limit = 5) {
 }
 
 export async function getOpenTasks(ownerId: string, limit = 8) {
+  const privacy = await privacyScope();
   return prisma.task.findMany({
-    where: { ownerId, completedAt: null },
+    where: { ownerId, completedAt: null, ...viaContactPrivacyWhere(privacy) },
     include: { contact: { select: { id: true, firstName: true, lastName: true } } },
     orderBy: [{ dueDate: { sort: "asc", nulls: "last" } }, { priority: "desc" }],
     take: limit,
@@ -166,8 +181,9 @@ export async function getOpenTasks(ownerId: string, limit = 8) {
 }
 
 export async function getOpenIdeas(ownerId: string, limit = 6) {
+  const privacy = await privacyScope();
   return prisma.idea.findMany({
-    where: { ownerId, status: "OPEN" },
+    where: { ownerId, status: "OPEN", ...viaContactPrivacyWhere(privacy) },
     include: { contact: { select: { id: true, firstName: true, lastName: true } } },
     orderBy: { createdAt: "desc" },
     take: limit,
@@ -188,16 +204,30 @@ export async function getStats(ownerId: string, timezone: string): Promise<Dashb
   const today = calendarDateInTz(now, timezone);
   const monthStart = new Date(Date.UTC(today.year, today.month - 1, 1));
 
+  const privacy = await privacyScope();
+  const contactPrivacy = contactPrivacyWhere(privacy);
+  const interactionPrivacy = interactionPrivacyWhere(privacy);
+
+  // Counts are filtered too: a total that shifts when you unlock is itself a
+  // disclosure that something is hidden.
   const [people, interactionsThisMonth, interactionsTotal, overdue, openTasks, openIdeas] =
     await Promise.all([
-      prisma.contact.count({ where: { ownerId, isArchived: false } }),
-      prisma.interaction.count({ where: { ownerId, occurredAt: { gte: monthStart, lte: now } } }),
-      prisma.interaction.count({ where: { ownerId, occurredAt: { lte: now } } }),
-      prisma.contact.count({
-        where: { ownerId, isArchived: false, cadenceDays: { not: null }, nextTouchAt: { lte: now } },
+      prisma.contact.count({ where: { ownerId, isArchived: false, ...contactPrivacy } }),
+      prisma.interaction.count({
+        where: { ownerId, occurredAt: { gte: monthStart, lte: now }, ...interactionPrivacy },
       }),
-      prisma.task.count({ where: { ownerId, completedAt: null } }),
-      prisma.idea.count({ where: { ownerId, status: "OPEN" } }),
+      prisma.interaction.count({ where: { ownerId, occurredAt: { lte: now }, ...interactionPrivacy } }),
+      prisma.contact.count({
+        where: {
+          ownerId,
+          isArchived: false,
+          cadenceDays: { not: null },
+          nextTouchAt: { lte: now },
+          ...contactPrivacy,
+        },
+      }),
+      prisma.task.count({ where: { ownerId, completedAt: null, ...viaContactPrivacyWhere(privacy) } }),
+      prisma.idea.count({ where: { ownerId, status: "OPEN", ...viaContactPrivacyWhere(privacy) } }),
     ]);
 
   return { people, interactionsThisMonth, interactionsTotal, overdue, openTasks, openIdeas };

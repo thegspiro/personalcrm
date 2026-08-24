@@ -5,11 +5,11 @@ import { usePathname } from "next/navigation";
 import { HeartHandshake } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Icon } from "./icon";
-import { PRIMARY_NAV, SECONDARY_NAV, isActive } from "./nav-items";
+import { PRIMARY_NAV, SECONDARY_NAV, isActive, visibleNav } from "./nav-items";
 
-export function Sidebar() {
+export function Sidebar({ hideDating = false }: { hideDating?: boolean }) {
   const pathname = usePathname();
-  const primary = PRIMARY_NAV.filter((item) => item.href !== "/more");
+  const primary = visibleNav(PRIMARY_NAV, hideDating).filter((item) => item.href !== "/more");
 
   return (
     <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-border bg-sidebar lg:flex">

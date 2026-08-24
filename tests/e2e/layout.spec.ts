@@ -10,7 +10,18 @@ import { createContact, ensureSignedIn } from "./helpers";
  * than the screen, and on a phone that also makes fixed elements land in the
  * wrong place — a submit button can look visible while being unclickable.
  */
-const ROUTES = ["/", "/people", "/timeline", "/tasks", "/ideas", "/gifts", "/more", "/settings"];
+const ROUTES = [
+  "/",
+  "/people",
+  "/timeline",
+  "/dating",
+  "/dating/compare",
+  "/tasks",
+  "/ideas",
+  "/gifts",
+  "/more",
+  "/settings",
+];
 
 async function overflow(page: import("@playwright/test").Page) {
   return page.evaluate(() => {

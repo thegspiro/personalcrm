@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Archive, BellOff, History, MoreVertical, Pencil, Plus, Star, Trash2 } from "lucide-react";
+import { Archive, BellOff, EyeOff, History, MoreVertical, Pencil, Plus, Star, Trash2 } from "lucide-react";
 import { cn, displayName, initialsOf } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import { cadenceLabel } from "@/lib/cadence";
 import { formatPartialDate, type DatePrecision } from "@/lib/date-precision";
 import type { PlainDate } from "@/lib/dates";
 import { deleteContact, patchContact, setContactArchived, snoozeContact } from "@/server/actions/contacts";
+import { setPrivate } from "@/server/actions/privacy";
 
 const STATUS_STYLES: Record<string, string> = {
   overdue: "bg-destructive/12 text-destructive",
@@ -51,6 +52,7 @@ export function ContactHeader({
     isFavorite: boolean;
     isArchived: boolean;
     isRomantic: boolean;
+    isPrivate: boolean;
     cadenceDays: number | null;
     birthDate: PlainDate | null;
     birthDatePrecision: DatePrecision;
@@ -135,6 +137,12 @@ export function ContactHeader({
                 Archived
               </span>
             ) : null}
+            {contact.isPrivate ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-accent-3 px-2 py-0.5 text-[11px] font-medium text-accent-11">
+                <EyeOff className="size-3" />
+                Private
+              </span>
+            ) : null}
           </div>
         </div>
 
@@ -188,6 +196,17 @@ export function ContactHeader({
             ) : null}
 
             <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() =>
+                void run(
+                  () => setPrivate("contact", contact.id, !contact.isPrivate),
+                  contact.isPrivate ? "Visible again" : "Marked private",
+                )
+              }
+            >
+              <EyeOff />
+              {contact.isPrivate ? "Remove private mark" : "Mark private"}
+            </DropdownMenuItem>
             <DropdownMenuItem
               onSelect={() =>
                 void run(

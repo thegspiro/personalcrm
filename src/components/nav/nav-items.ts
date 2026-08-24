@@ -27,3 +27,14 @@ export function isActive(pathname: string, item: NavItem): boolean {
   const prefixes = item.match ?? [item.href];
   return prefixes.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
+
+/**
+ * Drop Dating from a nav list when the module is hidden.
+ *
+ * The route itself also redirects — a nav item is a convenience, not a
+ * boundary — but leaving the link visible would defeat the point of hiding it.
+ */
+export function visibleNav(items: NavItem[], hideDating: boolean): NavItem[] {
+  if (!hideDating) return items;
+  return items.filter((item) => item.href !== "/dating");
+}

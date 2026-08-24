@@ -56,17 +56,21 @@ function useAction() {
   );
 }
 
-function useFormAction() {
+/**
+ * Wraps an add action so a successful submit collapses the panel. Leaving it
+ * open with the typed text still sitting there makes the next click look like
+ * it did nothing.
+ */
+function useAddAction() {
   const run = useAction();
   return React.useCallback(
-    (action: (form: FormData) => Promise<ActionResult<unknown>>, message?: string) =>
+    (
+      action: (form: FormData) => Promise<ActionResult<unknown>>,
+      close: () => void,
+      message?: string,
+    ) =>
       async (form: FormData) => {
-        const okResult = await run(() => action(form), message);
-        if (okResult) {
-          // Clear the inline add form so the next entry starts fresh.
-          const element = document.activeElement as HTMLElement | null;
-          element?.blur();
-        }
+        if (await run(() => action(form), message)) close();
       },
     [run],
   );
@@ -78,6 +82,7 @@ export interface FactItem {
   id: string;
   content: string;
   importance: number;
+  isPrivate: boolean;
   category: { label: string; icon: string | null; color: string | null } | null;
 }
 
@@ -91,7 +96,7 @@ export function FactsSection({
   categories: TermOption[];
 }) {
   const run = useAction();
-  const submit = useFormAction();
+  const add = useAddAction();
 
   return (
     <SectionCard
@@ -99,8 +104,8 @@ export function FactsSection({
       icon="Lightbulb"
       count={facts.length}
       addLabel="Add a fact"
-      form={
-        <form action={submit(createFact, "Noted")} className="grid gap-2.5">
+      form={(close) => (
+        <form action={add(createFact, close, "Noted")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
           <Field label="What should you remember?" htmlFor="fact-content">
             <Textarea
@@ -112,9 +117,13 @@ export function FactsSection({
             />
           </Field>
           <TermChips name="categoryId" label="Category" terms={categories} />
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" name="isPrivate" value="true" className="size-4" />
+            Hide this behind the privacy lock
+          </label>
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
-      }
+      )}
     >
       {facts.length === 0 ? (
         <SectionEmpty>Nothing noted yet.</SectionEmpty>
@@ -126,6 +135,11 @@ export function FactsSection({
             deleteLabel="Delete fact"
           >
             <p className={cn("text-sm", fact.importance >= 2 && "font-medium")}>{fact.content}</p>
+            {fact.isPrivate ? (
+              <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-accent-3 px-1.5 py-0.5 text-[11px] text-accent-11">
+                Private
+              </span>
+            ) : null}
             {fact.category ? (
               <span
                 className={cn(
@@ -165,7 +179,7 @@ export function DatesSection({
   types: TermOption[];
 }) {
   const run = useAction();
-  const submit = useFormAction();
+  const add = useAddAction();
 
   return (
     <SectionCard
@@ -173,8 +187,8 @@ export function DatesSection({
       icon="CalendarDays"
       count={dates.length}
       addLabel="Add a date"
-      form={
-        <form action={submit(createImportantDate, "Date added")} className="grid gap-2.5">
+      form={(close) => (
+        <form action={add(createImportantDate, close, "Date added")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
           <Field label="What is it?" htmlFor="date-label">
             <Input id="date-label" name="label" required placeholder="Wedding anniversary" />
@@ -195,7 +209,7 @@ export function DatesSection({
           </Field>
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
-      }
+      )}
     >
       {dates.length === 0 ? (
         <SectionEmpty>No dates yet.</SectionEmpty>
@@ -252,7 +266,7 @@ export function LifeEventsSection({
   types: TermOption[];
 }) {
   const run = useAction();
-  const submit = useFormAction();
+  const add = useAddAction();
 
   return (
     <SectionCard
@@ -260,8 +274,8 @@ export function LifeEventsSection({
       icon="Milestone"
       count={events.length}
       addLabel="Add a life event"
-      form={
-        <form action={submit(createLifeEvent, "Event added")} className="grid gap-2.5">
+      form={(close) => (
+        <form action={add(createLifeEvent, close, "Event added")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
           <Field label="What happened?" htmlFor="event-title">
             <Input id="event-title" name="title" required placeholder="Moved to Austin" />
@@ -279,7 +293,7 @@ export function LifeEventsSection({
           </Field>
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
-      }
+      )}
     >
       {events.length === 0 ? (
         <SectionEmpty>
@@ -322,7 +336,7 @@ export interface IdeaItem {
 
 export function IdeasSection({ contactId, ideas }: { contactId: string; ideas: IdeaItem[] }) {
   const run = useAction();
-  const submit = useFormAction();
+  const add = useAddAction();
   const open = ideas.filter((idea) => idea.status === "OPEN");
 
   return (
@@ -331,8 +345,8 @@ export function IdeasSection({ contactId, ideas }: { contactId: string; ideas: I
       icon="MessageSquareQuote"
       count={open.length}
       addLabel="Add an idea"
-      form={
-        <form action={submit(createIdea, "Saved")} className="grid gap-2.5">
+      form={(close) => (
+        <form action={add(createIdea, close, "Saved")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
           <Field label="What do you want to ask or mention?" htmlFor="idea-content">
             <Textarea
@@ -345,7 +359,7 @@ export function IdeasSection({ contactId, ideas }: { contactId: string; ideas: I
           </Field>
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
-      }
+      )}
     >
       {open.length === 0 ? (
         <SectionEmpty>Nothing queued up.</SectionEmpty>
@@ -384,7 +398,7 @@ export interface TaskItem {
 
 export function TasksSection({ contactId, tasks }: { contactId: string; tasks: TaskItem[] }) {
   const run = useAction();
-  const submit = useFormAction();
+  const add = useAddAction();
   const open = tasks.filter((task) => !task.completedAt);
 
   return (
@@ -393,8 +407,8 @@ export function TasksSection({ contactId, tasks }: { contactId: string; tasks: T
       icon="CircleCheck"
       count={open.length}
       addLabel="Add a follow-up"
-      form={
-        <form action={submit(createTask, "Added")} className="grid gap-2.5">
+      form={(close) => (
+        <form action={add(createTask, close, "Added")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
           <Field label="What do you need to do?" htmlFor="task-title">
             <Input id="task-title" name="title" required placeholder="Send the bakery recommendation" />
@@ -402,7 +416,7 @@ export function TasksSection({ contactId, tasks }: { contactId: string; tasks: T
           <DateField name="dueDate" label="Due" allowPrecision={false} presets={["today"]} />
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
-      }
+      )}
     >
       {open.length === 0 ? (
         <SectionEmpty>Nothing outstanding.</SectionEmpty>
@@ -457,7 +471,7 @@ export function GiftsSection({
   occasions: TermOption[];
 }) {
   const run = useAction();
-  const submit = useFormAction();
+  const add = useAddAction();
 
   return (
     <SectionCard
@@ -466,8 +480,8 @@ export function GiftsSection({
       count={gifts.length}
       addLabel="Add a gift idea"
       defaultOpen={false}
-      form={
-        <form action={submit(createGift, "Added")} className="grid gap-2.5">
+      form={(close) => (
+        <form action={add(createGift, close, "Added")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
           <Field label="What is it?" htmlFor="gift-name">
             <Input id="gift-name" name="name" required placeholder="Banneton proofing basket" />
@@ -478,7 +492,7 @@ export function GiftsSection({
           <TermSelect name="occasionId" label="Occasion" terms={occasions} />
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
-      }
+      )}
     >
       {gifts.length === 0 ? (
         <SectionEmpty>No gift ideas yet.</SectionEmpty>
@@ -527,7 +541,7 @@ export function RelationshipsSection({
   contacts: PickerContact[];
 }) {
   const run = useAction();
-  const submit = useFormAction();
+  const add = useAddAction();
 
   return (
     <SectionCard
@@ -536,8 +550,8 @@ export function RelationshipsSection({
       count={relationships.length}
       addLabel="Link someone"
       defaultOpen={false}
-      form={
-        <form action={submit(createRelationship, "Linked")} className="grid gap-2.5">
+      form={(close) => (
+        <form action={add(createRelationship, close, "Linked")} className="grid gap-2.5">
           <input type="hidden" name="fromContactId" value={contactId} />
           <ContactPicker
             name="toContactId"
@@ -549,7 +563,7 @@ export function RelationshipsSection({
           <TermChips name="typeId" label="Is their…" terms={types} allowEmpty={false} />
           <SubmitButton size="sm">Link</SubmitButton>
         </form>
-      }
+      )}
     >
       {relationships.length === 0 ? (
         <SectionEmpty>No connections recorded.</SectionEmpty>

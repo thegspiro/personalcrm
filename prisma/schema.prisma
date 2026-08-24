@@ -35,8 +35,17 @@ model User {
   passwordHash String   @db.VarChar(255)
   role         UserRole @default(MEMBER)
   isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+
+  /// Secondary lock over the dating module and anything marked private.
+  /// Deliberately a different secret from passwordHash: handing someone your
+  /// login should not hand them this.
+  privacyPinHash        String?   @db.VarChar(255)
+  /// Rate limiting lives on the user, not the session, so clearing cookies
+  /// does not reset a lockout.
+  privacyPinFailedCount Int       @default(0)
+  privacyPinFailedAt    DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   sessions             Session[]
   preference           UserPreference?
@@ -70,6 +79,11 @@ model Session {
   userAgent String?  @db.VarChar(255)
   ip        String?  @db.VarChar(64)
 
+  /// When the privacy lock was last opened on this session. Unlock state is
+  /// kept server-side so the client cannot claim to be unlocked, and so it
+  /// dies with the session rather than lingering in a cookie.
+  privacyUnlockedAt DateTime?
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
@@ -77,15 +91,23 @@ model Session {
 }
 
 model UserPreference {
-  userId             String   @id
-  theme              String   @default("system") @db.VarChar(16)
-  accent             String   @default("violet") @db.VarChar(24)
-  density            String   @default("comfortable") @db.VarChar(16)
-  timezone           String   @default("America/New_York") @db.VarChar(64)
-  weekStartsOn       Int      @default(0)
+  userId             String  @id
+  theme              String  @default("system") @db.VarChar(16)
+  accent             String  @default("violet") @db.VarChar(24)
+  density            String  @default("comfortable") @db.VarChar(16)
+  timezone           String  @default("America/New_York") @db.VarChar(64)
+  weekStartsOn       Int     @default(0)
   defaultCadenceDays Int?
-  digestHour         Int      @default(8)
-  digestEnabled      Boolean  @default(true)
+  digestHour         Int     @default(8)
+  digestEnabled      Boolean @default(true)
+
+  /// Require the PIN before showing the dating module or anything private.
+  privacyLockEnabled Boolean  @default(false)
+  /// Hide the dating module from navigation and the dashboard entirely.
+  hideDating         Boolean  @default(false)
+  /// Blur private notes until tapped — a second, weaker layer for shoulder
+  /// surfing after the lock has already been opened.
+  blurPrivateNotes   Boolean  @default(true)
   updatedAt          DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -190,6 +212,8 @@ model Contact {
   isFavorite Boolean @default(false)
   isArchived Boolean @default(false)
   isRomantic Boolean @default(false)
+  /// Hidden everywhere until the privacy lock is opened.
+  isPrivate  Boolean @default(false)
 
   /// Keep-in-touch cadence in days. Null = no cadence tracking for this person.
   cadenceDays       Int?
@@ -324,6 +348,8 @@ model Interaction {
   /// -2 rough .. 0 neutral .. +2 great
   sentiment       Int?
   location        String?  @db.VarChar(191)
+  /// Hidden everywhere until the privacy lock is opened.
+  isPrivate       Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -359,6 +385,8 @@ model Fact {
   content             String   @db.Text
   /// 0 = trivia, 1 = normal, 2 = important
   importance          Int      @default(1)
+  /// Hidden everywhere until the privacy lock is opened.
+  isPrivate           Boolean  @default(false)
   sourceInteractionId String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
@@ -559,10 +587,13 @@ model RomanticProfile {
   sourceId     String?
   sourceDetail String? @db.VarChar(191)
 
-  matchedOn   DateTime? @db.Date
-  firstDateOn DateTime? @db.Date
-  endedOn     DateTime? @db.Date
-  endedReason String?   @db.Text
+  matchedOn     DateTime? @db.Date
+  firstDateOn   DateTime? @db.Date
+  endedOn       DateTime? @db.Date
+  endedReason   String?   @db.Text
+  /// The reflection — what you took from it. Kept apart from endedReason
+  /// because collapsing the two makes both of them worse.
+  retrospective String?   @db.Text
 
   birthYear         Int?
   heightCm          Int?

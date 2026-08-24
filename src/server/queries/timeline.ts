@@ -1,5 +1,11 @@
 import "server-only";
 import { prisma } from "@/server/db/client";
+import {
+  interactionPrivacyWhere,
+  privacyScope,
+  viaContactPrivacyWhere,
+  type PrivacyScope,
+} from "@/server/privacy/filter";
 import { calendarDateInTz, plainDateFromDb, type PlainDate } from "@/lib/dates";
 import { comparePartialDates, type DatePrecision } from "@/lib/date-precision";
 
@@ -28,6 +34,11 @@ export interface TimelineEntry {
   detail?: string | null;
   /** True when this hasn't happened yet — a planned dinner, say. */
   upcoming?: boolean;
+  /**
+   * Worth blurring alongside the other private notes. Set for dates, so the
+   * same sentence is not blurred on the contact page and plain in the feed.
+   */
+  sensitive?: boolean;
   term?: { label: string; icon: string | null; color: string | null } | null;
   contacts: Array<{ id: string; firstName: string; lastName: string | null }>;
   sentiment?: number | null;
@@ -60,13 +71,15 @@ export async function buildTimeline(
       : ["interaction", "life-event", "important-date", "gift"],
   );
 
+  const scope = await privacyScope();
+
   // Each source is capped at `take` — after merging we slice again, so no
   // single source can crowd the others out of the window.
   const [interactions, lifeEvents, importantDates, gifts] = await Promise.all([
-    kinds.has("interaction") ? fetchInteractions(ownerId, options, take) : [],
-    kinds.has("life-event") ? fetchLifeEvents(ownerId, options, take) : [],
-    kinds.has("important-date") ? fetchImportantDates(ownerId, options, take) : [],
-    kinds.has("gift") ? fetchGifts(ownerId, options, take) : [],
+    kinds.has("interaction") ? fetchInteractions(ownerId, options, take, scope) : [],
+    kinds.has("life-event") ? fetchLifeEvents(ownerId, options, take, scope) : [],
+    kinds.has("important-date") ? fetchImportantDates(ownerId, options, take, scope) : [],
+    kinds.has("gift") ? fetchGifts(ownerId, options, take, scope) : [],
   ]);
 
   const now = new Date();
@@ -104,10 +117,16 @@ function contactFilter(contactId?: string) {
   return contactId ? { participants: { some: { contactId } } } : {};
 }
 
-async function fetchInteractions(ownerId: string, options: TimelineOptions, take: number) {
+async function fetchInteractions(
+  ownerId: string,
+  options: TimelineOptions,
+  take: number,
+  scope: PrivacyScope,
+) {
   return prisma.interaction.findMany({
     where: {
       ownerId,
+      ...interactionPrivacyWhere(scope),
       ...contactFilter(options.contactId),
       ...(options.typeIds?.length ? { typeId: { in: options.typeIds } } : {}),
       ...(options.from || options.to
@@ -116,6 +135,7 @@ async function fetchInteractions(ownerId: string, options: TimelineOptions, take
     },
     include: {
       type: true,
+      dateEntry: { select: { id: true } },
       participants: {
         include: { contact: { select: { id: true, firstName: true, lastName: true } } },
       },
@@ -125,10 +145,16 @@ async function fetchInteractions(ownerId: string, options: TimelineOptions, take
   });
 }
 
-async function fetchLifeEvents(ownerId: string, options: TimelineOptions, take: number) {
+async function fetchLifeEvents(
+  ownerId: string,
+  options: TimelineOptions,
+  take: number,
+  scope: PrivacyScope,
+) {
   return prisma.lifeEvent.findMany({
     where: {
       ownerId,
+      ...viaContactPrivacyWhere(scope),
       ...(options.contactId ? { contactId: options.contactId } : {}),
       ...(options.from || options.to
         ? { date: { ...(options.from ? { gte: options.from } : {}), ...(options.to ? { lte: options.to } : {}) } }
@@ -143,10 +169,16 @@ async function fetchLifeEvents(ownerId: string, options: TimelineOptions, take: 
   });
 }
 
-async function fetchImportantDates(ownerId: string, options: TimelineOptions, take: number) {
+async function fetchImportantDates(
+  ownerId: string,
+  options: TimelineOptions,
+  take: number,
+  scope: PrivacyScope,
+) {
   return prisma.importantDate.findMany({
     where: {
       ownerId,
+      ...viaContactPrivacyWhere(scope),
       ...(options.contactId ? { contactId: options.contactId } : {}),
       ...(options.from || options.to
         ? { date: { ...(options.from ? { gte: options.from } : {}), ...(options.to ? { lte: options.to } : {}) } }
@@ -161,10 +193,16 @@ async function fetchImportantDates(ownerId: string, options: TimelineOptions, ta
   });
 }
 
-async function fetchGifts(ownerId: string, options: TimelineOptions, take: number) {
+async function fetchGifts(
+  ownerId: string,
+  options: TimelineOptions,
+  take: number,
+  scope: PrivacyScope,
+) {
   return prisma.gift.findMany({
     where: {
       ownerId,
+      ...viaContactPrivacyWhere(scope),
       // Only gifts that actually changed hands belong on a history feed.
       status: "GIVEN",
       occurredOn: {
@@ -201,6 +239,7 @@ function interactionEntry(row: InteractionRow, timezone: string, now: Date): Tim
     title: row.title ?? row.type?.label ?? "Interaction",
     detail: row.notes,
     upcoming: row.occurredAt > now,
+    sensitive: row.dateEntry !== null,
     term: row.type ? { label: row.type.label, icon: row.type.icon, color: row.type.color } : null,
     contacts,
     sentiment: row.sentiment,

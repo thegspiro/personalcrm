@@ -4,18 +4,19 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Icon } from "./icon";
-import { PRIMARY_NAV, isActive } from "./nav-items";
+import { PRIMARY_NAV, isActive, visibleNav } from "./nav-items";
 
-export function BottomNav() {
+export function BottomNav({ hideDating = false }: { hideDating?: boolean }) {
   const pathname = usePathname();
+  const items = visibleNav(PRIMARY_NAV, hideDating);
 
   return (
     <nav
       aria-label="Primary"
       className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 backdrop-blur-lg safe-bottom lg:hidden"
     >
-      <ul className="grid grid-cols-5">
-        {PRIMARY_NAV.map((item) => {
+      <ul className="grid" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
+        {items.map((item) => {
           const active = isActive(pathname, item);
           return (
             <li key={item.href}>

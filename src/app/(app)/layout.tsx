@@ -12,14 +12,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="min-h-dvh">
       <AppearanceSync accent={prefs.accent} density={prefs.density} />
-      <Sidebar />
+      <Sidebar hideDating={prefs.hideDating} />
       <div className="lg:pl-60">
         <TopBar name={user.name} email={user.email} />
         <main className="pb-nav mx-auto w-full max-w-5xl px-4 pt-4 lg:px-6 lg:pb-10">
           {children}
         </main>
       </div>
-      <BottomNav />
+      <BottomNav hideDating={prefs.hideDating} />
     </div>
   );
 }

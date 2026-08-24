@@ -2,6 +2,13 @@ import "server-only";
 import { cache } from "react";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
+import {
+  contactPrivacyWhere,
+  factPrivacyWhere,
+  interactionPrivacyWhere,
+  privacyScope,
+  type PrivacyScope,
+} from "@/server/privacy/filter";
 
 export type ContactSort = "name" | "recent" | "overdue" | "added";
 
@@ -40,12 +47,16 @@ const LIST_SELECT = {
 
 export type ContactListItem = Prisma.ContactGetPayload<{ select: typeof LIST_SELECT }>;
 
-function buildWhere(ownerId: string, options: ContactListOptions): Prisma.ContactWhereInput {
-  const where: Prisma.ContactWhereInput = { ownerId };
+function buildWhere(
+  ownerId: string,
+  options: ContactListOptions,
+  privacy: PrivacyScope,
+): Prisma.ContactWhereInput {
+  const where: Prisma.ContactWhereInput = { ownerId, ...contactPrivacyWhere(privacy) };
 
-  const scope = options.scope ?? "active";
-  if (scope === "active") where.isArchived = false;
-  else if (scope === "archived") where.isArchived = true;
+  const archiveScope = options.scope ?? "active";
+  if (archiveScope === "active") where.isArchived = false;
+  else if (archiveScope === "archived") where.isArchived = true;
 
   if (options.categoryId) where.categoryId = options.categoryId;
   if (options.romanticOnly) where.isRomantic = true;
@@ -66,7 +77,8 @@ function buildWhere(ownerId: string, options: ContactListOptions): Prisma.Contac
       { city: { contains: search } },
       { summary: { contains: search } },
       { methods: { some: { value: { contains: search } } } },
-      { facts: { some: { content: { contains: search } } } },
+      // Search must not surface someone through a fact that is itself private.
+      { facts: { some: { content: { contains: search }, ...factPrivacyWhere(privacy) } } },
     ];
   }
 
@@ -92,7 +104,8 @@ export async function listContacts(
   ownerId: string,
   options: ContactListOptions = {},
 ): Promise<{ items: ContactListItem[]; total: number }> {
-  const where = buildWhere(ownerId, options);
+  const privacy = await privacyScope();
+  const where = buildWhere(ownerId, options, privacy);
   const [items, total] = await Promise.all([
     prisma.contact.findMany({
       where,
@@ -108,8 +121,9 @@ export async function listContacts(
 
 /** Lightweight list for pickers and the command palette. */
 export const listContactOptions = cache(async (ownerId: string) => {
+  const scope = await privacyScope();
   return prisma.contact.findMany({
-    where: { ownerId, isArchived: false },
+    where: { ownerId, isArchived: false, ...contactPrivacyWhere(scope) },
     select: { id: true, firstName: true, lastName: true, nickname: true, avatarPath: true },
     orderBy: [{ lastInteractionAt: { sort: "desc", nulls: "last" } }, { firstName: "asc" }],
     take: 500,
@@ -148,7 +162,19 @@ export type ContactDetail = Prisma.ContactGetPayload<{ include: typeof DETAIL_IN
 
 export const getContact = cache(
   async (ownerId: string, id: string): Promise<ContactDetail | null> => {
-    return prisma.contact.findFirst({ where: { id, ownerId }, include: DETAIL_INCLUDE });
+    const scope = await privacyScope();
+    const contact = await prisma.contact.findFirst({
+      where: { id, ownerId, ...contactPrivacyWhere(scope) },
+      include: DETAIL_INCLUDE,
+    });
+    if (!contact) return null;
+
+    // Facts carry their own marker, so a single private note about an
+    // otherwise ordinary person stays hidden.
+    if (!scope.unlocked) {
+      contact.facts = contact.facts.filter((fact) => !fact.isPrivate);
+    }
+    return contact;
   },
 );
 
@@ -158,8 +184,13 @@ export async function listContactInteractions(
   contactId: string,
   take = 50,
 ) {
+  const scope = await privacyScope();
   return prisma.interaction.findMany({
-    where: { ownerId, participants: { some: { contactId } } },
+    where: {
+      ownerId,
+      participants: { some: { contactId } },
+      ...interactionPrivacyWhere(scope),
+    },
     include: {
       type: true,
       dateEntry: { include: { activityType: true } },
