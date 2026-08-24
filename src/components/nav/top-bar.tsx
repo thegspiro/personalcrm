@@ -15,16 +15,20 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { logoutAction } from "@/server/actions/auth";
+import { purgeOfflineCaches } from "@/components/offline/offline";
+import { CommandPalette } from "./command-palette";
 import { cn, initialsOf } from "@/lib/utils";
 
 export function TopBar({
   name,
   email,
   title,
+  hideDating = false,
 }: {
   name: string;
   email: string;
   title?: string;
+  hideDating?: boolean;
 }) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -47,6 +51,8 @@ export function TopBar({
         {title ?? "Personal CRM"}
       </h1>
       {!title ? <div className="hidden flex-1 lg:block" /> : null}
+
+      <CommandPalette hideDating={hideDating} />
 
       <Button
         variant="ghost"
@@ -92,6 +98,8 @@ export function TopBar({
           <DropdownMenuItem
             variant="destructive"
             onSelect={() => {
+              // Saved pages must not outlive the session they came from.
+              purgeOfflineCaches();
               void logoutAction();
             }}
           >

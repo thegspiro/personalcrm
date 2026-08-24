@@ -16,12 +16,24 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { SubmitButton } from "@/components/form/submit-button";
+import {
+  CollapsibleCustomFields,
+  type RenderableField,
+} from "@/components/custom-fields/field-renderer";
 import { DateTimeField } from "@/components/form/date-field";
 import { TermChips, type TermOption } from "@/components/form/term-select";
 import { ContactPicker, type PickerContact } from "@/components/form/contact-picker";
 import { SENTIMENTS } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { createInteraction } from "@/server/actions/interactions";
+
+type ReachedOutBy = "ME" | "THEM" | "MUTUAL";
+
+const REACHED_OUT_OPTIONS: ReadonlyArray<{ value: ReachedOutBy; label: string }> = [
+  { value: "ME", label: "I did" },
+  { value: "THEM", label: "They did" },
+  { value: "MUTUAL", label: "Mutual" },
+];
 
 /**
  * Log something that happened.
@@ -39,6 +51,7 @@ export function LogInteractionSheet({
   defaultContactIds = [],
   defaultOccurredAt,
   onLogged,
+  customFields = [],
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -47,14 +60,20 @@ export function LogInteractionSheet({
   defaultContactIds?: string[];
   defaultOccurredAt?: Date;
   onLogged?: () => void;
+  /** Your own interaction fields — collapsed, so logging stays fast. */
+  customFields?: RenderableField[];
 }) {
   const router = useRouter();
   const [error, setError] = React.useState<string>();
   const [sentiment, setSentiment] = React.useState<number | null>(null);
+  const [reachedOutBy, setReachedOutBy] = React.useState<ReachedOutBy | null>(null);
   const formRef = React.useRef<HTMLFormElement>(null);
 
   async function onSubmit(form: FormData) {
     if (sentiment !== null) form.set("sentiment", String(sentiment));
+    // Left unset the field stays UNSPECIFIED, which is the honest answer when
+    // you genuinely don't remember who called whom.
+    if (reachedOutBy !== null) form.set("reachedOutBy", reachedOutBy);
 
     const result = await createInteraction(form);
     if (!result.ok) {
@@ -64,6 +83,7 @@ export function LogInteractionSheet({
 
     setError(undefined);
     setSentiment(null);
+    setReachedOutBy(null);
     formRef.current?.reset();
     toast.success("Logged");
     onOpenChange(false);
@@ -115,6 +135,32 @@ export function LogInteractionSheet({
             </Field>
 
             <div className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Who got in touch?</span>
+              <div className="flex gap-1.5">
+                {REACHED_OUT_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={reachedOutBy === option.value}
+                    onClick={() =>
+                      setReachedOutBy((current) =>
+                        current === option.value ? null : option.value,
+                      )
+                    }
+                    className={cn(
+                      "min-h-11 flex-1 rounded-lg border px-2 py-1.5 text-xs transition-colors",
+                      reachedOutBy === option.value
+                        ? "border-accent-8 bg-accent-3 text-accent-11"
+                        : "border-border hover:bg-muted",
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">How did it go?</span>
               <div className="flex gap-1.5">
                 {SENTIMENTS.map((option) => (
@@ -138,6 +184,8 @@ export function LogInteractionSheet({
                 ))}
               </div>
             </div>
+
+            <CollapsibleCustomFields fields={customFields} />
           </SheetBody>
 
           <SheetFooter>

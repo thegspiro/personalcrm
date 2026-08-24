@@ -3,6 +3,11 @@ import { cache } from "react";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import {
+  RECIPROCITY_WINDOW,
+  summarizeReciprocity,
+  type ReciprocitySummary,
+} from "@/lib/reciprocity";
+import {
   contactPrivacyWhere,
   factPrivacyWhere,
   interactionPrivacyWhere,
@@ -148,6 +153,8 @@ const DETAIL_INCLUDE = {
   ideas: { orderBy: [{ status: "asc" }, { createdAt: "desc" }] },
   tasks: { orderBy: [{ completedAt: "asc" }, { dueDate: "asc" }] },
   gifts: { include: { occasion: true }, orderBy: { createdAt: "desc" } },
+  debts: { orderBy: [{ settledOn: "asc" }, { incurredOn: "desc" }] },
+  dietaryNeeds: { orderBy: { createdAt: "asc" } },
   relationsFrom: {
     include: {
       type: true,
@@ -180,6 +187,10 @@ export const getContact = cache(
       contact.relationsFrom = contact.relationsFrom.filter(
         (relation) => !relation.toContact.isPrivate,
       );
+      // DETAIL_INCLUDE fetches the whole row, so a where-fragment elsewhere
+      // would not help here: without this the private debt is serialised into
+      // the page payload even though the section never renders it.
+      contact.debts = contact.debts.filter((debt) => !debt.isPrivate);
     }
     return contact;
   },
@@ -216,4 +227,33 @@ export async function listTags(ownerId: string) {
     select: { id: true, name: true, slug: true, color: true, _count: { select: { contacts: true } } },
     orderBy: { name: "asc" },
   });
+}
+
+/**
+ * How the reaching out has been split with one contact.
+ *
+ * Two queries rather than one: the window of attributed interactions the ratio
+ * is built from, and the total logged, so the readout can say what share of the
+ * history it actually speaks for. Both go through the same privacy scope — a
+ * summary counting rows the list beside it does not show would quietly
+ * disclose that something is hidden.
+ */
+export async function getReciprocity(
+  ownerId: string,
+  contactId: string,
+): Promise<ReciprocitySummary> {
+  const scope = await privacyScope();
+  const mine = { ownerId, participants: { some: { contactId } }, ...interactionPrivacyWhere(scope) };
+
+  const [rows, total] = await Promise.all([
+    prisma.interaction.findMany({
+      where: { ...mine, reachedOutBy: { not: "UNSPECIFIED" } },
+      orderBy: { occurredAt: "desc" },
+      take: RECIPROCITY_WINDOW,
+      select: { reachedOutBy: true, occurredAt: true },
+    }),
+    prisma.interaction.count({ where: mine }),
+  ]);
+
+  return summarizeReciprocity(rows, total);
 }

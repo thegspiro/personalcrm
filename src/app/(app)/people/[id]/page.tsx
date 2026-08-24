@@ -1,12 +1,16 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getUserContext } from "@/server/user/context";
-import { getContact, listContactOptions } from "@/server/queries/contacts";
+import { getContact, getReciprocity, listContactOptions } from "@/server/queries/contacts";
 import { buildTimeline } from "@/server/queries/timeline";
 import { listTermsByKind } from "@/server/taxonomy/queries";
 import { listDateEntries } from "@/server/queries/dating";
 import { canSeeDating } from "@/server/privacy/filter";
 import { getContactFamily, listHouseholdOptions } from "@/server/queries/family";
+import { fieldsFor } from "@/server/queries/custom-fields";
+import { offlineCacheable } from "@/server/privacy/offline";
+import { CacheThisPage } from "@/components/offline/offline";
+import { CustomFieldValues } from "@/components/custom-fields/field-values";
 import { familyMeta } from "@/lib/family";
 import { FamilySection, ContactHouseholdsSection } from "@/components/family/family-section";
 import { SuggestionList } from "@/components/family/suggestions";
@@ -18,6 +22,8 @@ import {
 import { ContactHeader } from "@/components/contacts/contact-header";
 import {
   DatesSection,
+  DebtsSection,
+  DietarySection,
   FactsSection,
   GiftsSection,
   IdeasSection,
@@ -55,8 +61,22 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
   // Gate before fetching: withholding the section in the component would still
   // have put the dates and notes into the payload sent to the browser.
   const showDating = contact.isRomantic && (await canSeeDating(prefs.hideDating));
+  // This one person is the whole page, so their own marker decides it — plus
+  // the dating sections, which are the most sensitive thing here.
+  const cacheable =
+    !contact.isPrivate && !showDating && (await offlineCacheable(user.id));
 
-  const [terms, timeline, contactOptions, dateEntries, family, allHouseholds] = await Promise.all([
+  const [
+    terms,
+    timeline,
+    contactOptions,
+    dateEntries,
+    family,
+    allHouseholds,
+    customFields,
+    interactionFields,
+    reciprocity,
+  ] = await Promise.all([
     listTermsByKind(user.id, [
       "INTERACTION_TYPE",
       "FACT_CATEGORY",
@@ -73,6 +93,9 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     showDating ? listDateEntries(user.id, id) : Promise.resolve([]),
     getContactFamily(user.id, id),
     listHouseholdOptions(user.id),
+    fieldsFor(user.id, "CONTACT", id, { categoryId: contact.categoryId }),
+    fieldsFor(user.id, "INTERACTION", null),
+    getReciprocity(user.id, id),
   ]);
 
   // Family relationships get their own section, so "Connected people" is left
@@ -86,6 +109,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
+      {cacheable ? <CacheThisPage /> : null}
       <div className="grid min-w-0 gap-4 lg:col-span-2">
         <ContactHeader
           contact={{
@@ -99,6 +123,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                 }
               : null,
           }}
+          interactionFields={interactionFields}
           cadence={{
             status: cadenceStatus(contact.nextTouchAt, timezone),
             message: cadenceMessage(daysUntilTouch(contact.nextTouchAt, timezone)),
@@ -118,6 +143,14 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
       <div className="grid min-w-0 gap-3">
         <SectionCard title="Timeline" icon="History" count={timeline.length}>
+          {reciprocity.text ? (
+            <div className="grid gap-0.5 px-1">
+              <p className="text-xs text-muted-foreground">{reciprocity.text}</p>
+              {reciprocity.coverage ? (
+                <p className="text-[11px] text-muted-foreground/70">{reciprocity.coverage}</p>
+              ) : null}
+            </div>
+          ) : null}
           <TimelineList
             entries={timeline}
             today={today}
@@ -209,6 +242,17 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           </>
         ) : null}
 
+        <DietarySection
+          contactId={contact.id}
+          needs={contact.dietaryNeeds.map((need) => ({
+            id: need.id,
+            kind: need.kind,
+            label: need.label,
+            notes: need.notes,
+            carriesEpinephrine: need.carriesEpinephrine,
+          }))}
+        />
+
         <FactsSection
           contactId={contact.id}
           facts={contact.facts.map((fact) => ({
@@ -276,6 +320,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           }))}
         />
 
+        <CustomFieldValues fields={customFields} editHref={`/people/${contact.id}/edit`} />
+
         <FamilySection
           contactId={contact.id}
           tiers={family.tiers.map((group) => ({
@@ -326,6 +372,21 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             }))}
           types={otherTypes}
           contacts={contactOptions}
+        />
+
+        <DebtsSection
+          contactId={contact.id}
+          debts={contact.debts.map((debt) => ({
+            id: debt.id,
+            direction: debt.direction,
+            description: debt.description,
+            amountCents: debt.amountCents,
+            currency: debt.currency,
+            incurredOn: plainDateFromDb(debt.incurredOn),
+            settledOn: debt.settledOn ? plainDateFromDb(debt.settledOn) : null,
+            notes: debt.notes,
+            isPrivate: debt.isPrivate,
+          }))}
         />
 
         <GiftsSection

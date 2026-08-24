@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { getUserContext } from "@/server/user/context";
+import { offlineCacheable } from "@/server/privacy/offline";
+import { CacheThisPage } from "@/components/offline/offline";
 import { buildTimeline, type TimelineKind } from "@/server/queries/timeline";
 import { TimelineList } from "@/components/timeline/timeline-list";
 import { TimelineFilters } from "@/components/timeline/timeline-filters";
@@ -21,6 +23,7 @@ export default async function TimelinePage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { user, prefs, timezone } = await getUserContext();
+  const cacheable = await offlineCacheable(user.id);
   const params = await searchParams;
 
   const first = (key: string) => {
@@ -47,6 +50,7 @@ export default async function TimelinePage({
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
+      {cacheable ? <CacheThisPage /> : null}
       <div>
         <h2 className="text-lg font-semibold tracking-tight">Timeline</h2>
         <p className="text-xs text-muted-foreground">

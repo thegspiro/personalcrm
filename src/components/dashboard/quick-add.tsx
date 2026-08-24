@@ -4,9 +4,11 @@ import * as React from "react";
 import Link from "next/link";
 import { Plus, UserPlus } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { QuickAddBox } from "@/components/quick-add/quick-add-box";
 import { LogInteractionSheet } from "@/components/contacts/log-interaction";
 import type { TermOption } from "@/components/form/term-select";
 import type { PickerContact } from "@/components/form/contact-picker";
+import type { RenderableField } from "@/components/custom-fields/field-renderer";
 
 /**
  * The one-tap entry point. Sits at the top of the dashboard on mobile, where
@@ -15,15 +17,22 @@ import type { PickerContact } from "@/components/form/contact-picker";
 export function QuickAddWidget({
   contacts,
   types,
+  customFields = [],
 }: {
   contacts: PickerContact[];
   types: TermOption[];
+  customFields?: RenderableField[];
 }) {
   const [logging, setLogging] = React.useState(false);
 
   return (
     <Card className="lg:col-span-2">
-      <CardContent className="flex flex-wrap gap-2 pt-4">
+      <CardContent className="grid grid-cols-[minmax(0,1fr)] gap-3 pt-4">
+        {/* One line, then confirm. Parsed on this machine — see Settings for
+            the optional assisted reading. */}
+        <QuickAddBox types={types} />
+
+        <div className="flex flex-wrap gap-2">
         <button
           type="button"
           onClick={() => setLogging(true)}
@@ -39,6 +48,7 @@ export function QuickAddWidget({
           <UserPlus className="size-4" />
           Add someone
         </Link>
+        </div>
       </CardContent>
 
       <LogInteractionSheet
@@ -46,6 +56,7 @@ export function QuickAddWidget({
         onOpenChange={setLogging}
         contacts={contacts}
         types={types}
+        customFields={customFields}
       />
     </Card>
   );

@@ -39,8 +39,14 @@ type Kind = "interaction" | "life-event" | "fact" | "important-date";
 const KINDS: Array<{ value: Kind; label: string; hint: string }> = [
   { value: "interaction", label: "Something you did", hint: "A meal, a call, a trip — with a date in the past." },
   { value: "life-event", label: "Something that happened to them", hint: "A job, a move, a milestone. A year on its own is fine." },
-  { value: "fact", label: "Something to remember", hint: "A preference, a allergy, a story. No date needed." },
+  { value: "fact", label: "Something to remember", hint: "A habit, a preference, a story. No date needed." },
   { value: "important-date", label: "A date worth remembering", hint: "Birthdays and anniversaries that come round." },
+];
+
+const BACKFILL_REACHED_OUT: ReadonlyArray<{ value: "ME" | "THEM" | "MUTUAL"; label: string }> = [
+  { value: "ME", label: "I did" },
+  { value: "THEM", label: "They did" },
+  { value: "MUTUAL", label: "Mutual" },
 ];
 
 interface AddedItem {
@@ -68,6 +74,7 @@ export function BackfillPanel({
   const [kind, setKind] = React.useState<Kind>("interaction");
   const [added, setAdded] = React.useState<AddedItem[]>([]);
   const [error, setError] = React.useState<string>();
+  const [reachedOutBy, setReachedOutBy] = React.useState<"ME" | "THEM" | "MUTUAL" | null>(null);
 
   // Keeping the form mounted per kind is what preserves the date between
   // entries — remounting would reset it to today every time.
@@ -76,6 +83,7 @@ export function BackfillPanel({
   async function submit(form: FormData) {
     form.set("contactId", contactId);
     if (kind === "interaction") form.set("contactIds", contactId);
+    if (kind === "interaction" && reachedOutBy) form.set("reachedOutBy", reachedOutBy);
 
     const action = {
       interaction: createInteraction,
@@ -174,6 +182,36 @@ export function BackfillPanel({
             {kind === "interaction" ? (
               <form ref={formRef} action={submit} className="grid gap-3" key="interaction">
                 <TermChips name="typeId" label="What was it?" terms={interactionTypes} allowEmpty={false} />
+                {/* Deliberately not cleared between entries: reconstructing a
+                    stretch of history usually means a run of the same answer,
+                    and this is the one signal whose whole value is volume. */}
+                <div className="grid gap-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    Who got in touch?
+                  </span>
+                  <div className="flex gap-1.5">
+                    {BACKFILL_REACHED_OUT.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={reachedOutBy === option.value}
+                        onClick={() =>
+                          setReachedOutBy((current) =>
+                            current === option.value ? null : option.value,
+                          )
+                        }
+                        className={cn(
+                          "min-h-11 flex-1 rounded-lg border px-2 py-1.5 text-xs transition-colors",
+                          reachedOutBy === option.value
+                            ? "border-accent-8 bg-accent-3 text-accent-11"
+                            : "border-border hover:bg-muted",
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <DateTimeField
                   name="occurredAt"
                   label="When"

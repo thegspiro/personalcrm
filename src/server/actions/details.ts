@@ -3,6 +3,8 @@
 import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
+import { calendarDateInTz, plainDateToDb } from "@/lib/dates";
+import { dietaryKindOf } from "@/lib/dietary";
 import {
   type ActionResult,
   bool,
@@ -17,7 +19,7 @@ import {
 
 /**
  * Everything that hangs off a contact: facts, important dates, life events,
- * ideas, tasks, gifts, and relationships.
+ * ideas, tasks, gifts, debts, dietary needs, and relationships.
  *
  * None of these touch interaction history, so none of them recompute contact
  * activity — only interactions move the keep-in-touch clock.
@@ -381,6 +383,105 @@ export async function deleteGift(id: string): Promise<ActionResult> {
   return ok();
 }
 
+// --- debts -----------------------------------------------------------------
+
+export async function createDebt(form: FormData): Promise<ActionResult<{ id: string }>> {
+  const { ownerId, timezone } = await owner();
+  const contactId = str(form, "contactId");
+  const description = str(form, "description");
+  if (!contactId || !description) return fail("What was lent?");
+  if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
+
+  const amount = num(form, "amount");
+  // Most debts are written down as they happen, so an empty date means today
+  // rather than an error — in the account's timezone, not the server's.
+  const incurredOn =
+    plainDate(form, "incurredOn") ?? plainDateToDb(calendarDateInTz(new Date(), timezone));
+
+  const created = await prisma.debt.create({
+    data: {
+      ownerId,
+      contactId,
+      direction: debtDirectionOf(str(form, "direction")),
+      description,
+      // Null keeps a lent object out of the balance rather than valuing it at
+      // zero, which would read as a settled debt.
+      amountCents: amount === undefined ? null : Math.round(amount * 100),
+      currency: str(form, "currency")?.toUpperCase() ?? "USD",
+      incurredOn,
+      notes: str(form, "notes") ?? null,
+      isPrivate: bool(form, "isPrivate"),
+    },
+  });
+
+  touch(contactId);
+  return ok({ id: created.id });
+}
+
+export async function settleDebt(id: string, on: Date | null): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const existing = await prisma.debt.findFirst({
+    where: { id, ownerId },
+    select: { contactId: true, incurredOn: true },
+  });
+  if (!existing) return fail("Not found.");
+  // A debt settled before it was incurred makes nonsense of any later report,
+  // and it is far more likely to be a typo than a story worth keeping.
+  if (on && on < existing.incurredOn) return fail("That's before the debt started.");
+
+  await prisma.debt.update({ where: { id }, data: { settledOn: on } });
+  touch(existing.contactId);
+  return ok();
+}
+
+export async function deleteDebt(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const existing = await prisma.debt.findFirst({
+    where: { id, ownerId },
+    select: { contactId: true },
+  });
+  if (!existing) return fail("Not found.");
+  await prisma.debt.delete({ where: { id } });
+  touch(existing.contactId);
+  return ok();
+}
+
+// --- dietary needs ---------------------------------------------------------
+
+export async function createDietaryNeed(form: FormData): Promise<ActionResult<{ id: string }>> {
+  const { ownerId } = await owner();
+  const contactId = str(form, "contactId");
+  const label = str(form, "label");
+  if (!contactId || !label) return fail("What can't they have?");
+  if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
+
+  const created = await prisma.dietaryNeed.create({
+    data: {
+      ownerId,
+      contactId,
+      kind: dietaryKindOf(str(form, "kind")),
+      label,
+      notes: str(form, "notes") ?? null,
+      carriesEpinephrine: bool(form, "carriesEpinephrine"),
+    },
+  });
+
+  touch(contactId);
+  return ok({ id: created.id });
+}
+
+export async function deleteDietaryNeed(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const existing = await prisma.dietaryNeed.findFirst({
+    where: { id, ownerId },
+    select: { contactId: true },
+  });
+  if (!existing) return fail("Not found.");
+  await prisma.dietaryNeed.delete({ where: { id } });
+  touch(existing.contactId);
+  return ok();
+}
+
 // --- relationships ---------------------------------------------------------
 
 /**
@@ -476,6 +577,10 @@ function priorityOf(value?: string): "LOW" | "NORMAL" | "HIGH" {
 
 function giftStatusOf(value?: string): "IDEA" | "RESERVED" | "PURCHASED" | "GIVEN" {
   return value === "RESERVED" || value === "PURCHASED" || value === "GIVEN" ? value : "IDEA";
+}
+
+function debtDirectionOf(value?: string): "THEY_OWE_ME" | "I_OWE_THEM" {
+  return value === "I_OWE_THEM" ? "I_OWE_THEM" : "THEY_OWE_ME";
 }
 
 /** "30, 7, 0" -> [30, 7, 0]; empty falls back to the account default. */

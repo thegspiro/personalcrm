@@ -29,6 +29,11 @@ export function factPrivacyWhere(scope: PrivacyScope): Prisma.FactWhereInput {
   return scope.unlocked ? {} : { isPrivate: false };
 }
 
+/** Applied to Debt queries. */
+export function debtPrivacyWhere(scope: PrivacyScope): Prisma.DebtWhereInput {
+  return scope.unlocked ? {} : { isPrivate: false };
+}
+
 /**
  * Applied to Interaction queries.
  *

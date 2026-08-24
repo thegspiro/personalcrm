@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { createContact, ensureSignedIn } from "./helpers";
+import { createContact, ensureSignedIn, openPrivacySettings } from "./helpers";
 
 /**
  * The secondary lock, tested for what it actually has to do: withhold data.
@@ -17,7 +17,7 @@ const secretName = () => `Secret ${test.info().project.name} ${STAMP}`;
 
 test("set a PIN and switch the lock on", async ({ page }) => {
   await ensureSignedIn(page);
-  await page.goto("/settings");
+  await openPrivacySettings(page);
 
   // Be honest in the UI about what this protects against.
   await expect(page.getByText(/doesn't encrypt anything/i)).toBeVisible();
@@ -61,7 +61,7 @@ test("a private contact is withheld from the response while locked", async ({ pa
   const beforeLock = await (await page.request.get("/people")).text();
   expect(beforeLock).toContain(name);
 
-  await page.goto("/settings");
+  await openPrivacySettings(page);
   await page.getByRole("button", { name: "Lock now" }).click();
   await page.waitForURL("/");
 
@@ -80,6 +80,55 @@ test("a private contact is withheld from the response while locked", async ({ pa
 
   await page.goto(url);
   await expect(page.getByRole("heading", { name: "Nothing here" })).toBeVisible();
+});
+
+test("a gift for a private contact is withheld from the gifts list while locked", async ({
+  page,
+}) => {
+  // Regression: /gifts queried by owner alone, so a gift named the private
+  // contact it was bought for and listed them while the lock was closed.
+  await ensureSignedIn(page);
+  const name = secretName();
+  const url = await createContact(page, name);
+  const gift = `Sable brush ${Date.now().toString(36)}`;
+
+  await page.goto("/unlock?next=/");
+  await page.getByLabel("PIN").fill(PIN);
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.waitForURL("/");
+
+  await page.goto(url);
+  await page.getByRole("button", { name: "Add a gift" }).click();
+  await page.getByLabel("What is it?").fill(gift);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText(gift)).toBeVisible();
+
+  await page.getByRole("button", { name: "Contact actions" }).click();
+  await page.getByRole("menuitem", { name: "Mark private" }).click();
+  await expect(page.getByText("Private", { exact: true })).toBeVisible();
+
+  expect(await (await page.request.get("/gifts")).text()).toContain(gift);
+
+  await openPrivacySettings(page);
+  await page.getByRole("button", { name: "Lock now" }).click();
+  await page.waitForURL("/");
+
+  // Raw HTML, for the same reason the contact list is checked this way: the row
+  // must never have left the database.
+  const html = await (await page.request.get("/gifts")).text();
+  expect(html).not.toContain(gift);
+  expect(html).not.toContain(name);
+
+  // Leave nothing private behind — a stray private contact switches offline
+  // caching off account-wide and fails the next project for no reason.
+  await page.goto("/unlock?next=/");
+  await page.getByLabel("PIN").fill(PIN);
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.waitForURL("/");
+  await page.goto(url);
+  await page.getByRole("button", { name: "Contact actions" }).click();
+  await page.getByRole("menuitem", { name: "Remove private mark" }).click();
+  await expect(page.getByText("Private", { exact: true })).toHaveCount(0);
 });
 
 test("locked routes redirect to the unlock screen", async ({ page }) => {
@@ -112,7 +161,7 @@ test("the right PIN unlocks and returns you where you were headed", async ({ pag
 
 test("hiding the module removes it from navigation and blocks the route", async ({ page }) => {
   await ensureSignedIn(page);
-  await page.goto("/settings");
+  await openPrivacySettings(page);
   await page.getByRole("switch", { name: /Hide the dating module/ }).click();
   await expect(page.getByRole("switch", { name: /Hide the dating module/ })).toBeChecked();
 
@@ -126,7 +175,7 @@ test("hiding the module removes it from navigation and blocks the route", async 
 
   // Put it back: a test that leaves a global setting on becomes a trap for
   // everything that runs after it.
-  await page.goto("/settings");
+  await openPrivacySettings(page);
   await page.getByRole("switch", { name: /Hide the dating module/ }).click();
   await expect(page.getByRole("switch", { name: /Hide the dating module/ })).not.toBeChecked();
 });
@@ -152,7 +201,7 @@ test("dating writes are refused while locked, not just hidden", async ({ page })
 
   // Close the lock, then confirm the write path is gone rather than merely
   // invisible: the section is not rendered at all.
-  await page.goto("/settings");
+  await openPrivacySettings(page);
   await page.getByRole("button", { name: "Lock now" }).click();
   await page.waitForURL("/");
 
@@ -165,13 +214,41 @@ test("dating writes are refused while locked, not just hidden", async ({ page })
   expect(html).not.toContain("Private notes");
 });
 
-test("cleaning up: unhide and remove the PIN", async ({ page }) => {
+test("cleaning up: unhide, unmark, and remove the PIN", async ({ page }) => {
   await ensureSignedIn(page);
-  await page.goto("/settings");
+  await openPrivacySettings(page);
 
   await page.getByLabel("Remove the PIN").fill(PIN);
   await page.getByRole("button", { name: "Remove PIN" }).click();
   await expect(page.getByText("PIN set")).toHaveCount(0);
+
+  // Unmark the contact too. A private contact left behind is not just untidy —
+  // it switches offline caching off for the whole account, so the next
+  // project's offline tests would fail for a reason that has nothing to do
+  // with them.
+  await page.goto(`/people?q=${encodeURIComponent(secretName())}`);
+  const link = page.getByRole("link", { name: new RegExp(secretName()) });
+  if ((await link.count()) > 0) {
+    await link.first().click();
+    await page.waitForURL(/\/people\/[a-z0-9]{20,}$/);
+    const url = page.url();
+    await page.getByRole("button", { name: "Contact actions" }).click();
+    const posted = page.waitForResponse(
+      (response) => response.request().method() === "POST",
+      { timeout: 15_000 },
+    );
+    await page.getByRole("menuitem", { name: "Remove private mark" }).click();
+    await posted.catch(() => {});
+    await expect
+      .poll(
+        async () => {
+          await page.goto(url);
+          return page.getByText("Private", { exact: true }).count();
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(0);
+  }
 
   // With no PIN the lock is off, so dating is reachable again.
   await page.goto("/dating");

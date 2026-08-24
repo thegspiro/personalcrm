@@ -16,8 +16,18 @@ import { SectionCard, SectionEmpty, SectionRow } from "./section-card";
 import { useAction, useAddAction } from "@/components/form/use-action";
 import { formatPartialDate, formatPartialRange, type DatePrecision } from "@/lib/date-precision";
 import { formatMoney, termColorClasses } from "@/lib/format";
+import { summarizeDebts, type DebtDirection } from "@/lib/debts";
+import {
+  DIETARY_GROUPS,
+  DIETARY_KINDS,
+  DIETARY_KIND_LABELS,
+  mustAvoid,
+  type DietaryKind,
+} from "@/lib/dietary";
 import type { PlainDate } from "@/lib/dates";
 import {
+  createDebt,
+  createDietaryNeed,
   createFact,
   createGift,
   createIdea,
@@ -25,6 +35,8 @@ import {
   createLifeEvent,
   createRelationship,
   createTask,
+  deleteDebt,
+  deleteDietaryNeed,
   deleteFact,
   deleteGift,
   deleteIdea,
@@ -34,6 +46,7 @@ import {
   deleteTask,
   setIdeaStatus,
   setTaskDone,
+  settleDebt,
 } from "@/server/actions/details";
 
 // --- facts -----------------------------------------------------------------
@@ -73,7 +86,7 @@ export function FactsSection({
               name="content"
               rows={2}
               required
-              placeholder="Allergic to shellfish — genuinely, not a preference."
+              placeholder="Reads Le Carré. Hates surprises. Grew up in Lagos."
             />
           </Field>
           <TermChips name="categoryId" label="Category" terms={categories} />
@@ -546,6 +559,326 @@ export function RelationshipsSection({
           </SectionRow>
         ))
       )}
+    </SectionCard>
+  );
+}
+
+// --- dietary needs ---------------------------------------------------------
+
+export interface DietaryItem {
+  id: string;
+  kind: DietaryKind;
+  label: string;
+  notes: string | null;
+  carriesEpinephrine: boolean;
+}
+
+/**
+ * What someone can't, or won't, eat.
+ *
+ * Two headings only, whatever the four kinds record — see `@/lib/dietary`. The
+ * add form opens on Allergy rather than on nothing, because the two ways of
+ * getting this wrong do not cost the same.
+ */
+export function DietarySection({
+  contactId,
+  needs,
+}: {
+  contactId: string;
+  needs: DietaryItem[];
+}) {
+  const run = useAction();
+  const add = useAddAction();
+  const [kind, setKind] = React.useState<DietaryKind>("ALLERGY");
+
+  const groups = DIETARY_GROUPS.map((group) => ({
+    ...group,
+    items: needs.filter((need) => group.kinds.includes(need.kind as never)),
+  })).filter((group) => group.items.length > 0);
+
+  return (
+    <SectionCard
+      title="Food and drink to avoid"
+      icon="UtensilsCrossed"
+      count={needs.length}
+      addLabel="Add a dietary need"
+      form={(close) => (
+        <form action={add(createDietaryNeed, close, "Noted")} className="grid gap-2.5">
+          <input type="hidden" name="contactId" value={contactId} />
+          <input type="hidden" name="kind" value={kind} />
+
+          <Field label="What should they avoid?" htmlFor="diet-label">
+            <Input id="diet-label" name="label" required placeholder="Shellfish" />
+          </Field>
+
+          <div className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">What kind?</span>
+            <div className="flex flex-wrap gap-1.5">
+              {DIETARY_KINDS.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={kind === option}
+                  onClick={() => setKind(option)}
+                  className={cn(
+                    "min-h-9 rounded-full border px-3 py-1 text-xs transition-colors",
+                    kind === option
+                      ? "border-accent-8 bg-accent-3 text-accent-11"
+                      : "border-border hover:bg-muted",
+                  )}
+                >
+                  {DIETARY_KIND_LABELS[option]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <Field label="Anything else worth knowing?" htmlFor="diet-notes">
+            <Textarea
+              id="diet-notes"
+              name="notes"
+              rows={2}
+              placeholder="Fine with it cooked, reacts to it raw."
+            />
+          </Field>
+
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" name="carriesEpinephrine" value="true" className="size-4" />
+            Carries adrenaline for this
+          </label>
+
+          <SubmitButton size="sm">Add</SubmitButton>
+        </form>
+      )}
+    >
+      {needs.length === 0 ? (
+        <SectionEmpty>Nothing noted — worth asking before you cook for them.</SectionEmpty>
+      ) : (
+        groups.map((group) => (
+          <div key={group.id} className="grid gap-2">
+            <h3 className="px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {group.heading}
+            </h3>
+            {group.items.map((need) => (
+              <SectionRow
+                key={need.id}
+                className={mustAvoid(need.kind) ? "border-destructive/40 bg-destructive/5" : undefined}
+                onDelete={() => void run(() => deleteDietaryNeed(need.id), "Removed")}
+                deleteLabel="Remove dietary need"
+              >
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="text-sm font-medium">{need.label}</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {DIETARY_KIND_LABELS[need.kind]}
+                  </span>
+                  {need.carriesEpinephrine ? (
+                    <Badge variant="destructive" className="text-[10px]">
+                      Carries adrenaline
+                    </Badge>
+                  ) : null}
+                </div>
+                {need.notes ? (
+                  <p className="mt-0.5 whitespace-pre-line text-xs text-muted-foreground">
+                    {need.notes}
+                  </p>
+                ) : null}
+              </SectionRow>
+            ))}
+          </div>
+        ))
+      )}
+    </SectionCard>
+  );
+}
+
+// --- debts -----------------------------------------------------------------
+
+export interface DebtItem {
+  id: string;
+  direction: DebtDirection;
+  description: string;
+  amountCents: number | null;
+  currency: string;
+  incurredOn: PlainDate;
+  settledOn: PlainDate | null;
+  notes: string | null;
+  isPrivate: boolean;
+}
+
+/**
+ * Money and things that have moved and not come back.
+ *
+ * Settled rows stay, behind a disclosure — that someone always pays you back is
+ * worth as much as knowing they owe you now, but it shouldn't crowd out what is
+ * still outstanding.
+ */
+export function DebtsSection({ contactId, debts }: { contactId: string; debts: DebtItem[] }) {
+  const run = useAction();
+  const add = useAddAction();
+  const [showSettled, setShowSettled] = React.useState(false);
+
+  const summary = summarizeDebts(
+    debts.map((debt) => ({
+      direction: debt.direction,
+      amountCents: debt.amountCents,
+      currency: debt.currency,
+      settled: debt.settledOn !== null,
+    })),
+  );
+
+  const outstanding = debts.filter((debt) => !debt.settledOn);
+  const settled = debts.filter((debt) => debt.settledOn);
+
+  return (
+    <SectionCard
+      title="Lent and borrowed"
+      icon="Scale"
+      count={outstanding.length}
+      addLabel="Add a debt"
+      defaultOpen={false}
+      form={(close) => (
+        <form action={add(createDebt, close, "Noted")} className="grid gap-2.5">
+          <input type="hidden" name="contactId" value={contactId} />
+
+          <Field label="What was it?" htmlFor="debt-description">
+            <Input id="debt-description" name="description" required placeholder="Covered dinner" />
+          </Field>
+
+          <Field label="Which way?" htmlFor="debt-direction">
+            <select
+              id="debt-direction"
+              name="direction"
+              defaultValue="THEY_OWE_ME"
+              className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+            >
+              <option value="THEY_OWE_ME">They owe me</option>
+              <option value="I_OWE_THEM">I owe them</option>
+            </select>
+          </Field>
+
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            <Field label="How much?" htmlFor="debt-amount" hint="Leave empty if you lent a thing.">
+              <Input
+                id="debt-amount"
+                name="amount"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                placeholder="0.00"
+              />
+            </Field>
+            <DateField name="incurredOn" label="When" hint="Defaults to today." />
+          </div>
+
+          <Field label="Notes" htmlFor="debt-notes">
+            <Textarea id="debt-notes" name="notes" rows={2} />
+          </Field>
+
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" name="isPrivate" value="true" className="size-4" />
+            Hide this behind the privacy lock
+          </label>
+
+          <SubmitButton size="sm">Add</SubmitButton>
+        </form>
+      )}
+    >
+      {summary.balances.length > 0 || summary.itemCount > 0 ? (
+        <div className="grid gap-0.5 px-1 text-xs">
+          {summary.balances.map((balance) => (
+            <p key={balance.currency} className="text-muted-foreground">
+              {balance.theyOweCents > 0 ? (
+                <span>They owe you {formatMoney(balance.theyOweCents, balance.currency)}</span>
+              ) : null}
+              {balance.theyOweCents > 0 && balance.youOweCents > 0 ? <span> · </span> : null}
+              {balance.youOweCents > 0 ? (
+                <span>You owe them {formatMoney(balance.youOweCents, balance.currency)}</span>
+              ) : null}
+              {balance.netCents !== null ? (
+                <span className="font-medium text-foreground">
+                  {" "}
+                  · net {formatMoney(Math.abs(balance.netCents), balance.currency)}{" "}
+                  {balance.netCents >= 0 ? "your way" : "their way"}
+                </span>
+              ) : null}
+            </p>
+          ))}
+          {summary.itemCount > 0 ? (
+            <p className="text-muted-foreground">
+              {summary.itemCount} {summary.itemCount === 1 ? "thing" : "things"} lent, no sum
+              attached
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {outstanding.length === 0 ? (
+        <SectionEmpty>Nothing outstanding.</SectionEmpty>
+      ) : (
+        outstanding.map((debt) => (
+          <SectionRow
+            key={debt.id}
+            onDelete={() => void run(() => deleteDebt(debt.id), "Removed")}
+            deleteLabel="Delete debt"
+          >
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="text-sm">{debt.description}</span>
+              {formatMoney(debt.amountCents, debt.currency) ? (
+                <span className="text-sm font-medium">
+                  {formatMoney(debt.amountCents, debt.currency)}
+                </span>
+              ) : null}
+              <span className="text-[11px] text-muted-foreground">
+                {debt.direction === "THEY_OWE_ME" ? "they owe you" : "you owe them"}
+              </span>
+              {debt.isPrivate ? <Icon name="EyeOff" className="size-3 text-muted-foreground" /> : null}
+            </div>
+            {debt.notes ? (
+              <p className="mt-0.5 whitespace-pre-line text-xs text-muted-foreground">{debt.notes}</p>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void run(() => settleDebt(debt.id, new Date()), "Settled")}
+              className="mt-1 text-[11px] font-medium text-accent-11 hover:underline"
+            >
+              Mark settled
+            </button>
+          </SectionRow>
+        ))
+      )}
+
+      {settled.length > 0 ? (
+        <div className="grid gap-2">
+          <button
+            type="button"
+            onClick={() => setShowSettled((v) => !v)}
+            aria-expanded={showSettled}
+            className="px-1 text-left text-[11px] font-medium text-muted-foreground hover:underline"
+          >
+            {settled.length} settled
+          </button>
+          {showSettled
+            ? settled.map((debt) => (
+                <SectionRow
+                  key={debt.id}
+                  className="opacity-70"
+                  onDelete={() => void run(() => deleteDebt(debt.id), "Removed")}
+                  deleteLabel="Delete debt"
+                >
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="text-sm line-through">{debt.description}</span>
+                    {formatMoney(debt.amountCents, debt.currency) ? (
+                      <span className="text-xs text-muted-foreground">
+                        {formatMoney(debt.amountCents, debt.currency)}
+                      </span>
+                    ) : null}
+                  </div>
+                </SectionRow>
+              ))
+            : null}
+        </div>
+      ) : null}
     </SectionCard>
   );
 }

@@ -81,8 +81,8 @@ export const WIDGET_REGISTRY: Record<WidgetId, WidgetDefinition> = {
   },
   "idea-bank": {
     id: "idea-bank",
-    title: "Conversation ideas",
-    description: "Things you've been meaning to bring up.",
+    title: "Bring this up",
+    description: "Conversation ideas you've been meaning to raise.",
     icon: "Lightbulb",
     defaultEnabled: true,
     defaultSettings: { limit: 6 },

@@ -6,6 +6,11 @@ import {
   recomputeContactActivity,
   resequenceDateEntries,
 } from "@/server/services/contact-activity";
+import {
+  customFieldFailure,
+  deleteCustomFieldValues,
+  saveCustomFieldValuesOrThrow,
+} from "@/server/services/custom-field-values";
 import { findTermBySlug } from "@/server/taxonomy/queries";
 import { requireUnlocked } from "@/server/privacy/lock";
 import {
@@ -80,7 +85,8 @@ export async function upsertRomanticProfile(form: FormData): Promise<ActionResul
     .getAll("loveLanguages")
     .filter((v): v is string => typeof v === "string" && v.trim() !== "");
 
-  await prisma.$transaction(async (tx) => {
+  try {
+    await prisma.$transaction(async (tx) => {
     // Filling in a dating profile implies they belong in the pipeline.
     await tx.contact.update({ where: { id: contactId }, data: { isRomantic: true } });
     await tx.romanticProfile.upsert({
@@ -116,7 +122,16 @@ export async function upsertRomanticProfile(form: FormData): Promise<ActionResul
         privateNotes: str(form, "privateNotes") ?? null,
       },
     });
+
+    // Keyed by contactId: a romantic profile is one-per-contact, so that is
+    // the stable id for its custom field values.
+    await saveCustomFieldValuesOrThrow(tx, ownerId, "ROMANTIC", contactId, form);
   });
+  } catch (error) {
+    const failure = customFieldFailure(error);
+    if (failure) return failure;
+    throw error;
+  }
 
   touch(contactId);
   return ok();
@@ -224,7 +239,9 @@ export async function createDateEntry(form: FormData): Promise<ActionResult<{ id
   const venue = str(form, "venue");
   const rating = clampRating(num(form, "rating"));
 
-  const entry = await prisma.$transaction(async (tx) => {
+  let entry: { id: string };
+  try {
+    entry = await prisma.$transaction(async (tx) => {
     await ensureProfileTx(tx, ownerId, contactId);
 
     const interaction = await tx.interaction.create({
@@ -266,10 +283,16 @@ export async function createDateEntry(form: FormData): Promise<ActionResult<{ id
     await recomputeContactActivity(tx, [contactId]);
     await resequenceDateEntries(tx, contactId);
 
+    await saveCustomFieldValuesOrThrow(tx, ownerId, "DATE_ENTRY", created.id, form);
     // The first date doubles as the profile's firstDateOn when unset.
     await backfillFirstDate(tx, contactId);
     return created;
-  });
+    });
+  } catch (error) {
+    const failure = customFieldFailure(error);
+    if (failure) return failure;
+    throw error;
+  }
 
   touch(contactId);
   return ok({ id: entry.id });
@@ -344,7 +367,12 @@ export async function deleteDateEntry(id: string): Promise<ActionResult> {
 
   await prisma.$transaction(async (tx) => {
     // Delete through the interaction; the DateEntry cascades from it, so the
-    // pair can never be left half-removed.
+    // pair can never be left half-removed. Custom field values do not cascade
+    // — entityId is a plain string — so they are swept explicitly.
+    await deleteCustomFieldValues(tx, ownerId, [
+      { entity: "INTERACTION", entityIds: [existing.interactionId] },
+      { entity: "DATE_ENTRY", entityIds: [id] },
+    ]);
     await tx.interaction.delete({ where: { id: existing.interactionId } });
     await recomputeContactActivity(tx, [existing.contactId]);
     await resequenceDateEntries(tx, existing.contactId);

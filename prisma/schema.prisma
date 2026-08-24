@@ -68,6 +68,8 @@ model User {
   notificationChannels NotificationChannel[]
   reminderLogs         ReminderLog[]
   lifeEvents           LifeEvent[]
+  debts                Debt[]
+  dietaryNeeds         DietaryNeed[]
   households           Household[]
   familyDismissals     FamilySuggestionDismissal[]
 }
@@ -240,6 +242,8 @@ model Contact {
   ideas           Idea[]
   tasks           Task[]
   gifts           Gift[]
+  debts           Debt[]
+  dietaryNeeds    DietaryNeed[]
   flags           Flag[]
   dateEntries     DateEntry[]
   romanticProfile RomanticProfile?
@@ -343,20 +347,24 @@ model Relationship {
 // ---------------------------------------------------------------------------
 
 model Interaction {
-  id              String   @id @default(cuid())
+  id              String       @id @default(cuid())
   ownerId         String
   typeId          String?
   occurredAt      DateTime
   durationMinutes Int?
-  title           String?  @db.VarChar(191)
-  notes           String?  @db.Text
+  title           String?      @db.VarChar(191)
+  notes           String?      @db.Text
   /// -2 rough .. 0 neutral .. +2 great
   sentiment       Int?
-  location        String?  @db.VarChar(191)
+  /// Who made the first move. Defaults to UNSPECIFIED so the interactions
+  /// logged before this column existed are counted as unknown rather than
+  /// silently attributed to whoever the default would have named.
+  reachedOutBy    ReachedOutBy @default(UNSPECIFIED)
+  location        String?      @db.VarChar(191)
   /// Hidden everywhere until the privacy lock is opened.
-  isPrivate       Boolean  @default(false)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  isPrivate       Boolean      @default(false)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   owner User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   type  TaxonomyTerm? @relation("InteractionType", fields: [typeId], references: [id], onDelete: SetNull)
@@ -623,6 +631,98 @@ model Gift {
   @@index([contactId, status])
   @@index([ownerId, status])
   @@index([occasionId])
+}
+
+/// Money or a thing that has moved between you and someone else and hasn't come
+/// back yet.
+///
+/// `amountCents` is nullable on purpose. Between neighbours the thing lent is
+/// usually not money — it's a drill, a stepladder, a casserole dish. Modelling
+/// only money would miss the relationship this feature serves best. Items are
+/// listed alongside the balance but never folded into it.
+model Debt {
+  id          String        @id @default(cuid())
+  ownerId     String
+  contactId   String
+  direction   DebtDirection
+  description String        @db.VarChar(191)
+  /// Null for a lent object rather than a sum.
+  amountCents Int?
+  currency    String        @default("USD") @db.VarChar(8)
+  incurredOn  DateTime      @db.Date
+  /// Settling records a date rather than deleting the row — that someone has
+  /// always paid you back is worth as much as knowing they owe you now.
+  settledOn   DateTime?     @db.Date
+  notes       String?       @db.Text
+  /// Hidden everywhere until the privacy lock is opened.
+  isPrivate   Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  owner   User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId, settledOn])
+  @@index([ownerId, settledOn])
+}
+
+enum DebtDirection {
+  THEY_OWE_ME
+  I_OWE_THEM
+}
+
+/// Something a person cannot, or will not, eat.
+///
+/// Deliberately not a `Fact`: the difference between "can't" and "won't" has to
+/// survive as structure rather than prose, because it is the only distinction
+/// that matters when you are cooking for someone.
+///
+/// There is deliberately no severity scale. Clinical consensus is that prior
+/// mild reactions do not predict future severe ones — most fatal food
+/// anaphylaxis happens to people whose earlier reactions were mild — so a field
+/// inviting "mild" next to a peanut allergy would manufacture exactly the false
+/// reassurance this table exists to prevent. Severity is expressed only as
+/// `kind` and `carriesEpinephrine`, both of which are facts rather than
+/// predictions.
+///
+/// Also deliberately carries no `isPrivate`: an allergy behind a PIN is a
+/// decorative allergy. Genuinely sensitive dietary context belongs in a private
+/// `Fact`. One attached to a private contact is still hidden with that contact.
+model DietaryNeed {
+  id                 String      @id @default(cuid())
+  ownerId            String
+  contactId          String
+  kind               DietaryKind
+  label              String      @db.VarChar(191)
+  notes              String?     @db.Text
+  /// Whether they carry adrenaline. Actionable in an emergency in a way that a
+  /// severity grade is not.
+  carriesEpinephrine Boolean     @default(false)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  owner   User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId, kind])
+}
+
+enum DietaryKind {
+  ALLERGY
+  INTOLERANCE
+  MEDICAL
+  PREFERENCE
+}
+
+/// Who made the first move on an interaction.
+///
+/// Mirrors `WhoPaid`, including UNSPECIFIED — see the note on
+/// `Interaction.reachedOutBy` for why the unknown case has to be its own value.
+enum ReachedOutBy {
+  UNSPECIFIED
+  ME
+  THEM
+  MUTUAL
 }
 
 // ---------------------------------------------------------------------------

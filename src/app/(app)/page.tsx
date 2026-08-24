@@ -15,6 +15,9 @@ import {
   getUpcomingInteractions,
 } from "@/server/queries/dashboard";
 import { QuickAddWidget } from "@/components/dashboard/quick-add";
+import { fieldsFor } from "@/server/queries/custom-fields";
+import { offlineCacheable } from "@/server/privacy/offline";
+import { CacheThisPage } from "@/components/offline/offline";
 import {
   DatingPipelineWidget,
   IdeasWidget,
@@ -35,6 +38,9 @@ export default async function HomePage() {
   // The dating widget is gated the same way the module is: hidden outright, or
   // withheld until the privacy lock is opened.
   const showDating = await canSeeDating(prefs.hideDating);
+  // The dating widget is the most sensitive thing on this page, so its
+  // presence rules out keeping a copy regardless of everything else.
+  const cacheable = !showDating && (await offlineCacheable(user.id));
 
   const layoutRow = await prisma.dashboardLayout.findUnique({ where: { userId: user.id } });
   const layout = normalizeDashboardLayout(layoutRow?.widgets).filter((entry) => entry.enabled);
@@ -57,6 +63,7 @@ export default async function HomePage() {
     ideas,
     stats,
     datingSummary,
+    interactionFields,
   ] = await Promise.all([
     enabled.has("quick-add") ? listContactOptions(user.id) : [],
     enabled.has("quick-add") ? listTerms(user.id, "INTERACTION_TYPE") : [],
@@ -79,6 +86,7 @@ export default async function HomePage() {
     enabled.has("idea-bank") ? getOpenIdeas(user.id, settingFor("idea-bank", "limit", 6)) : [],
     enabled.has("stats") ? getStats(user.id, timezone) : null,
     enabled.has("dating-pipeline") && showDating ? getDatingSummary(user.id) : null,
+    enabled.has("quick-add") ? fieldsFor(user.id, "INTERACTION", null) : [],
   ]);
 
   const mapInteractions = (rows: typeof recent) =>
@@ -91,7 +99,13 @@ export default async function HomePage() {
     }));
 
   const widgets: Record<string, React.ReactNode> = {
-    "quick-add": <QuickAddWidget contacts={contacts} types={interactionTypes} />,
+    "quick-add": (
+      <QuickAddWidget
+        contacts={contacts}
+        types={interactionTypes}
+        customFields={interactionFields}
+      />
+    ),
     overdue: <OverdueWidget contacts={overdue} />,
     "upcoming-dates": <UpcomingDatesWidget dates={upcomingDates} />,
     "recent-interactions": (
@@ -130,6 +144,7 @@ export default async function HomePage() {
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
+      {cacheable ? <CacheThisPage /> : null}
       <div>
         <h2 className="text-lg font-semibold tracking-tight">
           Hi {user.name.split(" ")[0]}
