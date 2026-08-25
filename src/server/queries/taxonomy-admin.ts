@@ -39,7 +39,7 @@ export async function listTaxonomyAdmin(ownerId: string): Promise<TaxonomyGroup[
     sourcesOnProfiles,
     gifts,
     lifeEvents,
-    dateIdeas,
+    plans,
   ] = await Promise.all([
     prisma.contact.groupBy({ by: ["categoryId"], where: { ownerId }, _count: { _all: true } }),
     prisma.contact.groupBy({ by: ["meetingSourceId"], where: { ownerId }, _count: { _all: true } }),
@@ -53,7 +53,7 @@ export async function listTaxonomyAdmin(ownerId: string): Promise<TaxonomyGroup[
     prisma.romanticProfile.groupBy({ by: ["sourceId"], where: { ownerId }, _count: { _all: true } }),
     prisma.gift.groupBy({ by: ["occasionId"], where: { ownerId }, _count: { _all: true } }),
     prisma.lifeEvent.groupBy({ by: ["typeId"], where: { ownerId }, _count: { _all: true } }),
-    prisma.dateIdea.groupBy({ by: ["categoryId"], where: { ownerId }, _count: { _all: true } }),
+    prisma.plan.groupBy({ by: ["categoryId"], where: { ownerId }, _count: { _all: true } }),
   ]);
 
   const counts = new Map<string, number>();
@@ -81,7 +81,7 @@ export async function listTaxonomyAdmin(ownerId: string): Promise<TaxonomyGroup[
   tally(sourcesOnProfiles, "sourceId");
   tally(gifts, "occasionId");
   tally(lifeEvents, "typeId");
-  tally(dateIdeas, "categoryId");
+  tally(plans, "categoryId");
 
   const labels = new Map<string, string>();
   for (const kind of TAXONOMY_KIND_ORDER) {

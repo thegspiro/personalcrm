@@ -337,8 +337,8 @@ export interface DateLogItem {
   activityLabel: string | null;
 }
 
-/** Just enough of a date idea to pick one when logging the date it became. */
-export interface DateIdeaOption {
+/** Just enough of a saved plan to pick one when logging the date it became. */
+export interface PlanOption {
   id: string;
   title: string;
   location: string | null;
@@ -355,14 +355,14 @@ export function DateLogSection({
   contactId,
   dates,
   activityTypes,
-  ideas = [],
+  plans = [],
   blurPrivate,
 }: {
   contactId: string;
   dates: DateLogItem[];
   activityTypes: TermOption[];
-  /** Saved date ideas for this person — picking one closes it out. */
-  ideas?: DateIdeaOption[];
+  /** Plans saved for this person — picking one closes it out. */
+  plans?: PlanOption[];
   blurPrivate: boolean;
 }) {
   const run = useRun();
@@ -387,22 +387,22 @@ export function DateLogSection({
       addLabel="Log a date"
       form={(close) => (
         <form action={add(close)} className="grid gap-2.5">
-          {ideas.length > 0 ? (
-            <Field label="From a saved idea" htmlFor="date-idea">
+          {plans.length > 0 ? (
+            <Field label="From a saved idea" htmlFor="date-plan">
               <select
-                id="date-idea"
-                name="dateIdeaId"
+                id="date-plan"
+                name="planId"
                 defaultValue=""
                 onChange={(event) => {
-                  const picked = ideas.find((idea) => idea.id === event.target.value);
+                  const picked = plans.find((plan) => plan.id === event.target.value);
                   if (picked) setVenue(picked.location ?? picked.title);
                 }}
                 className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
               >
                 <option value="">Not from the list</option>
-                {ideas.map((idea) => (
-                  <option key={idea.id} value={idea.id}>
-                    {idea.title}
+                {plans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>
+                    {plan.title}
                   </option>
                 ))}
               </select>

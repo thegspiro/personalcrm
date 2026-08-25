@@ -199,11 +199,11 @@ export const TAXONOMY_SEEDS: Record<TaxonomyKind, TaxonomySeed[]> = {
   ],
 
   /**
-   * What a saved date idea *is*. Broad on purpose: a place to go, a film to
-   * watch, a thing to try — an idea is worth keeping long before you know
-   * which of those it will turn into.
+   * What a saved plan *is*. Broad on purpose: a place to go, a film to watch,
+   * a thing to try — an idea is worth keeping long before you know which of
+   * those it will turn into, or who you will end up going with.
    */
-  DATE_IDEA_CATEGORY: [
+  PLAN_CATEGORY: [
     { slug: "place", label: "Place to go", icon: "MapPin", color: "emerald" },
     { slug: "restaurant", label: "Restaurant", icon: "UtensilsCrossed", color: "orange" },
     { slug: "bar-cafe", label: "Bar or café", icon: "Coffee", color: "amber" },
@@ -282,9 +282,9 @@ export const TAXONOMY_KIND_LABELS: Record<TaxonomyKind, { title: string; descrip
   RELATIONSHIP_TYPE: { title: "Relationship types", description: "How people connect to each other." },
   DATING_STAGE: { title: "Dating stages", description: "The columns of your dating pipeline." },
   DATE_ACTIVITY_TYPE: { title: "Date activities", description: "What you did on a date." },
-  DATE_IDEA_CATEGORY: {
-    title: "Date idea categories",
-    description: "How saved date ideas are grouped — places, films, things to try.",
+  PLAN_CATEGORY: {
+    title: "Things to do",
+    description: "How saved plans are grouped — places, films, things to try.",
   },
   MEETING_SOURCE: { title: "Meeting sources", description: "Where you met someone — apps included." },
   GIFT_OCCASION: { title: "Gift occasions", description: "Why a gift was given." },
@@ -304,5 +304,5 @@ export const TAXONOMY_KIND_ORDER: TaxonomyKind[] = [
   "LIFE_EVENT_TYPE",
   "DATING_STAGE",
   "DATE_ACTIVITY_TYPE",
-  "DATE_IDEA_CATEGORY",
+  "PLAN_CATEGORY",
 ];

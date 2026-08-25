@@ -2,7 +2,7 @@
 
 A self-hosted personal relationship manager — for the people in your life, not for sales leads.
 
-Track who you know, log the interactions you have, keep the things worth remembering, never miss an important date, and save conversation ideas for next time. Keep-in-touch cadences tell you who you're overdue to reach out to. An optional dating layer adds a pipeline, a date log with ratings, saved date ideas — places, films, things to try — green and red flags, and compatibility notes.
+Track who you know, log the interactions you have, keep the things worth remembering, never miss an important date, and save both kinds of idea for next time — things to bring up, and things to do. Keep-in-touch cadences tell you who you're overdue to reach out to. An optional dating layer adds a pipeline, a date log with ratings, green and red flags, and compatibility notes.
 
 Mobile-first for reading and quick logging, comfortable on a desktop for bulk entry. **MariaDB is built into the image**, so a deployment is one container and one appdata folder.
 

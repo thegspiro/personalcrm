@@ -2,55 +2,107 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { getUserContext } from "@/server/user/context";
 import { prisma } from "@/server/db/client";
+import { listContactOptions } from "@/server/queries/contacts";
+import { listPlans } from "@/server/queries/plans";
+import { listTerms } from "@/server/taxonomy/queries";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/nav/icon";
+import { PlansSection } from "@/components/plans/plans-section";
+import { plainDateFromDb } from "@/lib/dates";
 import { displayName } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Ideas" };
 export const dynamic = "force-dynamic";
 
+/**
+ * The two halves of "I had an idea": something to say, and something to do.
+ *
+ * They are separate models because they end differently — an idea is used when
+ * you say it, a plan when you do it — but they arrive in the same moment and
+ * belong on the same page.
+ */
 export default async function IdeasPage() {
   const { user } = await getUserContext();
 
-  const ideas = await prisma.idea.findMany({
-    where: { ownerId: user.id, status: "OPEN" },
-    include: { contact: { select: { id: true, firstName: true, lastName: true } } },
-    orderBy: { createdAt: "desc" },
-    take: 200,
-  });
+  const [ideas, plans, planCategories, contacts] = await Promise.all([
+    prisma.idea.findMany({
+      where: { ownerId: user.id, status: "OPEN" },
+      include: { contact: { select: { id: true, firstName: true, lastName: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    }),
+    listPlans(user.id),
+    listTerms(user.id, "PLAN_CATEGORY"),
+    listContactOptions(user.id),
+  ]);
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
       <div>
-        <h2 className="text-lg font-semibold tracking-tight">Conversation ideas</h2>
-        <p className="text-xs text-muted-foreground">Things you meant to bring up.</p>
+        <h2 className="text-lg font-semibold tracking-tight">Ideas</h2>
+        <p className="text-xs text-muted-foreground">
+          Things you meant to bring up, and things you meant to do.
+        </p>
       </div>
 
-      {ideas.length === 0 ? (
-        <EmptyState
-          icon={<Icon name="Lightbulb" />}
-          title="No ideas saved"
-          description="Add them from a person's page as you think of them."
-        />
-      ) : (
-        <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
-          {ideas.map((idea) => (
-            <li key={idea.id} className="rounded-xl border border-border bg-card px-3 py-2.5">
-              <p className="text-sm">{idea.content}</p>
-              {idea.contact ? (
-                <Link
-                  href={`/people/${idea.contact.id}`}
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                >
-                  {displayName(idea.contact)}
-                </Link>
-              ) : (
-                <span className="text-xs text-muted-foreground">General</span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+      <PlansSection
+        plans={plans.map((plan) => ({
+          id: plan.id,
+          title: plan.title,
+          status: plan.status,
+          location: plan.location,
+          city: plan.city,
+          url: plan.url,
+          estimatedCostCents: plan.estimatedCostCents,
+          currency: plan.currency,
+          notes: plan.notes,
+          plannedFor: plan.plannedFor ? plainDateFromDb(plan.plannedFor) : null,
+          category: plan.category
+            ? {
+                label: plan.category.label,
+                icon: plan.category.icon,
+                color: plan.category.color,
+              }
+            : null,
+          contact: plan.contact,
+        }))}
+        categories={planCategories}
+        people={contacts.map((contact) => ({
+          id: contact.id,
+          firstName: contact.firstName,
+          lastName: contact.lastName,
+        }))}
+      />
+
+      <div className="grid gap-2">
+        <h3 className="text-sm font-semibold tracking-tight">Bring this up</h3>
+
+        {ideas.length === 0 ? (
+          <EmptyState
+            icon={<Icon name="MessageSquareQuote" />}
+            title="No conversation ideas saved"
+            description="Add them from a person's page as you think of them."
+          />
+        ) : (
+          <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
+            {ideas.map((idea) => (
+              <li key={idea.id} className="rounded-xl border border-border bg-card px-3 py-2.5">
+                <p className="text-sm">{idea.content}</p>
+                {idea.contact ? (
+                  <Link
+                    href={`/people/${idea.contact.id}`}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    {displayName(idea.contact)}
+                  </Link>
+                ) : (
+                  <span className="text-xs text-muted-foreground">General</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }

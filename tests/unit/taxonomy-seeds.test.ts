@@ -35,8 +35,8 @@ describe("taxonomy seeds", () => {
    * takes — somewhere to go, something to watch, something to try — so those
    * are asserted rather than left to whoever edits the seeds next.
    */
-  it("date idea categories cover places, films and things to try", () => {
-    const slugs = TAXONOMY_SEEDS.DATE_IDEA_CATEGORY.map((seed) => seed.slug);
+  it("plan categories cover places, films and things to try", () => {
+    const slugs = TAXONOMY_SEEDS.PLAN_CATEGORY.map((seed) => seed.slug);
 
     expect(slugs).toEqual(
       expect.arrayContaining([
@@ -55,8 +55,8 @@ describe("taxonomy seeds", () => {
     );
   });
 
-  it("every date idea category carries an icon and a colour", () => {
-    for (const seed of TAXONOMY_SEEDS.DATE_IDEA_CATEGORY) {
+  it("every plan category carries an icon and a colour", () => {
+    for (const seed of TAXONOMY_SEEDS.PLAN_CATEGORY) {
       expect(seed.icon, `${seed.slug} has no icon`).toBeTruthy();
       expect(seed.color, `${seed.slug} has no colour`).toBeTruthy();
     }

@@ -18,23 +18,19 @@ import { formatPartialDate } from "@/lib/date-precision";
 import { formatMoney, termColorClasses } from "@/lib/format";
 import type { PlainDate } from "@/lib/dates";
 import type { ActionResult } from "@/server/actions/helpers";
-import {
-  createDateIdea,
-  deleteDateIdea,
-  setDateIdeaStatus,
-} from "@/server/actions/dating";
+import { createPlan, deletePlan, setPlanStatus } from "@/server/actions/details";
 
 /**
- * Date ideas — the list of things you've been meaning to do together.
+ * Things to do — the list of what you've been meaning to do with someone.
  *
- * One component serves both homes. On a person's page it is scoped to them;
- * on /dating `contactId` is null, the whole list shows, and each row says who
- * it is for. The category, the place and the link are all optional: an idea
- * you jot as three words is still worth keeping, and the fields are there for
- * when you know more.
+ * One component serves every home it has. On a person's page it is scoped to
+ * them; on /ideas and /dating `contactId` is null, the list spans everyone, and
+ * each row says who it is for. The category, the place and the link are all
+ * optional: three words jotted down is still worth keeping, and the fields are
+ * there for when you know more.
  */
 
-export interface DateIdeaItem {
+export interface PlanItem {
   id: string;
   title: string;
   status: "OPEN" | "PLANNED" | "DONE" | "ARCHIVED";
@@ -49,7 +45,7 @@ export interface DateIdeaItem {
   contact: { id: string; firstName: string; lastName: string | null } | null;
 }
 
-export interface DateIdeaPerson {
+export interface PlanPerson {
   id: string;
   firstName: string;
   lastName: string | null;
@@ -72,19 +68,21 @@ function useRun() {
   );
 }
 
-export function DateIdeasSection({
+export function PlansSection({
   contactId = null,
-  ideas,
+  plans,
   categories,
   people = [],
+  title = "Things to do",
   defaultOpen = true,
 }: {
-  /** Null on /dating, where the list spans everyone. */
+  /** Null on a list page, where the section spans everyone. */
   contactId?: string | null;
-  ideas: DateIdeaItem[];
+  plans: PlanItem[];
   categories: TermOption[];
-  /** Offered as "Who for?" only when the list is not already scoped. */
-  people?: DateIdeaPerson[];
+  /** Offered as "Who with?" only when the list is not already scoped. */
+  people?: PlanPerson[];
+  title?: string;
   defaultOpen?: boolean;
 }) {
   const run = useRun();
@@ -92,22 +90,22 @@ export function DateIdeasSection({
   function add(close: () => void) {
     return async (form: FormData) => {
       if (contactId) form.set("contactId", contactId);
-      if (await run(() => createDateIdea(form), "Saved")) close();
+      if (await run(() => createPlan(form), "Saved")) close();
     };
   }
 
   return (
     <SectionCard
-      title="Date ideas"
+      title={title}
       icon="Sparkles"
-      count={ideas.length}
+      count={plans.length}
       defaultOpen={defaultOpen}
-      addLabel="Add a date idea"
+      addLabel="Add something to do"
       form={(close) => (
         <form action={add(close)} className="grid gap-2.5">
-          <Field label="What's the idea?" htmlFor="idea-title">
+          <Field label="What do you want to do?" htmlFor="plan-title">
             <Input
-              id="idea-title"
+              id="plan-title"
               name="title"
               required
               maxLength={191}
@@ -118,9 +116,9 @@ export function DateIdeasSection({
           <TermChips name="categoryId" label="What kind of thing?" terms={categories} />
 
           {contactId === null && people.length > 0 ? (
-            <Field label="Who for?" htmlFor="idea-contact">
+            <Field label="Who with?" htmlFor="plan-contact">
               <select
-                id="idea-contact"
+                id="plan-contact"
                 name="contactId"
                 defaultValue=""
                 className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
@@ -136,21 +134,21 @@ export function DateIdeasSection({
           ) : null}
 
           <div className="grid gap-2.5 sm:grid-cols-2">
-            <Field label="Where" htmlFor="idea-location">
-              <Input id="idea-location" name="location" placeholder="Alamo Drafthouse" />
+            <Field label="Where" htmlFor="plan-location">
+              <Input id="plan-location" name="location" placeholder="Alamo Drafthouse" />
             </Field>
-            <Field label="City" htmlFor="idea-city">
-              <Input id="idea-city" name="city" placeholder="Arlington" />
+            <Field label="City" htmlFor="plan-city">
+              <Input id="plan-city" name="city" placeholder="Arlington" />
             </Field>
           </div>
 
           <div className="grid gap-2.5 sm:grid-cols-2">
-            <Field label="Link" htmlFor="idea-url">
-              <Input id="idea-url" name="url" type="url" placeholder="https://" />
+            <Field label="Link" htmlFor="plan-url">
+              <Input id="plan-url" name="url" type="url" placeholder="https://" />
             </Field>
-            <Field label="Rough cost" htmlFor="idea-cost">
+            <Field label="Rough cost" htmlFor="plan-cost">
               <Input
-                id="idea-cost"
+                id="plan-cost"
                 name="estimatedCost"
                 type="number"
                 inputMode="decimal"
@@ -169,9 +167,9 @@ export function DateIdeasSection({
             hint="Optional — leave it empty and it just sits on the list."
           />
 
-          <Field label="Notes" htmlFor="idea-notes">
+          <Field label="Notes" htmlFor="plan-notes">
             <Textarea
-              id="idea-notes"
+              id="plan-notes"
               name="notes"
               rows={2}
               placeholder="Book ahead, the balcony sells out."
@@ -182,57 +180,57 @@ export function DateIdeasSection({
         </form>
       )}
     >
-      {ideas.length === 0 ? (
+      {plans.length === 0 ? (
         <SectionEmpty>Nothing saved yet — places, films, things to try.</SectionEmpty>
       ) : (
-        ideas.map((idea) => (
+        plans.map((plan) => (
           <SectionRow
-            key={idea.id}
-            onDelete={() => void run(() => deleteDateIdea(idea.id), "Removed")}
-            deleteLabel="Delete idea"
+            key={plan.id}
+            onDelete={() => void run(() => deletePlan(plan.id), "Removed")}
+            deleteLabel="Delete plan"
           >
             <div className="flex items-start gap-2">
               <Checkbox
                 checked={false}
                 onCheckedChange={() =>
-                  void run(() => setDateIdeaStatus(idea.id, "DONE"), "Marked done")
+                  void run(() => setPlanStatus(plan.id, "DONE"), "Marked done")
                 }
                 aria-label="Mark as done"
                 className="mt-0.5"
               />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-sm font-medium">{idea.title}</span>
-                  {idea.category ? (
+                  <span className="text-sm font-medium">{plan.title}</span>
+                  {plan.category ? (
                     <span
                       className={cn(
                         "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px]",
-                        termColorClasses(idea.category.color),
+                        termColorClasses(plan.category.color),
                       )}
                     >
-                      {idea.category.icon ? (
-                        <Icon name={idea.category.icon} className="size-3" />
+                      {plan.category.icon ? (
+                        <Icon name={plan.category.icon} className="size-3" />
                       ) : null}
-                      {idea.category.label}
+                      {plan.category.label}
                     </span>
                   ) : null}
-                  {idea.status === "PLANNED" ? <Badge variant="success">planned</Badge> : null}
+                  {plan.status === "PLANNED" ? <Badge variant="success">planned</Badge> : null}
                 </div>
 
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-                  {idea.location ? <span>{idea.location}</span> : null}
-                  {idea.city ? <span>{idea.city}</span> : null}
-                  {idea.plannedFor ? (
-                    <span>{formatPartialDate(idea.plannedFor, "DAY", { short: true })}</span>
+                  {plan.location ? <span>{plan.location}</span> : null}
+                  {plan.city ? <span>{plan.city}</span> : null}
+                  {plan.plannedFor ? (
+                    <span>{formatPartialDate(plan.plannedFor, "DAY", { short: true })}</span>
                   ) : null}
-                  {formatMoney(idea.estimatedCostCents, idea.currency) ? (
-                    <span>{formatMoney(idea.estimatedCostCents, idea.currency)}</span>
+                  {formatMoney(plan.estimatedCostCents, plan.currency) ? (
+                    <span>{formatMoney(plan.estimatedCostCents, plan.currency)}</span>
                   ) : null}
-                  {idea.contact ? (
+                  {plan.contact ? (
                     // Redundant on the page of the person it is already for.
-                    idea.contact.id === contactId ? null : (
-                      <Link href={`/people/${idea.contact.id}`} className="hover:text-foreground">
-                        {displayName(idea.contact)}
+                    plan.contact.id === contactId ? null : (
+                      <Link href={`/people/${plan.contact.id}`} className="hover:text-foreground">
+                        {displayName(plan.contact)}
                       </Link>
                     )
                   ) : (
@@ -240,20 +238,20 @@ export function DateIdeasSection({
                   )}
                 </div>
 
-                {idea.url ? (
+                {plan.url ? (
                   <a
-                    href={idea.url}
+                    href={plan.url}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="mt-0.5 block truncate text-xs text-accent-11 hover:underline"
                   >
-                    {idea.url}
+                    {plan.url}
                   </a>
                 ) : null}
 
-                {idea.notes ? (
+                {plan.notes ? (
                   <p className="mt-1 whitespace-pre-line text-xs text-muted-foreground">
-                    {idea.notes}
+                    {plan.notes}
                   </p>
                 ) : null}
 
@@ -262,13 +260,13 @@ export function DateIdeasSection({
                   onClick={() =>
                     void run(
                       () =>
-                        setDateIdeaStatus(idea.id, idea.status === "PLANNED" ? "OPEN" : "PLANNED"),
-                      idea.status === "PLANNED" ? "Back on the list" : "Pencilled in",
+                        setPlanStatus(plan.id, plan.status === "PLANNED" ? "OPEN" : "PLANNED"),
+                      plan.status === "PLANNED" ? "Back on the list" : "Pencilled in",
                     )
                   }
                   className="mt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                 >
-                  {idea.status === "PLANNED" ? "Not planned after all" : "Pencil it in"}
+                  {plan.status === "PLANNED" ? "Not planned after all" : "Pencil it in"}
                 </button>
               </div>
             </div>

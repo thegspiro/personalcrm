@@ -19,7 +19,7 @@ import {
 
 /**
  * Everything that hangs off a contact: facts, important dates, life events,
- * ideas, tasks, gifts, debts, dietary needs, and relationships.
+ * ideas, plans, tasks, gifts, debts, dietary needs, and relationships.
  *
  * None of these touch interaction history, so none of them recompute contact
  * activity — only interactions move the keep-in-touch clock.
@@ -280,6 +280,155 @@ export async function deleteIdea(id: string): Promise<ActionResult> {
   await prisma.idea.delete({ where: { id } });
   touch(existing.contactId);
   revalidatePath("/ideas");
+  return ok();
+}
+
+// --- plans -----------------------------------------------------------------
+
+/**
+ * Things to do: a place to go, a film to see, a hike, a thing to try.
+ *
+ * Sits beside ideas rather than inside them, and beside the dating layer
+ * rather than inside that. An idea is something to *say* and ends when you say
+ * it; a plan is something to *do* and ends when you do it. Which is why a hike
+ * with a friend and a first date are the same row here — only the person
+ * differs, and `contactId` may be null when nobody in particular does.
+ *
+ * Not behind the privacy lock. Locking these would put your own hiking list
+ * behind a PIN; plans follow the same rule as gifts instead, inheriting the
+ * privacy of the person they name.
+ */
+
+const PLAN_STATUSES = ["OPEN", "PLANNED", "DONE", "ARCHIVED"] as const;
+export type PlanStatusValue = (typeof PLAN_STATUSES)[number];
+
+function planStatusOf(value?: string): PlanStatusValue {
+  return (PLAN_STATUSES as readonly string[]).includes(value ?? "")
+    ? (value as PlanStatusValue)
+    : "OPEN";
+}
+
+function touchPlans(contactId?: string | null) {
+  revalidatePath("/");
+  revalidatePath("/ideas");
+  revalidatePath("/dating");
+  if (contactId) revalidatePath(`/people/${contactId}`);
+}
+
+/**
+ * The fields create and update share.
+ *
+ * Null on an unknown category rather than a silent drop: a category the user
+ * cannot see is either someone else's row or a stale form, and both deserve an
+ * error instead of a plan filed under nothing.
+ */
+async function planFields(ownerId: string, form: FormData) {
+  const categoryId = str(form, "categoryId") ?? null;
+  if (categoryId) {
+    const term = await prisma.taxonomyTerm.findFirst({
+      where: { id: categoryId, ownerId, kind: "PLAN_CATEGORY" },
+      select: { id: true },
+    });
+    if (!term) return null;
+  }
+
+  const cost = num(form, "estimatedCost");
+  return {
+    categoryId,
+    location: str(form, "location") ?? null,
+    city: str(form, "city") ?? null,
+    url: str(form, "url") ?? null,
+    estimatedCostCents: cost === undefined ? null : Math.round(cost * 100),
+    notes: str(form, "notes") ?? null,
+    plannedFor: plainDate(form, "plannedFor") ?? null,
+  };
+}
+
+export async function createPlan(form: FormData): Promise<ActionResult<{ id: string }>> {
+  const { ownerId } = await owner();
+  const title = str(form, "title");
+  if (!title) return fail("What do you want to do?");
+
+  const contactId = str(form, "contactId") ?? null;
+  if (contactId && !(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
+
+  const fields = await planFields(ownerId, form);
+  if (!fields) return fail("Unknown category.");
+
+  const created = await prisma.plan.create({
+    data: {
+      ownerId,
+      contactId,
+      title,
+      status: planStatusOf(str(form, "status")),
+      ...fields,
+    },
+  });
+
+  touchPlans(contactId);
+  return ok({ id: created.id });
+}
+
+export async function updatePlan(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  if (!id) return fail("Missing plan.");
+
+  const existing = await prisma.plan.findFirst({
+    where: { id, ownerId },
+    select: { contactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  const title = str(form, "title");
+  if (!title) return fail("What do you want to do?");
+
+  const fields = await planFields(ownerId, form);
+  if (!fields) return fail("Unknown category.");
+
+  await prisma.plan.update({ where: { id }, data: { title, ...fields } });
+
+  touchPlans(existing.contactId);
+  return ok();
+}
+
+/**
+ * Move a plan along. `usedAt` is stamped on the way to DONE and cleared on the
+ * way back, so one marked done by mistake returns to the list clean.
+ */
+export async function setPlanStatus(id: string, status: PlanStatusValue): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const existing = await prisma.plan.findFirst({
+    where: { id, ownerId },
+    select: { contactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  const next = planStatusOf(status);
+  await prisma.plan.update({
+    where: { id },
+    data: {
+      status: next,
+      usedAt: next === "DONE" ? new Date() : null,
+      ...(next === "DONE" ? {} : { usedInInteractionId: null }),
+    },
+  });
+
+  touchPlans(existing.contactId);
+  return ok();
+}
+
+export async function deletePlan(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const existing = await prisma.plan.findFirst({
+    where: { id, ownerId },
+    select: { contactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  await prisma.plan.delete({ where: { id } });
+
+  touchPlans(existing.contactId);
   return ok();
 }
 
