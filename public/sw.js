@@ -16,6 +16,20 @@
  */
 
 const VERSION = "v1";
+
+/**
+ * URLs this worker has served from the page cache, waiting to be asked about.
+ *
+ * Only the worker knows whether a document came off the disk or the network,
+ * and the document itself is the worst-placed thing to guess: the
+ * online/offline events it would learn from fired before it existed, leaving
+ * it one read of navigator.onLine that can simply be wrong.
+ *
+ * Answered on request rather than pushed. A message posted before the page has
+ * a listener is not replayed to one added later, and the page's listener
+ * necessarily arrives after hydration — long after the response was served.
+ */
+const servedFromCache = new Set();
 const PAGES = `pcrm-pages-${VERSION}`;
 const ASSETS = `pcrm-assets-${VERSION}`;
 const OURS = [PAGES, ASSETS];
@@ -44,6 +58,12 @@ self.addEventListener("message", (event) => {
 
   if (data.type === "cache-page" && typeof data.url === "string") {
     event.waitUntil(cachePage(data.url));
+  } else if (data.type === "was-served-from-cache" && typeof data.url === "string") {
+    // Asked once, on mount, by the offline banner. Consumed as it is read: the
+    // answer is about this document's own navigation, not the URL forever.
+    const answer = servedFromCache.has(data.url);
+    servedFromCache.delete(data.url);
+    event.ports[0]?.postMessage({ servedFromCache: answer });
   } else if (data.type === "purge") {
     // Sent on lock and on sign-out. Everything goes, including the shell.
     event.waitUntil(purgeEverything());
@@ -128,7 +148,10 @@ async function networkFirst(request) {
     return response;
   } catch {
     const cached = await caches.match(request.url);
-    if (cached) return cached;
+    if (cached) {
+      servedFromCache.add(request.url);
+      return cached;
+    }
 
     const shell = await caches.match("/offline");
     if (shell) return shell;
