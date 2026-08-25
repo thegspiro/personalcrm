@@ -62,6 +62,7 @@ model User {
   gifts                Gift[]
   romanticProfiles     RomanticProfile[]
   dateEntries          DateEntry[]
+  plans                Plan[]
   flags                Flag[]
   customFieldDefs      CustomFieldDefinition[]
   customFieldValues    CustomFieldValue[]
@@ -140,6 +141,7 @@ enum TaxonomyKind {
   MEETING_SOURCE
   GIFT_OCCASION
   LIFE_EVENT_TYPE
+  PLAN_CATEGORY
 }
 
 model TaxonomyTerm {
@@ -174,6 +176,7 @@ model TaxonomyTerm {
   romanticStages          RomanticProfile[] @relation("DatingStage")
   romanticSources         RomanticProfile[] @relation("DatingSource")
   dateEntries             DateEntry[]       @relation("DateActivityType")
+  plans                   Plan[]            @relation("PlanCategory")
   gifts                   Gift[]            @relation("GiftOccasion")
 
   @@unique([ownerId, kind, slug])
@@ -246,6 +249,7 @@ model Contact {
   dietaryNeeds    DietaryNeed[]
   flags           Flag[]
   dateEntries     DateEntry[]
+  plans           Plan[]
   romanticProfile RomanticProfile?
   households      HouseholdMember[]
   dismissalsA     FamilySuggestionDismissal[] @relation("DismissalA")
@@ -369,10 +373,11 @@ model Interaction {
   owner User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   type  TaxonomyTerm? @relation("InteractionType", fields: [typeId], references: [id], onDelete: SetNull)
 
-  participants InteractionParticipant[]
-  dateEntry    DateEntry?
-  sourcedFacts Fact[]                   @relation("FactSource")
-  ideasUsed    Idea[]                   @relation("IdeaUsedIn")
+  participants    InteractionParticipant[]
+  dateEntry       DateEntry?
+  sourcedFacts    Fact[]                   @relation("FactSource")
+  ideasUsed       Idea[]                   @relation("IdeaUsedIn")
+  plansCarriedOut Plan[]                   @relation("PlanCarriedOut")
 
   @@index([ownerId, occurredAt])
   @@index([typeId])
@@ -833,6 +838,69 @@ model DateEntry {
   @@index([contactId, sequence])
   @@index([ownerId])
   @@index([activityTypeId])
+}
+
+enum PlanStatus {
+  OPEN
+  PLANNED
+  DONE
+  ARCHIVED
+}
+
+/// Something to do with someone: a place to go, a film to see, a thing to try.
+///
+/// Deliberately not an `Idea`: that model holds conversation starters — a
+/// sentence you meant to say — while this one holds a plan, and a plan needs
+/// the things a plan has. Where it is (`location`, `city`), what it costs, a
+/// link to the listing, and when you mean to do it. The two also end
+/// differently: an idea is used when you *say* it, a plan when you *do* it.
+///
+/// Not confined to the dating layer. A hike with a friend and a first date are
+/// the same object, so this hangs off any Contact — or off nobody, for the
+/// ones worth keeping whoever you end up going with.
+///
+/// `category` is a PLAN_CATEGORY taxonomy term, so a place, a film, a show, a
+/// thing to try and whatever else the user invents all live in one list they
+/// control rather than in an enum here.
+model Plan {
+  id        String  @id @default(cuid())
+  ownerId   String
+  /// Null = something you'd do with anyone, not saved against one person.
+  contactId String?
+
+  title      String  @db.VarChar(191)
+  categoryId String?
+  /// The venue, park, cinema, trailhead — or your own kitchen.
+  location   String? @db.VarChar(191)
+  city       String? @db.VarChar(120)
+  /// The listing, the menu, the trailer, the ticket page.
+  url        String? @db.VarChar(500)
+
+  estimatedCostCents Int?
+  currency           String @default("USD") @db.VarChar(8)
+
+  notes      String?    @db.Text
+  status     PlanStatus @default(OPEN)
+  /// Pencilled in, before there is anything logged to point at.
+  plannedFor DateTime?  @db.Date
+
+  usedAt              DateTime?
+  /// What it became. An interaction rather than a DateEntry: a plan carried
+  /// out with a friend never produces one of those.
+  usedInInteractionId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner             User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact           Contact?      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  category          TaxonomyTerm? @relation("PlanCategory", fields: [categoryId], references: [id], onDelete: SetNull)
+  usedInInteraction Interaction?  @relation("PlanCarriedOut", fields: [usedInInteractionId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, status])
+  @@index([contactId, status])
+  @@index([categoryId])
+  @@index([usedInInteractionId])
 }
 
 enum FlagKind {

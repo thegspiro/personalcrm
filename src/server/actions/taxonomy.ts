@@ -292,6 +292,8 @@ async function termUsageCount(id: string, kind: TaxonomyKind): Promise<number> {
       return prisma.romanticProfile.count({ where: { stageId: id } });
     case "DATE_ACTIVITY_TYPE":
       return prisma.dateEntry.count({ where: { activityTypeId: id } });
+    case "PLAN_CATEGORY":
+      return prisma.plan.count({ where: { categoryId: id } });
     case "MEETING_SOURCE":
       return (
         (await prisma.contact.count({ where: { meetingSourceId: id } })) +
