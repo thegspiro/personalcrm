@@ -18,13 +18,29 @@ export async function isFirstRun(page: Page): Promise<boolean> {
   return response.status() === 200;
 }
 
+/**
+ * Get to the dashboard from wherever authenticating left us.
+ *
+ * A new account lands in the first-run wizard rather than on the dashboard, and
+ * the app shell keeps sending it back there until the wizard is finished or
+ * skipped. Every helper that signs in goes through this so the rest of the
+ * suite can assume a dashboard.
+ */
+export async function skipOnboardingIfShown(page: Page): Promise<void> {
+  await page.waitForURL(/\/(welcome)?$/);
+  if (!page.url().endsWith("/welcome")) return;
+
+  await page.getByRole("button", { name: "Skip setup" }).click();
+  await page.waitForURL("/");
+}
+
 export async function completeSetup(page: Page): Promise<void> {
   await page.goto("/setup");
   await page.getByLabel("Your name").fill(ACCOUNT.name);
   await page.getByLabel("Email").fill(ACCOUNT.email);
   await page.getByLabel("Password").fill(ACCOUNT.password);
-  await page.getByRole("button", { name: "Create account & start" }).click();
-  await page.waitForURL("/");
+  await page.getByRole("button", { name: "Create account & continue" }).click();
+  await skipOnboardingIfShown(page);
 }
 
 export async function signIn(page: Page): Promise<void> {
@@ -32,7 +48,7 @@ export async function signIn(page: Page): Promise<void> {
   await page.getByLabel("Email").fill(ACCOUNT.email);
   await page.getByLabel("Password").fill(ACCOUNT.password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL("/");
+  await skipOnboardingIfShown(page);
 }
 
 /** Register the suite's account through the signup form. */
@@ -42,7 +58,7 @@ export async function signUp(page: Page): Promise<void> {
   await page.getByLabel("Email").fill(ACCOUNT.email);
   await page.getByLabel("Password").fill(ACCOUNT.password);
   await page.getByRole("button", { name: "Create account" }).click();
-  await page.waitForURL("/");
+  await skipOnboardingIfShown(page);
 }
 
 /**
@@ -62,13 +78,17 @@ export async function ensureSignedIn(page: Page): Promise<void> {
   await page.getByLabel("Password").fill(ACCOUNT.password);
   await page.getByRole("button", { name: "Sign in" }).click();
 
-  // Either we land on the dashboard, or the credentials were rejected because
-  // the account has not been created on this instance yet.
+  // Either we land signed in — on the dashboard, or in the wizard if this
+  // account never finished it — or the credentials were rejected because the
+  // account has not been created on this instance yet.
   const landed = await page
-    .waitForURL("/", { timeout: 5_000 })
+    .waitForURL(/\/(welcome)?$/, { timeout: 5_000 })
     .then(() => true)
     .catch(() => false);
-  if (landed) return;
+  if (landed) {
+    await skipOnboardingIfShown(page);
+    return;
+  }
 
   await signUp(page);
 }

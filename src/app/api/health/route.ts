@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/server/db/client";
+import { isSetupComplete } from "@/server/db/settings";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,10 +13,15 @@ export async function GET() {
   const startedAt = Date.now();
   try {
     await prisma.$queryRaw`SELECT 1`;
+    // So an operator can tell a booted-but-unconfigured instance from a working
+    // one without opening a browser. Cheap: isSetupComplete short-circuits on an
+    // AppSetting row once the first account exists.
+    const setup = (await isSetupComplete()) ? "complete" : "pending";
     return NextResponse.json(
       {
         status: "ok",
         database: "up",
+        setup,
         latencyMs: Date.now() - startedAt,
         version: process.env.APP_VERSION ?? "dev",
         uptimeSeconds: Math.round(process.uptime()),

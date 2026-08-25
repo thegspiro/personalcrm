@@ -52,10 +52,18 @@ export async function updateDefaults(form: FormData): Promise<ActionResult> {
     }
   }
 
+  // Presence, not value: an absent field is left alone, while a present-but-empty
+  // one clears the cadence. Without the distinction any form that doesn't happen
+  // to carry this field — the first-run wizard's earlier panels — would silently
+  // wipe a cadence set somewhere else.
+  const carriesCadence = form.has("defaultCadenceDays");
+
   await prisma.userPreference.update({
     where: { userId: ownerId },
     data: {
-      defaultCadenceDays: cadence && cadence > 0 ? Math.round(cadence) : null,
+      ...(carriesCadence
+        ? { defaultCadenceDays: cadence && cadence > 0 ? Math.round(cadence) : null }
+        : {}),
       ...(weekStartsOn === 0 || weekStartsOn === 1 ? { weekStartsOn } : {}),
       ...(timezone ? { timezone } : {}),
     },

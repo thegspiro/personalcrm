@@ -8,6 +8,7 @@ import { listAllFieldDefinitions } from "@/server/queries/custom-fields";
 import { TAXONOMY_KIND_LABELS } from "@/server/taxonomy/defaults";
 import { PrivacySettings } from "@/components/dating/privacy-settings";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
+import { AppSettings } from "@/components/settings/app-settings";
 import { CustomFieldsSettings } from "@/components/settings/custom-fields-settings";
 import { DashboardSettings } from "@/components/settings/dashboard-settings";
 import { TaxonomySettings } from "@/components/settings/taxonomy-settings";
@@ -118,6 +119,7 @@ export default async function SettingsPage() {
             blurPrivateNotes={prefs.blurPrivateNotes}
           />
         }
+        app={<AppSettings installedAt={prefs.pwaInstalledAt?.toISOString() ?? null} />}
       />
     </div>
   );

@@ -113,6 +113,15 @@ model UserPreference {
   /// Blur private notes until tapped — a second, weaker layer for shoulder
   /// surfing after the lock has already been opened.
   blurPrivateNotes   Boolean  @default(true)
+
+  /// First-run onboarding: when the welcome flow was finished or skipped.
+  /// Null means the wizard still has something to say, and the app shell
+  /// sends the user to /welcome instead of the dashboard.
+  onboardingCompletedAt DateTime?
+  /// Set when the browser reports the app was added to a home screen. Only a
+  /// hint for the setup checklist — an install on a second device never
+  /// reaches this row, so nothing is gated on it.
+  pwaInstalledAt        DateTime?
   updatedAt          DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
