@@ -103,8 +103,17 @@ export function OfflineBanner({ renderedAt }: { renderedAt: string }) {
     update();
     window.addEventListener("online", update);
     window.addEventListener("offline", update);
-    // A copy gets staler while you look at it, so the number has to move.
-    const timer = setInterval(update, 30_000);
+    // Two things need re-checking, and the more urgent one sets the pace.
+    //
+    // The age only has to move often enough to stay honest to the minute. But
+    // `offline` comes from a single read of navigator.onLine on mount, and a
+    // document that was *loaded* offline never receives the online/offline
+    // events — they fired before it existed. So if that one read is wrong, the
+    // page goes on claiming to be live, which is precisely the stale-data-
+    // looking-live problem this banner exists to prevent. A second is soon
+    // enough to matter and costs nothing: both setState calls bail out when the
+    // value has not changed, so a page that is simply online never re-renders.
+    const timer = setInterval(update, 1_000);
     return () => {
       window.removeEventListener("online", update);
       window.removeEventListener("offline", update);
