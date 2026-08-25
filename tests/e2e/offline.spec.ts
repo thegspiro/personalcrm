@@ -14,7 +14,21 @@ const STAMP = `${process.env.E2E_RUN_ID ?? "local"}-${Date.now().toString(36)}`;
 const SECRET = () => `Confidential ${test.info().project.name} ${STAMP}`;
 const PIN = "713904";
 
-/** Wait for the worker to be running before asking it anything. */
+/**
+ * Wait for the worker to be running AND for it to control this page.
+ *
+ * These are not the same thing, and the difference is the whole test. A
+ * registration becomes active without controlling the document that registered
+ * it — control is only taken on a navigation after activation. Caching still
+ * works meanwhile, because the page asks through `registration.active`, which
+ * needs no controller; so waiting for an active registration and a populated
+ * cache can both succeed while nothing is intercepting fetches.
+ *
+ * Go offline in that state and the navigation never reaches the worker at all:
+ * the browser shows its own ERR_INTERNET_DISCONNECTED page, and the assertion
+ * that fails is the one about the offline banner. It passes on a fast machine,
+ * where `clients.claim()` wins the race, and fails on a slower CI runner.
+ */
 async function readyWorker(page: Page) {
   await page.waitForFunction(
     async () => {
@@ -24,6 +38,13 @@ async function readyWorker(page: Page) {
     undefined,
     { timeout: 15_000 },
   );
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (await page.evaluate(() => Boolean(navigator.serviceWorker.controller))) return;
+    await page.reload();
+  }
+
+  throw new Error("the service worker activated but never took control of the page");
 }
 
 /** Pages currently kept for offline reading. */
