@@ -4,7 +4,7 @@ import { getUserContext } from "@/server/user/context";
 import { getContact, getReciprocity, listContactOptions } from "@/server/queries/contacts";
 import { buildTimeline } from "@/server/queries/timeline";
 import { listTermsByKind } from "@/server/taxonomy/queries";
-import { listDateEntries } from "@/server/queries/dating";
+import { listDateEntries, listDateIdeas } from "@/server/queries/dating";
 import { canSeeDating } from "@/server/privacy/filter";
 import { getContactFamily, listHouseholdOptions } from "@/server/queries/family";
 import { fieldsFor } from "@/server/queries/custom-fields";
@@ -19,6 +19,7 @@ import {
   FlagsSection,
   RomanticSection,
 } from "@/components/dating/dating-sections";
+import { DateIdeasSection } from "@/components/dating/date-ideas";
 import { ContactHeader } from "@/components/contacts/contact-header";
 import {
   DatesSection,
@@ -71,6 +72,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     timeline,
     contactOptions,
     dateEntries,
+    dateIdeas,
     family,
     allHouseholds,
     customFields,
@@ -86,11 +88,13 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
       "GIFT_OCCASION",
       "DATING_STAGE",
       "DATE_ACTIVITY_TYPE",
+      "DATE_IDEA_CATEGORY",
       "MEETING_SOURCE",
     ]),
     buildTimeline(user.id, timezone, { contactId: id, take: 40 }),
     listContactOptions(user.id),
     showDating ? listDateEntries(user.id, id) : Promise.resolve([]),
+    showDating ? listDateIdeas(user.id, { contactId: id }) : Promise.resolve([]),
     getContactFamily(user.id, id),
     listHouseholdOptions(user.id),
     fieldsFor(user.id, "CONTACT", id, { categoryId: contact.categoryId }),
@@ -213,6 +217,11 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
               contactId={contact.id}
               blurPrivate={prefs.blurPrivateNotes}
               activityTypes={terms.DATE_ACTIVITY_TYPE}
+              ideas={dateIdeas.map((idea) => ({
+                id: idea.id,
+                title: idea.title,
+                location: idea.location,
+              }))}
               dates={dateEntries.map((entry) => ({
                 id: entry.id,
                 sequence: entry.sequence,
@@ -226,6 +235,31 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                 conversationQuality: entry.conversationQuality,
                 notes: entry.notes,
                 activityLabel: entry.activityType?.label ?? null,
+              }))}
+            />
+
+            <DateIdeasSection
+              contactId={contact.id}
+              categories={terms.DATE_IDEA_CATEGORY}
+              ideas={dateIdeas.map((idea) => ({
+                id: idea.id,
+                title: idea.title,
+                status: idea.status,
+                location: idea.location,
+                city: idea.city,
+                url: idea.url,
+                estimatedCostCents: idea.estimatedCostCents,
+                currency: idea.currency,
+                notes: idea.notes,
+                plannedFor: idea.plannedFor ? plainDateFromDb(idea.plannedFor) : null,
+                category: idea.category
+                  ? {
+                      label: idea.category.label,
+                      icon: idea.category.icon,
+                      color: idea.category.color,
+                    }
+                  : null,
+                contact: idea.contact,
               }))}
             />
 

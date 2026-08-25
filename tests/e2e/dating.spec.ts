@@ -102,6 +102,40 @@ test("add green and red flags", async ({ page }) => {
   await expect(flags.getByText("RED FLAGS")).toBeVisible();
 });
 
+test("save a date idea, then log the date it becomes", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto(contactUrl);
+
+  const ideas = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Add a date idea" }) })
+    .first();
+
+  await ideas.getByRole("button", { name: "Add a date idea" }).click();
+  await ideas.getByLabel("What's the idea?").fill("Late showing at the Alamo");
+  await ideas.getByRole("button", { name: "Movie", exact: true }).click();
+  await ideas.getByLabel("Where").fill("Alamo Drafthouse");
+  await ideas.getByLabel("City").fill("Arlington");
+  await ideas.getByRole("button", { name: "Save", exact: true }).click();
+
+  await expect(ideas.getByText("Late showing at the Alamo")).toBeVisible();
+  await expect(ideas.getByText("Alamo Drafthouse")).toBeVisible();
+
+  // The date log offers it, prefills where it is, and closes it out on save.
+  const dates = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Log a date" }) })
+    .first();
+
+  await dates.getByRole("button", { name: "Log a date" }).click();
+  await dates.getByLabel("From a saved idea").selectOption({ label: "Late showing at the Alamo" });
+  await expect(dates.getByLabel("Where")).toHaveValue("Alamo Drafthouse");
+  await dates.getByRole("button", { name: "Log it" }).click();
+
+  await expect(dates.getByText(/Alamo Drafthouse/).first()).toBeVisible();
+  await expect(ideas.getByText("Late showing at the Alamo")).toHaveCount(0);
+});
+
 test("the pipeline groups them by stage and can move them", async ({ page }) => {
   await ensureSignedIn(page);
   const name = personName();
@@ -113,6 +147,26 @@ test("the pipeline groups them by stage and can move them", async ({ page }) => 
   // Move them along; the section they sit in changes with them.
   await card.getByRole("combobox", { name: new RegExp(`Stage for ${name}`) }).selectOption({ label: "Dating" });
   await expect(page.getByRole("heading", { name: "Dating", level: 3 })).toBeVisible();
+});
+
+test("the dating page keeps date ideas saved for nobody in particular", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto("/dating");
+
+  const ideas = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Add a date idea" }) })
+    .first();
+
+  await ideas.getByRole("button", { name: "Add a date idea" }).click();
+  await ideas.getByLabel("What's the idea?").fill(`Kayak the Potomac ${STAMP}`);
+  await ideas.getByRole("button", { name: "Outdoors", exact: true }).click();
+  await ideas.getByLabel("Where").fill("Key Bridge Boathouse");
+  await ideas.getByRole("button", { name: "Save", exact: true }).click();
+
+  await expect(ideas.getByText(`Kayak the Potomac ${STAMP}`)).toBeVisible();
+  // Not saved against anyone, and the list says so.
+  await expect(ideas.getByText("Anyone").first()).toBeVisible();
 });
 
 test("compare sorts and opens a side-by-side", async ({ page }) => {
@@ -162,6 +216,7 @@ test("converting to a friend keeps the history", async ({ page }) => {
   // filtering sections on "Dates" would also match "Important dates".
   await expect(page.getByRole("button", { name: "Log a date" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add a flag" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add a date idea" })).toHaveCount(0);
   const timeline = page.locator("section").filter({ hasText: "Timeline" }).first();
   await expect(timeline.getByText(/Middle Diner/).first()).toBeVisible();
 

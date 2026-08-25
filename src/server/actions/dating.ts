@@ -49,6 +49,13 @@ function touch(contactId: string) {
   revalidatePath(`/people/${contactId}`);
 }
 
+/** Same, for the rows that may belong to nobody in particular. */
+function touchIdeas(contactId: string | null) {
+  revalidatePath("/");
+  revalidatePath("/dating");
+  if (contactId) revalidatePath(`/people/${contactId}`);
+}
+
 async function assertOwned(ownerId: string, contactId: string): Promise<boolean> {
   return Boolean(
     await prisma.contact.findFirst({ where: { id: contactId, ownerId }, select: { id: true } }),
@@ -277,6 +284,18 @@ export async function createDateEntry(form: FormData): Promise<ActionResult<{ id
       },
     });
 
+    // Logging the date closes the idea it came from, pointing at the entry so
+    // "we did this on the 4th" survives. Scoped in the where clause: an id
+    // from a tampered form must not reach someone else's row, or an idea
+    // saved for a different person.
+    const dateIdeaId = str(form, "dateIdeaId");
+    if (dateIdeaId) {
+      await tx.dateIdea.updateMany({
+        where: { id: dateIdeaId, ownerId, OR: [{ contactId }, { contactId: null }] },
+        data: { status: "DONE", usedAt: occurredAt, usedInDateEntryId: created.id },
+      });
+    }
+
     // Order matters only in that both must run: the first keeps the cadence
     // honest when this date is backdated, the second renumbers if it landed
     // between two existing ones.
@@ -382,6 +401,119 @@ export async function deleteDateEntry(id: string): Promise<ActionResult> {
   return ok();
 }
 
+// --- date ideas ------------------------------------------------------------
+
+/**
+ * Somewhere to go, something to watch, something to try.
+ *
+ * Saved against a person when it is for them and against nobody when it is
+ * just a good idea, so the list survives whoever you are seeing at the time.
+ * Behind the same lock as the rest of the module: "take her to the cabin" is
+ * exactly the sort of thing the lock exists for.
+ */
+export async function createDateIdea(form: FormData): Promise<ActionResult<{ id: string }>> {
+  const blocked = await guard();
+  if (blocked) return fail(blocked);
+
+  const { ownerId } = await owner();
+  const title = str(form, "title");
+  if (!title) return fail("What's the idea?");
+
+  const contactId = str(form, "contactId") ?? null;
+  if (contactId && !(await assertOwned(ownerId, contactId))) return fail("Contact not found.");
+
+  const fields = await dateIdeaFields(ownerId, form);
+  if (!fields) return fail("Unknown category.");
+
+  const created = await prisma.dateIdea.create({
+    data: {
+      ownerId,
+      contactId,
+      title,
+      status: dateIdeaStatusOf(str(form, "status")),
+      ...fields,
+    },
+  });
+
+  touchIdeas(contactId);
+  return ok({ id: created.id });
+}
+
+export async function updateDateIdea(form: FormData): Promise<ActionResult> {
+  const blocked = await guard();
+  if (blocked) return fail(blocked);
+
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  if (!id) return fail("Missing idea.");
+
+  const existing = await prisma.dateIdea.findFirst({
+    where: { id, ownerId },
+    select: { contactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  const title = str(form, "title");
+  if (!title) return fail("What's the idea?");
+
+  const fields = await dateIdeaFields(ownerId, form);
+  if (!fields) return fail("Unknown category.");
+
+  await prisma.dateIdea.update({ where: { id }, data: { title, ...fields } });
+
+  touchIdeas(existing.contactId);
+  return ok();
+}
+
+/**
+ * Move an idea along. `usedAt` is stamped on the way to DONE and cleared on
+ * the way back, so an idea marked done by mistake returns to the list clean.
+ */
+export async function setDateIdeaStatus(
+  id: string,
+  status: DateIdeaStatusValue,
+): Promise<ActionResult> {
+  const blocked = await guard();
+  if (blocked) return fail(blocked);
+
+  const { ownerId } = await owner();
+  const existing = await prisma.dateIdea.findFirst({
+    where: { id, ownerId },
+    select: { contactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  const next = dateIdeaStatusOf(status);
+  await prisma.dateIdea.update({
+    where: { id },
+    data: {
+      status: next,
+      usedAt: next === "DONE" ? new Date() : null,
+      ...(next === "DONE" ? {} : { usedInDateEntryId: null }),
+    },
+  });
+
+  touchIdeas(existing.contactId);
+  return ok();
+}
+
+export async function deleteDateIdea(id: string): Promise<ActionResult> {
+  const blocked = await guard();
+  if (blocked) return fail(blocked);
+
+  const { ownerId } = await owner();
+  const existing = await prisma.dateIdea.findFirst({
+    where: { id, ownerId },
+    select: { contactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  await prisma.dateIdea.delete({ where: { id } });
+
+  touchIdeas(existing.contactId);
+  return ok();
+}
+
 // --- flags -----------------------------------------------------------------
 
 export async function createFlag(form: FormData): Promise<ActionResult<{ id: string }>> {
@@ -453,6 +585,44 @@ async function backfillFirstDate(tx: Tx, contactId: string) {
     Date.UTC(occurredAt.getUTCFullYear(), occurredAt.getUTCMonth(), occurredAt.getUTCDate()),
   );
   await tx.romanticProfile.update({ where: { contactId }, data: { firstDateOn: asDate } });
+}
+
+const DATE_IDEA_STATUSES = ["OPEN", "PLANNED", "DONE", "ARCHIVED"] as const;
+export type DateIdeaStatusValue = (typeof DATE_IDEA_STATUSES)[number];
+
+function dateIdeaStatusOf(value?: string): DateIdeaStatusValue {
+  return (DATE_IDEA_STATUSES as readonly string[]).includes(value ?? "")
+    ? (value as DateIdeaStatusValue)
+    : "OPEN";
+}
+
+/**
+ * The fields create and update share.
+ *
+ * Null on an unknown category rather than a silent drop: a category the user
+ * cannot see is either someone else's row or a stale form, and both deserve
+ * an error instead of an idea filed under nothing.
+ */
+async function dateIdeaFields(ownerId: string, form: FormData) {
+  const categoryId = str(form, "categoryId") ?? null;
+  if (categoryId) {
+    const term = await prisma.taxonomyTerm.findFirst({
+      where: { id: categoryId, ownerId, kind: "DATE_IDEA_CATEGORY" },
+      select: { id: true },
+    });
+    if (!term) return null;
+  }
+
+  const cost = num(form, "estimatedCost");
+  return {
+    categoryId,
+    location: str(form, "location") ?? null,
+    city: str(form, "city") ?? null,
+    url: str(form, "url") ?? null,
+    estimatedCostCents: cost === undefined ? null : Math.round(cost * 100),
+    notes: str(form, "notes") ?? null,
+    plannedFor: plainDate(form, "plannedFor") ?? null,
+  };
 }
 
 function clampRating(value: number | undefined): number | null {

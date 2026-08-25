@@ -218,4 +218,101 @@ describe.skipIf(!hasTestDatabase)("dating", () => {
     expect(profile.retrospective).toBe("I waited too long to say what I wanted.");
     expect(profile.endedOn).not.toBeNull();
   });
+
+  // --- date ideas ----------------------------------------------------------
+
+  async function category(slug: string) {
+    return prisma.taxonomyTerm.findFirstOrThrow({
+      where: { ownerId, kind: "DATE_IDEA_CATEGORY", slug },
+    });
+  }
+
+  it("a new account gets date idea categories, places and films among them", async () => {
+    const slugs = (
+      await prisma.taxonomyTerm.findMany({
+        where: { ownerId, kind: "DATE_IDEA_CATEGORY" },
+        select: { slug: true },
+      })
+    ).map((term) => term.slug);
+
+    expect(slugs).toEqual(expect.arrayContaining(["place", "movie", "thing-to-try", "other"]));
+  });
+
+  it("an idea keeps its category, its place and what it might cost", async () => {
+    const contact = await makeRomantic();
+    const movie = await category("movie");
+
+    const idea = await prisma.dateIdea.create({
+      data: {
+        ownerId,
+        contactId: contact.id,
+        title: "Late showing at the Alamo",
+        categoryId: movie.id,
+        location: "Alamo Drafthouse",
+        city: "Arlington",
+        url: "https://example.com/showtimes",
+        estimatedCostCents: 4400,
+      },
+    });
+
+    const stored = await prisma.dateIdea.findUniqueOrThrow({
+      where: { id: idea.id },
+      include: { category: true },
+    });
+    expect(stored.status).toBe("OPEN");
+    expect(stored.category?.slug).toBe("movie");
+    expect(stored.location).toBe("Alamo Drafthouse");
+    expect(stored.estimatedCostCents).toBe(4400);
+  });
+
+  it("an idea saved against nobody outlives the person you saved it near", async () => {
+    const contact = await makeRomantic();
+    await prisma.dateIdea.create({
+      data: { ownerId, contactId: contact.id, title: "Rooftop at the Wharf" },
+    });
+    const general = await prisma.dateIdea.create({
+      data: { ownerId, title: "Kayak the Potomac" },
+    });
+
+    await prisma.contact.delete({ where: { id: contact.id } });
+
+    const left = await prisma.dateIdea.findMany({ where: { ownerId }, select: { id: true } });
+    expect(left.map((row) => row.id)).toEqual([general.id]);
+  });
+
+  it("deleting a category leaves the idea, uncategorised", async () => {
+    const movie = await category("movie");
+    const idea = await prisma.dateIdea.create({
+      data: { ownerId, title: "Whatever is on at the Avalon", categoryId: movie.id },
+    });
+
+    await prisma.taxonomyTerm.delete({ where: { id: movie.id } });
+
+    const after = await prisma.dateIdea.findUniqueOrThrow({ where: { id: idea.id } });
+    expect(after.categoryId).toBeNull();
+    expect(after.title).toBe("Whatever is on at the Avalon");
+  });
+
+  it("logging the date it became closes the idea and points it at the entry", async () => {
+    const contact = await makeRomantic();
+    const idea = await prisma.dateIdea.create({
+      data: { ownerId, contactId: contact.id, title: "Cherry blossoms at dawn" },
+    });
+    const entry = await logDate(contact.id, daysAgo(1), 5);
+
+    await prisma.dateIdea.update({
+      where: { id: idea.id },
+      data: { status: "DONE", usedAt: new Date(), usedInDateEntryId: entry.id },
+    });
+
+    const done = await prisma.dateIdea.findUniqueOrThrow({ where: { id: idea.id } });
+    expect(done.status).toBe("DONE");
+    expect(done.usedInDateEntryId).toBe(entry.id);
+
+    // Deleting the date does not take the idea with it — only the link.
+    await prisma.interaction.delete({ where: { id: entry.interactionId } });
+    const orphaned = await prisma.dateIdea.findUniqueOrThrow({ where: { id: idea.id } });
+    expect(orphaned.usedInDateEntryId).toBeNull();
+    expect(orphaned.status).toBe("DONE");
+  });
 });

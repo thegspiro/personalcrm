@@ -314,6 +314,43 @@ export async function getDatingSummary(ownerId: string, quietAfterDays = 10): Pr
   };
 }
 
+/**
+ * Saved date ideas.
+ *
+ * `contactId` narrows to one person *plus* the ideas saved against nobody,
+ * because "go to the observatory" is worth offering whoever you are looking
+ * at. Omit it for the whole list.
+ *
+ * Ordered by status first — an enum column sorts by its declaration order,
+ * which is OPEN, PLANNED, DONE, ARCHIVED, exactly the order a list of ideas
+ * wants — then newest first within each.
+ */
+export async function listDateIdeas(
+  ownerId: string,
+  options: { contactId?: string; includeDone?: boolean } = {},
+) {
+  const scope = await privacyScope();
+
+  return prisma.dateIdea.findMany({
+    where: {
+      ownerId,
+      ...(options.contactId
+        ? { OR: [{ contactId: options.contactId }, { contactId: null }] }
+        : // A general idea has no contact to be private, so it is always visible.
+          scope.unlocked
+          ? {}
+          : { OR: [{ contactId: null }, { contact: { isPrivate: false } }] }),
+      ...(options.includeDone ? {} : { status: { in: ["OPEN", "PLANNED"] } }),
+    },
+    include: {
+      category: true,
+      contact: { select: { id: true, firstName: true, lastName: true } },
+    },
+    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+    take: 200,
+  });
+}
+
 /** Dates for one person, newest first. */
 export async function listDateEntries(ownerId: string, contactId: string) {
   return prisma.dateEntry.findMany({

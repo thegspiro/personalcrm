@@ -189,8 +189,35 @@ export const TAXONOMY_SEEDS: Record<TaxonomyKind, TaxonomySeed[]> = {
     { slug: "activity", label: "Activity", icon: "Bike", color: "lime" },
     { slug: "movie", label: "Movie", icon: "Film", color: "violet" },
     { slug: "concert", label: "Concert", icon: "Music", color: "fuchsia" },
+    { slug: "outdoors", label: "Outdoors", icon: "Trees", color: "green" },
+    { slug: "museum", label: "Museum or gallery", icon: "Landmark", color: "indigo" },
+    { slug: "event", label: "Event", icon: "PartyPopper", color: "pink" },
+    { slug: "class", label: "Class or workshop", icon: "GraduationCap", color: "blue" },
     { slug: "trip", label: "Trip", icon: "Plane", color: "cyan" },
     { slug: "at-home", label: "At home", icon: "Home", color: "pink" },
+    { slug: "other", label: "Other", icon: "CircleDot", color: "slate" },
+  ],
+
+  /**
+   * What a saved date idea *is*. Broad on purpose: a place to go, a film to
+   * watch, a thing to try — an idea is worth keeping long before you know
+   * which of those it will turn into.
+   */
+  DATE_IDEA_CATEGORY: [
+    { slug: "place", label: "Place to go", icon: "MapPin", color: "emerald" },
+    { slug: "restaurant", label: "Restaurant", icon: "UtensilsCrossed", color: "orange" },
+    { slug: "bar-cafe", label: "Bar or café", icon: "Coffee", color: "amber" },
+    { slug: "movie", label: "Movie", icon: "Film", color: "violet" },
+    { slug: "show", label: "Show or concert", icon: "Music", color: "fuchsia" },
+    { slug: "event", label: "Event", icon: "PartyPopper", color: "pink" },
+    { slug: "outdoors", label: "Outdoors", icon: "Trees", color: "green" },
+    { slug: "activity", label: "Activity", icon: "Bike", color: "lime" },
+    { slug: "museum", label: "Museum or gallery", icon: "Landmark", color: "indigo" },
+    { slug: "class", label: "Class or workshop", icon: "GraduationCap", color: "blue" },
+    { slug: "trip", label: "Trip or day out", icon: "Plane", color: "cyan" },
+    { slug: "at-home", label: "At home", icon: "Home", color: "rose" },
+    { slug: "thing-to-try", label: "Thing to try", icon: "Sparkles", color: "yellow" },
+    { slug: "seasonal", label: "Seasonal", icon: "Snowflake", color: "sky" },
     { slug: "other", label: "Other", icon: "CircleDot", color: "slate" },
   ],
 
@@ -255,6 +282,10 @@ export const TAXONOMY_KIND_LABELS: Record<TaxonomyKind, { title: string; descrip
   RELATIONSHIP_TYPE: { title: "Relationship types", description: "How people connect to each other." },
   DATING_STAGE: { title: "Dating stages", description: "The columns of your dating pipeline." },
   DATE_ACTIVITY_TYPE: { title: "Date activities", description: "What you did on a date." },
+  DATE_IDEA_CATEGORY: {
+    title: "Date idea categories",
+    description: "How saved date ideas are grouped — places, films, things to try.",
+  },
   MEETING_SOURCE: { title: "Meeting sources", description: "Where you met someone — apps included." },
   GIFT_OCCASION: { title: "Gift occasions", description: "Why a gift was given." },
   LIFE_EVENT_TYPE: { title: "Life events", description: "Things that happen in someone's life." },
@@ -273,4 +304,5 @@ export const TAXONOMY_KIND_ORDER: TaxonomyKind[] = [
   "LIFE_EVENT_TYPE",
   "DATING_STAGE",
   "DATE_ACTIVITY_TYPE",
+  "DATE_IDEA_CATEGORY",
 ];
