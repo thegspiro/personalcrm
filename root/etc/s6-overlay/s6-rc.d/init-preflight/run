@@ -1,0 +1,8 @@
+#!/command/with-contenv bash
+# Validate what the operator supplied before anything else starts.
+#
+# Ordered ahead of MariaDB deliberately: a wrong APP_URL or an unwritable
+# /config is far easier to read here than as a failure three services later.
+set -euo pipefail
+
+exec node /etc/s6-overlay/scripts/preflight.mjs

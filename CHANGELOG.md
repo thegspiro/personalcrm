@@ -16,6 +16,58 @@ for what each migration does.
 
 ## [Unreleased]
 
+### Startup sequence — 2026-08-25 — install, first boot, account, home screen
+
+*Schema: `20260825120000_add_onboarding_state`*
+
+#### Added
+- **A joined-up first run.** `/setup` keeps its form and becomes step 1 of 5,
+  handing off to a wizard at `/welcome` rather than to an empty dashboard. The
+  rest cover timezone, appearance, your first few people, and installing. Every
+  step reuses the same server action the Settings screen calls, so there is one
+  code path per setting; every step can be skipped, and skipping finishes rather
+  than defers.
+- **`init-preflight`**, a oneshot ahead of MariaDB that validates what the
+  operator supplied. A configuration that cannot work stops the container; one
+  that is merely odd warns and carries on. `APP_URL` is the case that matters —
+  the secure-cookie flag is decided from its scheme, so behind HTTPS with an
+  `http://` URL you get a login form that never signs anyone in and nothing in
+  the log to say why.
+- **An install offer** that works out what the browser can actually do before
+  rendering anything: the real prompt on Chromium, the three taps iOS Safari
+  needs because Apple provides no API, and a plain statement that desktop
+  Firefox cannot. In the wizard and permanently under Settings, since most
+  installs happen on a second device.
+- **A dashboard checklist** derived from real rows rather than a stored flag,
+  shown only while the account is empty.
+- `/api/health` now reports `setup`, so a booted-but-unconfigured instance is
+  distinguishable from a working one without opening a browser.
+- **`docs/`**: installing, first run, backing up, upgrading, troubleshooting.
+
+#### Fixed
+- `updateDefaults` wrote `defaultCadenceDays` unconditionally, so any form not
+  carrying that field silently cleared a cadence set elsewhere.
+- Two documented claims that were not true: nothing writes to `/config/backups`,
+  and the `ADMIN` role is recorded but never checked, so it grants no powers.
+
+---
+
+### Things to do — 2026-08-25 — date ideas generalised
+
+*Schema: `20260825094500_add_plans`*
+
+#### Added
+- **`Plan`** — something to *do* with someone, as against an `Idea`, which is
+  something to *say*. A plan carries what a plan needs: where it is, what it
+  costs, a link to the listing, when you mean to go. The two also end
+  differently — an idea is used when you say it, a plan when you do it.
+- Not confined to the dating layer. A hike with a friend and a first date are
+  the same object, so a plan hangs off any contact, or off nobody.
+- `PLAN_CATEGORY` joins the taxonomies, so places, films, shows and whatever
+  else you invent live in one list you control rather than an enum.
+
+---
+
 ### Unversioned — 2026-08-25 — documentation and CI
 
 #### Added

@@ -337,6 +337,13 @@ export interface DateLogItem {
   activityLabel: string | null;
 }
 
+/** Just enough of a saved plan to pick one when logging the date it became. */
+export interface PlanOption {
+  id: string;
+  title: string;
+  location: string | null;
+}
+
 const WHO_PAID_LABELS: Record<string, string> = {
   ME: "I paid",
   THEM: "They paid",
@@ -348,19 +355,27 @@ export function DateLogSection({
   contactId,
   dates,
   activityTypes,
+  plans = [],
   blurPrivate,
 }: {
   contactId: string;
   dates: DateLogItem[];
   activityTypes: TermOption[];
+  /** Plans saved for this person — picking one closes it out. */
+  plans?: PlanOption[];
   blurPrivate: boolean;
 }) {
   const run = useRun();
+  // The venue is prefilled from a picked idea, so it has to be controlled.
+  const [venue, setVenue] = React.useState("");
 
   function add(close: () => void) {
     return async (form: FormData) => {
       form.set("contactId", contactId);
-      if (await run(() => createDateEntry(form), "Date logged")) close();
+      if (await run(() => createDateEntry(form), "Date logged")) {
+        setVenue("");
+        close();
+      }
     };
   }
 
@@ -372,6 +387,27 @@ export function DateLogSection({
       addLabel="Log a date"
       form={(close) => (
         <form action={add(close)} className="grid gap-2.5">
+          {plans.length > 0 ? (
+            <Field label="From a saved idea" htmlFor="date-plan">
+              <select
+                id="date-plan"
+                name="planId"
+                defaultValue=""
+                onChange={(event) => {
+                  const picked = plans.find((plan) => plan.id === event.target.value);
+                  if (picked) setVenue(picked.location ?? picked.title);
+                }}
+                className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+              >
+                <option value="">Not from the list</option>
+                {plans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>
+                    {plan.title}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : null}
           <TermChips name="activityTypeId" label="What did you do?" terms={activityTypes} allowEmpty={false} />
           <DateTimeField
             name="occurredAt"
@@ -379,7 +415,13 @@ export function DateLogSection({
             hint="Logging one you forgot? Set it back — it won't disturb your cadence."
           />
           <Field label="Where" htmlFor="date-venue">
-            <Input id="date-venue" name="venue" placeholder="Northside Social" />
+            <Input
+              id="date-venue"
+              name="venue"
+              value={venue}
+              onChange={(event) => setVenue(event.target.value)}
+              placeholder="Northside Social"
+            />
           </Field>
           <div className="grid gap-2.5 sm:grid-cols-2">
             <RatingInput name="rating" label="How was it?" />

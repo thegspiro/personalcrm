@@ -26,6 +26,7 @@ src/
     (app)/          signed-in routes — dashboard, people, timeline, dating,
                     family, gifts, ideas, tasks, settings, more, unlock
     (auth)/         login, signup, first-run setup
+    (onboarding)/   the welcome flow, once per account
     api/health/     container healthcheck (the only route handler)
     manifest.ts     PWA manifest;  icon.tsx  draws the icon at build time
   components/       UI, grouped by feature; ui/ is the Radix-backed primitives
@@ -149,11 +150,12 @@ refuses to do.
 s6-overlay orders a chain of oneshots before the app is allowed to serve:
 
 ```
-init-perms  →  init-mariadb  →  svc-mariadb  →  init-db-ready  →  init-migrate  →  svc-app
+init-perms  →  init-preflight  →  init-mariadb  →  svc-mariadb  →  init-db-ready  →  init-migrate  →  svc-app
 ```
 
 | Step | Does |
 | --- | --- |
+| `init-preflight` | Validates what the operator supplied — `APP_URL`, a writable `/config` — before anything else starts. Ordered first deliberately: a wrong value is far easier to read here than as a failure three services later |
 | `init-perms` | Creates the `abc` user from `PUID`/`PGID`, makes `/config` writable, creates `db/ uploads/ backups/ logs/ cache/`. Only chowns recursively when the top-level owner is actually wrong |
 | `init-mariadb` | Generates `/config/secrets.json` (0600) on first boot with a random DB password and `authSecret`, initialises the data directory, publishes `DATABASE_URL` and `AUTH_SECRET` into the supervision tree. Skipped entirely when `DATABASE_URL` is set |
 | `svc-mariadb` | The bundled server (longrun) |

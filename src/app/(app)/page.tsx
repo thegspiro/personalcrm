@@ -18,6 +18,8 @@ import { QuickAddWidget } from "@/components/dashboard/quick-add";
 import { fieldsFor } from "@/server/queries/custom-fields";
 import { offlineCacheable } from "@/server/privacy/offline";
 import { CacheThisPage } from "@/components/offline/offline";
+import { SetupChecklist } from "@/components/onboarding/setup-checklist";
+import { needsSetupChecklist } from "@/lib/setup-checklist";
 import {
   DatingPipelineWidget,
   IdeasWidget,
@@ -41,6 +43,18 @@ export default async function HomePage() {
   // The dating widget is the most sensitive thing on this page, so its
   // presence rules out keeping a copy regardless of everything else.
   const cacheable = !showDating && (await offlineCacheable(user.id));
+
+  // Two counts rather than a stored flag, so a step skipped in the wizard and
+  // then done anyway ticks itself off.
+  const [contactCount, interactionCount] = await Promise.all([
+    prisma.contact.count({ where: { ownerId: user.id } }),
+    prisma.interaction.count({ where: { ownerId: user.id } }),
+  ]);
+  const checklist = {
+    hasPeople: contactCount > 0,
+    hasInteractions: interactionCount > 0,
+    hasInstalled: Boolean(prefs.pwaInstalledAt),
+  };
 
   const layoutRow = await prisma.dashboardLayout.findUnique({ where: { userId: user.id } });
   const layout = normalizeDashboardLayout(layoutRow?.widgets).filter((entry) => entry.enabled);
@@ -155,6 +169,8 @@ export default async function HomePage() {
             : "You're on top of things."}
         </p>
       </div>
+
+      {needsSetupChecklist(checklist) ? <SetupChecklist {...checklist} /> : null}
 
       <div className="grid grid-cols-[minmax(0,1fr)] gap-3 lg:grid-cols-2">
         {layout.map((entry) => {

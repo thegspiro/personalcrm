@@ -8,12 +8,14 @@ A self-hosted personal relationship manager — for the people in your life, not
 sales leads. Next.js 15 (App Router) + React 19 + Prisma + MariaDB, packaged as
 a single container with MariaDB bundled in and supervised by s6-overlay.
 
-Deep documentation lives in [`docs/`](docs/) — [architecture](docs/architecture.md),
-[data model](docs/data-model.md), [server actions](docs/server-actions.md),
-[privacy](docs/privacy.md), [configuration](docs/configuration.md),
-[deployment](docs/deployment.md), [testing](docs/testing.md). Keep them current
-with the code; [CONTRIBUTING.md](CONTRIBUTING.md) says which document a given
-change touches.
+Deep documentation lives in [`docs/`](docs/). Reference:
+[architecture](docs/architecture.md), [data model](docs/data-model.md),
+[server actions](docs/server-actions.md), [privacy](docs/privacy.md),
+[configuration](docs/configuration.md), [testing](docs/testing.md). Operator
+guides: [install](docs/install.md), [first run](docs/first-run.md),
+[backup](docs/backup.md), [upgrade](docs/upgrade.md),
+[troubleshooting](docs/troubleshooting.md). Keep them current with the code;
+[CONTRIBUTING.md](CONTRIBUTING.md) says which document a given change touches.
 
 ## Commands
 
@@ -77,7 +79,8 @@ src/server/queries/    reads for pages (privacy-filtered, owner-scoped)
 src/server/actions/    server actions — the entire write surface
 src/server/services/   multi-step writes shared by several actions (take a Tx client)
 src/server/privacy/    the lock: state, where-fragments, offline eligibility
-src/app/(app)|(auth)   routes;  src/app/api/health is the ONLY route handler
+src/app/(app)|(auth)|(onboarding)
+                       routes;  src/app/api/health is the ONLY route handler
 ```
 
 There is no REST API and no client data store. Pages are server components

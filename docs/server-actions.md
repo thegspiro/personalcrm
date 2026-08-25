@@ -42,7 +42,7 @@ enforces rather than documents:
 | Action | Notes |
 | --- | --- |
 | `loginAction` | Failures are indistinguishable between an unknown email and a wrong password |
-| `setupAction` | First-run wizard; the first account becomes `ADMIN` |
+| `setupAction` | First-run wizard; the first account becomes `ADMIN`, a label nothing checks yet. Hands off to `/welcome` |
 | `signupAction` | Refused when `DISABLE_SIGNUP=true` |
 | `logoutAction` | Deletes the session row and clears the cookie |
 | `currentUserAction` | |
@@ -70,6 +70,7 @@ backdating and deletion cannot corrupt a cadence.
 | Important dates | `createImportantDate`, `updateImportantDate`, `deleteImportantDate` |
 | Life events | `createLifeEvent`, `updateLifeEvent`, `deleteLifeEvent` |
 | Ideas | `createIdea`, `setIdeaStatus`, `deleteIdea` |
+| Plans | `createPlan`, `updatePlan`, `setPlanStatus`, `deletePlan` |
 | Tasks | `createTask`, `setTaskDone`, `deleteTask` |
 | Gifts | `createGift`, `setGiftStatus`, `deleteGift` |
 | Debts | `createDebt`, `settleDebt`, `deleteDebt` |
@@ -127,6 +128,12 @@ would null the reference or cascade the row away. `setTermActive(false)` is the
 supported alternative. A relationship type keeps its reciprocal paired in both
 directions, and `metadata` is not editable from the UI because family tiers and
 pipeline ordering are read from it by code.
+
+### Onboarding — `actions/onboarding.ts`
+
+`updateProfileName`, `completeOnboarding`, `markPwaInstalled`. The welcome flow
+runs once per account and records that it did in
+`UserPreference.onboardingCompletedAt`, so skipping counts as finishing.
 
 ### Privacy — `actions/privacy.ts`
 

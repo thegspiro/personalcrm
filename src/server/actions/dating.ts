@@ -277,6 +277,18 @@ export async function createDateEntry(form: FormData): Promise<ActionResult<{ id
       },
     });
 
+    // Logging the date closes the plan it came from, pointing at the
+    // interaction so "we did this on the 4th" survives. Scoped in the where
+    // clause: an id from a tampered form must not reach someone else's row, or
+    // a plan saved for a different person.
+    const planId = str(form, "planId");
+    if (planId) {
+      await tx.plan.updateMany({
+        where: { id: planId, ownerId, OR: [{ contactId }, { contactId: null }] },
+        data: { status: "DONE", usedAt: occurredAt, usedInInteractionId: interaction.id },
+      });
+    }
+
     // Order matters only in that both must run: the first keeps the cadence
     // honest when this date is backdated, the second renumbers if it landed
     // between two existing ones.

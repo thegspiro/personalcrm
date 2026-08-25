@@ -3,6 +3,12 @@
 The published image bundles MariaDB, so a normal deployment is **one container
 and one folder**.
 
+> The step-by-step guides live alongside this file and are the place to start:
+> [installing](install.md), [first run](first-run.md), [backing up](backup.md),
+> [upgrading](upgrade.md) and [troubleshooting](troubleshooting.md). This page
+> is the reference behind them — what the startup chain does, what the health
+> endpoint reports, and where the logs are.
+
 ## Unraid (the intended path)
 
 Search **Personal CRM** in Community Applications, or add the template
@@ -22,7 +28,7 @@ https://raw.githubusercontent.com/thegspiro/personalcrm/main/unraid/personalcrm.
 | `DISABLE_SIGNUP` | `false` | Set `true` once your accounts exist |
 | `DATABASE_URL` | — | Leave empty to use the bundled MariaDB |
 
-Open the WebUI and create your account — the first one is the administrator.
+Open the WebUI and create your account, then follow the welcome flow — see [first run](first-run.md).
 
 ## Plain Docker
 
@@ -78,7 +84,7 @@ init-perms  →  init-mariadb  →  svc-mariadb  →  init-db-ready  →  init-m
 4. `prisma migrate deploy` applies every pending migration.
 5. The app starts; on its own boot it re-provisions taxonomy defaults for every
    account and purges expired sessions.
-6. You open the WebUI and the first-run wizard creates the administrator.
+6. You open the WebUI, create the first account, and the welcome flow at `/welcome` takes it from there.
 
 The recursive `chown` of `/config` only runs when the top-level owner is
 actually wrong — it is slow once `db/` is large.
@@ -105,8 +111,11 @@ automatic pre-upgrade dump.
 start period, 3 retries).
 
 ```json
-{ "status": "ok", "database": "up", "latencyMs": 3, "version": "dev", "uptimeSeconds": 412 }
+{ "status": "ok", "database": "up", "setup": "complete", "latencyMs": 3, "version": "dev", "uptimeSeconds": 412 }
 ```
+
+`setup` is `pending` until the first account exists, so a booted-but-unconfigured
+instance is distinguishable from a working one without opening a browser.
 
 It runs `SELECT 1` against the database, so a `503` with `"database": "down"`
 means the app is serving but MariaDB is not up — which is what makes Docker

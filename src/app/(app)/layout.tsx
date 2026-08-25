@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { AppearanceSync } from "@/components/providers/theme-provider";
 import { BottomNav } from "@/components/nav/bottom-nav";
 import { Sidebar } from "@/components/nav/sidebar";
@@ -13,6 +14,11 @@ export const dynamic = "force-dynamic";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, prefs } = await getUserContext();
+
+  // Setup is not finished until the wizard says so. Existing accounts were
+  // backfilled by the migration that added the column, so an upgrade never
+  // drags anyone back through this.
+  if (!prefs.onboardingCompletedAt) redirect("/welcome");
 
   // Loaded once for the whole shell so the floating log button works from any
   // screen without each page having to supply it.

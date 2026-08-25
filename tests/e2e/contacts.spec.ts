@@ -124,6 +124,32 @@ test("record a fact and a follow-up", async ({ page }) => {
   await expect(tasks.getByText("Send the Denver recommendations")).toBeVisible();
 });
 
+test("save something to do with an ordinary friend", async ({ page }) => {
+  await ensureSignedIn(page);
+  const name = personName(page);
+  await openPerson(page, `${name} Case`);
+
+  // Nothing romantic about this person: things to do are not a dating section.
+  const plans = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Add something to do" }) })
+    .first();
+
+  await plans.getByRole("button", { name: "Add something to do" }).click();
+  await plans.getByLabel("What do you want to do?").fill(`Hike Old Rag ${STAMP}`);
+  await plans.getByRole("button", { name: "Outdoors", exact: true }).click();
+  await plans.getByLabel("Where").fill("Old Rag Mountain");
+  await plans.getByRole("button", { name: "Save", exact: true }).click();
+
+  await expect(plans.getByText(`Hike Old Rag ${STAMP}`)).toBeVisible();
+  await expect(plans.getByText("Old Rag Mountain")).toBeVisible();
+
+  // And it reaches the general list, beside the conversation ideas.
+  await page.goto("/ideas");
+  await expect(page.getByText(`Hike Old Rag ${STAMP}`)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Bring this up" })).toBeVisible();
+});
+
 test("everything shows on the global timeline", async ({ page }) => {
   await ensureSignedIn(page);
 

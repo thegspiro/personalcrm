@@ -4,12 +4,12 @@ Three suites, three different jobs.
 
 | Suite | Runner | Needs | Count | Command |
 | --- | --- | --- | --- | --- |
-| Unit | Vitest | Nothing | 199 cases, 11 files | `npm test` |
-| Integration | Vitest | A throwaway MariaDB | 83 cases, 7 files | `npm test` (skipped without `TEST_DATABASE_URL`) |
-| End-to-end | Playwright | A running instance | 76 cases, 12 specs | `npx playwright test` |
+| Unit | Vitest | Nothing | 14 files | `npm test` |
+| Integration | Vitest | A throwaway MariaDB | 8 files | `npm test` (skipped without `TEST_DATABASE_URL`) |
+| End-to-end | Playwright | A running instance | 13 specs | `npx playwright test` |
 
-Counts are the test cases in the tree at the time of writing — treat them as a
-scale, not a contract.
+File counts are what is in the tree; the case counts move with every change, so
+run the suite rather than trusting a number written here.
 
 ## Unit tests — `tests/unit/`
 
@@ -26,6 +26,9 @@ does not own. That is what makes these fast and worth writing.
 | `family-suggestions.test.ts` | Graph inference, and what it refuses to infer |
 | `custom-fields.test.ts` | Type coercion and validation |
 | `offline.test.ts` | Offline-cacheability rules |
+| `preflight.test.ts` | The container's start-up validation |
+| `setup-checklist.test.ts` | What the welcome flow considers done |
+| `taxonomy-seeds.test.ts` | The seeded default terms |
 | `ai-providers.test.ts` | Forgiving response parsing across provider dialects |
 
 The date-sensitive suites run against a **fixed clock**, and the timezone-aware
@@ -44,7 +47,7 @@ the schema do, not things a mock can:
 - `family.test.ts` — reciprocal pairs, ending a link, dismissals.
 - `dating.test.ts` — the Interaction/DateEntry pair and sequence renumbering.
 - `custom-fields.test.ts` — server-side validation and the delete sweep.
-- `quick-add.test.ts`, `phase4d.test.ts` — the newer write paths.
+- `quick-add.test.ts`, `phase4d.test.ts`, `plans.test.ts` — the newer write paths.
 
 ### Setting one up
 

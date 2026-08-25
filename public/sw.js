@@ -113,6 +113,8 @@ self.addEventListener("fetch", (event) => {
     url.pathname === "/login" ||
     url.pathname === "/unlock" ||
     url.pathname === "/setup" ||
+    url.pathname === "/signup" ||
+    url.pathname === "/welcome" ||
     url.searchParams.has("_rsc")
   ) {
     return;

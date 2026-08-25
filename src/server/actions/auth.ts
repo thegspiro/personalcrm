@@ -71,18 +71,25 @@ export async function setupAction(_prev: FormState, formData: FormData): Promise
   if (!(await needsFirstRunSetup())) {
     return { error: "This server has already been set up. Sign in instead." };
   }
-  return registerUser(formData, "ADMIN");
+  // Straight into the rest of the wizard rather than onto an empty dashboard.
+  return registerUser(formData, "ADMIN", "/welcome");
 }
 
 export async function signupAction(_prev: FormState, formData: FormData): Promise<FormState> {
-  if (await needsFirstRunSetup()) return registerUser(formData, "ADMIN");
+  if (await needsFirstRunSetup()) return registerUser(formData, "ADMIN", "/welcome");
   if (!(await signupsAllowed())) {
     return { error: "New accounts are disabled on this server." };
   }
-  return registerUser(formData, "MEMBER");
+  // A later account gets the same wizard: it is per-user, and their preferences
+  // and taxonomies are their own.
+  return registerUser(formData, "MEMBER", "/welcome");
 }
 
-async function registerUser(formData: FormData, role: "ADMIN" | "MEMBER"): Promise<FormState> {
+async function registerUser(
+  formData: FormData,
+  role: "ADMIN" | "MEMBER",
+  redirectTo: string,
+): Promise<FormState> {
   const parsed = signupSchema.safeParse({
     name: formData.get("name"),
     email: formData.get("email"),
@@ -110,7 +117,7 @@ async function registerUser(formData: FormData, role: "ADMIN" | "MEMBER"): Promi
   });
 
   await createSession(user.id, await requestMeta());
-  redirect("/");
+  redirect(redirectTo);
 }
 
 export async function logoutAction(): Promise<void> {

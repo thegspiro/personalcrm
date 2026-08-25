@@ -5,10 +5,13 @@ import { Columns2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getUserContext } from "@/server/user/context";
 import { listPipeline } from "@/server/queries/dating";
+import { listPlans } from "@/server/queries/plans";
+import { listTerms } from "@/server/taxonomy/queries";
 import { canSeeDating } from "@/server/privacy/filter";
 import { getPrivacyState } from "@/server/privacy/lock";
 import { PipelineList } from "@/components/dating/pipeline-list";
-import { calendarDateInTz } from "@/lib/dates";
+import { PlansSection } from "@/components/plans/plans-section";
+import { calendarDateInTz, plainDateFromDb } from "@/lib/dates";
 
 export const metadata: Metadata = { title: "Dating" };
 export const dynamic = "force-dynamic";
@@ -24,8 +27,25 @@ export default async function DatingPage() {
     redirect(enabled ? "/unlock?next=/dating" : "/");
   }
 
-  const pipeline = await listPipeline(user.id);
+  const [pipeline, plans, planCategories] = await Promise.all([
+    listPipeline(user.id),
+    // The same plans the rest of the app holds, filtered to the people this
+    // page is about — plus the ones saved against nobody.
+    listPlans(user.id, { romanticOnly: true }),
+    listTerms(user.id, "PLAN_CATEGORY"),
+  ]);
   const today = calendarDateInTz(new Date(), timezone);
+
+  // Everyone still in the pipeline, for the "who with?" picker.
+  const people = pipeline.stages
+    .filter((stage) => !stage.terminal)
+    .flatMap((stage) => stage.people)
+    .concat(pipeline.unstaged)
+    .map((person) => ({
+      id: person.id,
+      firstName: person.firstName,
+      lastName: person.lastName,
+    }));
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
@@ -58,6 +78,33 @@ export default async function DatingPage() {
         unstaged={pipeline.unstaged}
         timezone={timezone}
         today={today}
+      />
+
+      <PlansSection
+        title="Date ideas"
+        plans={plans.map((plan) => ({
+          id: plan.id,
+          title: plan.title,
+          status: plan.status,
+          location: plan.location,
+          city: plan.city,
+          url: plan.url,
+          estimatedCostCents: plan.estimatedCostCents,
+          currency: plan.currency,
+          notes: plan.notes,
+          plannedFor: plan.plannedFor ? plainDateFromDb(plan.plannedFor) : null,
+          category: plan.category
+            ? {
+                label: plan.category.label,
+                icon: plan.category.icon,
+                color: plan.category.color,
+              }
+            : null,
+          contact: plan.contact,
+        }))}
+        categories={planCategories}
+        people={people}
+        defaultOpen={plans.length > 0}
       />
     </div>
   );

@@ -5,7 +5,7 @@ schema rather than in prose.
 
 - **Engine:** MariaDB (Prisma `mysql` provider), `utf8mb4`
 - **Source of truth:** [`prisma/schema.prisma`](../prisma/schema.prisma)
-- **Tables:** 32 · **Enums:** 18 · **Migrations:** 6
+- **Tables:** 33 · **Enums:** 19 · **Migrations:** 8
 - **Primary keys:** `cuid()` strings unless the table is a join table (composite)
   or a per-user singleton (`UserPreference`, `DashboardLayout` key on `userId`).
 
@@ -33,6 +33,9 @@ schema rather than in prose.
 ### `User`
 
 The account. The first one created by the first-run wizard is `ADMIN`.
+
+> The role is a label only. Nothing in the app checks it, so an administrator
+> has no powers a member lacks — see [first-run.md](first-run.md#adding-other-people-to-the-instance).
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -85,6 +88,7 @@ One row per user, PK is `userId`.
 | `privacyLockEnabled` | `bool` | `false` | The lock switch |
 | `hideDating` | `bool` | `false` | Removes the dating module from nav and dashboard entirely |
 | `blurPrivateNotes` | `bool` | `true` | Shoulder-surfing layer *after* the lock is open |
+| `onboardingCompletedAt` | `datetime?` | — | When the welcome flow was finished or skipped |
 
 ### `AppSetting`
 
@@ -120,7 +124,7 @@ adding a type is a row edit, not a migration.
 Unique: `(ownerId, kind, slug)`. Indexes: `(ownerId, kind, sortOrder)`,
 `inverseTermId`.
 
-`TaxonomyKind` values, in the order Settings shows them:
+`TaxonomyKind` values (11 shown in Settings, plus `PLAN_CATEGORY`):
 
 | Kind | What it names |
 | --- | --- |
@@ -135,6 +139,7 @@ Unique: `(ownerId, kind, slug)`. Indexes: `(ownerId, kind, sortOrder)`,
 | `LIFE_EVENT_TYPE` | Things that happen in someone's life |
 | `DATING_STAGE` | The columns of the dating pipeline |
 | `DATE_ACTIVITY_TYPE` | What you did on a date |
+| `PLAN_CATEGORY` | Kinds of thing to do — a place, a film, a show, something to try |
 
 Defaults live in [`src/server/taxonomy/defaults.ts`](../src/server/taxonomy/defaults.ts)
 and are provisioned per account at signup **and backfilled on every boot**, so a
@@ -320,6 +325,32 @@ Conversation starters. `contactId` is nullable — a general idea belongs to
 nobody. `status`: `OPEN` | `USED` | `ARCHIVED`, with `usedAt` and
 `usedInInteractionId` (`SET NULL`) recording where it was actually used.
 
+### `Plan`
+
+Something to **do** with someone, as opposed to something to **say** to them.
+
+The distinction against `Idea` is the whole reason it is its own table: an idea
+is a sentence you meant to say, a plan is an outing, and a plan needs what a
+plan has — where it is, what it costs, a link to the listing, when you mean to
+go. They also end differently. An idea is used when you *say* it; a plan when
+you *do* it.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `contactId` | `cuid?` | Null = something you would do with anyone, not saved against one person |
+| `title` | `varchar(191)` | |
+| `categoryId` | `cuid?` | → `TaxonomyTerm` (`PLAN_CATEGORY`), `SET NULL` — so a place, a film, a show and whatever else you invent live in one list you control |
+| `location` / `city` | `varchar(191)?` / `varchar(120)?` | The venue, park, cinema, trailhead — or your own kitchen |
+| `url` | `varchar(500)?` | The listing, the menu, the trailer, the ticket page |
+| `estimatedCostCents` | `int?` | With `currency`, default `USD` |
+| `status` | `PlanStatus` | `OPEN` \| `PLANNED` \| `DONE` \| `ARCHIVED` |
+| `plannedFor` | `date?` | Pencilled in, before there is anything logged to point at |
+| `usedAt` | `datetime?` | |
+| `usedInInteractionId` | `cuid?` | → `Interaction`, `SET NULL`. An interaction rather than a `DateEntry`: a plan carried out with a friend never produces one of those |
+
+Deliberately not confined to the dating layer — a hike with a friend and a first
+date are the same object, so it hangs off any `Contact`, or off nobody.
+
 ### `Task`
 
 Follow-ups. Optional `contactId`, `dueDate`, `completedAt`, `priority`
@@ -466,10 +497,11 @@ The dedupe ledger, so a restart never re-sends a reminder. Unique on
 | Enum | Values |
 | --- | --- |
 | `UserRole` | `ADMIN`, `MEMBER` |
-| `TaxonomyKind` | 11 values — see [Taxonomies](#taxonomies) |
+| `TaxonomyKind` | 12 values — see [Taxonomies](#taxonomies) |
 | `DateRecurrence` | `NONE`, `ANNUAL`, `MONTHLY` |
 | `DatePrecision` | `DAY`, `MONTH`, `YEAR`, `MONTH_DAY` |
 | `IdeaStatus` | `OPEN`, `USED`, `ARCHIVED` |
+| `PlanStatus` | `OPEN`, `PLANNED`, `DONE`, `ARCHIVED` |
 | `TaskPriority` | `LOW`, `NORMAL`, `HIGH` |
 | `GiftStatus` | `IDEA`, `RESERVED`, `PURCHASED`, `GIVEN` |
 | `GiftDirection` | `OUTGOING`, `INCOMING` |
@@ -495,8 +527,8 @@ nobody gave.
 | Deleting… | Takes with it | Leaves behind |
 | --- | --- | --- |
 | A `User` | Everything they own, by cascade | — |
-| A `Contact` | Methods, addresses, tags, facts, dates, life events, gifts, debts, dietary needs, flags, ideas, tasks, household memberships, relationships (both halves), participations, romantic profile, date entries | `CustomFieldValue` rows — **swept explicitly** by the action |
-| An `Interaction` | Participants, its `DateEntry` | `Fact.sourceInteractionId` and `Idea.usedInInteractionId` set to null |
+| A `Contact` | Methods, addresses, tags, facts, dates, life events, gifts, debts, dietary needs, flags, ideas, plans, tasks, household memberships, relationships (both halves), participations, romantic profile, date entries | `CustomFieldValue` rows — **swept explicitly** by the action |
+| An `Interaction` | Participants, its `DateEntry` | `Fact.sourceInteractionId`, `Idea.usedInInteractionId` and `Plan.usedInInteractionId` set to null |
 | A `TaxonomyTerm` | `Relationship` rows of that type (cascade) — which is why deleting a term still in use is blocked; other references are `SET NULL` | The records themselves |
 | A `Session` | Nothing | The unlock state dies with it |
 
@@ -515,6 +547,8 @@ the `init-migrate` s6 oneshot).
 | `20260824130123_add_households` | `Household`, `HouseholdMember` |
 | `20260824130913_add_family_suggestion_dismissals` | `FamilySuggestionDismissal` |
 | `20260824182152_add_dietary_debts_and_reach_out` | `Debt`, `DietaryNeed`, `Interaction.reachedOutBy` |
+| `20260825094500_add_plans` | `Plan`, `PlanStatus`, and `PLAN_CATEGORY` on `TaxonomyKind` |
+| `20260825120000_add_onboarding_state` | `UserPreference.onboardingCompletedAt` |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).

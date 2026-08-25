@@ -269,6 +269,50 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
     });
   }
 
+  // ---- Plans: things to do -------------------------------------------------
+  const planSeeds: Array<{
+    person: string | null;
+    title: string;
+    category: string;
+    location?: string;
+    city?: string;
+    url?: string;
+    costCents?: number;
+    plannedInDays?: number;
+    notes?: string;
+  }> = [
+    { person: "Elena", title: "Cherry blossoms at dawn", category: "outdoors", location: "Tidal Basin", city: "Washington", plannedInDays: 6, notes: "Before the crowds — she said 6am or not at all." },
+    { person: "Elena", title: "Late showing at the Alamo", category: "movie", location: "Alamo Drafthouse", city: "Arlington", costCents: 4400 },
+    { person: "Nadia", title: "Rooftop at the Wharf", category: "bar-cafe", location: "Whiskey Charlie", city: "Washington", costCents: 6000, notes: "Go early, no reservations after seven." },
+    { person: "Devon", title: "Monday night pottery class", category: "class", location: "Del Ray Artisans", city: "Alexandria", costCents: 5500, notes: "Only works early week — they close the bar Thursdays." },
+    { person: "Marcus", title: "Hike Old Rag before it gets hot", category: "outdoors", location: "Old Rag Mountain", city: "Sperryville", notes: "Start at six or fight for parking." },
+    { person: "Jenna", title: "The Tana French adaptation", category: "movie", location: "AFI Silver", city: "Silver Spring", costCents: 2800 },
+    { person: "Dad", title: "Cars & Coffee at the airfield", category: "event", location: "Manassas Regional", city: "Manassas", plannedInDays: 12 },
+    { person: null, title: "Renwick Gallery, whatever is up", category: "museum", location: "Renwick Gallery", city: "Washington" },
+    { person: null, title: "Kayak the Potomac from Key Bridge", category: "outdoors", location: "Key Bridge Boathouse", city: "Arlington", costCents: 3200 },
+    { person: null, title: "That Georgian place everyone keeps mentioning", category: "restaurant", location: "Supra", city: "Washington" },
+  ];
+  for (const plan of planSeeds) {
+    await prisma.plan.create({
+      data: {
+        ownerId,
+        contactId: plan.person ? contactIds.get(plan.person) ?? null : null,
+        title: plan.title,
+        categoryId: term("PLAN_CATEGORY", plan.category),
+        location: plan.location ?? null,
+        city: plan.city ?? null,
+        url: plan.url ?? null,
+        estimatedCostCents: plan.costCents ?? null,
+        notes: plan.notes ?? null,
+        status: plan.plannedInDays === undefined ? "OPEN" : "PLANNED",
+        plannedFor:
+          plan.plannedInDays === undefined
+            ? null
+            : new Date(Date.now() + plan.plannedInDays * 86_400_000),
+      },
+    });
+  }
+
   // ---- Facts, ideas, tasks, gifts, flags, relationships -------------------
   const factSeeds: Array<[string, string, string, number]> = [
     ["Sarah", "work", "Works nights at Virginia Hospital Center, pediatric ward.", 1],
