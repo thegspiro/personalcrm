@@ -5,6 +5,18 @@ source /etc/s6-overlay/scripts/common.sh
 export_runtime_env
 
 echo "[svc-app] listening on ${HOSTNAME:-0.0.0.0}:${PORT:-3000}"
+
+# Say where to go. On a first run the URL is the only thing the operator needs,
+# and hunting for it in a Docker log is a poor start. Whether an account exists
+# yet is a database question, so it is left to /api/health rather than guessed
+# at from a marker file here.
+if [[ -n "${APP_URL:-}" ]]; then
+    echo "[svc-app] open ${APP_URL}"
+else
+    echo "[svc-app] open http://<this-host>:${PORT:-3000}"
+fi
+echo "[svc-app] setup state: curl -s http://127.0.0.1:${PORT:-3000}/api/health"
+
 cd /app
 exec s6-setuidgid abc env \
     DATABASE_URL="${DATABASE_URL}" \

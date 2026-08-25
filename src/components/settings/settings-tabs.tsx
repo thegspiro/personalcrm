@@ -11,13 +11,14 @@ const TABS = [
   { value: "dashboard", label: "Home", icon: "LayoutDashboard" },
   { value: "quickadd", label: "Quick add", icon: "Zap" },
   { value: "privacy", label: "Privacy", icon: "Lock" },
+  { value: "app", label: "App", icon: "Smartphone" },
 ] as const;
 
 /**
  * The settings sections.
  *
  * The tab strip scrolls horizontally inside its own container rather than
- * wrapping, so five tabs fit at 375px without pushing the page wide.
+ * wrapping, so they fit at 375px without pushing the page wide.
  */
 export function SettingsTabs({
   appearance,
@@ -26,8 +27,9 @@ export function SettingsTabs({
   dashboard,
   quickadd,
   privacy,
+  app,
 }: Record<(typeof TABS)[number]["value"], React.ReactNode>) {
-  const panels = { appearance, fields, taxonomies, dashboard, quickadd, privacy };
+  const panels = { appearance, fields, taxonomies, dashboard, quickadd, privacy, app };
 
   return (
     <Tabs defaultValue="appearance" className="grid grid-cols-[minmax(0,1fr)] gap-4">

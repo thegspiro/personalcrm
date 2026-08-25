@@ -8,7 +8,13 @@ Mobile-first for reading and quick logging, comfortable on a desktop for bulk en
 
 ## Status
 
-Under active development. See [`docs/`](docs/) for deployment details.
+Under active development.
+
+## Documentation
+
+- [Installing](docs/install.md) — Unraid, Docker, Compose, bring-your-own-database
+- [First run](docs/first-run.md) — the startup sequence, the admin account, installing the app
+- [Backing up](docs/backup.md) · [Upgrading](docs/upgrade.md) · [Troubleshooting](docs/troubleshooting.md)
 
 ## Deploying
 
@@ -31,6 +37,8 @@ https://raw.githubusercontent.com/thegspiro/personalcrm/main/unraid/personalcrm.
 | `DATABASE_URL` | — | Leave empty to use the bundled MariaDB |
 
 Open the WebUI and create your account — the first one is the administrator.
+Setup continues from there: your timezone, how the app looks, your first few
+people, and putting it on your home screen. See [first run](docs/first-run.md).
 
 ### Plain Docker
 
@@ -59,11 +67,11 @@ DATABASE_URL=mysql://user:password@dbhost:3306/personalcrm
 | --- | --- |
 | `db/` | MariaDB data directory |
 | `uploads/` | Avatars and photos |
-| `backups/` | Nightly database dumps |
+| `backups/` | Reserved for database dumps — nothing writes here yet, see [backing up](docs/backup.md) |
 | `logs/` | MariaDB error log |
 | `secrets.json` | Generated on first boot — session signing key and database password |
 
-`secrets.json` is created once and reused, so sessions and the database survive an image upgrade. Back up the whole folder.
+`secrets.json` is created once and reused, so sessions and the database survive an image upgrade. Back up the whole folder — including `secrets.json`, without which a restored database cannot be opened.
 
 ## Development
 
@@ -94,7 +102,8 @@ End-to-end tests expect an instance at `http://127.0.0.1:3200`; override with `E
 - **Next.js 15** (App Router) with React 19 and server actions — one codebase for UI and API
 - **Prisma** against **MariaDB**, migrations applied automatically at container start
 - **Tailwind CSS v4** with Radix primitives
-- **s6-overlay** supervises MariaDB and the app in one container and orders their startup
+- **s6-overlay** supervises MariaDB and the app in one container and orders their startup, with a preflight check on the supplied configuration ahead of both
+- **Installable** — a PWA with an offline reading mode; `/api/health` reports database and setup state
 
 Every "type" in the app — interaction types, fact categories, relationship types, dating stages — is a database row you can rename, recolor, reorder, or add to, not a hardcoded list.
 

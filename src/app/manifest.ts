@@ -14,12 +14,19 @@ import type { MetadataRoute } from "next";
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
+    // The install identity. Without it the browser keys the installed app on
+    // start_url, so changing that later would orphan every copy already on a
+    // home screen instead of updating it.
+    id: "/",
     name: "Personal CRM",
     short_name: "CRM",
     description: "Keep track of the people in your life.",
     start_url: "/",
     scope: "/",
     display: "standalone",
+    // Falls back to a trimmed browser window where standalone is unavailable,
+    // rather than all the way to a normal tab.
+    display_override: ["standalone", "minimal-ui"],
     orientation: "portrait",
     background_color: "#fafafa",
     theme_color: "#fafafa",
