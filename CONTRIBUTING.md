@@ -130,6 +130,12 @@ were found.
 Nothing enforces a prefix convention — the phase numbering in the existing log
 is a record of how the work happened, not a rule for future commits.
 
+## Pull requests
+
+[`.github/pull_request_template.md`](.github/pull_request_template.md) fills the
+description in. Its conditional sections are the same invariants listed above —
+delete the ones that do not apply rather than ticking them unread.
+
 ## Documentation
 
 Update the docs in the same commit as the change:
