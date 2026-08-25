@@ -161,11 +161,16 @@ test("an offline page says how old it is", async ({ page, context }) => {
   await context.setOffline(true);
   await page.goto("/people", { waitUntil: "domcontentloaded" });
 
+  // The saved page first, then what it says about itself. Two very different
+  // failures both show up as "no offline banner": the worker served the saved
+  // copy and the banner did not render, or the navigation never reached the
+  // worker at all and this is the browser's own error page. Asserting the
+  // content first is what tells them apart from a CI log alone.
+  await expect(page.getByRole("heading", { name: "People", level: 2 })).toBeVisible();
+
   // Stale data that looks live is the real danger here, so it has to say so.
   await expect(page.getByText(/You're offline/)).toBeVisible();
   await expect(page.getByText(/saved copy/)).toBeVisible();
-  // And the content is genuinely there, not a placeholder.
-  await expect(page.getByRole("heading", { name: "People", level: 2 })).toBeVisible();
 
   await context.setOffline(false);
 });
