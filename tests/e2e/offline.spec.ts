@@ -14,7 +14,21 @@ const STAMP = `${process.env.E2E_RUN_ID ?? "local"}-${Date.now().toString(36)}`;
 const SECRET = () => `Confidential ${test.info().project.name} ${STAMP}`;
 const PIN = "713904";
 
-/** Wait for the worker to be running before asking it anything. */
+/**
+ * Wait for the worker to be running AND for it to control this page.
+ *
+ * These are not the same thing, and the difference is the whole test. A
+ * registration becomes active without controlling the document that registered
+ * it — control is only taken on a navigation after activation. Caching still
+ * works meanwhile, because the page asks through `registration.active`, which
+ * needs no controller; so waiting for an active registration and a populated
+ * cache can both succeed while nothing is intercepting fetches.
+ *
+ * Go offline in that state and the navigation never reaches the worker at all:
+ * the browser shows its own ERR_INTERNET_DISCONNECTED page, and the assertion
+ * that fails is the one about the offline banner. It passes on a fast machine,
+ * where `clients.claim()` wins the race, and fails on a slower CI runner.
+ */
 async function readyWorker(page: Page) {
   await page.waitForFunction(
     async () => {
@@ -24,6 +38,13 @@ async function readyWorker(page: Page) {
     undefined,
     { timeout: 15_000 },
   );
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (await page.evaluate(() => Boolean(navigator.serviceWorker.controller))) return;
+    await page.reload();
+  }
+
+  throw new Error("the service worker activated but never took control of the page");
 }
 
 /** Pages currently kept for offline reading. */
@@ -140,11 +161,16 @@ test("an offline page says how old it is", async ({ page, context }) => {
   await context.setOffline(true);
   await page.goto("/people", { waitUntil: "domcontentloaded" });
 
+  // The saved page first, then what it says about itself. Two very different
+  // failures both show up as "no offline banner": the worker served the saved
+  // copy and the banner did not render, or the navigation never reached the
+  // worker at all and this is the browser's own error page. Asserting the
+  // content first is what tells them apart from a CI log alone.
+  await expect(page.getByRole("heading", { name: "People", level: 2 })).toBeVisible();
+
   // Stale data that looks live is the real danger here, so it has to say so.
   await expect(page.getByText(/You're offline/)).toBeVisible();
   await expect(page.getByText(/saved copy/)).toBeVisible();
-  // And the content is genuinely there, not a placeholder.
-  await expect(page.getByRole("heading", { name: "People", level: 2 })).toBeVisible();
 
   await context.setOffline(false);
 });

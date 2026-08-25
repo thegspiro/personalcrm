@@ -1,0 +1,77 @@
+# Configuration
+
+Everything the app reads from its environment, and everything it keeps on disk.
+
+## Environment variables
+
+### Deployment
+
+| Variable | Default | Required | Notes |
+| --- | --- | --- | --- |
+| `APP_URL` | — | Behind HTTPS | Your external URL, e.g. `https://crm.example.com`. Session cookies are marked `secure` only when this starts with `https://`, so sign-in fails silently behind a TLS proxy if it is unset |
+| `DATABASE_URL` | generated | No | Set it and the bundled MariaDB never starts. Format: `mysql://user:password@host:3306/personalcrm` |
+| `AUTH_SECRET` | generated | No (container) / Yes (bare) | 32+ random bytes. Signs sessions **and** derives the key that encrypts a stored AI key. Generated into `/config/secrets.json` on first boot; rotating it invalidates sessions and makes a stored AI key undecryptable |
+| `DISABLE_SIGNUP` | `false` | No | Set `true` once your accounts exist. The first-run wizard still works on an empty instance |
+| `TZ` | `Etc/UTC` (image) | No | Container clock. Note the account's own `UserPreference.timezone` is what every reminder and "overdue" calculation actually uses — this only affects logs and the default for a brand-new account |
+| `PUID` / `PGID` | `99` / `100` | No | Unraid's `nobody:users`. `/config` is chowned to this |
+| `PORT` / `HOSTNAME` | `3000` / `0.0.0.0` | No | Set in the image |
+| `APP_VERSION` | `dev` | No | Reported by `/api/health` |
+
+### Optional assisted reading
+
+Only consulted when the feature is switched on in Settings. First match wins:
+
+| Variable | Notes |
+| --- | --- |
+| `AI_API_KEY` | The neutral name — prefer this |
+| `OPENAI_API_KEY` | Accepted because it is what people already have set |
+| `ANTHROPIC_API_KEY` | Same |
+| `GEMINI_API_KEY` | Same |
+
+An env-supplied key wins over one pasted in Settings, cannot be edited from the
+app, and keeps the key out of the database and therefore out of your backups.
+Provider, base URL and model are configured in Settings (stored in
+`AppSetting`), not in the environment.
+
+### Development and test only
+
+| Variable | Notes |
+| --- | --- |
+| `TEST_DATABASE_URL` | Integration tests truncate this database between runs — it must **never** point at real data |
+| `E2E_BASE_URL` | Playwright target, default `http://127.0.0.1:3200` |
+| `PLAYWRIGHT_CHROMIUM_PATH` | Use an already-installed Chromium instead of downloading one |
+| `SEED_DEMO` | `1` to create the demo account and sample data |
+| `SEED_DEMO_EMAIL` / `SEED_DEMO_PASSWORD` | Override the demo credentials |
+
+[`.env.example`](../.env.example) is the starting point for local development.
+
+## `/config` — the only volume
+
+| Path | Contents | Back up? |
+| --- | --- | --- |
+| `db/` | MariaDB data directory | **Yes** |
+| `uploads/` | Avatars and photos. Created at boot; **no upload path writes here yet** | **Yes**, once it holds anything |
+| `secrets.json` | `authSecret` + `dbPassword`, mode `0600` | **Yes — without it the database is unreadable** |
+| `backups/` | Created at boot; **nothing writes here yet** (see [Known gaps](README.md#known-gaps)) | — |
+| `logs/` | MariaDB error log | No |
+| `cache/` | Scratch | No |
+
+Back up the whole folder. `secrets.json` is generated once and reused, which is
+why sessions and the database survive an image upgrade — losing it while keeping
+`db/` leaves you with a database nobody can log into.
+
+## Per-account settings (not environment)
+
+These live in the database and are edited in **Settings**, not in the container
+config:
+
+| Where | What |
+| --- | --- |
+| `UserPreference` | Theme, accent, density, **timezone**, week start, default cadence, digest hour, privacy lock switch, hide-dating, blur-private-notes |
+| `DashboardLayout` | Which home-screen widgets are on, in what order, with what row counts |
+| `TaxonomyTerm` | Every type list in the app — labels, colours, icons, order |
+| `CustomFieldDefinition` | User-defined fields on contacts, dating profiles, interactions and dates |
+| `AppSetting` | Instance-wide: first-run state, AI provider/base URL/model/key |
+
+The account timezone is the one to get right: every cadence, every "overdue",
+every date parse in quick add is anchored to it rather than to the server clock.

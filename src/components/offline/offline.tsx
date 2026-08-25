@@ -92,12 +92,13 @@ export function howLongAgo(then: Date, now: Date = new Date()): string {
  * that was.
  */
 export function OfflineBanner({ renderedAt }: { renderedAt: string }) {
-  const [offline, setOffline] = React.useState(false);
+  const [disconnected, setDisconnected] = React.useState(false);
+  const [savedCopy, setSavedCopy] = React.useState(false);
   const [age, setAge] = React.useState("just now");
 
   React.useEffect(() => {
     const update = () => {
-      setOffline(!navigator.onLine);
+      setDisconnected(!navigator.onLine);
       setAge(howLongAgo(new Date(renderedAt)));
     };
     update();
@@ -112,7 +113,40 @@ export function OfflineBanner({ renderedAt }: { renderedAt: string }) {
     };
   }, [renderedAt]);
 
-  if (!offline) return null;
+  /**
+   * The worker's word for it, which beats navigator.onLine.
+   *
+   * A document loaded offline is the worst-placed thing in the browser to work
+   * out that it was: the online/offline events it would learn from fired
+   * before it existed, so all it has is one read of navigator.onLine at mount,
+   * and if that read is wrong the page presents a saved copy as though it were
+   * live. The worker served the copy and is never wrong about it.
+   *
+   * Asked rather than listened for. A message the worker posts while serving
+   * the response arrives before this component exists, and a listener added
+   * afterwards never receives it — `startMessages()` does not replay what has
+   * already been dispatched.
+   *
+   * Sticky on purpose. Getting the network back does not make what you are
+   * looking at any less of a saved copy — nothing has re-fetched it — so
+   * dropping the warning then would be the same lie told later.
+   */
+  React.useEffect(() => {
+    const worker = typeof navigator !== "undefined" ? navigator.serviceWorker?.controller : null;
+    if (!worker) return;
+
+    const channel = new MessageChannel();
+    channel.port1.onmessage = (event: MessageEvent) => {
+      if ((event.data as { servedFromCache?: boolean } | null)?.servedFromCache) setSavedCopy(true);
+    };
+    // No hash: the worker only ever saw what was sent to the server.
+    const url = `${window.location.origin}${window.location.pathname}${window.location.search}`;
+    worker.postMessage({ type: "was-served-from-cache", url }, [channel.port2]);
+
+    return () => channel.port1.close();
+  }, []);
+
+  if (!disconnected && !savedCopy) return null;
 
   return (
     <div

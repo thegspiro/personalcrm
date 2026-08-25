@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { ACCOUNT, FIRST_NAME, completeSetup, isFirstRun, skipOnboardingIfShown } from "./helpers";
+import { ACCOUNT, FIRST_NAME, isFirstRun, skipOnboardingIfShown } from "./helpers";
 
 /**
  * First-run setup: the state a brand-new Unraid install is in.
@@ -55,7 +55,16 @@ test("setup closes once an account exists", async ({ page }) => {
 });
 
 test("the wizard does not reopen once it has been finished", async ({ page }) => {
-  await completeSetup(page);
+  // Sign in rather than run setup again: the account exists by now, so /setup
+  // redirects and there is no form to fill. Inlined rather than using signIn(),
+  // because that helper skips the wizard when it appears — which is the very
+  // thing this test has to observe.
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(ACCOUNT.email);
+  await page.getByLabel("Password").fill(ACCOUNT.password);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  // Landing anywhere signed-in will do; where exactly is what this test asks.
+  await page.waitForURL(/\/(welcome)?$/);
 
   // Skipping counts as finishing: the shell must stop redirecting, and /welcome
   // itself must send you on rather than starting over.

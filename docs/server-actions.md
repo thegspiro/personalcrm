@@ -1,0 +1,169 @@
+# Write surface: server actions
+
+There is no REST API. Every mutation is a Next.js **server action** in
+`src/server/actions/`, and the only route handler in the app is
+`GET /api/health`.
+
+## The contract
+
+Every action returns `ActionResult` from
+[`actions/helpers.ts`](../src/server/actions/helpers.ts):
+
+```ts
+interface ActionResult<T = void> {
+  ok: boolean;
+  error?: string;                        // form-level message
+  fieldErrors?: Record<string, string>;  // keyed by input name
+  data?: T;
+}
+```
+
+and follows the same five steps:
+
+1. `await owner()` → `{ ownerId, timezone }` (redirects when signed out).
+2. Parse `FormData` with the typed helpers — `str`, `num`, `bool`, `strList`,
+   `instant`, `partialDate`, `plainDate`, `toDbDate`.
+3. Validate with Zod; `invalid(err)` maps issues onto `fieldErrors`.
+4. Write — in `prisma.$transaction` whenever more than one table is touched.
+5. Re-derive denormalised state, `revalidatePath`, return.
+
+**A server action is a public POST endpoint.** Three consequences the code
+enforces rather than documents:
+
+- Every value is re-validated server-side. The browser is not a validator.
+- Every dating write re-checks the privacy lock instead of trusting that the
+  page was gated.
+- Every query is scoped by `ownerId`, or by a parent that is.
+
+## Reference
+
+### Auth — `actions/auth.ts`
+
+| Action | Notes |
+| --- | --- |
+| `loginAction` | Failures are indistinguishable between an unknown email and a wrong password |
+| `setupAction` | First-run wizard; the first account becomes `ADMIN`, a label nothing checks yet. Hands off to `/welcome` |
+| `signupAction` | Refused when `DISABLE_SIGNUP=true` |
+| `logoutAction` | Deletes the session row and clears the cookie |
+| `currentUserAction` | |
+
+### Contacts — `actions/contacts.ts`
+
+`createContact`, `updateContact`, `patchContact`, `snoozeContact`,
+`deleteContact`, `setContactArchived`.
+
+`deleteContact` sweeps the contact's `CustomFieldValue` rows explicitly —
+`entityId` is not a foreign key, so nothing cascades.
+
+### Interactions — `actions/interactions.ts`
+
+`createInteraction`, `updateInteraction`, `deleteInteraction`.
+
+All three run `contact-activity` recomputation for every participant, so
+backdating and deletion cannot corrupt a cadence.
+
+### Everything hanging off a contact — `actions/details.ts`
+
+| Group | Actions |
+| --- | --- |
+| Facts | `createFact`, `updateFact`, `deleteFact` |
+| Important dates | `createImportantDate`, `updateImportantDate`, `deleteImportantDate` |
+| Life events | `createLifeEvent`, `updateLifeEvent`, `deleteLifeEvent` |
+| Ideas | `createIdea`, `setIdeaStatus`, `deleteIdea` |
+| Plans | `createPlan`, `updatePlan`, `setPlanStatus`, `deletePlan` |
+| Tasks | `createTask`, `setTaskDone`, `deleteTask` |
+| Gifts | `createGift`, `setGiftStatus`, `deleteGift` |
+| Debts | `createDebt`, `settleDebt`, `deleteDebt` |
+| Dietary needs | `createDietaryNeed`, `deleteDietaryNeed` |
+| Relationships | `createRelationship`, `deleteRelationship` |
+
+`createRelationship` writes **both** reciprocal rows under one `pairId`;
+`deleteRelationship` removes both. `settleDebt` records a date rather than
+deleting the row.
+
+### Family — `actions/family.ts`
+
+`createHousehold`, `updateHousehold`, `deleteHousehold`, `addHouseholdMember`,
+`removeHouseholdMember`, `acceptSuggestion`, `dismissSuggestion`,
+`endRelationshipLink`.
+
+Suggestions are never written without a press. `endRelationshipLink` re-types
+both halves to their `former` counterparts; it never deletes.
+
+### Dating — `actions/dating.ts`
+
+`upsertRomanticProfile`, `setDatingStage`, `endRelationship`, `convertToFriend`,
+`createDateEntry`, `updateDateEntry`, `deleteDateEntry`, `createFlag`,
+`deleteFlag`.
+
+Every one re-checks the lock. `createDateEntry` writes an `Interaction` **and**
+a `DateEntry`, recomputes activity from full history, and renumbers `sequence`
+so a date remembered late slots in where it happened. `deleteDateEntry` goes
+through the `Interaction` so the pair cannot be left half-removed.
+`convertToFriend` clears `isRomantic` and keeps the profile, dates, flags and
+notes.
+
+### Quick add — `actions/quick-add.ts`
+
+| Action | Notes |
+| --- | --- |
+| `interpretQuickAdd` | Parses a line **locally**; optionally asks a model when assistance is on and no named contact is private. Returns a proposal, writes nothing |
+| `confirmQuickAdd` | Writes what you approved, through the same activity machinery as any other log |
+| `searchPalette` | ⌘K search, through the same privacy filter as every other read |
+
+A name two contacts share is never guessed: both candidates are surfaced and
+saving is blocked until you pick.
+
+### Customization
+
+| File | Actions |
+| --- | --- |
+| `actions/taxonomy.ts` | `createTerm`, `updateTerm`, `setTermActive`, `deleteTerm`, `moveTerm`, `restoreMissingDefaults` |
+| `actions/custom-fields.ts` | `createFieldDefinition`, `updateFieldDefinition`, `setFieldActive`, `deleteFieldDefinition`, `moveFieldDefinition` |
+| `actions/dashboard.ts` | `setWidgetEnabled`, `moveWidget`, `setWidgetSetting`, `resetDashboardLayout` |
+| `actions/settings.ts` | `updateAppearance`, `updateDefaults` |
+
+`deleteTerm` refuses while the term is still referenced — the foreign keys
+would null the reference or cascade the row away. `setTermActive(false)` is the
+supported alternative. A relationship type keeps its reciprocal paired in both
+directions, and `metadata` is not editable from the UI because family tiers and
+pipeline ordering are read from it by code.
+
+### Onboarding — `actions/onboarding.ts`
+
+`updateProfileName`, `completeOnboarding`, `markPwaInstalled`. The welcome flow
+runs once per account and records that it did in
+`UserPreference.onboardingCompletedAt`, so skipping counts as finishing.
+
+### Privacy — `actions/privacy.ts`
+
+`unlockPrivacyAction`, `lockPrivacyAction`, `setPinAction`, `clearPinAction`,
+`updatePrivacyPreferences`, `setPrivate`.
+
+`setPrivate` is refused while locked — otherwise a row vanishes with no way back
+to it.
+
+### AI settings — `actions/ai-settings.ts`
+
+`updateAiEnabled`, `saveAiConnection`, `removeApiKey`. A connection is tested
+against the provider before it is stored; the key is encrypted at rest and
+never shown again.
+
+## Custom fields on a form
+
+Two failure modes the shared helper
+([`services/custom-field-values.ts`](../src/server/services/custom-field-values.ts))
+exists to prevent:
+
+- **Absence is ambiguous in a `FormData`.** An unchecked checkbox and a field
+  that was never on screen look identical. Forms therefore submit a hidden
+  `cf_rendered` input listing the definitions they rendered, so saving from a
+  form that omits custom fields cannot clear every boolean on the record.
+- **A failing field aborts the whole save** rather than leaving a record
+  half-written.
+
+## The one HTTP endpoint
+
+`GET /api/health` → `200` with `{ status, database, latencyMs, version,
+uptimeSeconds }`, or `503` with `{ status: "error", database: "down", message }`.
+`cache-control: no-store`, runtime `nodejs`, `force-dynamic`.

@@ -82,5 +82,13 @@ test("the dashboard checklist reflects what is actually done", async ({ page }) 
 
   const checklist = page.getByText("Finish setting up");
   await expect(checklist).toBeVisible();
-  await expect(page.getByRole("link", { name: "Add someone" })).toBeVisible();
+  // Scoped to the checklist row: the dashboard's own quick actions carry a link
+  // of the same name, so an unscoped locator matches two things and fails on
+  // strict mode rather than on anything being wrong.
+  await expect(
+    page
+      .getByRole("listitem")
+      .filter({ hasText: "you want to keep in touch with" })
+      .getByRole("link", { name: "Add someone" }),
+  ).toBeVisible();
 });

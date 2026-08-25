@@ -8,13 +8,22 @@ Mobile-first for reading and quick logging, comfortable on a desktop for bulk en
 
 ## Status
 
-Under active development.
+Under active development; nothing tagged as a release yet. See
+[`CHANGELOG.md`](CHANGELOG.md) for what has landed.
 
 ## Documentation
+
+Running it:
 
 - [Installing](docs/install.md) — Unraid, Docker, Compose, bring-your-own-database
 - [First run](docs/first-run.md) — the startup sequence, the admin account, installing the app
 - [Backing up](docs/backup.md) · [Upgrading](docs/upgrade.md) · [Troubleshooting](docs/troubleshooting.md)
+
+Working on it:
+
+- [Architecture](docs/architecture.md) · [Data model](docs/data-model.md) · [Server actions](docs/server-actions.md)
+- [Privacy](docs/privacy.md) · [Configuration](docs/configuration.md) · [Testing](docs/testing.md)
+- [Contributing](CONTRIBUTING.md) — setup and the invariants that have each been a bug
 
 ## Deploying
 
@@ -66,7 +75,7 @@ DATABASE_URL=mysql://user:password@dbhost:3306/personalcrm
 | Path | Contents |
 | --- | --- |
 | `db/` | MariaDB data directory |
-| `uploads/` | Avatars and photos |
+| `uploads/` | Avatars and photos — nothing writes here yet |
 | `backups/` | Reserved for database dumps — nothing writes here yet, see [backing up](docs/backup.md) |
 | `logs/` | MariaDB error log |
 | `secrets.json` | Generated on first boot — session signing key and database password |
@@ -97,6 +106,9 @@ npm run dev
 
 End-to-end tests expect an instance at `http://127.0.0.1:3200`; override with `E2E_BASE_URL`.
 
+Setup, conventions and the rules that are not style preferences are in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## Architecture
 
 - **Next.js 15** (App Router) with React 19 and server actions — one codebase for UI and API
@@ -106,6 +118,7 @@ End-to-end tests expect an instance at `http://127.0.0.1:3200`; override with `E
 - **Installable** — a PWA with an offline reading mode; `/api/health` reports database and setup state
 
 Every "type" in the app — interaction types, fact categories, relationship types, dating stages — is a database row you can rename, recolor, reorder, or add to, not a hardcoded list.
+
 
 ## Licence
 
