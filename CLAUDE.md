@@ -37,11 +37,12 @@ npm run dev
 | `npm run db:migrate` | Create and apply a migration (dev) |
 | `npm run db:deploy` | Apply pending migrations (what the container runs) |
 | `npm run db:studio` | Browse the database |
-| `npm run lint` | ESLint (`next lint`). Note `next.config.ts` sets `eslint.ignoreDuringBuilds`, so a build will not catch lint |
+| `npm run lint` | ESLint (`eslint .`, flat config in `eslint.config.mjs`). `next.config.ts` sets `eslint.ignoreDuringBuilds`, so a build never catches lint — the CI lint job is what does |
 
 Before pushing: `npm run typecheck && npm test && npm run build`, plus
-`npx playwright test` for UI changes. **There is no CI workflow** — local runs
-are the only gate.
+`npx playwright test` for UI changes. CI (`.github/workflows/ci.yml`) runs the
+same four things on every PR — quality, unit + integration, end-to-end against
+the standalone bundle, and a container build with a clean-volume boot.
 
 ### Running one test
 

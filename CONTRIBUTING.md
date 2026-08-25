@@ -36,7 +36,8 @@ npm run typecheck && npm test && npm run build
 ```
 
 and, for anything touching the UI, `npx playwright test` against a running
-instance. There is no CI workflow in the repository yet, so these are the gate.
+instance. CI runs the same checks on every pull request — see
+[docs/testing.md](docs/testing.md#ci).
 
 ## Where code goes
 

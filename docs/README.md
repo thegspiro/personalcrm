@@ -58,7 +58,6 @@ Documented so nobody assumes a feature works:
 | **Notifications and reminders** | `NotificationChannel` and `ReminderLog` exist and are migrated; `UserPreference.digestHour`/`digestEnabled` and `ImportantDate.reminderDaysBefore` are stored. Nothing sends anything — there is no scheduler, and `node-cron`/`nodemailer` are dependencies that no code imports |
 | **Nightly backups** | `/config/backups` is created at boot and nothing writes to it. Back up `/config` yourself — see [deployment.md](deployment.md#backups) |
 | **Avatar upload** | `Contact.avatarPath` is read and rendered throughout, but no upload path writes it and nothing writes to `/config/uploads` |
-| **CI** | No workflow in the repository; `npm run typecheck && npm test && npm run build` locally is the gate |
 | **Offline writes** | Deliberately absent. Non-GET requests go straight to the network and fail honestly rather than pretending something was saved |
 
 The project is under active development and nothing has been tagged as a

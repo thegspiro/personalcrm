@@ -4,7 +4,7 @@ Three suites, three different jobs.
 
 | Suite | Runner | Needs | Count | Command |
 | --- | --- | --- | --- | --- |
-| Unit | Vitest | Nothing | 190 cases, 11 files | `npm test` |
+| Unit | Vitest | Nothing | 199 cases, 11 files | `npm test` |
 | Integration | Vitest | A throwaway MariaDB | 83 cases, 7 files | `npm test` (skipped without `TEST_DATABASE_URL`) |
 | End-to-end | Playwright | A running instance | 76 cases, 12 specs | `npx playwright test` |
 
@@ -110,8 +110,61 @@ npm run build                         # production build
 npx playwright test                   # against a running instance
 ```
 
-There is no CI workflow in the repository yet — these are what a change is
-expected to pass locally before it is pushed.
+These are what a change is expected to pass locally before it is pushed; CI
+runs the same set on every pull request.
+
+## CI
+
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs on every pull
+request, on pushes to `main`, and on demand. Four jobs, all independent:
+
+| Job | Does | Why it exists |
+| --- | --- | --- |
+| **Typecheck, lint, build** | `tsc --noEmit`, `eslint .`, `next build` | The cheapest signal, so it does not queue behind a database |
+| **Unit and integration tests** | Vitest against a MariaDB service container | The suites that need a real database |
+| **End-to-end tests** | Playwright against the **standalone bundle**, on an empty database | What actually ships, not `next dev` |
+| **Container build and boot** | Builds the image, boots it on an empty volume, restarts it | The container is the product |
+
+Three details worth knowing before editing the workflow:
+
+**The integration suites must not pass vacuously.** They skip themselves when
+`TEST_DATABASE_URL` is missing — deliberately, so a developer without a spare
+database is not blocked. In CI that same behaviour would turn a broken service
+container into a green tick with 83 tests silently not run. The test job writes
+the JSON reporter output and
+[`assert-integration-ran.mjs`](../.github/scripts/assert-integration-ran.mjs)
+fails the build if any of them skipped.
+
+**Lint is only enforced here.** `next.config.ts` sets
+`eslint.ignoreDuringBuilds`, so a build never fails on lint. The lint job is the
+only thing between a lint error and `main`.
+
+**The E2E job runs the standalone bundle.** `npm run build` produces
+`.next/standalone`, and the workflow copies `public/` and `.next/static` into it
+exactly as the Dockerfile does, then runs `node .next/standalone/server.js`.
+Testing `next dev` would skip the tracing step that has its own failure modes.
+
+The container job boots the image on an empty volume and then restarts it —
+which is the pair of things every phase has verified by hand: a first boot that
+generates secrets, initialises MariaDB under `/config/db` and applies every
+migration, and a restart that reuses both rather than starting over.
+
+### Lint findings that are warnings, not errors
+
+`eslint-config-next` 16 ships the React Compiler rule set, and three of its
+rules flag patterns this codebase uses on purpose. They are set to `warn` in
+[`eslint.config.mjs`](../eslint.config.mjs), with the reasoning next to them, so
+that lint is a gate that can actually be enforced rather than one permanently
+red:
+
+- `react-hooks/set-state-in-effect` — the `mounted` pattern behind theme-aware
+  controls. The theme is only known after hydration.
+- `react-hooks/purity` — `Date.now()` in a client component rendering a
+  relative day count.
+- `react-hooks/immutability` — writing `document.documentElement.dataset` so an
+  accent change shows before the action returns.
+
+Everything else, `react-hooks/rules-of-hooks` included, fails the build.
 
 ## What a change is expected to bring with it
 

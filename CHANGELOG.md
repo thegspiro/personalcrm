@@ -16,6 +16,34 @@ for what each migration does.
 
 ## [Unreleased]
 
+### Unversioned — 2026-08-25 — documentation and CI
+
+#### Added
+- **`docs/`** — architecture, data model, server actions, privacy, configuration,
+  deployment and testing. The README had linked to the directory since Phase 1
+  and it did not exist.
+- **`CLAUDE.md`** and **`CONTRIBUTING.md`** — the commands, the layering, and the
+  invariants that have each already been a bug.
+- **This changelog.**
+- **CI** (`.github/workflows/ci.yml`): typecheck/lint/build, unit and
+  integration against a MariaDB service container, end-to-end against the
+  standalone bundle on an empty database, and a container build that boots the
+  image on an empty volume and restarts it. Local runs had been the only gate.
+- A guard that fails the build when the integration suites **skip** rather than
+  run. They skip themselves without `TEST_DATABASE_URL`, which in CI would have
+  turned a broken service container into a green tick with 83 tests silently not
+  run.
+
+#### Fixed
+- **`npm run lint` did not work.** `next lint` is deprecated and, with no ESLint
+  config on disk, prompted interactively for one — which hangs a CI job rather
+  than failing it. Replaced with a flat config and the ESLint CLI.
+- Four claims in the README were checked against the code; three were wrong.
+  `/config/backups` is created and never written to, so the nightly dump does
+  not exist; nothing writes to `/config/uploads` either; and the notification
+  tables have no sender. All three are now listed as known gaps.
+
+
 ### Phase 4d — 2026-08-24 — dietary needs, debts, and who reached out
 
 *Schema: `20260824182152_add_dietary_debts_and_reach_out`*
