@@ -32,7 +32,14 @@ import {
   parsePartialDate,
   type DatePrecision,
 } from "@/lib/date-precision";
-import { addPlainDays, plainDateKey, parsePlainDate, type PlainDate } from "@/lib/dates";
+import {
+  addPlainDays,
+  clampPlainDate,
+  daysInMonth,
+  plainDateKey,
+  parsePlainDate,
+  type PlainDate,
+} from "@/lib/dates";
 
 export interface DateFieldProps {
   name: string;
@@ -110,8 +117,16 @@ export function DateField({
     // `anchor` is derived, so keying on its serialised form avoids a loop.
   }, [value, precision]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * Every path into state goes through here so a day can never outrun its
+   * month. Picking February with 31 already in the day box used to build
+   * 2026-02-31, which `parsePlainDate` rejects on the server — and `partialDate`
+   * turns a rejected anchor into `undefined`, so the form saved cleanly with the
+   * date silently missing. Clamping to the 28th loses a digit; not clamping lost
+   * the whole date without saying so.
+   */
   function commit(next: PlainDate, nextPrecision?: DatePrecision) {
-    setDate(next);
+    setDate(clampPlainDate(next));
     if (nextPrecision) setPrecision(nextPrecision);
   }
 
@@ -120,7 +135,7 @@ export function DateField({
    * handed to chrono for the relative phrasings people actually type
    * ("3 years ago", "last March").
    */
-  function commitText(raw: string) {
+  function commitText(raw: string, close: boolean) {
     const trimmed = raw.trim();
     if (!trimmed) return;
 
@@ -128,7 +143,7 @@ export function DateField({
     if (partial) {
       commit(partial.date, partial.precision);
       setText("");
-      setOpen(false);
+      if (close) setOpen(false);
       return;
     }
 
@@ -139,7 +154,7 @@ export function DateField({
         "DAY",
       );
       setText("");
-      setOpen(false);
+      if (close) setOpen(false);
     }
   }
 
@@ -209,11 +224,13 @@ export function DateField({
                 value={text}
                 placeholder="2019, March 2019, 3 years ago…"
                 onChange={(event) => setText(event.target.value)}
-                onBlur={(event) => commitText(event.target.value)}
+                // Tapping straight into Year must not close the popover out
+                // from under the finger that opened it.
+                onBlur={(event) => commitText(event.target.value, false)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
-                    commitText(text);
+                    commitText(text, true);
                   }
                 }}
               />
@@ -256,19 +273,13 @@ export function DateField({
               {precision !== "MONTH_DAY" ? (
                 <div className="grid gap-1">
                   <Label htmlFor={`${name}-year`}>Year</Label>
-                  <Input
+                  <NumberBox
                     id={`${name}-year`}
-                    type="number"
-                    inputMode="numeric"
+                    value={anchor?.year ?? null}
                     min={1900}
                     max={2200}
-                    value={anchor?.year ?? ""}
-                    onChange={(event) => {
-                      const year = Number(event.target.value);
-                      if (year >= 1900 && year <= 2200) {
-                        commit({ ...(anchor ?? todayPlain()), year });
-                      }
-                    }}
+                    digits={4}
+                    onCommit={(year) => commit({ ...(anchor ?? todayPlain()), year })}
                   />
                 </div>
               ) : null}
@@ -303,17 +314,13 @@ export function DateField({
               {precision === "DAY" || precision === "MONTH_DAY" ? (
                 <div className="grid gap-1">
                   <Label htmlFor={`${name}-day`}>Day</Label>
-                  <Input
+                  <NumberBox
                     id={`${name}-day`}
-                    type="number"
-                    inputMode="numeric"
+                    value={anchor?.day ?? null}
                     min={1}
-                    max={31}
-                    value={anchor?.day ?? ""}
-                    onChange={(event) => {
-                      const day = Number(event.target.value);
-                      if (day >= 1 && day <= 31) commit({ ...(anchor ?? todayPlain()), day });
-                    }}
+                    max={daysInMonth(yearForInputs, anchor?.month ?? todayPlain().month)}
+                    digits={2}
+                    onCommit={(day) => commit({ ...(anchor ?? todayPlain()), day })}
                   />
                 </div>
               ) : null}
@@ -332,6 +339,61 @@ export function DateField({
         <p className="text-xs text-muted-foreground/80">{hint}</p>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * A digits-only box that can actually be typed into.
+ *
+ * The obvious version — a controlled `<input type="number">` that only calls
+ * back when the value is in range — cannot be retyped at all. Clearing 2026 to
+ * enter 1985 goes through "", "1", "19", "198", and every one of those is out
+ * of range, so nothing commits, the controlled value re-renders as 2026, and
+ * the box fights the keyboard. This is what a phone user sees as a stuck field.
+ *
+ * So the keystrokes live in a draft that is always shown, and only a complete,
+ * in-range number is committed upward. Blur drops the draft, which snaps a
+ * half-typed or impossible entry back to the value that is really selected —
+ * a visible correction rather than a silent one.
+ */
+function NumberBox({
+  id,
+  value,
+  min,
+  max,
+  digits,
+  onCommit,
+}: {
+  id: string;
+  value: number | null;
+  min: number;
+  max: number;
+  digits: number;
+  onCommit: (value: number) => void;
+}) {
+  const [draft, setDraft] = React.useState<string | null>(null);
+
+  return (
+    <Input
+      id={id}
+      // Not `type="number"`: it offers a keypad with "." and "," on it, accepts
+      // "1e5", and turns a stray scroll over the field into a changed year.
+      type="text"
+      inputMode="numeric"
+      pattern="[0-9]*"
+      autoComplete="off"
+      maxLength={digits}
+      value={draft ?? (value === null ? "" : String(value))}
+      onChange={(event) => {
+        const typed = event.target.value.replace(/\D/g, "").slice(0, digits);
+        setDraft(typed);
+        const next = Number(typed);
+        if (typed !== "" && next >= min && next <= max) onCommit(next);
+      }}
+      // Tapping in to change the year almost always means replacing it.
+      onFocus={(event) => event.currentTarget.select()}
+      onBlur={() => setDraft(null)}
+    />
   );
 }
 

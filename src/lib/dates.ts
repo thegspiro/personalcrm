@@ -175,6 +175,16 @@ function clampToMonth(year: number, month: number, day: number): PlainDate {
   return { year, month, day: Math.min(day, daysInMonth(year, month)) };
 }
 
+/**
+ * Pull a day back into its month: February 31st becomes the 28th, or the 29th
+ * on a leap year. Anything that assembles a date field by field needs this,
+ * because month and day are chosen separately and nothing stops the pair from
+ * naming a day that does not exist.
+ */
+export function clampPlainDate(date: PlainDate): PlainDate {
+  return clampToMonth(date.year, date.month, date.day);
+}
+
 /** Age (or years elapsed) on the given date, or null when the year is unknown. */
 export function yearsBetween(anchor: PlainDate, on: PlainDate): number {
   let years = on.year - anchor.year;

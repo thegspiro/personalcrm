@@ -18,6 +18,7 @@
 import {
   type PlainDate,
   addPlainDays,
+  clampPlainDate,
   daysInMonth,
   diffPlainDays,
   plainDateKey,
@@ -77,7 +78,10 @@ export function hasKnownDay(precision: DatePrecision): boolean {
 export function normalizeToPrecision(date: PlainDate, precision: DatePrecision): PlainDate {
   switch (precision) {
     case "DAY":
-      return date;
+      // Clamped, not passed through: a day-precision anchor is the one case
+      // where every field is load-bearing, so an impossible pair like Feb 31
+      // has to be resolved here rather than stored and rejected later.
+      return clampPlainDate(date);
     case "MONTH":
       return { year: date.year, month: date.month, day: 1 };
     case "YEAR":

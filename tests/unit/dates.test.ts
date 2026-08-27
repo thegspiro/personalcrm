@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addPlainDays,
   calendarDateInTz,
+  clampPlainDate,
   diffPlainDays,
   nextOccurrence,
   parsePlainDate,
@@ -70,6 +71,29 @@ describe("plain date storage round-trip", () => {
     expect(parsePlainDate("2025-02-30")).toBeNull();
     expect(parsePlainDate("2026-13-01")).toBeNull();
     expect(parsePlainDate("nope")).toBeNull();
+  });
+});
+
+describe("clampPlainDate", () => {
+  it("pulls a day back into a month that is too short for it", () => {
+    // The picker builds a date field by field, so month and day are chosen
+    // separately and nothing stops 31 outliving a switch to February.
+    expect(plainDateKey(clampPlainDate({ year: 2026, month: 2, day: 31 }))).toBe("2026-02-28");
+    expect(plainDateKey(clampPlainDate({ year: 2024, month: 2, day: 31 }))).toBe("2024-02-29");
+    expect(plainDateKey(clampPlainDate({ year: 2026, month: 4, day: 31 }))).toBe("2026-04-30");
+  });
+
+  it("leaves a real date alone", () => {
+    expect(plainDateKey(clampPlainDate({ year: 2026, month: 8, day: 26 }))).toBe("2026-08-26");
+  });
+
+  it("produces something parsePlainDate accepts, which is the point", () => {
+    // An unclamped Feb 31 reaches the server as "2026-02-31", parsePlainDate
+    // rejects it, and partialDate turns the rejection into `undefined` — the
+    // form saves and the date is silently gone.
+    expect(parsePlainDate("2026-02-31")).toBeNull();
+    expect(parsePlainDate(plainDateKey(clampPlainDate({ year: 2026, month: 2, day: 31 })))).not
+      .toBeNull();
   });
 });
 
