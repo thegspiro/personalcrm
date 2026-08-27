@@ -279,6 +279,87 @@ describe("title and notes", () => {
   });
 });
 
+/**
+ * A possessive name is grammar, not just a participant.
+ *
+ * Cutting it out the way a plain "with Sarah" is cut leaves "First time at 's
+ * place" — a title with a hole in it that nothing downstream can repair, and
+ * which the app had no way to correct after the fact.
+ */
+describe("possessive names", () => {
+  it("keeps the person in the title when the name is possessive", () => {
+    const result = parse("First time at Sarah's place");
+    expect(result.title).toBe("First time at Sarah's place");
+    expect(result.contacts.map((m) => m.contact.id)).toEqual(["sarah"]);
+  });
+
+  it("keeps a possessive that ends in s without an extra one", () => {
+    const withChris = [...CONTACTS, contact("chris", "Chris")];
+    const result = parse("dinner at Chris' house", withChris);
+    expect(result.title).toBe("dinner at Chris' house");
+    expect(result.contacts.map((m) => m.contact.id)).toEqual(["chris"]);
+  });
+
+  it("keeps a possessive written with a curly apostrophe", () => {
+    const result = parse("lunch at Sarah\u2019s flat");
+    expect(result.title).toBe("lunch at Sarah\u2019s flat");
+    expect(result.contacts.map((m) => m.contact.id)).toEqual(["sarah"]);
+  });
+
+  it("keeps an ambiguous possessive in the title while still asking who", () => {
+    const twoJohns = [contact("j1", "John", "Reed"), contact("j2", "John", "Diaz")];
+    const result = parse("hangout at John's place", twoJohns);
+    expect(result.title).toBe("hangout at John's place");
+    expect(needsDisambiguation(result)).toBe(true);
+  });
+
+  it("does not offer to create a contact named after the possessive", () => {
+    const result = parse("party at Sarah's, met her sister");
+    expect(result.unknownNames).not.toContain("Sarah's");
+    expect(result.unknownNames).not.toContain("Sarah");
+  });
+
+  it("reads a stranger's possessive as the stranger, not as the possessive", () => {
+    const result = parse("drinks at Bob's afterwards");
+    expect(result.unknownNames).toEqual(["Bob"]);
+  });
+
+  it("still drops a plain participant name from the title", () => {
+    const result = parse("coffee with Sarah about the house move");
+    expect(result.title).not.toContain("Sarah");
+    expect(result.title.toLowerCase()).toContain("house move");
+  });
+
+  it("does not let a month-named person become a date once kept in the title", () => {
+    // The reason names are masked rather than left in place: chrono would read
+    // the "April" in "April's place" as the first of April and file the
+    // evening under a day nobody typed.
+    const withApril = [contact("april", "April")];
+    const result = parse("hangout at April's place", withApril);
+    expect(result.title).toBe("hangout at April's place");
+    expect(result.date).toBeNull();
+    expect(result.contacts.map((m) => m.contact.id)).toEqual(["april"]);
+  });
+
+  it("handles two possessives on one line", () => {
+    const result = parse("started at Sarah's then on to Priya's");
+    expect(result.title).toBe("started at Sarah's then on to Priya's");
+    expect(result.contacts.map((m) => m.contact.id).sort()).toEqual(["priya", "sarah"]);
+  });
+
+  it("keeps a possessive nickname", () => {
+    const result = parse("watched the game at Mars' flat");
+    expect(result.title).toBe("watched the game at Mars' flat");
+    expect(result.contacts.map((m) => m.contact.id)).toEqual(["marcus"]);
+  });
+
+  it("leaves no mask characters in the title or notes", () => {
+    const result = parse("coffee with Sarah at Priya's yesterday, good chat");
+    expect(result.title).not.toMatch(/[\ue000-\ue1ff]/);
+    expect(result.notes ?? "").not.toMatch(/[\ue000-\ue1ff]/);
+  });
+});
+
 describe("privacy", () => {
   it("flags a matched private contact", () => {
     const withPrivate = [contact("secret", "Robin", null, { isPrivate: true })];
