@@ -106,7 +106,7 @@ export function quickParse(
   // May, June — and letting the date parser run first would swallow the person
   // and file the interaction against nobody. A name you have recorded always
   // wins over a date reading of the same word.
-  const { contacts, ambiguous, unknownNames, remainder: withoutPeople } = extractPeople(
+  const { contacts, ambiguous, unknownNames, remainder: withoutPeople, names } = extractPeople(
     text,
     context.contacts,
   );
@@ -116,7 +116,9 @@ export function quickParse(
     context.now,
     context.timeZone,
   );
-  const { title, notes } = splitTitleAndNotes(withoutDate, type, contacts);
+  // Names come back only once the date and type readers have had their turn on
+  // text that cannot mislead them — see `NAME_MASK`.
+  const { title, notes } = splitTitleAndNotes(restoreNames(withoutDate, names), type, contacts);
 
   return { contacts, ambiguous, unknownNames, type, date, dateText, title, notes };
 }
@@ -179,12 +181,18 @@ function extractType(
   return { type: null, withoutType: text };
 }
 
-/** Index of `needle` in `haystack` on word boundaries, or -1. */
-function indexOfWord(haystack: string, needle: string): number {
+/**
+ * Index of `needle` in `haystack` on word boundaries at or after `from`, or -1.
+ *
+ * The offset is what lets the people scanner move forward over a name it has
+ * already dealt with. Slicing is safe because every offset it passes sits on a
+ * boundary the scanner just created.
+ */
+function indexOfWord(haystack: string, needle: string, from = 0): number {
   const pattern = new RegExp(`(^|[^a-z0-9])${escapeRegExp(needle)}($|[^a-z0-9])`, "i");
-  const match = pattern.exec(haystack);
+  const match = pattern.exec(haystack.slice(from));
   if (!match) return -1;
-  return match.index + (match[1] ? match[1].length : 0);
+  return from + match.index + (match[1] ? match[1].length : 0);
 }
 
 function escapeRegExp(value: string): string {
@@ -192,6 +200,55 @@ function escapeRegExp(value: string): string {
 }
 
 // --- people ----------------------------------------------------------------
+
+/**
+ * The stand-in left behind wherever a name was recognised.
+ *
+ * Names are masked rather than cut out because the two readers that run next
+ * must not see them: "at April's place" would otherwise hand chrono a month
+ * and file the evening under 1 April. Private-use characters carry no letters
+ * or digits, so nothing downstream can read anything into them, and each mask
+ * carries its own index so a name is restored to the exact spot it came from.
+ */
+const NAME_MASK = "\ue000";
+const NAME_MASK_FIRST = 0xe100;
+const NAME_MASK_LIMIT = 0x100;
+const NAME_MASK_PATTERN = /\ue000([\ue100-\ue1ff])/g;
+
+interface MaskedName {
+  text: string;
+  /**
+   * True when the name is doing grammatical work rather than only naming a
+   * participant — "at Sarah's place". Those come back into the title; a plain
+   * "coffee with Sarah" does not, because the fallback already says it better.
+   */
+  possessive: boolean;
+}
+
+function maskFor(index: number): string {
+  return NAME_MASK + String.fromCharCode(NAME_MASK_FIRST + index);
+}
+
+/**
+ * True when what follows a name is a possessive ending — "Sarah's place", or
+ * "Chris' place" for a name that already ends in s.
+ */
+function possessiveAt(text: string, index: number): boolean {
+  return /^['\u2019](?:s\b|(?![a-z0-9]))/i.test(text.slice(index));
+}
+
+/** Put the possessive names back and drop the masks left by the rest. */
+function restoreNames(text: string, names: MaskedName[]): string {
+  return text
+    .replace(NAME_MASK_PATTERN, (_match, marker: string) => {
+      const name = names[marker.charCodeAt(0) - NAME_MASK_FIRST];
+      // A space, not an empty string: cutting "Sarah" out of "coffee with
+      // Sarah and John" must not weld "with" onto "and".
+      return name?.possessive ? name.text : " ";
+    })
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
 
 function extractPeople(
   text: string,
@@ -201,9 +258,11 @@ function extractPeople(
   ambiguous: AmbiguousName[];
   unknownNames: string[];
   remainder: string;
+  names: MaskedName[];
 } {
   const matched: MatchedContact[] = [];
   const ambiguous: AmbiguousName[] = [];
+  const names: MaskedName[] = [];
   const taken = new Set<string>();
   let remainder = text;
 
@@ -239,9 +298,12 @@ function extractPeople(
   for (const entry of ordered) {
     // Looped, not matched once: "dinner with John and John" is two people, and
     // consuming only the first would leave the second looking like a stranger
-    // and offer to create a third John.
+    // and offer to create a third John. The cursor only ever moves forward,
+    // because a masked name stays in the string and would otherwise match
+    // itself for ever.
+    let cursor = 0;
     for (;;) {
-      const at = indexOfWord(remainder.toLowerCase(), entry.needle.toLowerCase());
+      const at = indexOfWord(remainder.toLowerCase(), entry.needle.toLowerCase(), cursor);
       if (at === -1) break;
 
       // Anyone already pinned down by a longer, more specific name is out of
@@ -250,10 +312,14 @@ function extractPeople(
       const remaining = entry.contacts.filter((contact) => !taken.has(contact.id));
       if (remaining.length === 0) break;
 
-      const matchedText = remainder.slice(at, at + entry.needle.length);
-      remainder = (remainder.slice(0, at) + " " + remainder.slice(at + entry.needle.length))
-        .replace(/\s{2,}/g, " ")
-        .trim();
+      const end = at + entry.needle.length;
+      const matchedText = remainder.slice(at, end);
+
+      if (names.length >= NAME_MASK_LIMIT) break;
+      const mask = maskFor(names.length);
+      names.push({ text: matchedText, possessive: possessiveAt(remainder, end) });
+      remainder = remainder.slice(0, at) + mask + remainder.slice(end);
+      cursor = at + mask.length;
 
       if (remaining.length === 1) {
         taken.add(remaining[0].id);
@@ -275,8 +341,15 @@ function extractPeople(
   const unknownNames: string[] = [];
   const words = remainder.split(/\s+/);
   for (const [index, word] of words.entries()) {
-    const bare = word.replace(/[^A-Za-z'-]/g, "");
+    const bare = word
+      .replace(/[^A-Za-z'\u2019-]/g, "")
+      // "Sarah's" is Sarah. Without this the possessive left standing in the
+      // title reads as a stranger, and quick add offers to create a contact
+      // literally called "Sarah's".
+      .replace(/['\u2019]s?$/i, "");
     if (bare.length < 2) continue;
+    // Masks leave punctuation behind; a name starts with a letter.
+    if (!/^[A-Za-z]/.test(bare)) continue;
     if (STOPWORDS.has(bare.toLowerCase())) continue;
     if (bare[0] !== bare[0].toUpperCase()) continue;
     // A capitalised first word is usually just the start of the sentence.
@@ -288,7 +361,7 @@ function extractPeople(
     if (!unknownNames.includes(bare)) unknownNames.push(bare);
   }
 
-  return { contacts: matched, ambiguous, unknownNames, remainder };
+  return { contacts: matched, ambiguous, unknownNames, remainder, names };
 }
 
 // --- title and notes -------------------------------------------------------

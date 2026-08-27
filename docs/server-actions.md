@@ -57,10 +57,25 @@ enforces rather than documents:
 
 ### Interactions — `actions/interactions.ts`
 
-`createInteraction`, `updateInteraction`, `deleteInteraction`.
+`createInteraction`, `updateInteraction`, `deleteInteraction`,
+`loadInteractionForEdit`.
 
-All three run `contact-activity` recomputation for every participant, so
-backdating and deletion cannot corrupt a cadence.
+All three writes run `contact-activity` recomputation for every participant, so
+backdating and deletion cannot corrupt a cadence. `updateInteraction` recomputes
+for the people it *removed* as well as the ones it kept — a contact dropped from
+an interaction must not keep a last-contact date from a meeting they were not at.
+
+Both `updateInteraction` and `loadInteractionForEdit` filter through
+`interactionPrivacyWhere`, so an id hidden behind a closed lock can be neither
+read back into a form nor written to by guessing at it. `typeId` is checked
+against the account's own taxonomy on the way in — the column is a plain foreign
+key, so an unchecked id from another account would otherwise be accepted.
+
+`loadInteractionForEdit` is a read behind `"use server"`, called when the edit
+sheet opens rather than embedded in the timeline payload: a feed of a hundred
+rows should not ship a hundred contact pickers to the browser. It returns
+participants who are archived or currently hidden alongside the picker's own
+list, because a person missing from the form would be silently dropped on save.
 
 ### Everything hanging off a contact — `actions/details.ts`
 
