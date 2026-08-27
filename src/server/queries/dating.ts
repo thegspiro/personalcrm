@@ -320,7 +320,11 @@ export async function listDateEntries(ownerId: string, contactId: string) {
     where: { ownerId, contactId },
     include: {
       activityType: true,
-      interaction: { select: { id: true, occurredAt: true, notes: true, sentiment: true } },
+      // `isPrivate` lives on the interaction, not the DateEntry, and the edit
+      // form has to show the marker it is about to write back.
+      interaction: {
+        select: { id: true, occurredAt: true, notes: true, sentiment: true, isPrivate: true },
+      },
     },
     orderBy: { sequence: "desc" },
   });

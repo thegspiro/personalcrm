@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown, Pencil, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Icon } from "@/components/nav/icon";
 import { Button } from "@/components/ui/button";
@@ -91,18 +91,54 @@ export function SectionCard({
   );
 }
 
-/** Row wrapper with a hover-revealed delete affordance. */
+/**
+ * A row in a section, with edit and delete affordances.
+ *
+ * `editForm` swaps the row's contents for the form in place rather than
+ * opening a dialog. The same reason adding is inline: a nested modal on a
+ * phone is a dead end, and an edit form that covers the row hides the thing
+ * you are trying to correct.
+ *
+ * Unlike the delete ×, the pencil is visible without hovering — a phone has no
+ * hover, and an affordance that only appears on a pointer is not an
+ * affordance on the device this app is designed around.
+ */
 export function SectionRow({
   children,
   onDelete,
   deleteLabel = "Delete",
+  editForm,
+  editLabel = "Edit",
   className,
 }: {
   children: React.ReactNode;
   onDelete?: () => void;
   deleteLabel?: string;
+  /**
+   * Receives a `close` callback, so a saved edit collapses the form back to
+   * the row it corrected.
+   */
+  editForm?: (close: () => void) => React.ReactNode;
+  editLabel?: string;
   className?: string;
 }) {
+  const [editing, setEditing] = React.useState(false);
+
+  if (editing && editForm) {
+    return (
+      <div className={cn("rounded-lg border border-accent-8 bg-card p-3", className)}>
+        {editForm(() => setEditing(false))}
+        <button
+          type="button"
+          onClick={() => setEditing(false)}
+          className="mt-2 w-full text-center text-xs text-muted-foreground hover:text-foreground"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
@@ -111,15 +147,29 @@ export function SectionRow({
       )}
     >
       <div className="min-w-0 flex-1">{children}</div>
-      {onDelete ? (
-        <button
-          type="button"
-          onClick={onDelete}
-          aria-label={deleteLabel}
-          className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-        >
-          <span aria-hidden>×</span>
-        </button>
+      {editForm || onDelete ? (
+        <div className="flex shrink-0 items-center gap-0.5">
+          {editForm ? (
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              aria-label={editLabel}
+              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Pencil className="size-3.5" aria-hidden />
+            </button>
+          ) : null}
+          {onDelete ? (
+            <button
+              type="button"
+              onClick={onDelete}
+              aria-label={deleteLabel}
+              className="rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+            >
+              <span aria-hidden>×</span>
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

@@ -16,6 +16,74 @@ for what each migration does.
 
 ## [Unreleased]
 
+### Editing everything else you logged — 2026-08-27
+
+*Schema: none*
+
+The timeline learned to correct an interaction; nothing else in the app had
+learned to correct anything. Every other entry — a fact, an important date, a
+life event, a follow-up, a gift, a debt, an allergy, a flag, a date, a plan, a
+conversation idea, a link between two people — was add-and-delete. Fixing a
+typo meant deleting the row and typing it again, which threw away the category,
+the date, the privacy marker and the notes along with the mistake, and for a
+relationship it threw away both halves of the pair.
+
+#### Added
+- **Inline editing in every section of a contact's page.** A pencil beside each
+  row swaps its contents for the form that made it, filled in. In place rather
+  than in a dialog, for the same reason adding is: a nested modal on a phone is
+  a dead end, and a form that covers the row hides the thing you are correcting.
+  The pencil is visible without hovering — a phone has no hover, and the delete
+  × next to it had already taught that lesson once.
+- **The `update*` actions that were missing** — `updateIdea`, `updateTask`,
+  `updateGift`, `updateDebt`, `updateDietaryNeed`, `updateRelationship` and
+  `updateFlag`. `updateRelationship` re-types **both** halves under the same
+  `pairId`, so correcting "Bob is Alice's colleague" to "neighbour" does not
+  leave Alice still filed as Bob's colleague, and it collapses into a row that
+  already carries the target type rather than tripping the uniqueness
+  constraint.
+- **Editing on the list pages too** — follow-ups on `/tasks`, conversation
+  ideas on `/ideas`, gifts on `/gifts`, and things to do wherever the plans
+  section appears. `/gifts` is where you are most likely to be standing when a
+  gift stops being an idea and becomes something you have bought.
+- **Fields that were stored but never settable**: a life event's end date and
+  its milestone marker, an important date's notes, a follow-up's priority and
+  notes, a gift's price, direction and the day it changed hands, a date's city
+  and conversation rating, a flag's date. They were all rendered somewhere and
+  none of them could be entered.
+
+#### Fixed
+- **`updateFact` silently dropped a fact's privacy marker.** It wrote content,
+  category and importance and left `isPrivate` out of the update, so the field
+  the create path offers had no way back. It is now written — but only when the
+  lock is open, because hiding a row from a session that could not then reach
+  it to put it back is exactly what `setPrivate` refuses to do.
+- **`updateFact` could be aimed at a fact the lock was hiding.** It looked the
+  row up by id and owner without the privacy where-fragment, so a private fact
+  was hidden from the page and still writable by anyone who had seen its id
+  while unlocked. Both it and `updateDebt` now scope the lookup through the
+  fragment: the row is out of reach, not merely out of sight.
+- **`updateDebt` accepts no start date later than the day the debt was
+  settled** — the mirror of the check `settleDebt` already made in the other
+  direction, and nonsense in any later report either way round.
+- **Facts, important dates, life events and gifts took a taxonomy term id
+  straight to the database.** The same hole `updateInteraction` was found with:
+  a POST naming a stranger's term rendered the row with a label that was never
+  theirs to use, and one of your own terms under the wrong kind was accepted
+  too — a gift occasion would happily file itself as a fact category. All eight
+  create and update paths now resolve the id against the account and the kind
+  first. Found by adding the edit form that made these ids reachable from the
+  UI at all.
+
+#### Changed
+- Each entry's add form and edit form are now rendered from one shared
+  field-set component. An `update*` writes the whole form rather than patching
+  it, so a field offered only when adding is a field the first edit clears —
+  writing the two forms separately is how that bug gets in.
+- `DateField` and `TermSelect` take an id prefix. An add panel and an inline
+  edit form can be open at once, and both submit the same field names; two
+  elements sharing an id sends every label to whichever the browser finds first.
+
 ### Editing what you logged — 2026-08-27
 
 *Schema: none*

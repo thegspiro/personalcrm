@@ -100,6 +100,7 @@ function Chip({
 /** Plain select, for long lists where chips would overwhelm the form. */
 export function TermSelect({
   name,
+  id,
   label,
   terms,
   defaultValue,
@@ -107,17 +108,24 @@ export function TermSelect({
   className,
 }: {
   name: string;
+  /**
+   * Defaults to `name`. Set it when an add form and an inline edit form are on
+   * the page at once: two elements sharing an id makes the label point at
+   * whichever the browser finds first, which is not the one you tapped.
+   */
+  id?: string;
   label?: string;
   terms: TermOption[];
   defaultValue?: string | null;
   placeholder?: string;
   className?: string;
 }) {
+  const elementId = id ?? name;
   return (
     <div className={cn("grid gap-1.5", className)}>
-      {label ? <Label htmlFor={name}>{label}</Label> : null}
+      {label ? <Label htmlFor={elementId}>{label}</Label> : null}
       <select
-        id={name}
+        id={elementId}
         name={name}
         defaultValue={defaultValue ?? ""}
         className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

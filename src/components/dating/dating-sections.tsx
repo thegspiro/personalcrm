@@ -18,7 +18,7 @@ import { PrivateText } from "./private-text";
 import { EndRelationshipSheet } from "./end-relationship-sheet";
 import { formatMoney } from "@/lib/format";
 import { formatPartialDate } from "@/lib/date-precision";
-import { plainDateFromDb } from "@/lib/dates";
+import { plainDateFromDb, plainDateKey, type PlainDate } from "@/lib/dates";
 import type { ActionResult } from "@/server/actions/helpers";
 import {
   convertToFriend,
@@ -26,6 +26,8 @@ import {
   createFlag,
   deleteDateEntry,
   deleteFlag,
+  updateDateEntry,
+  updateFlag,
   upsertRomanticProfile,
 } from "@/server/actions/dating";
 
@@ -334,6 +336,8 @@ export interface DateLogItem {
   chemistry: number | null;
   conversationQuality: number | null;
   notes: string | null;
+  isPrivate: boolean;
+  activityTypeId: string | null;
   activityLabel: string | null;
 }
 
@@ -350,6 +354,126 @@ const WHO_PAID_LABELS: Record<string, string> = {
   SPLIT: "Split",
   UNSPECIFIED: "",
 };
+
+/**
+ * Logging a date and correcting one, from one description.
+ *
+ * Every field is here, including the city and the conversation rating the row
+ * does not render: `updateDateEntry` writes the whole form, so a field only the
+ * add form carried would be cleared the first time the date was edited.
+ *
+ * The venue is controlled when adding, because picking a saved plan fills it
+ * in, and uncontrolled when editing, where there is nothing to fill it from.
+ */
+function DateEntryFields({
+  formId,
+  activityTypes,
+  entry,
+  venue,
+  onVenueChange,
+}: {
+  formId: string;
+  activityTypes: TermOption[];
+  entry?: DateLogItem;
+  venue?: string;
+  onVenueChange?: (value: string) => void;
+}) {
+  return (
+    <>
+      <TermChips
+        name="activityTypeId"
+        label="What did you do?"
+        terms={activityTypes}
+        defaultValue={entry?.activityTypeId}
+        allowEmpty={false}
+      />
+      <DateTimeField
+        name="occurredAt"
+        label="When"
+        defaultValue={entry?.occurredAt}
+        hint="Logging one you forgot? Set it back — it won't disturb your cadence."
+      />
+      <div className="grid gap-2.5 sm:grid-cols-2">
+        <Field label="Where" htmlFor={`${formId}-venue`}>
+          {onVenueChange ? (
+            <Input
+              id={`${formId}-venue`}
+              name="venue"
+              value={venue ?? ""}
+              onChange={(event) => onVenueChange(event.target.value)}
+              placeholder="Northside Social"
+            />
+          ) : (
+            <Input
+              id={`${formId}-venue`}
+              name="venue"
+              defaultValue={entry?.venue ?? ""}
+              placeholder="Northside Social"
+            />
+          )}
+        </Field>
+        <Field label="City" htmlFor={`${formId}-city`}>
+          <Input id={`${formId}-city`} name="city" defaultValue={entry?.city ?? ""} />
+        </Field>
+      </div>
+      <div className="grid gap-2.5 sm:grid-cols-2">
+        <RatingInput name="rating" label="How was it?" defaultValue={entry?.rating} />
+        <RatingInput name="chemistry" label="Chemistry" defaultValue={entry?.chemistry} />
+      </div>
+      <RatingInput
+        name="conversationQuality"
+        label="Conversation"
+        defaultValue={entry?.conversationQuality}
+      />
+      <div className="grid gap-2.5 sm:grid-cols-2">
+        <Field label="Who paid" htmlFor={`${formId}-whoPaid`}>
+          <select
+            id={`${formId}-whoPaid`}
+            name="whoPaid"
+            defaultValue={entry?.whoPaid ?? "UNSPECIFIED"}
+            className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+          >
+            <option value="UNSPECIFIED">Not noted</option>
+            <option value="ME">I paid</option>
+            <option value="THEM">They paid</option>
+            <option value="SPLIT">Split</option>
+          </select>
+        </Field>
+        <Field label="Cost" htmlFor={`${formId}-cost`}>
+          <Input
+            id={`${formId}-cost`}
+            name="cost"
+            type="number"
+            inputMode="decimal"
+            min={0}
+            step="0.01"
+            defaultValue={entry?.costCents == null ? "" : entry.costCents / 100}
+            placeholder="0.00"
+          />
+        </Field>
+      </div>
+      <Field label="Notes" htmlFor={`${formId}-notes`}>
+        <Textarea
+          id={`${formId}-notes`}
+          name="notes"
+          rows={2}
+          defaultValue={entry?.notes ?? ""}
+          placeholder="What did you talk about? How did it feel?"
+        />
+      </Field>
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          name="isPrivate"
+          value="true"
+          defaultChecked={entry?.isPrivate ?? false}
+          className="size-4"
+        />
+        Hide this behind the privacy lock
+      </label>
+    </>
+  );
+}
 
 export function DateLogSection({
   contactId,
@@ -376,6 +500,13 @@ export function DateLogSection({
         setVenue("");
         close();
       }
+    };
+  }
+
+  function edit(entry: DateLogItem, close: () => void) {
+    return async (form: FormData) => {
+      form.set("id", entry.id);
+      if (await run(() => updateDateEntry(form), "Saved")) close();
     };
   }
 
@@ -408,45 +539,12 @@ export function DateLogSection({
               </select>
             </Field>
           ) : null}
-          <TermChips name="activityTypeId" label="What did you do?" terms={activityTypes} allowEmpty={false} />
-          <DateTimeField
-            name="occurredAt"
-            label="When"
-            hint="Logging one you forgot? Set it back — it won't disturb your cadence."
+          <DateEntryFields
+            formId="date-new"
+            activityTypes={activityTypes}
+            venue={venue}
+            onVenueChange={setVenue}
           />
-          <Field label="Where" htmlFor="date-venue">
-            <Input
-              id="date-venue"
-              name="venue"
-              value={venue}
-              onChange={(event) => setVenue(event.target.value)}
-              placeholder="Northside Social"
-            />
-          </Field>
-          <div className="grid gap-2.5 sm:grid-cols-2">
-            <RatingInput name="rating" label="How was it?" />
-            <RatingInput name="chemistry" label="Chemistry" />
-          </div>
-          <div className="grid gap-2.5 sm:grid-cols-2">
-            <Field label="Who paid" htmlFor="whoPaid">
-              <select id="whoPaid" name="whoPaid" defaultValue="UNSPECIFIED" className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm">
-                <option value="UNSPECIFIED">Not noted</option>
-                <option value="ME">I paid</option>
-                <option value="THEM">They paid</option>
-                <option value="SPLIT">Split</option>
-              </select>
-            </Field>
-            <Field label="Cost" htmlFor="date-cost">
-              <Input id="date-cost" name="cost" type="number" inputMode="decimal" min={0} step="0.01" placeholder="0.00" />
-            </Field>
-          </div>
-          <Field label="Notes" htmlFor="date-notes">
-            <Textarea id="date-notes" name="notes" rows={2} placeholder="What did you talk about? How did it feel?" />
-          </Field>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            <input type="checkbox" name="isPrivate" value="true" className="size-4" />
-            Hide this behind the privacy lock
-          </label>
           <SubmitButton size="sm">Log it</SubmitButton>
         </form>
       )}
@@ -459,6 +557,17 @@ export function DateLogSection({
             key={entry.id}
             onDelete={() => void run(() => deleteDateEntry(entry.id), "Removed")}
             deleteLabel="Delete date"
+            editLabel="Edit date"
+            editForm={(close) => (
+              <form action={edit(entry, close)} className="grid gap-2.5">
+                <DateEntryFields
+                  formId={`date-${entry.id}`}
+                  activityTypes={activityTypes}
+                  entry={entry}
+                />
+                <SubmitButton size="sm">Save</SubmitButton>
+              </form>
+            )}
           >
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-medium">
@@ -496,6 +605,7 @@ export interface FlagItem {
   kind: "GREEN" | "RED" | "DEALBREAKER";
   text: string;
   severity: number;
+  noticedOn: PlainDate | null;
 }
 
 const FLAG_META: Record<string, { label: string; className: string; icon: React.ReactNode }> = {
@@ -512,6 +622,58 @@ const FLAG_META: Record<string, { label: string; className: string; icon: React.
   },
 };
 
+/**
+ * Noting a flag and reconsidering one.
+ *
+ * The kind is editable, which is the point of being able to edit a flag at all:
+ * a second look often moves something from red to green, and re-typing it keeps
+ * the note and the date you first noticed it rather than starting over.
+ */
+function FlagFields({ formId, flag }: { formId: string; flag?: FlagItem }) {
+  const [kind, setKind] = React.useState<FlagItem["kind"]>(flag?.kind ?? "GREEN");
+
+  return (
+    <>
+      <input type="hidden" name="kind" value={kind} />
+      <div className="flex gap-1.5">
+        {(["GREEN", "RED", "DEALBREAKER"] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            aria-pressed={kind === k}
+            onClick={() => setKind(k)}
+            className={cn(
+              "flex min-h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-medium transition-colors",
+              kind === k ? "border-accent-8 bg-accent-3 text-accent-11" : "border-border hover:bg-muted",
+            )}
+          >
+            {FLAG_META[k].icon}
+            {k === "DEALBREAKER" ? "Dealbreaker" : k === "GREEN" ? "Green" : "Red"}
+          </button>
+        ))}
+      </div>
+      <Field label="What did you notice?" htmlFor={`${formId}-text`}>
+        <Textarea
+          id={`${formId}-text`}
+          name="text"
+          rows={2}
+          required
+          defaultValue={flag?.text ?? ""}
+          placeholder="Says what she means without being unkind."
+        />
+      </Field>
+      <DateField
+        name="noticedOn"
+        idPrefix={`${formId}-noticedOn`}
+        label="When you noticed"
+        allowPrecision={false}
+        presets={["today", "lastWeek"]}
+        defaultValue={flag?.noticedOn ? plainDateKey(flag.noticedOn) : undefined}
+      />
+    </>
+  );
+}
+
 export function FlagsSection({
   contactId,
   flags,
@@ -522,13 +684,18 @@ export function FlagsSection({
   blurPrivate: boolean;
 }) {
   const run = useRun();
-  const [kind, setKind] = React.useState<"GREEN" | "RED" | "DEALBREAKER">("GREEN");
 
   function add(close: () => void) {
     return async (form: FormData) => {
       form.set("contactId", contactId);
-      form.set("kind", kind);
       if (await run(() => createFlag(form), "Noted")) close();
+    };
+  }
+
+  function edit(flag: FlagItem, close: () => void) {
+    return async (form: FormData) => {
+      form.set("id", flag.id);
+      if (await run(() => updateFlag(form), "Saved")) close();
     };
   }
 
@@ -545,26 +712,7 @@ export function FlagsSection({
       addLabel="Add a flag"
       form={(close) => (
         <form action={add(close)} className="grid gap-2.5">
-          <div className="flex gap-1.5">
-            {(["GREEN", "RED", "DEALBREAKER"] as const).map((k) => (
-              <button
-                key={k}
-                type="button"
-                aria-pressed={kind === k}
-                onClick={() => setKind(k)}
-                className={cn(
-                  "flex min-h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-medium transition-colors",
-                  kind === k ? "border-accent-8 bg-accent-3 text-accent-11" : "border-border hover:bg-muted",
-                )}
-              >
-                {FLAG_META[k].icon}
-                {k === "DEALBREAKER" ? "Dealbreaker" : k === "GREEN" ? "Green" : "Red"}
-              </button>
-            ))}
-          </div>
-          <Field label="What did you notice?" htmlFor="flag-text">
-            <Textarea id="flag-text" name="text" rows={2} required placeholder="Says what she means without being unkind." />
-          </Field>
+          <FlagFields formId="flag-new" />
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
       )}
@@ -585,6 +733,13 @@ export function FlagsSection({
                   key={flag.id}
                   onDelete={() => void run(() => deleteFlag(flag.id), "Removed")}
                   deleteLabel="Delete flag"
+                  editLabel="Edit flag"
+                  editForm={(close) => (
+                    <form action={edit(flag, close)} className="grid gap-2.5">
+                      <FlagFields formId={`flag-${flag.id}`} flag={flag} />
+                      <SubmitButton size="sm">Save</SubmitButton>
+                    </form>
+                  )}
                 >
                   <PrivateText enabled={blurPrivate} className="block text-sm">
                     {flag.text}

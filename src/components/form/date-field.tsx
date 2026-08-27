@@ -36,6 +36,12 @@ import { addPlainDays, plainDateKey, parsePlainDate, type PlainDate } from "@/li
 
 export interface DateFieldProps {
   name: string;
+  /**
+   * Prefix for the element ids, defaulting to `name`. Set it when an add form
+   * and an inline edit form are open at once: both submit the same field name,
+   * and two elements sharing an id sends every label to the first of them.
+   */
+  idPrefix?: string;
   label?: string;
   defaultValue?: string | null;
   defaultPrecision?: DatePrecision;
@@ -83,6 +89,7 @@ function presetDate(preset: string): PlainDate {
 
 export function DateField({
   name,
+  idPrefix,
   label,
   defaultValue,
   defaultPrecision = "DAY",
@@ -94,6 +101,7 @@ export function DateField({
   className,
   onChange,
 }: DateFieldProps) {
+  const ids = idPrefix ?? name;
   const [precision, setPrecision] = React.useState<DatePrecision>(defaultPrecision);
   const [date, setDate] = React.useState<PlainDate | null>(() => {
     if (!defaultValue) return null;
@@ -148,7 +156,7 @@ export function DateField({
 
   return (
     <div className={cn("grid gap-1.5", className)}>
-      {label ? <Label htmlFor={`${name}-trigger`}>{label}</Label> : null}
+      {label ? <Label htmlFor={`${ids}-trigger`}>{label}</Label> : null}
 
       {/* The values that actually get submitted. */}
       <input type="hidden" name={name} value={value} />
@@ -167,7 +175,7 @@ export function DateField({
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
-            id={`${name}-trigger`}
+            id={`${ids}-trigger`}
             type="button"
             variant="outline"
             className={cn(
@@ -203,9 +211,9 @@ export function DateField({
             ) : null}
 
             <div className="grid gap-1.5">
-              <Label htmlFor={`${name}-text`}>Type a date</Label>
+              <Label htmlFor={`${ids}-text`}>Type a date</Label>
               <Input
-                id={`${name}-text`}
+                id={`${ids}-text`}
                 value={text}
                 placeholder="2019, March 2019, 3 years ago…"
                 onChange={(event) => setText(event.target.value)}
@@ -255,9 +263,9 @@ export function DateField({
             <div className="grid grid-cols-3 gap-2">
               {precision !== "MONTH_DAY" ? (
                 <div className="grid gap-1">
-                  <Label htmlFor={`${name}-year`}>Year</Label>
+                  <Label htmlFor={`${ids}-year`}>Year</Label>
                   <Input
-                    id={`${name}-year`}
+                    id={`${ids}-year`}
                     type="number"
                     inputMode="numeric"
                     min={1900}
@@ -275,9 +283,9 @@ export function DateField({
 
               {precision !== "YEAR" ? (
                 <div className="grid gap-1">
-                  <Label htmlFor={`${name}-month`}>Month</Label>
+                  <Label htmlFor={`${ids}-month`}>Month</Label>
                   <select
-                    id={`${name}-month`}
+                    id={`${ids}-month`}
                     value={anchor?.month ?? 1}
                     onChange={(event) =>
                       commit({
@@ -302,9 +310,9 @@ export function DateField({
 
               {precision === "DAY" || precision === "MONTH_DAY" ? (
                 <div className="grid gap-1">
-                  <Label htmlFor={`${name}-day`}>Day</Label>
+                  <Label htmlFor={`${ids}-day`}>Day</Label>
                   <Input
-                    id={`${name}-day`}
+                    id={`${ids}-day`}
                     type="number"
                     inputMode="numeric"
                     min={1}
