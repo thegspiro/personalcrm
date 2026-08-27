@@ -16,6 +16,32 @@ for what each migration does.
 
 ## [Unreleased]
 
+### Date picker — 2026-08-27 — a field that can be typed into
+
+*Schema: none*
+
+#### Fixed
+- **The year could not be retyped.** The Year and Day boxes were controlled
+  `<input type="number">` that committed only an in-range value, so every prefix
+  of a year someone was typing — "1", "19", "198" — was rejected and re-rendered
+  as the year already there. Clearing the box was rejected too. On a phone this
+  reads as a field that ignores the keyboard, which is how it was reported. The
+  keystrokes now live in a draft that is always shown; only a complete, in-range
+  number is committed, and blur snaps a half-typed entry back to what is really
+  selected.
+- **A birthday could be discarded on save without saying so.** Month and day are
+  picked separately, so a day left at 31 survived a switch to February and built
+  an anchor of `2026-02-31`. `parsePlainDate` rejects that, and `partialDate`
+  turns a rejected anchor into `undefined` — the form saved cleanly with the date
+  simply missing. The day is now clamped to its month wherever a date is
+  assembled, and `normalizeToPrecision` clamps at day precision as a backstop.
+- **A popover taller than the screen put its own button out of reach.** On a
+  phone the picker's "Done" sat below the fold with no way to scroll to it, and
+  an on-screen keyboard halves the room again. Popovers now cap themselves to
+  the space Radix reports is available and scroll the remainder.
+
+---
+
 ### Startup sequence — 2026-08-25 — install, first boot, account, home screen
 
 *Schema: `20260825120000_add_onboarding_state`*

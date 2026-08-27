@@ -93,6 +93,14 @@ describe("normalizeToPrecision", () => {
     const once = normalizeToPrecision(MAR_14_2019, "MONTH");
     expect(plainDateKey(normalizeToPrecision(once, "MONTH"))).toBe(plainDateKey(once));
   });
+
+  it("clamps a day-precision date onto a day its month actually has", () => {
+    // Day precision is the one case where nothing is padding, so an impossible
+    // pair has to resolve here rather than be stored and rejected downstream.
+    expect(plainDateKey(normalizeToPrecision({ year: 2026, month: 2, day: 31 }, "DAY"))).toBe(
+      "2026-02-28",
+    );
+  });
 });
 
 describe("precisionRange", () => {

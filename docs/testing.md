@@ -97,6 +97,13 @@ container. Horizontal overflow on a phone pushes buttons off-screen where they
 look tappable and are not, and it has recurred often enough to earn a permanent
 test.
 
+`date-field.spec.ts` is the other one, and it drives the picker with
+`pressSequentially` rather than `fill`. `fill` sets a whole value in one event,
+which is not what a keyboard does: it never produces the half-typed year the
+field used to reject, and it never leaves a day stranded in a month too short
+for it. Both bugs were invisible to a `fill`-based test and obvious to anyone
+holding a phone. Anything that validates as you type wants the same treatment.
+
 ### Specs that must clean up after themselves
 
 `privacy.spec.ts` creates a private contact. Leaving one behind correctly
