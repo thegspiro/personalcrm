@@ -138,6 +138,13 @@ Quick add is [`lib/quick-parse.ts`](../src/lib/quick-parse.ts): chrono-node for
 dates resolved in the account timezone, matching against your own contacts and
 your own taxonomy slugs. No key, no network, always on.
 
+People are matched before dates are read, because plenty of real names are also
+months. A matched name is replaced with a private-use marker rather than cut
+out, so neither the date reader nor the type reader can see it — and the marker
+is what lets a possessive be put back afterwards. "at Sarah's place" names a
+participant *and* is part of the sentence; removing it outright left titles like
+"First time at 's place", which nothing downstream could repair.
+
 `src/server/ai/` is a separate, optional layer that produces a better reading of
 awkward phrasing when you switch it on and point it at a provider. The whole
 directory can be deleted and quick add keeps working — that is the test of

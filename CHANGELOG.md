@@ -16,6 +16,46 @@ for what each migration does.
 
 ## [Unreleased]
 
+### Editing what you logged — 2026-08-27
+
+*Schema: none*
+
+#### Added
+- **An edit sheet for interactions**, reachable from every row of the timeline
+  and of a contact's feed. `updateInteraction` had been in the codebase since
+  interactions were added and nothing had ever called it: the only way to fix a
+  wrong title was to delete the record and type it again, throwing away the
+  sentiment, the notes and the custom fields along with the mistake. The sheet
+  fetches the record when it opens rather than riding along in the timeline
+  payload, so a hundred-row feed does not ship a hundred contact pickers.
+
+#### Fixed
+- **Quick add no longer hollows out a possessive title.** "First time at
+  Sarah's place" was read for the person, and the name was then cut out of the
+  title the same way it is in "coffee with Sarah" — leaving "First time at 's
+  place", and offering to create a second contact called "Sarah's". Names are
+  now masked rather than deleted, and a possessive is restored once the date
+  and type readers have run. Masking is what makes that safe: leaving the name
+  in place would let chrono read "at April's place" as the first of April.
+- **`updateInteraction` accepted an interaction type belonging to another
+  account.** `typeId` went to the database unchecked, so a POST naming a
+  stranger's taxonomy term would render the row with a label that was never
+  theirs to use. Now verified against the account's own terms — and the same
+  hole in `createInteraction` is closed with it. Found by writing the first
+  test that had ever run either path.
+- **`updateInteraction` no longer skips validation the create path applies.**
+  It took a title too long for the column straight to a database error, allowed
+  a form with nobody on it to silently keep the old participants, and dropped
+  custom field values on every save.
+- **A closed privacy lock now refuses the edit as firmly as the read.** Both
+  the load and the update filter through `interactionPrivacyWhere`, so an id
+  that is hidden cannot be written to by guessing at it.
+
+#### Changed
+- Timeline row actions moved out of the card's corner and into the row itself.
+  They had been absolutely positioned at zero opacity, revealed on hover:
+  invisible on a phone, still tappable, and sitting on top of the date.
+
 ### Startup sequence — 2026-08-25 — install, first boot, account, home screen
 
 *Schema: `20260825120000_add_onboarding_state`*

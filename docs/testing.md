@@ -48,6 +48,14 @@ the schema do, not things a mock can:
 - `dating.test.ts` — the Interaction/DateEntry pair and sequence renumbering.
 - `custom-fields.test.ts` — server-side validation and the delete sweep.
 - `quick-add.test.ts`, `phase4d.test.ts`, `plans.test.ts` — the newer write paths.
+- `interactions.test.ts` — editing something already logged: that the type and
+  the people are re-checked against the account, that a dropped participant is
+  recomputed too, and that a closed lock refuses the edit as firmly as the read.
+
+`interactions.test.ts` calls the server action itself rather than reproducing
+its steps. That needs `server-only` neutralised — `vitest.config.ts` aliases it
+to the same empty module Next resolves it to on the server — plus stubs for the
+request context, the privacy lock, and `next/cache`.
 
 ### Setting one up
 
@@ -96,6 +104,11 @@ horizontally**, ignoring content that legitimately scrolls inside its own
 container. Horizontal overflow on a phone pushes buttons off-screen where they
 look tappable and are not, and it has recurred often enough to earn a permanent
 test.
+
+`edit-interaction.spec.ts` walks the loop quick add opens: type a line with a
+possessive in it, check the person survives into the title, then correct that
+title from the timeline. It is the only spec that exercises `updateInteraction`
+through the UI.
 
 ### Specs that must clean up after themselves
 
