@@ -13,12 +13,21 @@ import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { DateField } from "@/components/form/date-field";
 import { TermChips, type TermOption } from "@/components/form/term-select";
-import { SectionCard, SectionEmpty, SectionRow } from "@/components/contacts/section-card";
+import {
+  SectionCard,
+  SectionEmpty,
+  SectionRow,
+} from "@/components/contacts/section-card";
 import { formatPartialDate } from "@/lib/date-precision";
 import { formatMoney, termColorClasses } from "@/lib/format";
-import type { PlainDate } from "@/lib/dates";
+import { plainDateKey, type PlainDate } from "@/lib/dates";
 import type { ActionResult } from "@/server/actions/helpers";
-import { createPlan, deletePlan, setPlanStatus } from "@/server/actions/details";
+import {
+  createPlan,
+  deletePlan,
+  setPlanStatus,
+  updatePlan,
+} from "@/server/actions/details";
 
 /**
  * Things to do — the list of what you've been meaning to do with someone.
@@ -41,6 +50,7 @@ export interface PlanItem {
   currency: string;
   notes: string | null;
   plannedFor: PlainDate | null;
+  categoryId: string | null;
   category: { label: string; icon: string | null; color: string | null } | null;
   contact: { id: string; firstName: string; lastName: string | null } | null;
 }
@@ -65,6 +75,138 @@ function useRun() {
       return true;
     },
     [router],
+  );
+}
+
+/**
+ * Adding a plan and correcting one, from one description.
+ *
+ * `updatePlan` writes every field the form carries, so any field offered only
+ * when adding would be cleared the first time the plan was edited. The one
+ * exception is who it is with, which `updatePlan` leaves alone: moving a plan
+ * to a different person is not a correction, and the plan's own contact is
+ * what scopes it on their page.
+ */
+function PlanFields({
+  formId,
+  categories,
+  contactId,
+  people,
+  plan,
+}: {
+  formId: string;
+  categories: TermOption[];
+  contactId: string | null;
+  people: PlanPerson[];
+  plan?: PlanItem;
+}) {
+  return (
+    <>
+      <Field label="What do you want to do?" htmlFor={`${formId}-title`}>
+        <Input
+          id={`${formId}-title`}
+          name="title"
+          required
+          maxLength={191}
+          defaultValue={plan?.title ?? ""}
+          placeholder="Late showing at the Alamo"
+        />
+      </Field>
+
+      <TermChips
+        name="categoryId"
+        label="What kind of thing?"
+        terms={categories}
+        defaultValue={plan?.categoryId}
+      />
+
+      {plan === undefined && contactId === null && people.length > 0 ? (
+        <Field label="Who with?" htmlFor={`${formId}-contact`}>
+          <select
+            id={`${formId}-contact`}
+            name="contactId"
+            defaultValue=""
+            className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+          >
+            <option value="">Anyone</option>
+            {people.map((person) => (
+              <option key={person.id} value={person.id}>
+                {displayName(person)}
+              </option>
+            ))}
+          </select>
+        </Field>
+      ) : null}
+
+      <div className="grid gap-2.5 sm:grid-cols-2">
+        <Field label="Where" htmlFor={`${formId}-location`}>
+          <Input
+            id={`${formId}-location`}
+            name="location"
+            defaultValue={plan?.location ?? ""}
+            placeholder="Alamo Drafthouse"
+          />
+        </Field>
+        <Field label="City" htmlFor={`${formId}-city`}>
+          <Input
+            id={`${formId}-city`}
+            name="city"
+            defaultValue={plan?.city ?? ""}
+            placeholder="Arlington"
+          />
+        </Field>
+      </div>
+
+      <div className="grid gap-2.5 sm:grid-cols-2">
+        <Field label="Link" htmlFor={`${formId}-url`}>
+          <Input
+            id={`${formId}-url`}
+            name="url"
+            type="url"
+            defaultValue={plan?.url ?? ""}
+            placeholder="https://"
+          />
+        </Field>
+        <Field label="Rough cost" htmlFor={`${formId}-cost`}>
+          <Input
+            id={`${formId}-cost`}
+            name="estimatedCost"
+            type="number"
+            inputMode="decimal"
+            min={0}
+            step="0.01"
+            defaultValue={
+              plan?.estimatedCostCents == null
+                ? ""
+                : plan.estimatedCostCents / 100
+            }
+            placeholder="0.00"
+          />
+        </Field>
+      </div>
+
+      <DateField
+        name="plannedFor"
+        idPrefix={`${formId}-plannedFor`}
+        label="Pencilled in for"
+        allowPrecision={false}
+        presets={["today"]}
+        defaultValue={
+          plan?.plannedFor ? plainDateKey(plan.plannedFor) : undefined
+        }
+        hint="Optional — leave it empty and it just sits on the list."
+      />
+
+      <Field label="Notes" htmlFor={`${formId}-notes`}>
+        <Textarea
+          id={`${formId}-notes`}
+          name="notes"
+          rows={2}
+          defaultValue={plan?.notes ?? ""}
+          placeholder="Book ahead, the balcony sells out."
+        />
+      </Field>
+    </>
   );
 }
 
@@ -94,6 +236,13 @@ export function PlansSection({
     };
   }
 
+  function edit(plan: PlanItem, close: () => void) {
+    return async (form: FormData) => {
+      form.set("id", plan.id);
+      if (await run(() => updatePlan(form), "Saved")) close();
+    };
+  }
+
   return (
     <SectionCard
       title={title}
@@ -103,91 +252,39 @@ export function PlansSection({
       addLabel="Add something to do"
       form={(close) => (
         <form action={add(close)} className="grid gap-2.5">
-          <Field label="What do you want to do?" htmlFor="plan-title">
-            <Input
-              id="plan-title"
-              name="title"
-              required
-              maxLength={191}
-              placeholder="Late showing at the Alamo"
-            />
-          </Field>
-
-          <TermChips name="categoryId" label="What kind of thing?" terms={categories} />
-
-          {contactId === null && people.length > 0 ? (
-            <Field label="Who with?" htmlFor="plan-contact">
-              <select
-                id="plan-contact"
-                name="contactId"
-                defaultValue=""
-                className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
-              >
-                <option value="">Anyone</option>
-                {people.map((person) => (
-                  <option key={person.id} value={person.id}>
-                    {displayName(person)}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          ) : null}
-
-          <div className="grid gap-2.5 sm:grid-cols-2">
-            <Field label="Where" htmlFor="plan-location">
-              <Input id="plan-location" name="location" placeholder="Alamo Drafthouse" />
-            </Field>
-            <Field label="City" htmlFor="plan-city">
-              <Input id="plan-city" name="city" placeholder="Arlington" />
-            </Field>
-          </div>
-
-          <div className="grid gap-2.5 sm:grid-cols-2">
-            <Field label="Link" htmlFor="plan-url">
-              <Input id="plan-url" name="url" type="url" placeholder="https://" />
-            </Field>
-            <Field label="Rough cost" htmlFor="plan-cost">
-              <Input
-                id="plan-cost"
-                name="estimatedCost"
-                type="number"
-                inputMode="decimal"
-                min={0}
-                step="0.01"
-                placeholder="0.00"
-              />
-            </Field>
-          </div>
-
-          <DateField
-            name="plannedFor"
-            label="Pencilled in for"
-            allowPrecision={false}
-            presets={["today"]}
-            hint="Optional — leave it empty and it just sits on the list."
+          <PlanFields
+            formId="plan-new"
+            categories={categories}
+            contactId={contactId}
+            people={people}
           />
-
-          <Field label="Notes" htmlFor="plan-notes">
-            <Textarea
-              id="plan-notes"
-              name="notes"
-              rows={2}
-              placeholder="Book ahead, the balcony sells out."
-            />
-          </Field>
-
           <SubmitButton size="sm">Save</SubmitButton>
         </form>
       )}
     >
       {plans.length === 0 ? (
-        <SectionEmpty>Nothing saved yet — places, films, things to try.</SectionEmpty>
+        <SectionEmpty>
+          Nothing saved yet — places, films, things to try.
+        </SectionEmpty>
       ) : (
         plans.map((plan) => (
           <SectionRow
             key={plan.id}
             onDelete={() => void run(() => deletePlan(plan.id), "Removed")}
             deleteLabel="Delete plan"
+            editLabel="Edit plan"
+            editForm={(close) => (
+              <form action={edit(plan, close)} className="grid gap-2.5">
+                <PlanFields
+                  formId={`plan-${plan.id}`}
+                  categories={categories}
+                  contactId={contactId}
+                  people={people}
+                  plan={plan}
+                />
+                <SubmitButton size="sm">Save</SubmitButton>
+              </form>
+            )}
           >
             <div className="flex items-start gap-2">
               <Checkbox
@@ -214,22 +311,33 @@ export function PlansSection({
                       {plan.category.label}
                     </span>
                   ) : null}
-                  {plan.status === "PLANNED" ? <Badge variant="success">planned</Badge> : null}
+                  {plan.status === "PLANNED" ? (
+                    <Badge variant="success">planned</Badge>
+                  ) : null}
                 </div>
 
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                   {plan.location ? <span>{plan.location}</span> : null}
                   {plan.city ? <span>{plan.city}</span> : null}
                   {plan.plannedFor ? (
-                    <span>{formatPartialDate(plan.plannedFor, "DAY", { short: true })}</span>
+                    <span>
+                      {formatPartialDate(plan.plannedFor, "DAY", {
+                        short: true,
+                      })}
+                    </span>
                   ) : null}
                   {formatMoney(plan.estimatedCostCents, plan.currency) ? (
-                    <span>{formatMoney(plan.estimatedCostCents, plan.currency)}</span>
+                    <span>
+                      {formatMoney(plan.estimatedCostCents, plan.currency)}
+                    </span>
                   ) : null}
                   {plan.contact ? (
                     // Redundant on the page of the person it is already for.
                     plan.contact.id === contactId ? null : (
-                      <Link href={`/people/${plan.contact.id}`} className="hover:text-foreground">
+                      <Link
+                        href={`/people/${plan.contact.id}`}
+                        className="hover:text-foreground"
+                      >
                         {displayName(plan.contact)}
                       </Link>
                     )
@@ -260,13 +368,20 @@ export function PlansSection({
                   onClick={() =>
                     void run(
                       () =>
-                        setPlanStatus(plan.id, plan.status === "PLANNED" ? "OPEN" : "PLANNED"),
-                      plan.status === "PLANNED" ? "Back on the list" : "Pencilled in",
+                        setPlanStatus(
+                          plan.id,
+                          plan.status === "PLANNED" ? "OPEN" : "PLANNED",
+                        ),
+                      plan.status === "PLANNED"
+                        ? "Back on the list"
+                        : "Pencilled in",
                     )
                   }
                   className="mt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                 >
-                  {plan.status === "PLANNED" ? "Not planned after all" : "Pencil it in"}
+                  {plan.status === "PLANNED"
+                    ? "Not planned after all"
+                    : "Pencil it in"}
                 </button>
               </div>
             </div>

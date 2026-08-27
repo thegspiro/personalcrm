@@ -93,6 +93,7 @@ export default async function DatingPage() {
           currency: plan.currency,
           notes: plan.notes,
           plannedFor: plan.plannedFor ? plainDateFromDb(plan.plannedFor) : null,
+          categoryId: plan.categoryId,
           category: plan.category
             ? {
                 label: plan.category.label,

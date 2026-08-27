@@ -1,4 +1,3 @@
-import Link from "next/link";
 import type { Metadata } from "next";
 import { getUserContext } from "@/server/user/context";
 import { prisma } from "@/server/db/client";
@@ -8,6 +7,7 @@ import { listTerms } from "@/server/taxonomy/queries";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/nav/icon";
 import { PlansSection } from "@/components/plans/plans-section";
+import { IdeaList } from "@/components/lists/idea-list";
 import { plainDateFromDb } from "@/lib/dates";
 import { displayName } from "@/lib/utils";
 
@@ -57,6 +57,7 @@ export default async function IdeasPage() {
           currency: plan.currency,
           notes: plan.notes,
           plannedFor: plan.plannedFor ? plainDateFromDb(plan.plannedFor) : null,
+          categoryId: plan.categoryId,
           category: plan.category
             ? {
                 label: plan.category.label,
@@ -84,23 +85,13 @@ export default async function IdeasPage() {
             description="Add them from a person's page as you think of them."
           />
         ) : (
-          <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
-            {ideas.map((idea) => (
-              <li key={idea.id} className="rounded-xl border border-border bg-card px-3 py-2.5">
-                <p className="text-sm">{idea.content}</p>
-                {idea.contact ? (
-                  <Link
-                    href={`/people/${idea.contact.id}`}
-                    className="text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    {displayName(idea.contact)}
-                  </Link>
-                ) : (
-                  <span className="text-xs text-muted-foreground">General</span>
-                )}
-              </li>
-            ))}
-          </ul>
+          <IdeaList
+            ideas={ideas.map((idea) => ({
+              id: idea.id,
+              content: idea.content,
+              contact: idea.contact,
+            }))}
+          />
         )}
       </div>
     </div>

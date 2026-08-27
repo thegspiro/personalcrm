@@ -84,17 +84,34 @@ list, because a person missing from the form would be silently dropped on save.
 | Facts | `createFact`, `updateFact`, `deleteFact` |
 | Important dates | `createImportantDate`, `updateImportantDate`, `deleteImportantDate` |
 | Life events | `createLifeEvent`, `updateLifeEvent`, `deleteLifeEvent` |
-| Ideas | `createIdea`, `setIdeaStatus`, `deleteIdea` |
+| Ideas | `createIdea`, `updateIdea`, `setIdeaStatus`, `deleteIdea` |
 | Plans | `createPlan`, `updatePlan`, `setPlanStatus`, `deletePlan` |
-| Tasks | `createTask`, `setTaskDone`, `deleteTask` |
-| Gifts | `createGift`, `setGiftStatus`, `deleteGift` |
-| Debts | `createDebt`, `settleDebt`, `deleteDebt` |
-| Dietary needs | `createDietaryNeed`, `deleteDietaryNeed` |
-| Relationships | `createRelationship`, `deleteRelationship` |
+| Tasks | `createTask`, `updateTask`, `setTaskDone`, `deleteTask` |
+| Gifts | `createGift`, `updateGift`, `setGiftStatus`, `deleteGift` |
+| Debts | `createDebt`, `updateDebt`, `settleDebt`, `deleteDebt` |
+| Dietary needs | `createDietaryNeed`, `updateDietaryNeed`, `deleteDietaryNeed` |
+| Relationships | `createRelationship`, `updateRelationship`, `deleteRelationship` |
 
 `createRelationship` writes **both** reciprocal rows under one `pairId`;
-`deleteRelationship` removes both. `settleDebt` records a date rather than
-deleting the row.
+`updateRelationship` re-types both and keeps the `pairId`; `deleteRelationship`
+removes both. `settleDebt` records a date rather than deleting the row.
+
+**An `update*` writes the whole form.** These are `PUT`s, not `PATCH`es: an
+absent field is stored as absent, not left alone. A form that offers a field
+when adding and not when editing therefore clears it on the first correction,
+which is why the add and edit forms for each entry are rendered from one shared
+field-set component rather than written twice. The three deliberate exceptions
+each keep a state change out of a text correction: `updateGift` falls back to
+the stored status, `updateDebt` never touches `settledOn`, and `updateTask`
+never touches `completedAt`.
+
+**The privacy marker is not freely writable.** `updateFact` and `updateDebt`
+scope their lookup through the privacy where-fragment, so a private row is out
+of reach while the lock is closed rather than merely hidden, and they refuse a
+change to `isPrivate` unless the lock is open — hiding a row from a session
+that could not then reach it is exactly what `setPrivate` refuses for the same
+reason. `updateDateEntry` may write it freely because the dating guard has
+already established the lock is open.
 
 ### Family — `actions/family.ts`
 
@@ -109,14 +126,16 @@ both halves to their `former` counterparts; it never deletes.
 
 `upsertRomanticProfile`, `setDatingStage`, `endRelationship`, `convertToFriend`,
 `createDateEntry`, `updateDateEntry`, `deleteDateEntry`, `createFlag`,
-`deleteFlag`.
+`updateFlag`, `deleteFlag`.
 
 Every one re-checks the lock. `createDateEntry` writes an `Interaction` **and**
 a `DateEntry`, recomputes activity from full history, and renumbers `sequence`
 so a date remembered late slots in where it happened. `deleteDateEntry` goes
 through the `Interaction` so the pair cannot be left half-removed.
 `convertToFriend` clears `isRomantic` and keeps the profile, dates, flags and
-notes.
+notes. `updateFlag` can re-type a flag between green, red and dealbreaker: a
+second look often moves one, and re-typing keeps the wording and the day you
+first noticed it rather than starting over.
 
 ### Quick add — `actions/quick-add.ts`
 

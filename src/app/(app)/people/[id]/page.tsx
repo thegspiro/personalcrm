@@ -235,6 +235,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                 chemistry: entry.chemistry,
                 conversationQuality: entry.conversationQuality,
                 notes: entry.notes,
+                isPrivate: entry.interaction.isPrivate,
+                activityTypeId: entry.activityTypeId,
                 activityLabel: entry.activityType?.label ?? null,
               }))}
             />
@@ -247,6 +249,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                 kind: flag.kind,
                 text: flag.text,
                 severity: flag.severity,
+                noticedOn: flag.noticedOn ? plainDateFromDb(flag.noticedOn) : null,
               }))}
             />
           </>
@@ -270,6 +273,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             content: fact.content,
             importance: fact.importance,
             isPrivate: fact.isPrivate,
+            categoryId: fact.categoryId,
             category: fact.category
               ? { label: fact.category.label, icon: fact.category.icon, color: fact.category.color }
               : null,
@@ -300,6 +304,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             currency: plan.currency,
             notes: plan.notes,
             plannedFor: plan.plannedFor ? plainDateFromDb(plan.plannedFor) : null,
+            categoryId: plan.categoryId,
             category: plan.category
               ? {
                   label: plan.category.label,
@@ -319,6 +324,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             date: plainDateFromDb(item.date),
             precision: item.precision,
             recurrence: item.recurrence,
+            typeId: item.typeId,
+            notes: item.notes,
             type: item.type
               ? { label: item.type.label, icon: item.type.icon, color: item.type.color }
               : null,
@@ -332,6 +339,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             id: event.id,
             title: event.title,
             description: event.description,
+            typeId: event.typeId,
             date: plainDateFromDb(event.date),
             precision: event.precision,
             endDate: event.endDate ? plainDateFromDb(event.endDate) : null,
@@ -349,6 +357,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           tasks={contact.tasks.map((task) => ({
             id: task.id,
             title: task.title,
+            notes: task.notes,
             dueDate: task.dueDate ? plainDateFromDb(task.dueDate) : null,
             completedAt: task.completedAt,
             priority: task.priority,
@@ -398,6 +407,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             .filter((relationship) => !familyTermIds.has(relationship.type.id))
             .map((relationship) => ({
               id: relationship.id,
+              typeId: relationship.type.id,
               type: {
                 label: relationship.type.label,
                 icon: relationship.type.icon,
@@ -429,9 +439,14 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           gifts={contact.gifts.map((gift) => ({
             id: gift.id,
             name: gift.name,
+            description: gift.description,
+            url: gift.url,
             status: gift.status,
+            direction: gift.direction,
+            occurredOn: gift.occurredOn ? plainDateFromDb(gift.occurredOn) : null,
             priceCents: gift.priceCents,
             currency: gift.currency,
+            occasionId: gift.occasionId,
             occasion: gift.occasion ? { label: gift.occasion.label } : null,
           }))}
           occasions={terms.GIFT_OCCASION}

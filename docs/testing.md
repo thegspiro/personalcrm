@@ -51,9 +51,15 @@ the schema do, not things a mock can:
 - `interactions.test.ts` — editing something already logged: that the type and
   the people are re-checked against the account, that a dropped participant is
   recomputed too, and that a closed lock refuses the edit as firmly as the read.
+- `entry-editing.test.ts` — the same for everything else that hangs off a
+  person: that an `update*` writes the whole form rather than patching it, that
+  the state changes it deliberately leaves alone stay put (a gift's status, a
+  debt's settlement, a task's tick), that a private fact or debt is out of
+  reach while the lock is closed, and that re-typing a relationship moves both
+  halves of the pair.
 
-`interactions.test.ts` calls the server action itself rather than reproducing
-its steps. That needs `server-only` neutralised — `vitest.config.ts` aliases it
+`interactions.test.ts` and `entry-editing.test.ts` call the server actions
+themselves rather than reproducing their steps. That needs `server-only` neutralised — `vitest.config.ts` aliases it
 to the same empty module Next resolves it to on the server — plus stubs for the
 request context, the privacy lock, and `next/cache`.
 
@@ -109,6 +115,12 @@ test.
 possessive in it, check the person survives into the title, then correct that
 title from the timeline. It is the only spec that exercises `updateInteraction`
 through the UI.
+
+`edit-entries.spec.ts` does the same for the contact page's sections — add
+something, get it wrong, fix it in place — and checks the fixes that are easy
+to get wrong from the server side alone: that the edit form opens holding the
+record, that a debt turns round, and that a dietary preference can become the
+allergy it turned out to be.
 
 ### Specs that must clean up after themselves
 

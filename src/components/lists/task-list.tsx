@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -9,7 +10,9 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/nav/icon";
 import { relativeDay } from "@/lib/format";
 import { calendarDateInTz, type PlainDate } from "@/lib/dates";
-import { deleteTask, setTaskDone } from "@/server/actions/details";
+import { SubmitButton } from "@/components/form/submit-button";
+import { TaskFields } from "@/components/contacts/contact-sections";
+import { deleteTask, setTaskDone, updateTask } from "@/server/actions/details";
 
 export interface TaskListItem {
   id: string;
@@ -47,6 +50,20 @@ export function TaskList({ tasks, timezone }: { tasks: TaskListItem[]; timezone:
     router.refresh();
   }
 
+  function edit(task: TaskListItem, close: () => void) {
+    return async (form: FormData) => {
+      form.set("id", task.id);
+      const result = await updateTask(form);
+      if (!result.ok) {
+        toast.error(result.error ?? "Could not save.");
+        return;
+      }
+      toast.success("Saved");
+      close();
+      router.refresh();
+    };
+  }
+
   if (tasks.length === 0) {
     return (
       <EmptyState
@@ -67,6 +84,7 @@ export function TaskList({ tasks, timezone }: { tasks: TaskListItem[]; timezone:
             today={today}
             onToggle={() => void toggle(task)}
             onDelete={() => void remove(task)}
+            onEdit={edit}
           />
         ))}
       </ul>
@@ -84,6 +102,7 @@ export function TaskList({ tasks, timezone }: { tasks: TaskListItem[]; timezone:
                 today={today}
                 onToggle={() => void toggle(task)}
                 onDelete={() => void remove(task)}
+                onEdit={edit}
               />
             ))}
           </ul>
@@ -98,14 +117,35 @@ function TaskRow({
   today,
   onToggle,
   onDelete,
+  onEdit,
 }: {
   task: TaskListItem;
   today: PlainDate;
   onToggle: () => void;
   onDelete: () => void;
+  onEdit: (task: TaskListItem, close: () => void) => (form: FormData) => Promise<void>;
 }) {
+  const [editing, setEditing] = React.useState(false);
   const done = Boolean(task.completedAt);
   const overdue = !done && task.dueDate ? relativeDay(task.dueDate, today).includes("ago") : false;
+
+  if (editing) {
+    return (
+      <li className="rounded-xl border border-accent-8 bg-card p-3">
+        <form action={onEdit(task, () => setEditing(false))} className="grid gap-2.5">
+          <TaskFields formId={`task-${task.id}`} task={task} />
+          <SubmitButton size="sm">Save</SubmitButton>
+        </form>
+        <button
+          type="button"
+          onClick={() => setEditing(false)}
+          className="mt-2 w-full text-center text-xs text-muted-foreground hover:text-foreground"
+        >
+          Cancel
+        </button>
+      </li>
+    );
+  }
 
   return (
     <li className="group flex items-start gap-2.5 rounded-xl border border-border bg-card px-3 py-2.5">
@@ -125,15 +165,28 @@ function TaskRow({
           ) : null}
           {task.priority === "HIGH" ? <span className="text-[var(--warning)]">High</span> : null}
         </div>
+        {task.notes ? (
+          <p className="mt-0.5 whitespace-pre-line text-xs text-muted-foreground">{task.notes}</p>
+        ) : null}
       </div>
-      <button
-        type="button"
-        onClick={onDelete}
-        aria-label="Delete follow-up"
-        className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-      >
-        <span aria-hidden>×</span>
-      </button>
+      <div className="flex shrink-0 items-center gap-0.5">
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          aria-label="Edit follow-up"
+          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <Icon name="Pencil" className="size-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={onDelete}
+          aria-label="Delete follow-up"
+          className="rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          <span aria-hidden>×</span>
+        </button>
+      </div>
     </li>
   );
 }

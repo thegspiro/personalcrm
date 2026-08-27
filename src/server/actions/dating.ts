@@ -353,6 +353,10 @@ export async function updateDateEntry(form: FormData): Promise<ActionResult> {
         notes: str(form, "notes") ?? null,
         location: venue ?? null,
         sentiment: rating === null ? null : rating >= 4 ? 2 : rating >= 3 ? 1 : 0,
+        // Safe to write here where it is not on a fact or a debt: `guard()`
+        // has already established the lock is open, so a row cannot be hidden
+        // from a session that would then have no way back to it.
+        isPrivate: bool(form, "isPrivate"),
       },
     });
 
@@ -420,6 +424,39 @@ export async function createFlag(form: FormData): Promise<ActionResult<{ id: str
 
   touch(contactId);
   return ok({ id: created.id });
+}
+
+export async function updateFlag(form: FormData): Promise<ActionResult> {
+  const blocked = await guard();
+  if (blocked) return fail(blocked);
+
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  const text = str(form, "text");
+  if (!id || !text) return fail("Write what you noticed.");
+
+  const existing = await prisma.flag.findFirst({
+    where: { id, ownerId },
+    select: { contactId: true, severity: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  const severity = num(form, "severity") ?? existing.severity;
+  await prisma.flag.update({
+    where: { id },
+    data: {
+      // Green and red are not two spellings of the same note: a second look at
+      // something you filed as a red flag may well move it, and re-typing it
+      // as a green one is the whole point of being able to edit it.
+      kind: flagKindOf(str(form, "kind")),
+      text,
+      severity: Math.max(1, Math.min(3, Math.round(severity))),
+      noticedOn: plainDate(form, "noticedOn") ?? null,
+    },
+  });
+
+  touch(existing.contactId);
+  return ok();
 }
 
 export async function deleteFlag(id: string): Promise<ActionResult> {

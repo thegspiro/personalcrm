@@ -1,8 +1,10 @@
 "use server";
 
 import { randomBytes } from "node:crypto";
+import type { TaxonomyKind } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
+import { debtPrivacyWhere, factPrivacyWhere, privacyScope } from "@/server/privacy/filter";
 import { calendarDateInTz, plainDateToDb } from "@/lib/dates";
 import { dietaryKindOf } from "@/lib/dietary";
 import {
@@ -37,6 +39,35 @@ async function ownsContact(ownerId: string, contactId: string): Promise<boolean>
   );
 }
 
+/**
+ * Read a taxonomy term id out of a form, refusing one that is not this
+ * account's — or is the right id under the wrong kind.
+ *
+ * Every action here is a public POST endpoint, so an unchecked id goes to the
+ * database as-is and renders the row with a label that was never theirs to use.
+ * `updateInteraction` was found with exactly this hole; `planFields` was
+ * written without it. Empty means no term, which is not an error; an id that
+ * does not resolve is, rather than a silent drop, because it is either
+ * somebody else's row or a stale form and both deserve to be said out loud.
+ */
+async function termFromForm(
+  ownerId: string,
+  form: FormData,
+  key: string,
+  kind: TaxonomyKind,
+): Promise<{ ok: true; id: string | null } | { ok: false }> {
+  const id = str(form, key);
+  if (!id) return { ok: true, id: null };
+
+  const term = await prisma.taxonomyTerm.findFirst({
+    where: { id, ownerId, kind },
+    select: { id: true },
+  });
+  return term ? { ok: true, id } : { ok: false };
+}
+
+const UNKNOWN_TERM = "That type isn't one of yours.";
+
 // --- facts -----------------------------------------------------------------
 
 export async function createFact(form: FormData): Promise<ActionResult<{ id: string }>> {
@@ -46,12 +77,15 @@ export async function createFact(form: FormData): Promise<ActionResult<{ id: str
   if (!contactId || !content) return fail("Write something to remember.");
   if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
 
+  const category = await termFromForm(ownerId, form, "categoryId", "FACT_CATEGORY");
+  if (!category.ok) return fail(UNKNOWN_TERM);
+
   const created = await prisma.fact.create({
     data: {
       ownerId,
       contactId,
       content,
-      categoryId: str(form, "categoryId") ?? null,
+      categoryId: category.id,
       importance: clamp(num(form, "importance") ?? 1, 0, 2),
       isPrivate: bool(form, "isPrivate"),
       sourceInteractionId: str(form, "sourceInteractionId") ?? null,
@@ -68,15 +102,28 @@ export async function updateFact(form: FormData): Promise<ActionResult> {
   const content = str(form, "content");
   if (!id || !content) return fail("Write something to remember.");
 
-  const existing = await prisma.fact.findFirst({ where: { id, ownerId }, select: { contactId: true } });
+  // Scoped by the privacy fragment as well as the owner: a private fact is not
+  // merely hidden while the lock is closed, it is out of reach, and an id
+  // remembered from an unlocked session must not be a way back in.
+  const existing = await prisma.fact.findFirst({
+    where: { id, ownerId, ...factPrivacyWhere(await privacyScope()) },
+    select: { contactId: true, isPrivate: true },
+  });
   if (!existing) return fail("Not found.");
+
+  const marker = await privacyMarker(form, existing.isPrivate);
+  if (!marker.ok) return fail(marker.error);
+
+  const category = await termFromForm(ownerId, form, "categoryId", "FACT_CATEGORY");
+  if (!category.ok) return fail(UNKNOWN_TERM);
 
   await prisma.fact.update({
     where: { id },
     data: {
       content,
-      categoryId: str(form, "categoryId") ?? null,
+      categoryId: category.id,
       importance: clamp(num(form, "importance") ?? 1, 0, 2),
+      isPrivate: marker.isPrivate,
     },
   });
 
@@ -103,12 +150,15 @@ export async function createImportantDate(form: FormData): Promise<ActionResult<
   if (!contactId || !label || !when) return fail("A label and a date are required.");
   if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
 
+  const type = await termFromForm(ownerId, form, "typeId", "DATE_TYPE");
+  if (!type.ok) return fail(UNKNOWN_TERM);
+
   const created = await prisma.importantDate.create({
     data: {
       ownerId,
       contactId,
       label,
-      typeId: str(form, "typeId") ?? null,
+      typeId: type.id,
       date: when.date,
       precision: when.precision,
       recurrence: recurrenceOf(str(form, "recurrence")),
@@ -135,11 +185,14 @@ export async function updateImportantDate(form: FormData): Promise<ActionResult>
   const label = str(form, "label");
   if (!label || !when) return fail("A label and a date are required.");
 
+  const type = await termFromForm(ownerId, form, "typeId", "DATE_TYPE");
+  if (!type.ok) return fail(UNKNOWN_TERM);
+
   await prisma.importantDate.update({
     where: { id },
     data: {
       label,
-      typeId: str(form, "typeId") ?? null,
+      typeId: type.id,
       date: when.date,
       precision: when.precision,
       recurrence: recurrenceOf(str(form, "recurrence")),
@@ -176,12 +229,15 @@ export async function createLifeEvent(form: FormData): Promise<ActionResult<{ id
 
   const end = partialDate(form, "endDate");
 
+  const type = await termFromForm(ownerId, form, "typeId", "LIFE_EVENT_TYPE");
+  if (!type.ok) return fail(UNKNOWN_TERM);
+
   const created = await prisma.lifeEvent.create({
     data: {
       ownerId,
       contactId,
       title,
-      typeId: str(form, "typeId") ?? null,
+      typeId: type.id,
       description: str(form, "description") ?? null,
       date: when.date,
       precision: when.precision,
@@ -210,11 +266,14 @@ export async function updateLifeEvent(form: FormData): Promise<ActionResult> {
   if (!title || !when) return fail("A title and a date are required.");
   const end = partialDate(form, "endDate");
 
+  const type = await termFromForm(ownerId, form, "typeId", "LIFE_EVENT_TYPE");
+  if (!type.ok) return fail(UNKNOWN_TERM);
+
   await prisma.lifeEvent.update({
     where: { id },
     data: {
       title,
-      typeId: str(form, "typeId") ?? null,
+      typeId: type.id,
       description: str(form, "description") ?? null,
       date: when.date,
       precision: when.precision,
@@ -253,6 +312,25 @@ export async function createIdea(form: FormData): Promise<ActionResult<{ id: str
   touch(contactId);
   revalidatePath("/ideas");
   return ok({ id: created.id });
+}
+
+export async function updateIdea(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  const content = str(form, "content");
+  if (!id || !content) return fail("What did you want to bring up?");
+
+  const existing = await prisma.idea.findFirst({
+    where: { id, ownerId },
+    select: { contactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  await prisma.idea.update({ where: { id }, data: { content } });
+
+  touch(existing.contactId);
+  revalidatePath("/ideas");
+  return ok();
 }
 
 export async function setIdeaStatus(
@@ -457,6 +535,41 @@ export async function createTask(form: FormData): Promise<ActionResult<{ id: str
   return ok({ id: created.id });
 }
 
+/**
+ * Correct a follow-up.
+ *
+ * The due date is read straight back out of the form, so clearing it in the
+ * picker clears it on the row — an edit that could only ever move a date
+ * forward would leave "chase this by Friday" hanging over a thing that turned
+ * out not to have a deadline at all.
+ */
+export async function updateTask(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  const title = str(form, "title");
+  if (!id || !title) return fail("Give the follow-up a name.");
+
+  const existing = await prisma.task.findFirst({
+    where: { id, ownerId },
+    select: { contactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  await prisma.task.update({
+    where: { id },
+    data: {
+      title,
+      notes: str(form, "notes") ?? null,
+      dueDate: plainDate(form, "dueDate") ?? null,
+      priority: priorityOf(str(form, "priority")),
+    },
+  });
+
+  touch(existing.contactId);
+  revalidatePath("/tasks");
+  return ok();
+}
+
 export async function setTaskDone(id: string, done: boolean): Promise<ActionResult> {
   const { ownerId } = await owner();
   const existing = await prisma.task.findFirst({ where: { id, ownerId }, select: { contactId: true } });
@@ -488,6 +601,8 @@ export async function createGift(form: FormData): Promise<ActionResult<{ id: str
   if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
 
   const price = num(form, "price");
+  const occasion = await termFromForm(ownerId, form, "occasionId", "GIFT_OCCASION");
+  if (!occasion.ok) return fail(UNKNOWN_TERM);
 
   const created = await prisma.gift.create({
     data: {
@@ -497,7 +612,7 @@ export async function createGift(form: FormData): Promise<ActionResult<{ id: str
       description: str(form, "description") ?? null,
       url: str(form, "url") ?? null,
       priceCents: price === undefined ? null : Math.round(price * 100),
-      occasionId: str(form, "occasionId") ?? null,
+      occasionId: occasion.id,
       status: giftStatusOf(str(form, "status")),
       direction: str(form, "direction") === "INCOMING" ? "INCOMING" : "OUTGOING",
       occurredOn: plainDate(form, "occurredOn") ?? null,
@@ -507,6 +622,48 @@ export async function createGift(form: FormData): Promise<ActionResult<{ id: str
   touch(contactId);
   revalidatePath("/gifts");
   return ok({ id: created.id });
+}
+
+/**
+ * Correct a gift.
+ *
+ * `status` is carried in the form rather than left to `setGiftStatus`, because
+ * an edit that reset every gift to IDEA on save would quietly un-give things
+ * you have already handed over.
+ */
+export async function updateGift(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  const name = str(form, "name");
+  if (!id || !name) return fail("What's the gift?");
+
+  const existing = await prisma.gift.findFirst({
+    where: { id, ownerId },
+    select: { contactId: true, status: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  const price = num(form, "price");
+  const occasion = await termFromForm(ownerId, form, "occasionId", "GIFT_OCCASION");
+  if (!occasion.ok) return fail(UNKNOWN_TERM);
+
+  await prisma.gift.update({
+    where: { id },
+    data: {
+      name,
+      description: str(form, "description") ?? null,
+      url: str(form, "url") ?? null,
+      priceCents: price === undefined ? null : Math.round(price * 100),
+      occasionId: occasion.id,
+      status: giftStatusOf(str(form, "status") ?? existing.status),
+      direction: str(form, "direction") === "INCOMING" ? "INCOMING" : "OUTGOING",
+      occurredOn: plainDate(form, "occurredOn") ?? null,
+    },
+  });
+
+  touch(existing.contactId);
+  revalidatePath("/gifts");
+  return ok();
 }
 
 export async function setGiftStatus(
@@ -567,6 +724,57 @@ export async function createDebt(form: FormData): Promise<ActionResult<{ id: str
   return ok({ id: created.id });
 }
 
+/**
+ * Correct a debt.
+ *
+ * `settledOn` is not touched here — settling is its own act, with its own
+ * check that the date is not before the debt started, and folding it into a
+ * general edit would let a typo in the description quietly re-open something
+ * already squared away.
+ */
+export async function updateDebt(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  const description = str(form, "description");
+  if (!id || !description) return fail("What was lent?");
+
+  // As with facts: while the lock is closed a private debt is out of reach,
+  // not merely hidden.
+  const existing = await prisma.debt.findFirst({
+    where: { id, ownerId, ...debtPrivacyWhere(await privacyScope()) },
+    select: { contactId: true, incurredOn: true, settledOn: true, isPrivate: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  const marker = await privacyMarker(form, existing.isPrivate);
+  if (!marker.ok) return fail(marker.error);
+
+  const incurredOn = plainDate(form, "incurredOn") ?? existing.incurredOn;
+  // Same nonsense as settling early, arrived at from the other side: moving
+  // the start of a settled debt past the day it was squared up.
+  if (existing.settledOn && incurredOn > existing.settledOn) {
+    return fail("That's after the debt was settled.");
+  }
+
+  const amount = num(form, "amount");
+
+  await prisma.debt.update({
+    where: { id },
+    data: {
+      direction: debtDirectionOf(str(form, "direction")),
+      description,
+      amountCents: amount === undefined ? null : Math.round(amount * 100),
+      currency: str(form, "currency")?.toUpperCase() ?? "USD",
+      incurredOn,
+      notes: str(form, "notes") ?? null,
+      isPrivate: marker.isPrivate,
+    },
+  });
+
+  touch(existing.contactId);
+  return ok();
+}
+
 export async function settleDebt(id: string, on: Date | null): Promise<ActionResult> {
   const { ownerId } = await owner();
   const existing = await prisma.debt.findFirst({
@@ -617,6 +825,32 @@ export async function createDietaryNeed(form: FormData): Promise<ActionResult<{ 
 
   touch(contactId);
   return ok({ id: created.id });
+}
+
+export async function updateDietaryNeed(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  const label = str(form, "label");
+  if (!id || !label) return fail("What can't they have?");
+
+  const existing = await prisma.dietaryNeed.findFirst({
+    where: { id, ownerId },
+    select: { contactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  await prisma.dietaryNeed.update({
+    where: { id },
+    data: {
+      kind: dietaryKindOf(str(form, "kind")),
+      label,
+      notes: str(form, "notes") ?? null,
+      carriesEpinephrine: bool(form, "carriesEpinephrine"),
+    },
+  });
+
+  touch(existing.contactId);
+  return ok();
 }
 
 export async function deleteDietaryNeed(id: string): Promise<ActionResult> {
@@ -694,6 +928,80 @@ export async function createRelationship(form: FormData): Promise<ActionResult> 
   return ok();
 }
 
+/**
+ * Fix the word for a link that is already there.
+ *
+ * Both halves move together, so correcting "Bob is Alice's colleague" to
+ * "neighbour" does not leave Alice still filed as Bob's colleague. The `pairId`
+ * and whatever notes each half carries survive: the people and the connection
+ * were never wrong, only the label on it.
+ */
+export async function updateRelationship(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  const typeId = str(form, "typeId");
+  if (!id || !typeId) return fail("Pick a relationship.");
+
+  const existing = await prisma.relationship.findFirst({
+    where: { id, ownerId },
+    select: { pairId: true, fromContactId: true, toContactId: true, notes: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  const type = await prisma.taxonomyTerm.findFirst({
+    where: { id: typeId, ownerId, kind: "RELATIONSHIP_TYPE" },
+    select: { id: true, inverseTermId: true },
+  });
+  if (!type) return fail("Unknown relationship type.");
+
+  const { pairId, fromContactId, toContactId } = existing;
+  const inverseTypeId = type.inverseTermId ?? type.id;
+  const notes = str(form, "notes") ?? existing.notes;
+
+  const inverse = await prisma.relationship.findFirst({
+    where: { ownerId, pairId, fromContactId: toContactId, toContactId: fromContactId },
+    select: { notes: true },
+  });
+
+  await prisma.$transaction(async (tx) => {
+    // Cleared first so the re-typed rows cannot collide with the rows they
+    // replace; the pair is then written back exactly as `createRelationship`
+    // writes a new one, which also collapses into a row that already carries
+    // the target type rather than tripping the uniqueness constraint.
+    await tx.relationship.deleteMany({ where: { ownerId, pairId } });
+
+    await tx.relationship.upsert({
+      where: {
+        fromContactId_toContactId_typeId: { fromContactId, toContactId, typeId: type.id },
+      },
+      create: { ownerId, fromContactId, toContactId, typeId: type.id, pairId, notes },
+      update: { pairId, notes },
+    });
+    await tx.relationship.upsert({
+      where: {
+        fromContactId_toContactId_typeId: {
+          fromContactId: toContactId,
+          toContactId: fromContactId,
+          typeId: inverseTypeId,
+        },
+      },
+      create: {
+        ownerId,
+        fromContactId: toContactId,
+        toContactId: fromContactId,
+        typeId: inverseTypeId,
+        pairId,
+        notes: inverse?.notes ?? null,
+      },
+      update: { pairId, notes: inverse?.notes ?? null },
+    });
+  });
+
+  touch(fromContactId);
+  touch(toContactId);
+  return ok();
+}
+
 export async function deleteRelationship(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
   const existing = await prisma.relationship.findFirst({
@@ -711,6 +1019,28 @@ export async function deleteRelationship(id: string): Promise<ActionResult> {
 }
 
 // --- helpers ---------------------------------------------------------------
+
+/**
+ * The `isPrivate` value an edit is allowed to write.
+ *
+ * Flipping the marker while the lock is closed would make the row vanish with
+ * no way back to it — the same reason `setPrivate` refuses — so an edit that
+ * tries is rejected rather than quietly dropped. Leaving it where it already is
+ * always passes, so fixing a typo on a visible row never asks for the PIN.
+ */
+async function privacyMarker(
+  form: FormData,
+  current: boolean,
+): Promise<{ ok: true; isPrivate: boolean } | { ok: false; error: string }> {
+  const wanted = bool(form, "isPrivate");
+  if (wanted === current) return { ok: true, isPrivate: current };
+
+  const scope = await privacyScope();
+  if (scope.enabled && !scope.unlocked) {
+    return { ok: false, error: "Unlock privacy before changing this." };
+  }
+  return { ok: true, isPrivate: wanted };
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.round(value)));

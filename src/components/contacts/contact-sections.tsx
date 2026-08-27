@@ -24,7 +24,7 @@ import {
   mustAvoid,
   type DietaryKind,
 } from "@/lib/dietary";
-import type { PlainDate } from "@/lib/dates";
+import { plainDateKey, type PlainDate } from "@/lib/dates";
 import {
   createDebt,
   createDietaryNeed,
@@ -47,6 +47,15 @@ import {
   setIdeaStatus,
   setTaskDone,
   settleDebt,
+  updateDebt,
+  updateDietaryNeed,
+  updateFact,
+  updateGift,
+  updateIdea,
+  updateImportantDate,
+  updateLifeEvent,
+  updateRelationship,
+  updateTask,
 } from "@/server/actions/details";
 
 // --- facts -----------------------------------------------------------------
@@ -56,7 +65,57 @@ export interface FactItem {
   content: string;
   importance: number;
   isPrivate: boolean;
+  /** Carried alongside the label so the edit form can preselect the chip. */
+  categoryId: string | null;
   category: { label: string; icon: string | null; color: string | null } | null;
+}
+
+/**
+ * The fields shared by adding a fact and correcting one.
+ *
+ * Written once so the two can never drift: a field that exists only on the way
+ * in is a field an edit silently clears, because the action reads the whole
+ * form and writes what it finds.
+ */
+function FactFields({
+  formId,
+  categories,
+  fact,
+}: {
+  formId: string;
+  categories: TermOption[];
+  fact?: FactItem;
+}) {
+  return (
+    <>
+      <Field label="What should you remember?" htmlFor={`${formId}-content`}>
+        <Textarea
+          id={`${formId}-content`}
+          name="content"
+          rows={2}
+          required
+          defaultValue={fact?.content ?? ""}
+          placeholder="Reads Le Carré. Hates surprises. Grew up in Lagos."
+        />
+      </Field>
+      <TermChips
+        name="categoryId"
+        label="Category"
+        terms={categories}
+        defaultValue={fact?.categoryId}
+      />
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          name="isPrivate"
+          value="true"
+          defaultChecked={fact?.isPrivate ?? false}
+          className="size-4"
+        />
+        Hide this behind the privacy lock
+      </label>
+    </>
+  );
 }
 
 export function FactsSection({
@@ -80,20 +139,7 @@ export function FactsSection({
       form={(close) => (
         <form action={add(createFact, close, "Noted")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
-          <Field label="What should you remember?" htmlFor="fact-content">
-            <Textarea
-              id="fact-content"
-              name="content"
-              rows={2}
-              required
-              placeholder="Reads Le Carré. Hates surprises. Grew up in Lagos."
-            />
-          </Field>
-          <TermChips name="categoryId" label="Category" terms={categories} />
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            <input type="checkbox" name="isPrivate" value="true" className="size-4" />
-            Hide this behind the privacy lock
-          </label>
+          <FactFields formId="fact-new" categories={categories} />
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
       )}
@@ -106,6 +152,14 @@ export function FactsSection({
             key={fact.id}
             onDelete={() => void run(() => deleteFact(fact.id), "Removed")}
             deleteLabel="Delete fact"
+            editLabel="Edit fact"
+            editForm={(close) => (
+              <form action={add(updateFact, close, "Saved")} className="grid gap-2.5">
+                <input type="hidden" name="id" value={fact.id} />
+                <FactFields formId={`fact-${fact.id}`} categories={categories} fact={fact} />
+                <SubmitButton size="sm">Save</SubmitButton>
+              </form>
+            )}
           >
             <p className={cn("text-sm", fact.importance >= 2 && "font-medium")}>{fact.content}</p>
             {fact.isPrivate ? (
@@ -139,7 +193,71 @@ export interface DateItem {
   date: PlainDate;
   precision: DatePrecision;
   recurrence: "NONE" | "ANNUAL" | "MONTHLY";
+  typeId: string | null;
+  notes: string | null;
   type: { label: string; icon: string | null; color: string | null } | null;
+}
+
+/**
+ * Adding a date and correcting one, from one description.
+ *
+ * Notes are here even though the row does not render them: `updateImportantDate`
+ * writes whatever the form holds, so a form without the field would wipe the
+ * note on every unrelated edit.
+ */
+function ImportantDateFields({
+  formId,
+  types,
+  item,
+}: {
+  formId: string;
+  types: TermOption[];
+  item?: DateItem;
+}) {
+  return (
+    <>
+      <Field label="What is it?" htmlFor={`${formId}-label`}>
+        <Input
+          id={`${formId}-label`}
+          name="label"
+          required
+          defaultValue={item?.label ?? ""}
+          placeholder="Wedding anniversary"
+        />
+      </Field>
+      <DateField
+        name="date"
+        idPrefix={`${formId}-date`}
+        label="When"
+        required
+        presets={[]}
+        defaultValue={item ? plainDateKey(item.date) : undefined}
+        defaultPrecision={item?.precision}
+      />
+      <TermSelect
+        name="typeId"
+        id={`${formId}-typeId`}
+        label="Type"
+        terms={types}
+        defaultValue={item?.typeId}
+      />
+      <Field label="Repeats" htmlFor={`${formId}-recurrence`}>
+        <select
+          id={`${formId}-recurrence`}
+          name="recurrence"
+          defaultValue={item?.recurrence ?? "ANNUAL"}
+          className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+        >
+          <option value="ANNUAL">Every year</option>
+          <option value="MONTHLY">Every month</option>
+          <option value="NONE">Just once</option>
+        </select>
+      </Field>
+      <Field label="Notes" htmlFor={`${formId}-notes`}>
+        <Textarea id={`${formId}-notes`} name="notes" rows={2} defaultValue={item?.notes ?? ""} />
+      </Field>
+    </>
+  );
 }
 
 export function DatesSection({
@@ -163,23 +281,7 @@ export function DatesSection({
       form={(close) => (
         <form action={add(createImportantDate, close, "Date added")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
-          <Field label="What is it?" htmlFor="date-label">
-            <Input id="date-label" name="label" required placeholder="Wedding anniversary" />
-          </Field>
-          <DateField name="date" label="When" required presets={[]} />
-          <TermSelect name="typeId" label="Type" terms={types} />
-          <Field label="Repeats" htmlFor="date-recurrence">
-            <select
-              id="date-recurrence"
-              name="recurrence"
-              defaultValue="ANNUAL"
-              className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
-            >
-              <option value="ANNUAL">Every year</option>
-              <option value="MONTHLY">Every month</option>
-              <option value="NONE">Just once</option>
-            </select>
-          </Field>
+          <ImportantDateFields formId="date-new" types={types} />
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
       )}
@@ -192,6 +294,14 @@ export function DatesSection({
             key={item.id}
             onDelete={() => void run(() => deleteImportantDate(item.id), "Removed")}
             deleteLabel="Delete date"
+            editLabel="Edit date"
+            editForm={(close) => (
+              <form action={add(updateImportantDate, close, "Saved")} className="grid gap-2.5">
+                <input type="hidden" name="id" value={item.id} />
+                <ImportantDateFields formId={`date-${item.id}`} types={types} item={item} />
+                <SubmitButton size="sm">Save</SubmitButton>
+              </form>
+            )}
           >
             <div className="flex items-center gap-2">
               {item.type?.icon ? (
@@ -216,6 +326,7 @@ export interface LifeEventItem {
   id: string;
   title: string;
   description: string | null;
+  typeId: string | null;
   date: PlainDate;
   precision: DatePrecision;
   endDate: PlainDate | null;
@@ -229,6 +340,75 @@ export interface LifeEventItem {
  * necessarily there, and separate from important dates because you don't want a
  * yearly reminder about someone's bereavement.
  */
+/**
+ * Adding a life event and correcting one.
+ *
+ * The end date and the milestone marker are here because the row renders both
+ * and `updateLifeEvent` writes both: a form that offered neither would clear a
+ * backfilled range and demote a milestone every time you fixed a spelling.
+ */
+function LifeEventFields({
+  formId,
+  types,
+  event,
+}: {
+  formId: string;
+  types: TermOption[];
+  event?: LifeEventItem;
+}) {
+  return (
+    <>
+      <Field label="What happened?" htmlFor={`${formId}-title`}>
+        <Input
+          id={`${formId}-title`}
+          name="title"
+          required
+          defaultValue={event?.title ?? ""}
+          placeholder="Moved to Austin"
+        />
+      </Field>
+      <DateField
+        name="date"
+        idPrefix={`${formId}-date`}
+        label="When"
+        required
+        presets={["lastYear"]}
+        defaultValue={event ? plainDateKey(event.date) : undefined}
+        defaultPrecision={event?.precision}
+        hint="Only know the year? Set the precision to 'Year only'."
+      />
+      <DateField
+        name="endDate"
+        idPrefix={`${formId}-endDate`}
+        label="Until"
+        presets={[]}
+        defaultValue={event?.endDate ? plainDateKey(event.endDate) : undefined}
+        defaultPrecision={event?.endPrecision ?? "DAY"}
+        hint="Only for things that ran for a while — a job, a course, a city."
+      />
+      <TermSelect name="typeId" id={`${formId}-typeId`} label="Type" terms={types} defaultValue={event?.typeId} />
+      <Field label="Anything more?" htmlFor={`${formId}-description`}>
+        <Textarea
+          id={`${formId}-description`}
+          name="description"
+          rows={2}
+          defaultValue={event?.description ?? ""}
+        />
+      </Field>
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          name="isMilestone"
+          value="true"
+          defaultChecked={event?.isMilestone ?? false}
+          className="size-4"
+        />
+        One of the big ones
+      </label>
+    </>
+  );
+}
+
 export function LifeEventsSection({
   contactId,
   events,
@@ -250,20 +430,7 @@ export function LifeEventsSection({
       form={(close) => (
         <form action={add(createLifeEvent, close, "Event added")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
-          <Field label="What happened?" htmlFor="event-title">
-            <Input id="event-title" name="title" required placeholder="Moved to Austin" />
-          </Field>
-          <DateField
-            name="date"
-            label="When"
-            required
-            presets={["lastYear"]}
-            hint="Only know the year? Set the precision to 'Year only'."
-          />
-          <TermSelect name="typeId" label="Type" terms={types} />
-          <Field label="Anything more?" htmlFor="event-description">
-            <Textarea id="event-description" name="description" rows={2} />
-          </Field>
+          <LifeEventFields formId="event-new" types={types} />
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
       )}
@@ -278,6 +445,14 @@ export function LifeEventsSection({
             key={event.id}
             onDelete={() => void run(() => deleteLifeEvent(event.id), "Removed")}
             deleteLabel="Delete life event"
+            editLabel="Edit life event"
+            editForm={(close) => (
+              <form action={add(updateLifeEvent, close, "Saved")} className="grid gap-2.5">
+                <input type="hidden" name="id" value={event.id} />
+                <LifeEventFields formId={`event-${event.id}`} types={types} event={event} />
+                <SubmitButton size="sm">Save</SubmitButton>
+              </form>
+            )}
           >
             <div className="flex items-center gap-2">
               {event.type?.icon ? (
@@ -342,6 +517,22 @@ export function IdeasSection({ contactId, ideas }: { contactId: string; ideas: I
             key={idea.id}
             onDelete={() => void run(() => deleteIdea(idea.id), "Removed")}
             deleteLabel="Delete idea"
+            editLabel="Edit idea"
+            editForm={(close) => (
+              <form action={add(updateIdea, close, "Saved")} className="grid gap-2.5">
+                <input type="hidden" name="id" value={idea.id} />
+                <Field label="What do you want to ask or mention?" htmlFor={`idea-${idea.id}`}>
+                  <Textarea
+                    id={`idea-${idea.id}`}
+                    name="content"
+                    rows={2}
+                    required
+                    defaultValue={idea.content}
+                  />
+                </Field>
+                <SubmitButton size="sm">Save</SubmitButton>
+              </form>
+            )}
           >
             <div className="flex items-start gap-2">
               <Checkbox
@@ -364,9 +555,50 @@ export function IdeasSection({ contactId, ideas }: { contactId: string; ideas: I
 export interface TaskItem {
   id: string;
   title: string;
+  notes: string | null;
   dueDate: PlainDate | null;
   completedAt: Date | null;
   priority: "LOW" | "NORMAL" | "HIGH";
+}
+
+/** Adding a follow-up and correcting one. Shared with the /tasks page. */
+export function TaskFields({ formId, task }: { formId: string; task?: TaskItem }) {
+  return (
+    <>
+      <Field label="What do you need to do?" htmlFor={`${formId}-title`}>
+        <Input
+          id={`${formId}-title`}
+          name="title"
+          required
+          defaultValue={task?.title ?? ""}
+          placeholder="Send the bakery recommendation"
+        />
+      </Field>
+      <DateField
+        name="dueDate"
+        idPrefix={`${formId}-dueDate`}
+        label="Due"
+        allowPrecision={false}
+        presets={["today"]}
+        defaultValue={task?.dueDate ? plainDateKey(task.dueDate) : undefined}
+      />
+      <Field label="Priority" htmlFor={`${formId}-priority`}>
+        <select
+          id={`${formId}-priority`}
+          name="priority"
+          defaultValue={task?.priority ?? "NORMAL"}
+          className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+        >
+          <option value="LOW">Low</option>
+          <option value="NORMAL">Normal</option>
+          <option value="HIGH">High</option>
+        </select>
+      </Field>
+      <Field label="Notes" htmlFor={`${formId}-notes`}>
+        <Textarea id={`${formId}-notes`} name="notes" rows={2} defaultValue={task?.notes ?? ""} />
+      </Field>
+    </>
+  );
 }
 
 export function TasksSection({ contactId, tasks }: { contactId: string; tasks: TaskItem[] }) {
@@ -383,10 +615,7 @@ export function TasksSection({ contactId, tasks }: { contactId: string; tasks: T
       form={(close) => (
         <form action={add(createTask, close, "Added")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
-          <Field label="What do you need to do?" htmlFor="task-title">
-            <Input id="task-title" name="title" required placeholder="Send the bakery recommendation" />
-          </Field>
-          <DateField name="dueDate" label="Due" allowPrecision={false} presets={["today"]} />
+          <TaskFields formId="task-new" />
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
       )}
@@ -399,6 +628,14 @@ export function TasksSection({ contactId, tasks }: { contactId: string; tasks: T
             key={task.id}
             onDelete={() => void run(() => deleteTask(task.id), "Removed")}
             deleteLabel="Delete follow-up"
+            editLabel="Edit follow-up"
+            editForm={(close) => (
+              <form action={add(updateTask, close, "Saved")} className="grid gap-2.5">
+                <input type="hidden" name="id" value={task.id} />
+                <TaskFields formId={`task-${task.id}`} task={task} />
+                <SubmitButton size="sm">Save</SubmitButton>
+              </form>
+            )}
           >
             <div className="flex items-start gap-2">
               <Checkbox
@@ -428,10 +665,129 @@ export function TasksSection({ contactId, tasks }: { contactId: string; tasks: T
 export interface GiftItem {
   id: string;
   name: string;
+  description: string | null;
+  url: string | null;
   status: "IDEA" | "RESERVED" | "PURCHASED" | "GIVEN";
+  direction: "OUTGOING" | "INCOMING";
+  occurredOn: PlainDate | null;
   priceCents: number | null;
   currency: string;
+  occasionId: string | null;
   occasion: { label: string } | null;
+}
+
+const GIFT_STATUSES: ReadonlyArray<{ value: GiftItem["status"]; label: string }> = [
+  { value: "IDEA", label: "Just an idea" },
+  { value: "RESERVED", label: "Set aside" },
+  { value: "PURCHASED", label: "Bought" },
+  { value: "GIVEN", label: "Given" },
+];
+
+/**
+ * Adding a gift and correcting one. Shared with the /gifts page.
+ *
+ * The add form stays short — a gift usually starts as a name and a link — but
+ * the status, the price and the day it changed hands have to be here too:
+ * `updateGift` writes the whole form, so a field the edit form omitted would be
+ * cleared by the next unrelated correction.
+ */
+export function GiftFields({
+  formId,
+  occasions,
+  gift,
+}: {
+  formId: string;
+  occasions: TermOption[];
+  gift?: GiftItem;
+}) {
+  return (
+    <>
+      <Field label="What is it?" htmlFor={`${formId}-name`}>
+        <Input
+          id={`${formId}-name`}
+          name="name"
+          required
+          defaultValue={gift?.name ?? ""}
+          placeholder="Banneton proofing basket"
+        />
+      </Field>
+      <Field label="Link" htmlFor={`${formId}-url`}>
+        <Input
+          id={`${formId}-url`}
+          name="url"
+          type="url"
+          defaultValue={gift?.url ?? ""}
+          placeholder="https://"
+        />
+      </Field>
+      <TermSelect
+        name="occasionId"
+        id={`${formId}-occasionId`}
+        label="Occasion"
+        terms={occasions}
+        defaultValue={gift?.occasionId}
+      />
+      {gift ? (
+        <>
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            <Field label="Where it's got to" htmlFor={`${formId}-status`}>
+              <select
+                id={`${formId}-status`}
+                name="status"
+                defaultValue={gift.status}
+                className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+              >
+                {GIFT_STATUSES.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Price" htmlFor={`${formId}-price`}>
+              <Input
+                id={`${formId}-price`}
+                name="price"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                defaultValue={gift.priceCents === null ? "" : gift.priceCents / 100}
+                placeholder="0.00"
+              />
+            </Field>
+          </div>
+          <Field label="Which way?" htmlFor={`${formId}-direction`}>
+            <select
+              id={`${formId}-direction`}
+              name="direction"
+              defaultValue={gift.direction}
+              className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+            >
+              <option value="OUTGOING">I gave it</option>
+              <option value="INCOMING">They gave it to me</option>
+            </select>
+          </Field>
+          <DateField
+            name="occurredOn"
+            idPrefix={`${formId}-occurredOn`}
+            label="Changed hands"
+            allowPrecision={false}
+            presets={["today"]}
+            defaultValue={gift.occurredOn ? plainDateKey(gift.occurredOn) : undefined}
+          />
+          <Field label="Notes" htmlFor={`${formId}-description`}>
+            <Textarea
+              id={`${formId}-description`}
+              name="description"
+              rows={2}
+              defaultValue={gift.description ?? ""}
+            />
+          </Field>
+        </>
+      ) : null}
+    </>
+  );
 }
 
 export function GiftsSection({
@@ -456,13 +812,7 @@ export function GiftsSection({
       form={(close) => (
         <form action={add(createGift, close, "Added")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
-          <Field label="What is it?" htmlFor="gift-name">
-            <Input id="gift-name" name="name" required placeholder="Banneton proofing basket" />
-          </Field>
-          <Field label="Link" htmlFor="gift-url">
-            <Input id="gift-url" name="url" type="url" placeholder="https://" />
-          </Field>
-          <TermSelect name="occasionId" label="Occasion" terms={occasions} />
+          <GiftFields formId="gift-new" occasions={occasions} />
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
       )}
@@ -475,6 +825,14 @@ export function GiftsSection({
             key={gift.id}
             onDelete={() => void run(() => deleteGift(gift.id), "Removed")}
             deleteLabel="Delete gift"
+            editLabel="Edit gift"
+            editForm={(close) => (
+              <form action={add(updateGift, close, "Saved")} className="grid gap-2.5">
+                <input type="hidden" name="id" value={gift.id} />
+                <GiftFields formId={`gift-${gift.id}`} occasions={occasions} gift={gift} />
+                <SubmitButton size="sm">Save</SubmitButton>
+              </form>
+            )}
           >
             <div className="flex items-center gap-2">
               <span className="truncate text-sm">{gift.name}</span>
@@ -498,6 +856,7 @@ export function GiftsSection({
 
 export interface RelationshipItem {
   id: string;
+  typeId: string;
   type: { label: string; icon: string | null; color: string | null };
   other: { id: string; firstName: string; lastName: string | null };
 }
@@ -546,6 +905,25 @@ export function RelationshipsSection({
             key={relationship.id}
             onDelete={() => void run(() => deleteRelationship(relationship.id), "Unlinked")}
             deleteLabel="Remove link"
+            editLabel="Change relationship"
+            editForm={(close) => (
+              // Only the word for the link is editable. Pointing it at someone
+              // else is not a correction, it is a different link — unlink and
+              // link again, which is also what keeps the reciprocal honest.
+              <form action={add(updateRelationship, close, "Saved")} className="grid gap-2.5">
+                <input type="hidden" name="id" value={relationship.id} />
+                <p className="text-xs text-muted-foreground">
+                  {displayName(relationship.other)} is…
+                </p>
+                <TermChips
+                  name="typeId"
+                  terms={types}
+                  defaultValue={relationship.typeId}
+                  allowEmpty={false}
+                />
+                <SubmitButton size="sm">Save</SubmitButton>
+              </form>
+            )}
           >
             <Link href={`/people/${relationship.other.id}`} className="flex items-center gap-2">
               {relationship.type.icon ? (
@@ -574,6 +952,76 @@ export interface DietaryItem {
 }
 
 /**
+ * Adding a dietary need and correcting one.
+ *
+ * The kind is a controlled chip row rather than a select, so it carries its own
+ * state and submits through a hidden input — the same shape either way, opening
+ * on Allergy when new and on whatever was recorded when editing.
+ */
+function DietaryFields({ formId, need }: { formId: string; need?: DietaryItem }) {
+  const [kind, setKind] = React.useState<DietaryKind>(need?.kind ?? "ALLERGY");
+
+  return (
+    <>
+      <input type="hidden" name="kind" value={kind} />
+
+      <Field label="What should they avoid?" htmlFor={`${formId}-label`}>
+        <Input
+          id={`${formId}-label`}
+          name="label"
+          required
+          defaultValue={need?.label ?? ""}
+          placeholder="Shellfish"
+        />
+      </Field>
+
+      <div className="grid gap-1.5">
+        <span className="text-xs font-medium text-muted-foreground">What kind?</span>
+        <div className="flex flex-wrap gap-1.5">
+          {DIETARY_KINDS.map((option) => (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={kind === option}
+              onClick={() => setKind(option)}
+              className={cn(
+                "min-h-9 rounded-full border px-3 py-1 text-xs transition-colors",
+                kind === option
+                  ? "border-accent-8 bg-accent-3 text-accent-11"
+                  : "border-border hover:bg-muted",
+              )}
+            >
+              {DIETARY_KIND_LABELS[option]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <Field label="Anything else worth knowing?" htmlFor={`${formId}-notes`}>
+        <Textarea
+          id={`${formId}-notes`}
+          name="notes"
+          rows={2}
+          defaultValue={need?.notes ?? ""}
+          placeholder="Fine with it cooked, reacts to it raw."
+        />
+      </Field>
+
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          name="carriesEpinephrine"
+          value="true"
+          defaultChecked={need?.carriesEpinephrine ?? false}
+          className="size-4"
+        />
+        Carries adrenaline for this
+      </label>
+    </>
+  );
+}
+
+/**
  * What someone can't, or won't, eat.
  *
  * Two headings only, whatever the four kinds record — see `@/lib/dietary`. The
@@ -589,7 +1037,6 @@ export function DietarySection({
 }) {
   const run = useAction();
   const add = useAddAction();
-  const [kind, setKind] = React.useState<DietaryKind>("ALLERGY");
 
   const groups = DIETARY_GROUPS.map((group) => ({
     ...group,
@@ -605,48 +1052,7 @@ export function DietarySection({
       form={(close) => (
         <form action={add(createDietaryNeed, close, "Noted")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
-          <input type="hidden" name="kind" value={kind} />
-
-          <Field label="What should they avoid?" htmlFor="diet-label">
-            <Input id="diet-label" name="label" required placeholder="Shellfish" />
-          </Field>
-
-          <div className="grid gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">What kind?</span>
-            <div className="flex flex-wrap gap-1.5">
-              {DIETARY_KINDS.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  aria-pressed={kind === option}
-                  onClick={() => setKind(option)}
-                  className={cn(
-                    "min-h-9 rounded-full border px-3 py-1 text-xs transition-colors",
-                    kind === option
-                      ? "border-accent-8 bg-accent-3 text-accent-11"
-                      : "border-border hover:bg-muted",
-                  )}
-                >
-                  {DIETARY_KIND_LABELS[option]}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <Field label="Anything else worth knowing?" htmlFor="diet-notes">
-            <Textarea
-              id="diet-notes"
-              name="notes"
-              rows={2}
-              placeholder="Fine with it cooked, reacts to it raw."
-            />
-          </Field>
-
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            <input type="checkbox" name="carriesEpinephrine" value="true" className="size-4" />
-            Carries adrenaline for this
-          </label>
-
+          <DietaryFields formId="diet-new" />
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
       )}
@@ -665,6 +1071,14 @@ export function DietarySection({
                 className={mustAvoid(need.kind) ? "border-destructive/40 bg-destructive/5" : undefined}
                 onDelete={() => void run(() => deleteDietaryNeed(need.id), "Removed")}
                 deleteLabel="Remove dietary need"
+                editLabel="Edit dietary need"
+                editForm={(close) => (
+                  <form action={add(updateDietaryNeed, close, "Saved")} className="grid gap-2.5">
+                    <input type="hidden" name="id" value={need.id} />
+                    <DietaryFields formId={`diet-${need.id}`} need={need} />
+                    <SubmitButton size="sm">Save</SubmitButton>
+                  </form>
+                )}
               >
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-sm font-medium">{need.label}</span>
@@ -712,6 +1126,75 @@ export interface DebtItem {
  * worth as much as knowing they owe you now, but it shouldn't crowd out what is
  * still outstanding.
  */
+function DebtFields({ formId, debt }: { formId: string; debt?: DebtItem }) {
+  return (
+    <>
+      <Field label="What was it?" htmlFor={`${formId}-description`}>
+        <Input
+          id={`${formId}-description`}
+          name="description"
+          required
+          defaultValue={debt?.description ?? ""}
+          placeholder="Covered dinner"
+        />
+      </Field>
+
+      <Field label="Which way?" htmlFor={`${formId}-direction`}>
+        <select
+          id={`${formId}-direction`}
+          name="direction"
+          defaultValue={debt?.direction ?? "THEY_OWE_ME"}
+          className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+        >
+          <option value="THEY_OWE_ME">They owe me</option>
+          <option value="I_OWE_THEM">I owe them</option>
+        </select>
+      </Field>
+
+      <div className="grid gap-2.5 sm:grid-cols-2">
+        <Field
+          label="How much?"
+          htmlFor={`${formId}-amount`}
+          hint="Leave empty if you lent a thing."
+        >
+          <Input
+            id={`${formId}-amount`}
+            name="amount"
+            type="number"
+            inputMode="decimal"
+            min={0}
+            step="0.01"
+            defaultValue={debt?.amountCents == null ? "" : debt.amountCents / 100}
+            placeholder="0.00"
+          />
+        </Field>
+        <DateField
+          name="incurredOn"
+          idPrefix={`${formId}-incurredOn`}
+          label="When"
+          defaultValue={debt ? plainDateKey(debt.incurredOn) : undefined}
+          hint={debt ? undefined : "Defaults to today."}
+        />
+      </div>
+
+      <Field label="Notes" htmlFor={`${formId}-notes`}>
+        <Textarea id={`${formId}-notes`} name="notes" rows={2} defaultValue={debt?.notes ?? ""} />
+      </Field>
+
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          name="isPrivate"
+          value="true"
+          defaultChecked={debt?.isPrivate ?? false}
+          className="size-4"
+        />
+        Hide this behind the privacy lock
+      </label>
+    </>
+  );
+}
+
 export function DebtsSection({ contactId, debts }: { contactId: string; debts: DebtItem[] }) {
   const run = useAction();
   const add = useAddAction();
@@ -739,47 +1222,7 @@ export function DebtsSection({ contactId, debts }: { contactId: string; debts: D
       form={(close) => (
         <form action={add(createDebt, close, "Noted")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
-
-          <Field label="What was it?" htmlFor="debt-description">
-            <Input id="debt-description" name="description" required placeholder="Covered dinner" />
-          </Field>
-
-          <Field label="Which way?" htmlFor="debt-direction">
-            <select
-              id="debt-direction"
-              name="direction"
-              defaultValue="THEY_OWE_ME"
-              className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
-            >
-              <option value="THEY_OWE_ME">They owe me</option>
-              <option value="I_OWE_THEM">I owe them</option>
-            </select>
-          </Field>
-
-          <div className="grid gap-2.5 sm:grid-cols-2">
-            <Field label="How much?" htmlFor="debt-amount" hint="Leave empty if you lent a thing.">
-              <Input
-                id="debt-amount"
-                name="amount"
-                type="number"
-                inputMode="decimal"
-                min={0}
-                step="0.01"
-                placeholder="0.00"
-              />
-            </Field>
-            <DateField name="incurredOn" label="When" hint="Defaults to today." />
-          </div>
-
-          <Field label="Notes" htmlFor="debt-notes">
-            <Textarea id="debt-notes" name="notes" rows={2} />
-          </Field>
-
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            <input type="checkbox" name="isPrivate" value="true" className="size-4" />
-            Hide this behind the privacy lock
-          </label>
-
+          <DebtFields formId="debt-new" />
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
       )}
@@ -821,6 +1264,14 @@ export function DebtsSection({ contactId, debts }: { contactId: string; debts: D
             key={debt.id}
             onDelete={() => void run(() => deleteDebt(debt.id), "Removed")}
             deleteLabel="Delete debt"
+            editLabel="Edit debt"
+            editForm={(close) => (
+              <form action={add(updateDebt, close, "Saved")} className="grid gap-2.5">
+                <input type="hidden" name="id" value={debt.id} />
+                <DebtFields formId={`debt-${debt.id}`} debt={debt} />
+                <SubmitButton size="sm">Save</SubmitButton>
+              </form>
+            )}
           >
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="text-sm">{debt.description}</span>
@@ -865,6 +1316,16 @@ export function DebtsSection({ contactId, debts }: { contactId: string; debts: D
                   className="opacity-70"
                   onDelete={() => void run(() => deleteDebt(debt.id), "Removed")}
                   deleteLabel="Delete debt"
+                  editLabel="Edit debt"
+                  // Settled, not finished with: a debt squared up for the wrong
+                  // amount is still the wrong amount in next year's total.
+                  editForm={(close) => (
+                    <form action={add(updateDebt, close, "Saved")} className="grid gap-2.5">
+                      <input type="hidden" name="id" value={debt.id} />
+                      <DebtFields formId={`debt-${debt.id}`} debt={debt} />
+                      <SubmitButton size="sm">Save</SubmitButton>
+                    </form>
+                  )}
                 >
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="text-sm line-through">{debt.description}</span>
