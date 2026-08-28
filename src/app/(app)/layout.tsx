@@ -8,7 +8,7 @@ import { listContactOptions } from "@/server/queries/contacts";
 import { listTerms } from "@/server/taxonomy/queries";
 import { fieldsFor } from "@/server/queries/custom-fields";
 import { QuickLogFab } from "@/components/nav/quick-log-fab";
-import { OfflineBanner, ServiceWorkerRegistrar } from "@/components/offline/offline";
+import { OfflineBanner } from "@/components/offline/offline";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +41,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           {children}
         </main>
       </div>
-      <ServiceWorkerRegistrar />
       <QuickLogFab
         contacts={contacts}
         types={interactionTypes}

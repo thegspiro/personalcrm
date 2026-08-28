@@ -31,6 +31,36 @@ async function register(page: import("@playwright/test").Page) {
   return account;
 }
 
+test("the service worker is active before the install step", async ({ browser }, testInfo) => {
+  // Use a context with no registrations inherited from another test. The
+  // worker must be registered by the onboarding shell itself, not incidentally
+  // by visiting the authenticated app shell first.
+  const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL });
+  const page = await context.newPage();
+
+  try {
+    const account = await register(page);
+    test.skip(account === null, "signups are disabled on this instance");
+
+    await expect(page).toHaveURL(/\/welcome$/);
+    await expect(page.getByText("Step 2 of 5")).toBeVisible();
+    await expect(page.getByText("Step 5 of 5")).toHaveCount(0);
+
+    await expect
+      .poll(
+        () =>
+          page.evaluate(async () => {
+            const registration = await navigator.serviceWorker.getRegistration();
+            return registration?.active?.state;
+          }),
+        { timeout: 15_000 },
+      )
+      .toBe("activated");
+  } finally {
+    await context.close();
+  }
+});
+
 test("the wizard walks through every step and lands on the dashboard", async ({ page }) => {
   // Make sure the instance is past first-run, so /signup is the route in.
   await ensureSignedIn(page);
