@@ -36,6 +36,7 @@ export function PrivacySettings({
   const [hidden, setHidden] = React.useState(hideDating);
   const [blur, setBlur] = React.useState(blurPrivateNotes);
   const [changingPin, setChangingPin] = React.useState(false);
+  const [locking, setLocking] = React.useState(false);
 
   const [pinState, pinAction] = useActionState<ActionResult, FormData>(setPinAction, { ok: true });
   const [clearState, clearAction] = useActionState<ActionResult, FormData>(clearPinAction, { ok: true });
@@ -157,16 +158,19 @@ export function PrivacySettings({
 
           {pinSet && lockEnabled ? (
             <form
-              action={lockPrivacyAction}
-              onSubmit={() => {
+              onSubmit={async (event) => {
+                event.preventDefault();
+                if (locking) return;
+                setLocking(true);
                 // Anything saved for offline reading was saved while unlocked.
                 // Leaving it behind would make the lock decorative.
-                purgeOfflineCaches();
+                await purgeOfflineCaches();
+                await lockPrivacyAction();
               }}
             >
-              <Button type="submit" size="sm" variant="outline">
+              <Button type="submit" size="sm" variant="outline" disabled={locking}>
                 <Lock />
-                Lock now
+                {locking ? "Locking…" : "Lock now"}
               </Button>
             </form>
           ) : null}

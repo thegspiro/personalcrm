@@ -85,7 +85,12 @@ self.addEventListener("message", (event) => {
     event.ports[0]?.postMessage({ servedFromCache: answer });
   } else if (data.type === "purge") {
     // Sent on lock and on sign-out. Everything goes, including the shell.
-    event.waitUntil(purgeEverything());
+    event.waitUntil(
+      (async () => {
+        await purgeEverything();
+        event.ports[0]?.postMessage({ purged: true });
+      })(),
+    );
   }
 });
 

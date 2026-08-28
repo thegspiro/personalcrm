@@ -24,12 +24,59 @@ export function ServiceWorkerRegistrar() {
   return null;
 }
 
-/** Tell the worker to throw everything away. */
-export function purgeOfflineCaches(): void {
-  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
-  void navigator.serviceWorker.ready
-    .then((registration) => registration.active?.postMessage({ type: "purge" }))
-    .catch(() => {});
+const PURGE_ACK_TIMEOUT_MS = 2_000;
+
+/** Delete this application's caches without relying on a worker. */
+async function deleteOfflineCachesFromPage(): Promise<void> {
+  if (typeof caches === "undefined") return;
+
+  try {
+    const names = await caches.keys();
+    await Promise.all(
+      names.filter((name) => name.startsWith("pcrm-")).map((name) => caches.delete(name)),
+    );
+  } catch {
+    // Blocked Cache Storage is equivalent to there being nothing we can keep.
+  }
+}
+
+/** Tell the worker to throw everything away and wait until it confirms that it has. */
+export async function purgeOfflineCaches(): Promise<void> {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+    await deleteOfflineCachesFromPage();
+    return;
+  }
+
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    const worker = registration?.active ?? navigator.serviceWorker.controller;
+    if (!worker) {
+      await deleteOfflineCachesFromPage();
+      return;
+    }
+
+    const acknowledged = await new Promise<boolean>((resolve) => {
+      const channel = new MessageChannel();
+      const finish = (value: boolean) => {
+        window.clearTimeout(timeout);
+        channel.port1.close();
+        resolve(value);
+      };
+      const timeout = window.setTimeout(() => finish(false), PURGE_ACK_TIMEOUT_MS);
+      channel.port1.onmessage = () => finish(true);
+      channel.port1.onmessageerror = () => finish(false);
+
+      try {
+        worker.postMessage({ type: "purge" }, [channel.port2]);
+      } catch {
+        finish(false);
+      }
+    });
+
+    if (!acknowledged) await deleteOfflineCachesFromPage();
+  } catch {
+    await deleteOfflineCachesFromPage();
+  }
 }
 
 /**
