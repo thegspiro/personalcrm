@@ -195,6 +195,46 @@ worse than one that missed a housekeeping pass.
 - **Command palette** — ⌘K, searching people through the same privacy filter as
   every other read.
 
+### Offline-support matrix
+
+Offline support is an explicit allow-list. “Cacheable read-only” means a page
+renders `CacheThisPage` only after `offlineCacheable(ownerId)` approves the
+whole account: either the PIN lock is enabled and currently closed (so query
+filters have removed private rows), or the account contains no private contact,
+fact, interaction, or debt. It does **not** mean that controls on a saved page
+can mutate data while disconnected.
+
+| Route | Classification | Offline/privacy rule |
+| --- | --- | --- |
+| `/` | Cacheable read-only | Allowed by the account-wide gate only when the dating layer is not rendered. |
+| `/people` | Cacheable read-only | Contact query is privacy-filtered; account-wide gate still applies. |
+| `/people/[id]` | Cacheable read-only (conditional) | Only a non-private contact with no dating section, plus the account-wide gate. Query strings are cached as distinct pages. |
+| `/timeline` | Cacheable read-only | Interactions and their participants are privacy-filtered; account-wide gate applies. |
+| `/tasks` | Cacheable read-only | Tasks without a contact and tasks attached to a visible contact only; account-wide gate applies. |
+| `/gifts` | Cacheable read-only | Gifts inherit contact privacy; account-wide gate applies. |
+| `/ideas` | Cacheable read-only | General ideas/plans and those attached to visible contacts only; contact pickers are filtered; account-wide gate applies. |
+| `/family` | Cacheable read-only | Relationships, contacts, suggestions, household members, and private-only households are filtered; account-wide gate applies. Each `anchor` query is a distinct saved page. |
+| `/dating`, `/dating/compare` | Deliberately unavailable | Dating content is never written to offline storage. |
+| `/people/new`, `/people/[id]/edit`, `/people/[id]/backfill` | Deliberately unavailable | Create/edit forms require live reads and server-action validation. |
+| `/settings` | Deliberately unavailable | Contains security, privacy, account, and integration controls. |
+| `/more` | Deliberately unavailable | Navigation-only page has not opted in; its destinations retain their own policies. |
+| `/unlock` | Deliberately unavailable | The privacy boundary must always be evaluated live. |
+| `/login`, `/signup`, `/setup`, `/welcome` | Deliberately unavailable | Authentication and onboarding state must always be evaluated live. |
+| `/api/health` | Deliberately unavailable | A cached health response would be false; the worker never handles `/api/*`. |
+
+The framework-generated `/manifest.webmanifest` and `/icon` resources support
+installation rather than offline page reading. The icon and versioned Next.js
+assets may be cached as assets; the manifest is not an application data route.
+
+There are currently **no routes eligible for offline mutation**. In particular,
+the worker sends every non-GET request directly to the network and never queues
+or replays a server-action POST. If offline quick capture is introduced later,
+it must be a separate feature with a narrow draft schema: validate before
+writing to IndexedDB, visibly label drafts unsynced, encrypt sensitive fields
+or exclude them under the privacy model, and require an explicit conflict
+review/reconciliation after reconnecting. Contact and interaction mutations
+must never use blind background replay.
+
 ## Mobile-first constraints that are tested, not assumed
 
 Two classes of bug were frequent enough to earn a permanent test

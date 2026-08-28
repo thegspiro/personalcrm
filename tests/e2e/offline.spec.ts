@@ -151,6 +151,18 @@ test("visited pages become readable offline", async ({ page }) => {
     .toContain("/people");
 });
 
+for (const route of ["/tasks", "/gifts", "/ideas", "/family"]) {
+  test(`${route} becomes readable offline after a visit`, async ({ page }) => {
+    await ensureSignedIn(page);
+    await page.goto(route);
+    await readyWorker(page);
+    await clearPageCache(page);
+    await page.goto(route);
+
+    await expect.poll(() => cachedPages(page), { timeout: 15_000 }).toContain(route);
+  });
+}
+
 test("a worker update removes an old page and its assets together", async ({ page }) => {
   await ensureSignedIn(page);
   await page.goto("/people");
@@ -259,6 +271,14 @@ test("nothing is stored once anyone is marked private", async ({ page }) => {
   await page.goto(url);
   await page.waitForTimeout(3_000);
   expect(await cachedPages(page)).toEqual([]);
+
+  // Every read-only route uses the same account-wide gate. None may opt in
+  // merely because its own result happens not to mention the private person.
+  for (const route of ["/tasks", "/gifts", "/ideas", "/family"]) {
+    await page.goto(route);
+    await page.waitForTimeout(1_000);
+    expect(await cachedPages(page)).toEqual([]);
+  }
 });
 
 test("cleaning up: unmark the private contact", async ({ page }) => {
