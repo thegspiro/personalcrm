@@ -40,9 +40,8 @@ const ASSETS = `pcrm-assets-${VERSION}`;
 const OURS = [PAGES, ASSETS];
 
 self.addEventListener("install", (event) => {
-  // Take over promptly: a half-updated worker serving an old shell against a
-  // new server is worse than a moment's delay.
-  event.waitUntil(self.skipWaiting());
+  // An update waits until the page explicitly accepts it. A first install has
+  // no incumbent worker and proceeds to activation normally.
 });
 
 self.addEventListener("activate", (event) => {
@@ -86,6 +85,8 @@ self.addEventListener("message", (event) => {
   } else if (data.type === "purge") {
     // Sent on lock and on sign-out. Everything goes, including the shell.
     event.waitUntil(purgeEverything());
+  } else if (data.type === "activate-update") {
+    self.skipWaiting();
   }
 });
 
