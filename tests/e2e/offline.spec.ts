@@ -151,6 +151,51 @@ test("visited pages become readable offline", async ({ page }) => {
     .toContain("/people");
 });
 
+test("a worker update removes an old page and its assets together", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto("/people");
+  await readyWorker(page);
+
+  // Model the two halves of a previous deployment. The HTML deliberately
+  // names an asset that exists only in that generation: preserving the page
+  // while deleting the asset would reproduce the broken offline update.
+  await page.evaluate(async () => {
+    const oldPages = await caches.open("pcrm-pages-e2e-old");
+    const oldAssets = await caches.open("pcrm-assets-e2e-old");
+    await oldPages.put(
+      "/e2e-old-page",
+      new Response('<!doctype html><script src="/_next/static/e2e-old.js"></script>', {
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
+    await oldAssets.put("/_next/static/e2e-old.js", new Response("window.oldGeneration = true"));
+  });
+
+  // A distinct script URL makes the browser install and activate a fresh
+  // worker even though this test server still serves the same sw.js contents.
+  // Unregistering models replacement rather than waiting for a real deploy.
+  await page.evaluate(async () => {
+    const oldRegistration = await navigator.serviceWorker.getRegistration();
+    await oldRegistration?.unregister();
+    const nextRegistration = await navigator.serviceWorker.register(`/sw.js?e2e-version=${Date.now()}`);
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error("updated worker did not activate")), 15_000);
+      const finish = () => {
+        if (!nextRegistration.active) return;
+        window.clearTimeout(timeout);
+        resolve();
+      };
+      if (nextRegistration.active) finish();
+      else if (nextRegistration.installing) nextRegistration.installing.addEventListener("statechange", finish);
+      else nextRegistration.addEventListener("updatefound", () => nextRegistration.installing?.addEventListener("statechange", finish));
+    });
+  });
+
+  await expect
+    .poll(() => page.evaluate(async () => (await caches.keys()).filter((name) => name.includes("e2e-old"))))
+    .toEqual([]);
+});
+
 test("an offline page says how old it is", async ({ page, context }) => {
   await ensureSignedIn(page);
   await page.goto("/people");

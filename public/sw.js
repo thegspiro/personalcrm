@@ -10,6 +10,11 @@
  *     missed pattern quietly writes someone's private notes to disk.
  *  2. **Locking or signing out wipes it.** The privacy lock is worth nothing
  *     if yesterday's copy of a locked page is still sitting in the cache.
+ *  3. **A worker generation is one page/asset unit.** On activation, obsolete
+ *     page caches are deleted before their matching asset caches. This is the
+ *     deliberate "cold offline after an update" strategy: no old document is
+ *     retained after the assets named by that document can disappear. Pages
+ *     become offline-capable again as they are revisited and opt in.
  *
  * This worker never queues writes. Everything non-GET goes straight to the
  * network and fails honestly when there isn't one.
@@ -43,14 +48,28 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
-      const names = await caches.keys();
-      await Promise.all(
-        names.filter((name) => name.startsWith("pcrm-") && !OURS.includes(name)).map((name) => caches.delete(name)),
-      );
+      await purgeObsoleteGenerations();
       await self.clients.claim();
     })(),
   );
 });
+
+/**
+ * Remove an obsolete generation as a page/asset unit.
+ *
+ * Cache Storage has no multi-cache transaction. Deleting old documents first
+ * gives the operation the one safe ordering: interruption can leave harmless
+ * orphaned assets, but can never leave an old cached document after its asset
+ * generation has been removed. Do not parallelize these two phases.
+ */
+async function purgeObsoleteGenerations() {
+  const obsolete = (await caches.keys()).filter((name) => name.startsWith("pcrm-") && !OURS.includes(name));
+  const pages = obsolete.filter((name) => name.startsWith("pcrm-pages-"));
+  const assetsAndUnknown = obsolete.filter((name) => !pages.includes(name));
+
+  await Promise.all(pages.map((name) => caches.delete(name)));
+  await Promise.all(assetsAndUnknown.map((name) => caches.delete(name)));
+}
 
 self.addEventListener("message", (event) => {
   const data = event.data;
