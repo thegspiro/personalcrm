@@ -285,12 +285,7 @@ export const getFamilyOverview = cache(
       loadFamilyEdges(ownerId),
       loadLinkedPairs(ownerId),
       prisma.household.findMany({
-        // Household names and notes can identify a private family even when
-        // its filtered member list is empty, so omit private-only households.
-        where: {
-          ownerId,
-          members: { some: { contact: contactPrivacyWhere(scope) } },
-        },
+        where: { ownerId },
         select: {
           id: true,
           name: true,

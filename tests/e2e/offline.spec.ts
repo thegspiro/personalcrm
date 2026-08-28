@@ -151,17 +151,33 @@ test("visited pages become readable offline", async ({ page }) => {
     .toContain("/people");
 });
 
-for (const route of ["/tasks", "/gifts", "/ideas", "/family"]) {
-  test(`${route} becomes readable offline after a visit`, async ({ page }) => {
-    await ensureSignedIn(page);
-    await page.goto(route);
-    await readyWorker(page);
-    await clearPageCache(page);
-    await page.goto(route);
+test("the additional read-only routes become readable offline", async ({ page, context }) => {
+  await ensureSignedIn(page);
+  await page.goto("/tasks");
+  await readyWorker(page);
+  await clearPageCache(page);
 
-    await expect.poll(() => cachedPages(page), { timeout: 15_000 }).toContain(route);
-  });
-}
+  const routes = [
+    { path: "/tasks", heading: "Follow-ups" },
+    { path: "/gifts", heading: "Gifts" },
+    { path: "/ideas", heading: "Ideas" },
+    { path: "/family", heading: "Family" },
+  ];
+  for (const route of routes) {
+    await page.goto(route.path);
+    // CacheThisPage intentionally waits before asking the worker. Confirm each
+    // write before navigating so the component's cleanup cannot cancel it.
+    await expect.poll(() => cachedPages(page), { timeout: 15_000 }).toContain(route.path);
+  }
+
+  await context.setOffline(true);
+  for (const route of routes) {
+    await page.goto(route.path, { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: route.heading, level: 2 })).toBeVisible();
+    await expect(page.getByText(/You're offline/)).toBeVisible();
+  }
+  await context.setOffline(false);
+});
 
 test("a worker update removes an old page and its assets together", async ({ page }) => {
   await ensureSignedIn(page);
