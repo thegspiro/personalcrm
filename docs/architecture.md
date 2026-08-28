@@ -184,8 +184,12 @@ worse than one that missed a housekeeping pass.
 - **Offline reading** — a service worker (`public/sw.js`) caches pages you have
   visited, but only when the server has decided the account is safe to cache.
   Network-first, never cache-first, and every offline page shows how stale it
-  is to the minute. Locking or signing out wipes the cache. Rules in
-  [privacy.md](privacy.md#offline-caching).
+  is to the minute. Locking or signing out wipes the cache. Deployments use a
+  deliberately cold update: activation deletes obsolete page caches first and
+  only then deletes obsolete asset caches. Thus an interrupted cleanup may
+  leave unused assets, but it can never preserve HTML after removing the asset
+  generation that HTML references. Users revisit pages to make the new
+  generation offline-capable. Rules in [privacy.md](privacy.md#offline-caching).
 - **Installable** — `src/app/manifest.ts` plus an icon drawn at build time in
   `src/app/icon.tsx`, so there is no binary asset to keep in sync with the theme.
 - **Command palette** — ⌘K, searching people through the same privacy filter as
