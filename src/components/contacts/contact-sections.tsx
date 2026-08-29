@@ -25,7 +25,6 @@ import {
   type DietaryKind,
 } from "@/lib/dietary";
 import { plainDateKey, type PlainDate } from "@/lib/dates";
-import { MILESTONE_SUMMARY_LIMIT } from "@/lib/life-events";
 import {
   createDebt,
   createDietaryNeed,
@@ -336,40 +335,6 @@ export interface LifeEventItem {
   type: { label: string; icon: string | null; color: string | null } | null;
 }
 
-export function MilestonesSummary({ milestones }: { milestones: LifeEventItem[] }) {
-  if (milestones.length === 0) return null;
-  return (
-    <section className="min-w-0 rounded-xl border border-accent-7/60 bg-accent-2/40 px-4 py-3">
-      <div className="mb-2 flex min-w-0 items-center gap-2">
-        <Icon name="Milestone" className="size-4 shrink-0 text-accent-11" />
-        <h2 className="truncate text-sm font-semibold">Milestones</h2>
-        <Link
-          href="#life-events"
-          className="ml-auto shrink-0 text-xs text-accent-11 hover:underline"
-        >
-          View all
-        </Link>
-      </div>
-      <div className="grid gap-2">
-        {milestones.slice(0, MILESTONE_SUMMARY_LIMIT).map((event) => (
-          <div
-            key={event.id}
-            className="min-w-0 rounded-lg border border-border/70 bg-card px-3 py-2"
-          >
-            <p className="truncate text-sm font-medium">{event.title}</p>
-            <p className="text-xs text-muted-foreground">
-              {formatPartialRange(event.date, event.precision, event.endDate, event.endPrecision)}
-            </p>
-            {event.description ? (
-              <p className="mt-0.5 text-xs text-muted-foreground">{event.description}</p>
-            ) : null}
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 /**
  * Things that happened to them. Separate from interactions because you weren't
  * necessarily there, and separate from important dates because you don't want a
@@ -457,57 +422,56 @@ export function LifeEventsSection({
   const add = useAddAction();
 
   return (
-    <div id="life-events" className="scroll-mt-4">
-      <SectionCard
-        title="Life events"
-        icon="Milestone"
-        count={events.length}
-        addLabel="Add a life event"
-        form={(close) => (
-          <form action={add(createLifeEvent, close, "Event added")} className="grid gap-2.5">
-            <input type="hidden" name="contactId" value={contactId} />
-            <LifeEventFields formId="event-new" types={types} />
-            <SubmitButton size="sm">Add</SubmitButton>
-          </form>
-        )}
-      >
-        {events.length === 0 ? (
-          <SectionEmpty>
-            Nothing recorded. Good for backfilling history — jobs, moves, milestones.
-          </SectionEmpty>
-        ) : (
-          events.map((event) => (
-            <SectionRow
-              key={event.id}
-              onDelete={() => void run(() => deleteLifeEvent(event.id), "Removed")}
-              deleteLabel="Delete life event"
-              editLabel="Edit life event"
-              editForm={(close) => (
-                <form action={add(updateLifeEvent, close, "Saved")} className="grid gap-2.5">
-                  <input type="hidden" name="id" value={event.id} />
-                  <LifeEventFields formId={`event-${event.id}`} types={types} event={event} />
-                  <SubmitButton size="sm">Save</SubmitButton>
-                </form>
-              )}
-            >
-              <div className="flex items-center gap-2">
-                {event.type?.icon ? (
-                  <Icon name={event.type.icon} className="size-3.5 shrink-0 text-muted-foreground" />
-                ) : null}
-                <span className="truncate text-sm font-medium">{event.title}</span>
-                {event.isMilestone ? <Badge variant="muted">Milestone</Badge> : null}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {formatPartialRange(event.date, event.precision, event.endDate, event.endPrecision)}
-              </p>
-              {event.description ? (
-                <p className="mt-0.5 text-xs text-muted-foreground">{event.description}</p>
+    <SectionCard
+      id="life-events"
+      title="Life events"
+      icon="Milestone"
+      count={events.length}
+      addLabel="Add a life event"
+      form={(close) => (
+        <form action={add(createLifeEvent, close, "Event added")} className="grid gap-2.5">
+          <input type="hidden" name="contactId" value={contactId} />
+          <LifeEventFields formId="event-new" types={types} />
+          <SubmitButton size="sm">Add</SubmitButton>
+        </form>
+      )}
+    >
+      {events.length === 0 ? (
+        <SectionEmpty>
+          Nothing recorded. Good for backfilling history — jobs, moves, milestones.
+        </SectionEmpty>
+      ) : (
+        events.map((event) => (
+          <SectionRow
+            key={event.id}
+            onDelete={() => void run(() => deleteLifeEvent(event.id), "Removed")}
+            deleteLabel="Delete life event"
+            editLabel="Edit life event"
+            editForm={(close) => (
+              <form action={add(updateLifeEvent, close, "Saved")} className="grid gap-2.5">
+                <input type="hidden" name="id" value={event.id} />
+                <LifeEventFields formId={`event-${event.id}`} types={types} event={event} />
+                <SubmitButton size="sm">Save</SubmitButton>
+              </form>
+            )}
+          >
+            <div className="flex items-center gap-2">
+              {event.type?.icon ? (
+                <Icon name={event.type.icon} className="size-3.5 shrink-0 text-muted-foreground" />
               ) : null}
-            </SectionRow>
-          ))
-        )}
-      </SectionCard>
-    </div>
+              <span className="truncate text-sm font-medium">{event.title}</span>
+              {event.isMilestone ? <Badge variant="muted">Milestone</Badge> : null}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {formatPartialRange(event.date, event.precision, event.endDate, event.endPrecision)}
+            </p>
+            {event.description ? (
+              <p className="mt-0.5 text-xs text-muted-foreground">{event.description}</p>
+            ) : null}
+          </SectionRow>
+        ))
+      )}
+    </SectionCard>
   );
 }
 

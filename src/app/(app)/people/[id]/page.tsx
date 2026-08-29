@@ -30,10 +30,10 @@ import {
   GiftsSection,
   IdeasSection,
   LifeEventsSection,
-  MilestonesSummary,
   RelationshipsSection,
   TasksSection,
 } from "@/components/contacts/contact-sections";
+import { MilestonesSummary } from "@/components/contacts/milestones-summary";
 import { TimelineList } from "@/components/timeline/timeline-list";
 import { SectionCard } from "@/components/contacts/section-card";
 import { calendarDateInTz, plainDateFromDb, plainDateKey } from "@/lib/dates";
