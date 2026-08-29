@@ -5,12 +5,14 @@ import type { TaxonomyKind } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
 import { debtPrivacyWhere, factPrivacyWhere, privacyScope } from "@/server/privacy/filter";
-import { calendarDateInTz, plainDateToDb } from "@/lib/dates";
+import { calendarDateInTz, plainDateFromDb, plainDateToDb } from "@/lib/dates";
+import { isValidPartialDateRange } from "@/lib/date-precision";
 import { dietaryKindOf } from "@/lib/dietary";
 import {
   type ActionResult,
   bool,
   fail,
+  fieldError,
   num,
   ok,
   owner,
@@ -228,6 +230,14 @@ export async function createLifeEvent(form: FormData): Promise<ActionResult<{ id
   if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
 
   const end = partialDate(form, "endDate");
+  if (
+    !isValidPartialDateRange(
+      { date: plainDateFromDb(when.date), precision: when.precision },
+      end ? { date: plainDateFromDb(end.date), precision: end.precision } : null,
+    )
+  ) {
+    return fieldError("endDate", "End date must not be before the start date.");
+  }
 
   const type = await termFromForm(ownerId, form, "typeId", "LIFE_EVENT_TYPE");
   if (!type.ok) return fail(UNKNOWN_TERM);
@@ -265,6 +275,14 @@ export async function updateLifeEvent(form: FormData): Promise<ActionResult> {
   const when = partialDate(form, "date");
   if (!title || !when) return fail("A title and a date are required.");
   const end = partialDate(form, "endDate");
+  if (
+    !isValidPartialDateRange(
+      { date: plainDateFromDb(when.date), precision: when.precision },
+      end ? { date: plainDateFromDb(end.date), precision: end.precision } : null,
+    )
+  ) {
+    return fieldError("endDate", "End date must not be before the start date.");
+  }
 
   const type = await termFromForm(ownerId, form, "typeId", "LIFE_EVENT_TYPE");
   if (!type.ok) return fail(UNKNOWN_TERM);
