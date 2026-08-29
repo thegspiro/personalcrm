@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 
 test("offers an update action and reloads after the new worker takes control", async ({ page }) => {
   await page.addInitScript(() => {
+    const loads = Number(sessionStorage.getItem("worker-test-loads") ?? "0") + 1;
+    sessionStorage.setItem("worker-test-loads", String(loads));
     const container = new EventTarget();
     const registration = new EventTarget() as EventTarget & {
       installing: (EventTarget & { state: string }) | null;
@@ -18,7 +20,10 @@ test("offers an update action and reloads after the new worker takes control", a
     };
     Object.assign(container, {
       controller: {},
-      register: async () => registration,
+      register: async () => {
+        Object.assign(window, { workerRegistrationObserved: true });
+        return registration;
+      },
       getRegistrations: async () => [registration],
       ready: Promise.resolve(registration),
     });
@@ -36,13 +41,22 @@ test("offers an update action and reloads after the new worker takes control", a
   });
 
   await page.goto("/login");
+  // Registration is attached from a React effect. Waiting for the mock to be
+  // called avoids dispatching updatefound before the registrar has subscribed.
+  await expect.poll(() =>
+    page.evaluate(() => Boolean((window as unknown as { workerRegistrationObserved?: boolean }).workerRegistrationObserved)),
+  ).toBe(true);
   await page.evaluate(() =>
     (window as unknown as { revealWorkerUpdate(): void }).revealWorkerUpdate(),
   );
   await expect(page.getByText("An update is ready")).toBeVisible();
 
-  await page.getByRole("button", { name: "Reload to update" }).click();
-  await page.waitForLoadState("domcontentloaded");
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: "domcontentloaded" }),
+    page.getByRole("button", { name: "Reload to update" }).click(),
+  ]);
   await expect.poll(() => page.evaluate(() => sessionStorage.getItem("worker-activation-message")))
     .toBe(JSON.stringify({ type: "activate-update" }));
+  await expect.poll(() => page.evaluate(() => Number(sessionStorage.getItem("worker-test-loads"))))
+    .toBeGreaterThanOrEqual(2);
 });
