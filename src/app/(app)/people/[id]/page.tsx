@@ -39,6 +39,8 @@ import { calendarDateInTz, plainDateFromDb, plainDateKey } from "@/lib/dates";
 import { cadenceMessage } from "@/lib/format";
 import { cadenceStatus, daysSinceLastInteraction, daysUntilTouch } from "@/lib/cadence";
 import { displayName } from "@/lib/utils";
+import { getUpcomingDates } from "@/server/queries/dashboard";
+import { UpcomingDatesWidget } from "@/components/dashboard/widgets";
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +81,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     customFields,
     interactionFields,
     reciprocity,
+    upcomingDates,
   ] = await Promise.all([
     listTermsByKind(user.id, [
       "INTERACTION_TYPE",
@@ -101,6 +104,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     fieldsFor(user.id, "CONTACT", id, { categoryId: contact.categoryId }),
     fieldsFor(user.id, "INTERACTION", null),
     getReciprocity(user.id, id),
+    getUpcomingDates(user.id, timezone, 366, 100, id),
   ]);
 
   // Family relationships get their own section, so "Connected people" is left
@@ -147,6 +151,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
       </div>
 
       <div className="grid min-w-0 gap-3">
+        <UpcomingDatesWidget dates={upcomingDates} />
         <SectionCard title="Timeline" icon="History" count={timeline.length}>
           {reciprocity.text ? (
             <div className="grid gap-0.5 px-1">

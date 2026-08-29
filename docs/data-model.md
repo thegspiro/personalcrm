@@ -275,7 +275,16 @@ normal, 2 important), `isPrivate`, and `sourceInteractionId` → `Interaction`
 
 ### `ImportantDate`
 
-Recurring things you want reminding about.
+Dates you want remembering or reminding about. The main timeline is purely
+historical: it includes a `NONE` date only after that date has happened, and it
+never renders a recurring definition at its stored anchor year. The dashboard,
+global timeline, and person page instead have a **Coming up** section that uses
+one shared projection policy for annual and monthly occurrences. The projected
+date controls display and sorting; the stored year remains the source for an
+age or anniversary number. February 29 is observed on February 28 in common
+years, and a monthly day that is absent from a month is observed on its final
+day. Month- and year-only values are not projected because doing so would invent
+a day.
 
 | Column | Type | Notes |
 | --- | --- | --- |

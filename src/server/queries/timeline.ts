@@ -12,9 +12,12 @@ import { comparePartialDates, type DatePrecision } from "@/lib/date-precision";
 /**
  * The unified timeline.
  *
- * Four different things share one feed: interactions (what you did together),
- * life events (what happened to them), important dates that have already come
- * round, and gifts that changed hands. They live in separate tables because
+ * This feed is deliberately historical. Four different things share it:
+ * interactions (what you did together), life events (what happened to them),
+ * one-time important dates that happened, and gifts that changed hands.
+ * Recurring definitions are projected in the separate Coming up query; showing
+ * their stored anchor here would pretend a reminder was a one-off event. They
+ * live in separate tables because
  * they mean different things, so the merge happens here.
  *
  * Every entry carries a precision, because a backfilled life event may only be
@@ -73,23 +76,22 @@ export async function buildTimeline(
   );
 
   const scope = await privacyScope();
+  const now = new Date();
+  const today = calendarDateInTz(now, timezone);
 
   // Each source is capped at `take` — after merging we slice again, so no
   // single source can crowd the others out of the window.
   const [interactions, lifeEvents, importantDates, gifts] = await Promise.all([
-    kinds.has("interaction") ? fetchInteractions(ownerId, options, take, scope) : [],
-    kinds.has("life-event") ? fetchLifeEvents(ownerId, options, take, scope) : [],
-    kinds.has("important-date") ? fetchImportantDates(ownerId, options, take, scope) : [],
-    kinds.has("gift") ? fetchGifts(ownerId, options, take, scope) : [],
+    kinds.has("interaction") ? fetchInteractions(ownerId, options, take, scope, now) : [],
+    kinds.has("life-event") ? fetchLifeEvents(ownerId, options, take, scope, today) : [],
+    kinds.has("important-date") ? fetchImportantDates(ownerId, options, take, scope, today) : [],
+    kinds.has("gift") ? fetchGifts(ownerId, options, take, scope, today) : [],
   ]);
-
-  const now = new Date();
-  const today = calendarDateInTz(now, timezone);
 
   const entries: TimelineEntry[] = [
     ...interactions.map((row) => interactionEntry(row, timezone, now)),
     ...lifeEvents.map(lifeEventEntry),
-    ...importantDates.map((row) => importantDateEntry(row, today)),
+    ...importantDates.map(importantDateEntry),
     ...gifts.map(giftEntry),
   ];
 
@@ -123,16 +125,20 @@ async function fetchInteractions(
   options: TimelineOptions,
   take: number,
   scope: PrivacyScope,
+  now: Date,
 ) {
+  const requestedTo = options.to ? endOfDay(options.to) : now;
+  const historicalTo = requestedTo < now ? requestedTo : now;
   return prisma.interaction.findMany({
     where: {
       ownerId,
+      occurredAt: {
+        lte: historicalTo,
+        ...(options.from ? { gte: options.from } : {}),
+      },
       ...interactionPrivacyWhere(scope),
       ...contactFilter(options.contactId),
       ...(options.typeIds?.length ? { typeId: { in: options.typeIds } } : {}),
-      ...(options.from || options.to
-        ? { occurredAt: { ...(options.from ? { gte: options.from } : {}), ...(options.to ? { lte: endOfDay(options.to) } : {}) } }
-        : {}),
     },
     include: {
       type: true,
@@ -151,15 +157,16 @@ async function fetchLifeEvents(
   options: TimelineOptions,
   take: number,
   scope: PrivacyScope,
+  today: PlainDate,
 ) {
+  const todayDb = new Date(Date.UTC(today.year, today.month - 1, today.day));
+  const historicalTo = options.to && options.to < todayDb ? options.to : todayDb;
   return prisma.lifeEvent.findMany({
     where: {
       ownerId,
       ...viaContactPrivacyWhere(scope),
       ...(options.contactId ? { contactId: options.contactId } : {}),
-      ...(options.from || options.to
-        ? { date: { ...(options.from ? { gte: options.from } : {}), ...(options.to ? { lte: options.to } : {}) } }
-        : {}),
+      date: { lte: historicalTo, ...(options.from ? { gte: options.from } : {}) },
     },
     include: {
       type: true,
@@ -175,15 +182,20 @@ async function fetchImportantDates(
   options: TimelineOptions,
   take: number,
   scope: PrivacyScope,
+  today: PlainDate,
 ) {
+  const todayDb = new Date(Date.UTC(today.year, today.month - 1, today.day));
+  const historicalTo = options.to && options.to < todayDb ? options.to : todayDb;
   return prisma.importantDate.findMany({
     where: {
       ownerId,
+      recurrence: "NONE",
       ...viaContactPrivacyWhere(scope),
       ...(options.contactId ? { contactId: options.contactId } : {}),
-      ...(options.from || options.to
-        ? { date: { ...(options.from ? { gte: options.from } : {}), ...(options.to ? { lte: options.to } : {}) } }
-        : {}),
+      date: {
+        lte: historicalTo,
+        ...(options.from ? { gte: options.from } : {}),
+      },
     },
     include: {
       type: true,
@@ -199,7 +211,10 @@ async function fetchGifts(
   options: TimelineOptions,
   take: number,
   scope: PrivacyScope,
+  today: PlainDate,
 ) {
+  const todayDb = new Date(Date.UTC(today.year, today.month - 1, today.day));
+  const historicalTo = options.to && options.to < todayDb ? options.to : todayDb;
   return prisma.gift.findMany({
     where: {
       ownerId,
@@ -208,8 +223,8 @@ async function fetchGifts(
       status: "GIVEN",
       occurredOn: {
         not: null,
+        lte: historicalTo,
         ...(options.from ? { gte: options.from } : {}),
-        ...(options.to ? { lte: options.to } : {}),
       },
       ...(options.contactId ? { contactId: options.contactId } : {}),
     },
@@ -264,7 +279,7 @@ function lifeEventEntry(row: LifeEventRow): TimelineEntry {
   };
 }
 
-function importantDateEntry(row: ImportantDateRow, today: PlainDate): TimelineEntry {
+function importantDateEntry(row: ImportantDateRow): TimelineEntry {
   const date = plainDateFromDb(row.date);
   return {
     id: row.id,
@@ -273,7 +288,6 @@ function importantDateEntry(row: ImportantDateRow, today: PlainDate): TimelineEn
     precision: row.precision,
     title: row.label,
     detail: row.notes,
-    upcoming: date.year > today.year,
     term: row.type ? { label: row.type.label, icon: row.type.icon, color: row.type.color } : null,
     contacts: [row.contact],
     href: `/people/${row.contactId}`,

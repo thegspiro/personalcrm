@@ -11,7 +11,7 @@ import {
   addPlainDays,
   calendarDateInTz,
   diffPlainDays,
-  nextOccurrence,
+  projectDateOccurrences,
   plainDateFromDb,
 } from "@/lib/dates";
 import { hasKnownYear, yearsSince, type DatePrecision } from "@/lib/date-precision";
@@ -97,6 +97,7 @@ export async function getUpcomingDates(
   timezone: string,
   windowDays = 45,
   limit = 8,
+  contactId?: string,
 ): Promise<UpcomingDate[]> {
   const today = calendarDateInTz(new Date(), timezone);
   const horizon = addPlainDays(today, windowDays);
@@ -105,6 +106,7 @@ export async function getUpcomingDates(
   const rows = await prisma.importantDate.findMany({
     where: {
       ownerId,
+      ...(contactId ? { contactId } : {}),
       contact: { isArchived: false, ...(privacy.unlocked ? {} : { isPrivate: false }) },
     },
     include: {
@@ -116,10 +118,11 @@ export async function getUpcomingDates(
   const upcoming: UpcomingDate[] = [];
 
   for (const row of rows) {
-    if (row.precision === "YEAR" || row.precision === "MONTH") continue;
-
     const anchor = plainDateFromDb(row.date);
-    const occursOn = nextOccurrence(anchor, today, row.recurrence);
+    const occursOn = projectDateOccurrences(anchor, row.precision, row.recurrence, today, {
+      from: today,
+      to: horizon,
+    })[0];
     if (!occursOn) continue;
 
     const daysAway = diffPlainDays(today, occursOn);

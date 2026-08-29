@@ -6,6 +6,8 @@ import { buildTimeline, type TimelineKind } from "@/server/queries/timeline";
 import { TimelineList } from "@/components/timeline/timeline-list";
 import { TimelineFilters } from "@/components/timeline/timeline-filters";
 import { calendarDateInTz, parsePlainDate, plainDateToDb } from "@/lib/dates";
+import { getUpcomingDates } from "@/server/queries/dashboard";
+import { UpcomingDatesWidget } from "@/components/dashboard/widgets";
 
 export const metadata: Metadata = { title: "Timeline" };
 export const dynamic = "force-dynamic";
@@ -38,13 +40,16 @@ export default async function TimelinePage({
   const fromPlain = first("from") ? parsePlainDate(first("from")!) : null;
   const toPlain = first("to") ? parsePlainDate(first("to")!) : null;
 
-  const entries = await buildTimeline(user.id, timezone, {
-    kinds,
-    search: first("q"),
-    from: fromPlain ? plainDateToDb(fromPlain) : undefined,
-    to: toPlain ? plainDateToDb(toPlain) : undefined,
-    take: 100,
-  });
+  const [entries, upcomingDates] = await Promise.all([
+    buildTimeline(user.id, timezone, {
+      kinds,
+      search: first("q"),
+      from: fromPlain ? plainDateToDb(fromPlain) : undefined,
+      to: toPlain ? plainDateToDb(toPlain) : undefined,
+      take: 100,
+    }),
+    getUpcomingDates(user.id, timezone, 366, 100),
+  ]);
 
   const today = calendarDateInTz(new Date(), timezone);
 
@@ -54,7 +59,7 @@ export default async function TimelinePage({
       <div>
         <h2 className="text-lg font-semibold tracking-tight">Timeline</h2>
         <p className="text-xs text-muted-foreground">
-          Everything, newest first — including history you backfilled.
+          History, newest first — recurring reminders are projected separately below.
         </p>
       </div>
 
@@ -68,6 +73,8 @@ export default async function TimelinePage({
         emptyTitle="Nothing to show"
         emptyDescription="Log an interaction, or widen the filters."
       />
+
+      <UpcomingDatesWidget dates={upcomingDates} />
     </div>
   );
 }

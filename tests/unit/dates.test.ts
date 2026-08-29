@@ -9,6 +9,7 @@ import {
   plainDateFromDb,
   plainDateKey,
   plainDateToDb,
+  projectDateOccurrences,
   startOfDayInTz,
   yearsBetween,
   zonedStartOfDay,
@@ -174,6 +175,111 @@ describe("nextOccurrence", () => {
   it("returns a future non-recurring date unchanged", () => {
     const next = nextOccurrence({ year: 2026, month: 12, day: 25 }, today, "NONE");
     expect(plainDateKey(next!)).toBe("2026-12-25");
+  });
+});
+
+describe("projectDateOccurrences", () => {
+  const today = { year: 2026, month: 6, day: 15 };
+
+  it("projects annual dates without losing their known anchor year", () => {
+    const anchor = { year: 1990, month: 7, day: 4 };
+    const occurrences = projectDateOccurrences(anchor, "DAY", "ANNUAL", today, {
+      from: today,
+      to: { year: 2027, month: 7, day: 4 },
+    });
+    expect(occurrences.map(plainDateKey)).toEqual(["2026-07-04", "2027-07-04"]);
+    expect(anchor.year).toBe(1990);
+  });
+
+  it("projects monthly dates across the year boundary", () => {
+    const occurrences = projectDateOccurrences(
+      { year: 2020, month: 1, day: 10 },
+      "DAY",
+      "MONTHLY",
+      { year: 2026, month: 11, day: 20 },
+      {
+        from: { year: 2026, month: 12, day: 1 },
+        to: { year: 2027, month: 2, day: 10 },
+      },
+    );
+    expect(occurrences.map(plainDateKey)).toEqual([
+      "2026-12-10",
+      "2027-01-10",
+      "2027-02-10",
+    ]);
+  });
+
+  it("projects both known- and unknown-year day precision", () => {
+    const window = { from: today, to: { year: 2026, month: 8, day: 1 } };
+    expect(
+      projectDateOccurrences({ year: 1985, month: 7, day: 2 }, "DAY", "ANNUAL", today, window)
+        .map(plainDateKey),
+    ).toEqual(["2026-07-02"]);
+    expect(
+      projectDateOccurrences(
+        { year: 1904, month: 7, day: 2 },
+        "MONTH_DAY",
+        "ANNUAL",
+        today,
+        window,
+      ).map(plainDateKey),
+    ).toEqual(["2026-07-02"]);
+    expect(
+      projectDateOccurrences({ year: 2020, month: 7, day: 1 }, "MONTH", "ANNUAL", today, window),
+    ).toEqual([]);
+  });
+
+  it("applies the shared Feb 29 policy throughout a range", () => {
+    const occurrences = projectDateOccurrences(
+      { year: 1992, month: 2, day: 29 },
+      "DAY",
+      "ANNUAL",
+      { year: 2027, month: 1, day: 1 },
+      {
+        from: { year: 2027, month: 1, day: 1 },
+        to: { year: 2028, month: 3, day: 1 },
+      },
+    );
+    expect(occurrences.map(plainDateKey)).toEqual(["2027-02-28", "2028-02-29"]);
+  });
+
+  it("filters occurrences to inclusive range bounds and classifies one-time dates", () => {
+    const window = {
+      from: { year: 2026, month: 7, day: 1 },
+      to: { year: 2026, month: 7, day: 31 },
+    };
+    expect(
+      projectDateOccurrences({ year: 1990, month: 6, day: 30 }, "DAY", "MONTHLY", today, window)
+        .map(plainDateKey),
+    ).toEqual(["2026-07-30"]);
+    expect(
+      projectDateOccurrences({ year: 2020, month: 1, day: 1 }, "DAY", "NONE", today, window),
+    ).toEqual([]);
+    expect(
+      projectDateOccurrences({ year: 2026, month: 7, day: 31 }, "DAY", "NONE", today, window)
+        .map(plainDateKey),
+    ).toEqual(["2026-07-31"]);
+  });
+
+  it("uses the user's calendar day at a timezone boundary", () => {
+    const instant = new Date("2026-07-04T02:00:00Z");
+    const newYorkToday = calendarDateInTz(instant, NY);
+    const tokyoToday = calendarDateInTz(instant, TOKYO);
+    const anchor = { year: 1990, month: 7, day: 3 };
+    const horizon = { year: 2026, month: 7, day: 4 };
+
+    expect(
+      projectDateOccurrences(anchor, "DAY", "ANNUAL", newYorkToday, {
+        from: newYorkToday,
+        to: horizon,
+      }).map(plainDateKey),
+    ).toEqual(["2026-07-03"]);
+    expect(
+      projectDateOccurrences(anchor, "DAY", "ANNUAL", tokyoToday, {
+        from: tokyoToday,
+        to: horizon,
+      }),
+    ).toEqual([]);
   });
 });
 
