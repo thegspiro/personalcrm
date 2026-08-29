@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { CloudOff } from "lucide-react";
+import { toast } from "sonner";
 
 
 /**
@@ -11,25 +12,185 @@ import { CloudOff } from "lucide-react";
  * store, and telling you when what you are looking at is old.
  */
 
-/** Registers the worker, and wipes its caches when the session ends. */
+export type WorkerUpdateState = "idle" | "installing" | "waiting" | "activating";
+
+type WorkerSnapshot = {
+  update: WorkerUpdateState;
+  failures: number;
+};
+
+const listeners = new Set<() => void>();
+let snapshot: WorkerSnapshot = { update: "idle", failures: 0 };
+const serverSnapshot: WorkerSnapshot = { update: "idle", failures: 0 };
+let retainedRegistration: ServiceWorkerRegistration | null = null;
+
+export function reduceWorkerSnapshot(
+  current: WorkerSnapshot,
+  event: "installing" | "installed" | "activate" | "activated" | "failed",
+): WorkerSnapshot {
+  if (event === "failed") return { update: "idle", failures: current.failures + 1 };
+  if (event === "installing") return { ...current, update: "installing" };
+  if (event === "installed") return { ...current, update: "waiting" };
+  if (event === "activate") return { ...current, update: "activating" };
+  return { ...current, update: "idle", failures: 0 };
+}
+
+function publish(event: Parameters<typeof reduceWorkerSnapshot>[1]) {
+  snapshot = reduceWorkerSnapshot(snapshot, event);
+  listeners.forEach((listener) => listener());
+}
+
+function observeInstalling(registration: ServiceWorkerRegistration) {
+  const worker = registration.installing;
+  if (!worker) return;
+  publish("installing");
+  const statechange = () => {
+    if (worker.state === "installed" && navigator.serviceWorker.controller) publish("installed");
+    // register() can resolve even though fetching or evaluating an updated
+    // worker later fails. Browsers report that case by making the installing
+    // worker redundant, so it must feed the same failure warning as a rejected
+    // registration rather than leaving the UI stuck on "installing".
+    if (worker.state === "redundant") publish("failed");
+  };
+  worker.addEventListener("statechange", statechange);
+}
+
+/** Registers the worker and retains its lifecycle for the update UI. */
 export function ServiceWorkerRegistrar() {
   React.useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.register("/sw.js").catch(() => {
-      // A blocked or unsupported worker just means no offline reading. The app
-      // works exactly as it did before.
-    });
+    let cancelled = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const register = () => {
+      navigator.serviceWorker.register("/sw.js").then((registration) => {
+        if (cancelled) return;
+        retainedRegistration = registration;
+        snapshot = { ...snapshot, failures: 0 };
+        if (registration.waiting && navigator.serviceWorker.controller) publish("installed");
+        observeInstalling(registration);
+        registration.addEventListener("updatefound", () => observeInstalling(registration));
+      }).catch(() => {
+        if (cancelled) return;
+        publish("failed");
+        if (snapshot.failures < 3) retry = setTimeout(register, 1_000);
+      });
+    };
+    register();
+
+    const controllerchange = () => {
+      publish("activated");
+      if (reloadOnControllerChange) window.location.reload();
+    };
+    navigator.serviceWorker.addEventListener("controllerchange", controllerchange);
+    return () => {
+      cancelled = true;
+      clearTimeout(retry);
+      navigator.serviceWorker.removeEventListener("controllerchange", controllerchange);
+    };
   }, []);
 
   return null;
 }
 
-/** Tell the worker to throw everything away. */
-export function purgeOfflineCaches(): void {
-  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
-  void navigator.serviceWorker.ready
-    .then((registration) => registration.active?.postMessage({ type: "purge" }))
-    .catch(() => {});
+let reloadOnControllerChange = false;
+
+/** Bridges worker lifecycle state to a non-blocking Sonner notification. */
+export function ServiceWorkerUpdateNotification() {
+  const state = React.useSyncExternalStore(
+    (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+    () => snapshot,
+    () => serverSnapshot,
+  );
+
+  React.useEffect(() => {
+    if (state.update !== "waiting") return;
+    toast.info("An update is ready", {
+      id: "service-worker-update",
+      duration: Infinity,
+      action: {
+        label: "Reload to update",
+        onClick: () => {
+          reloadOnControllerChange = true;
+          publish("activate");
+          retainedRegistration?.waiting?.postMessage({ type: "activate-update" });
+        },
+      },
+    });
+  }, [state.update]);
+
+  React.useEffect(() => {
+    if (state.failures < 3) return;
+    toast.warning("Offline reading could not start", {
+      id: "service-worker-registration-failed",
+      description: "The app still works online. You can reset offline data in Settings.",
+      duration: Infinity,
+    });
+  }, [state.failures]);
+  return null;
+}
+
+/** Fully reset the app's root worker and deliberately-prefixed caches. */
+export async function resetOfflineWorker(): Promise<void> {
+  if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+    const registration = await navigator.serviceWorker.getRegistration("/");
+    await registration?.unregister();
+  }
+  await deleteOfflineCachesFromPage();
+}
+
+const PURGE_ACK_TIMEOUT_MS = 2_000;
+
+/** Delete this application's caches without relying on a worker. */
+async function deleteOfflineCachesFromPage(): Promise<void> {
+  if (typeof caches === "undefined") return;
+
+  try {
+    const names = await caches.keys();
+    await Promise.all(
+      names.filter((name) => name.startsWith("pcrm-")).map((name) => caches.delete(name)),
+    );
+  } catch {
+    // Blocked Cache Storage is equivalent to there being nothing we can keep.
+  }
+}
+
+/** Tell the worker to throw everything away and wait until it confirms that it has. */
+export async function purgeOfflineCaches(): Promise<void> {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+    await deleteOfflineCachesFromPage();
+    return;
+  }
+
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    const worker = registration?.active ?? navigator.serviceWorker.controller;
+    if (!worker) {
+      await deleteOfflineCachesFromPage();
+      return;
+    }
+
+    const acknowledged = await new Promise<boolean>((resolve) => {
+      const channel = new MessageChannel();
+      const finish = (value: boolean) => {
+        window.clearTimeout(timeout);
+        channel.port1.close();
+        resolve(value);
+      };
+      const timeout = window.setTimeout(() => finish(false), PURGE_ACK_TIMEOUT_MS);
+      channel.port1.onmessage = () => finish(true);
+      channel.port1.onmessageerror = () => finish(false);
+
+      try {
+        worker.postMessage({ type: "purge" }, [channel.port2]);
+      } catch {
+        finish(false);
+      }
+    });
+
+    if (!acknowledged) await deleteOfflineCachesFromPage();
+  } catch {
+    await deleteOfflineCachesFromPage();
+  }
 }
 
 /**
