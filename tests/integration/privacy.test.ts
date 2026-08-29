@@ -143,7 +143,10 @@ describe.skipIf(!hasTestDatabase)("privacy filters", () => {
         { ownerId, name: "Mixed household" },
       ],
     });
-    const households = await prisma.household.findMany({ orderBy: { name: "asc" } });
+    const households = await prisma.household.findMany({
+      where: { ownerId },
+      orderBy: { name: "asc" },
+    });
     await prisma.householdMember.createMany({
       data: [
         {
