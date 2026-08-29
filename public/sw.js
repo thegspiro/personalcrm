@@ -39,6 +39,19 @@ const PAGES = `pcrm-pages-${VERSION}`;
 const ASSETS = `pcrm-assets-${VERSION}`;
 const OURS = [PAGES, ASSETS];
 
+// A purge closes caching as well as deleting what is already present. Without
+// this gate, the navigation that follows a lock can immediately recreate an
+// empty pages cache (and a sign-out can cache login-page assets) before the
+// caller gets a chance to inspect Cache Storage. A cacheable page explicitly
+// opens the gate again through `cache-page`.
+// Start closed as well: a browser may terminate and restart the worker between
+// the purge acknowledgement and the following navigation. Cache reads remain
+// available while closed, but only a fresh `cache-page` opt-in permits writes.
+let cachingEnabled = false;
+let cacheEpoch = 0;
+
+// No install-time skipWaiting: an update remains waiting until the page sends
+// the explicit activation message below.
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
@@ -79,7 +92,12 @@ self.addEventListener("message", (event) => {
     event.ports[0]?.postMessage({ servedFromCache: answer });
   } else if (data.type === "purge") {
     // Sent on lock and on sign-out. Everything goes, including the shell.
-    event.waitUntil(purgeEverything());
+    event.waitUntil(
+      (async () => {
+        await purgeEverything();
+        event.ports[0]?.postMessage({ purged: true });
+      })(),
+    );
   } else if (data.type === "activate-update") {
     // Keep this message event alive until the browser has accepted the
     // activation request. Without waitUntil the waiting worker may be stopped
@@ -96,13 +114,16 @@ self.addEventListener("message", (event) => {
  * the decision to store is always the server's rather than a guess made here.
  */
 async function cachePage(url) {
+  const epoch = cacheEpoch;
   try {
     const response = await fetch(url, { credentials: "same-origin" });
     if (!response.ok) return;
     // A redirect means we were bounced — to /login or /unlock — and storing
     // that under the original URL would show the wrong page offline.
     if (response.redirected) return;
+    if (epoch !== cacheEpoch) return;
 
+    cachingEnabled = true;
     const cache = await caches.open(PAGES);
     await cache.put(url, response.clone());
   } catch {
@@ -111,6 +132,8 @@ async function cachePage(url) {
 }
 
 async function purgeEverything() {
+  cachingEnabled = false;
+  cacheEpoch += 1;
   const names = await caches.keys();
   await Promise.all(names.filter((name) => name.startsWith("pcrm-")).map((name) => caches.delete(name)));
 }
@@ -157,11 +180,12 @@ self.addEventListener("fetch", (event) => {
  * worse than a spinner. The cache is a fallback, not a speed-up.
  */
 async function networkFirst(request) {
+  const epoch = cacheEpoch;
   try {
     const response = await fetch(request);
     // Only refresh what is already stored. A page that never opted in does not
     // get cached just because you happened to visit it.
-    if (response.ok && !response.redirected) {
+    if (cachingEnabled && epoch === cacheEpoch && response.ok && !response.redirected) {
       const cache = await caches.open(PAGES);
       const existing = await cache.match(request.url);
       if (existing) await cache.put(request.url, response.clone());
@@ -189,11 +213,15 @@ async function networkFirst(request) {
 }
 
 async function cacheFirst(request) {
+  const epoch = cacheEpoch;
+
+  // A closed gate prevents writes, not offline reads. This matters when the
+  // browser restarts the worker before loading an already-saved offline page.
   const cached = await caches.match(request.url);
   if (cached) return cached;
 
   const response = await fetch(request);
-  if (response.ok) {
+  if (cachingEnabled && epoch === cacheEpoch && response.ok) {
     const cache = await caches.open(ASSETS);
     await cache.put(request.url, response.clone());
   }

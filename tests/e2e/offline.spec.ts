@@ -61,6 +61,13 @@ async function cachedPages(page: Page): Promise<string[]> {
   });
 }
 
+/** Every cache owned by the app, including deliberately seeded sentinels. */
+async function offlineCacheNames(page: Page): Promise<string[]> {
+  return page.evaluate(async () =>
+    (await caches.keys()).filter((name) => name.startsWith("pcrm-")),
+  );
+}
+
 /**
  * Toggle the private marker and wait for it to actually stick.
  *
@@ -275,6 +282,9 @@ test("locking throws the saved pages away", async ({ page }) => {
   await page.goto("/people");
   await readyWorker(page);
   await expect.poll(() => cachedPages(page), { timeout: 15_000 }).toContain("/people");
+  await page.evaluate(async () => {
+    await caches.open("pcrm-e2e-lock-sentinel");
+  });
 
   await openPrivacySettings(page);
   if ((await page.getByText("PIN set").count()) === 0) {
@@ -287,14 +297,14 @@ test("locking throws the saved pages away", async ({ page }) => {
   if (!(await requirePin.isChecked())) await requirePin.click();
 
   await page.getByRole("button", { name: /Lock now/i }).click();
-  await page.waitForTimeout(2_000);
+  await page.waitForURL("/");
 
   // A saved copy of a page seen while unlocked would make the lock decorative,
   // so everything from before is gone. Pages visited *after* locking may be
   // saved again and that is correct: while locked, every query has already
   // excluded private rows, so what lands on disk is exactly what someone
   // holding the phone could see anyway.
-  expect(await cachedPages(page)).not.toContain("/people");
+  expect(await offlineCacheNames(page)).toEqual([]);
 
   // Put it back so the rest of the suite is unaffected.
   await page.goto("/unlock");
@@ -305,4 +315,19 @@ test("locking throws the saved pages away", async ({ page }) => {
   await page.getByLabel("Remove the PIN").fill(PIN);
   await page.getByRole("button", { name: "Remove PIN" }).click();
   await expect(page.getByText("PIN set")).toHaveCount(0);
+});
+
+test("signing out throws every saved cache away", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto("/");
+  await readyWorker(page);
+  await page.evaluate(async () => {
+    await caches.open("pcrm-e2e-sign-out-sentinel");
+  });
+
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+  await page.waitForURL(/\/login$/);
+
+  expect(await offlineCacheNames(page)).toEqual([]);
 });
