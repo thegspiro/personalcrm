@@ -37,12 +37,26 @@ const VERSION = "v1";
 const servedFromCache = new Set();
 const PAGES = `pcrm-pages-${VERSION}`;
 const ASSETS = `pcrm-assets-${VERSION}`;
-const OURS = [PAGES, ASSETS];
+const SHELL = `pcrm-shell-${VERSION}`;
+const OURS = [PAGES, ASSETS, SHELL];
 
 self.addEventListener("install", (event) => {
   // Take over promptly: a half-updated worker serving an old shell against a
   // new server is worse than a moment's delay.
-  event.waitUntil(self.skipWaiting());
+  event.waitUntil(
+    (async () => {
+      try {
+        const response = await fetch("/offline", { credentials: "same-origin" });
+        if (!response.ok || response.redirected) throw new Error("offline document unavailable");
+        const cache = await caches.open(SHELL);
+        await cache.put("/offline", response);
+      } catch {
+        // Do not strand an old worker if the server is unavailable mid-deploy.
+        // networkFirst still has its minimal inline Response as a last resort.
+      }
+      await self.skipWaiting();
+    })(),
+  );
 });
 
 self.addEventListener("activate", (event) => {
@@ -168,14 +182,24 @@ async function networkFirst(request) {
     }
     return response;
   } catch {
-    const cached = await caches.match(request.url);
-    if (cached) {
-      servedFromCache.add(request.url);
-      return cached;
+    try {
+      const cached = await caches.match(request.url);
+      if (cached) {
+        servedFromCache.add(request.url);
+        return cached;
+      }
+    } catch {
+      // Cache Storage can reject if its backing store is unavailable or
+      // corrupt. Continue to the independently stored offline document.
     }
 
-    const shell = await caches.match("/offline");
-    if (shell) return shell;
+    try {
+      const shellCache = await caches.open(SHELL);
+      const shell = await shellCache.match("/offline");
+      if (shell?.ok) return shell;
+    } catch {
+      // The minimal response below deliberately has no cache dependency.
+    }
 
     return new Response(
       "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>" +
