@@ -57,6 +57,7 @@ import {
   updateRelationship,
   updateTask,
 } from "@/server/actions/details";
+import { updateContactBirthday } from "@/server/actions/contacts";
 
 // --- facts -----------------------------------------------------------------
 
@@ -196,6 +197,7 @@ export interface DateItem {
   typeId: string | null;
   notes: string | null;
   type: { label: string; icon: string | null; color: string | null } | null;
+  canonicalBirthday?: boolean;
 }
 
 /**
@@ -292,15 +294,41 @@ export function DatesSection({
         dates.map((item) => (
           <SectionRow
             key={item.id}
-            onDelete={() => void run(() => deleteImportantDate(item.id), "Removed")}
-            deleteLabel="Delete date"
+            onDelete={
+              item.canonicalBirthday
+                ? undefined
+                : () => void run(() => deleteImportantDate(item.id), "Removed")
+            }
+            deleteLabel={item.canonicalBirthday ? undefined : "Delete date"}
             editLabel="Edit date"
             editForm={(close) => (
-              <form action={add(updateImportantDate, close, "Saved")} className="grid gap-2.5">
-                <input type="hidden" name="id" value={item.id} />
-                <ImportantDateFields formId={`date-${item.id}`} types={types} item={item} />
-                <SubmitButton size="sm">Save</SubmitButton>
-              </form>
+              item.canonicalBirthday ? (
+                <form
+                  action={add(updateContactBirthday, close, "Birthday saved")}
+                  className="grid gap-2.5"
+                >
+                  <input type="hidden" name="id" value={contactId} />
+                  <DateField
+                    name="birthDate"
+                    idPrefix={`date-${item.id}-birthday`}
+                    label="Birthday"
+                    required
+                    presets={[]}
+                    defaultValue={plainDateKey(item.date)}
+                    defaultPrecision={item.precision}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Birthday is stored on this person and repeats every year.
+                  </p>
+                  <SubmitButton size="sm">Save</SubmitButton>
+                </form>
+              ) : (
+                <form action={add(updateImportantDate, close, "Saved")} className="grid gap-2.5">
+                  <input type="hidden" name="id" value={item.id} />
+                  <ImportantDateFields formId={`date-${item.id}`} types={types} item={item} />
+                  <SubmitButton size="sm">Save</SubmitButton>
+                </form>
+              )
             )}
           >
             <div className="flex items-center gap-2">
