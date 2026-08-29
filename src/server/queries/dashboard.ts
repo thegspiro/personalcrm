@@ -15,6 +15,7 @@ import {
   plainDateFromDb,
 } from "@/lib/dates";
 import { hasKnownYear, yearsSince, type DatePrecision } from "@/lib/date-precision";
+import { fetchContactBirthdays, isBirthdayImportantDate } from "./birthdays";
 
 export interface OverdueContact {
   id: string;
@@ -102,23 +103,37 @@ export async function getUpcomingDates(
   const horizon = addPlainDays(today, windowDays);
 
   const privacy = await privacyScope();
-  const rows = await prisma.importantDate.findMany({
-    where: {
-      ownerId,
-      contact: { isArchived: false, ...(privacy.unlocked ? {} : { isPrivate: false }) },
-    },
-    include: {
-      type: true,
-      contact: { select: { id: true, firstName: true, lastName: true } },
-    },
-  });
+  const [rows, birthdays] = await Promise.all([
+    prisma.importantDate.findMany({
+      where: {
+        ownerId,
+        contact: { isArchived: false, ...(privacy.unlocked ? {} : { isPrivate: false }) },
+      },
+      include: {
+        type: true,
+        contact: { select: { id: true, firstName: true, lastName: true } },
+      },
+    }),
+    fetchContactBirthdays(ownerId, privacy),
+  ]);
 
   const upcoming: UpcomingDate[] = [];
 
-  for (const row of rows) {
+  // Contact.birthDate is authoritative. Birthday-typed legacy rows remain in
+  // storage for reminder compatibility, but are hidden when a canonical value
+  // exists so an account never sees the same birthday twice.
+  const canonicalContactIds = new Set(birthdays.map((birthday) => birthday.contactId));
+  const sources = [
+    ...birthdays,
+    ...rows.filter(
+      (row) => !(canonicalContactIds.has(row.contactId) && isBirthdayImportantDate(row)),
+    ),
+  ];
+
+  for (const row of sources) {
     if (row.precision === "YEAR" || row.precision === "MONTH") continue;
 
-    const anchor = plainDateFromDb(row.date);
+    const anchor = "canonicalBirthday" in row ? row.date : plainDateFromDb(row.date);
     const occursOn = nextOccurrence(anchor, today, row.recurrence);
     if (!occursOn) continue;
 

@@ -37,7 +37,8 @@ const VERSION = "v1";
 const servedFromCache = new Set();
 const PAGES = `pcrm-pages-${VERSION}`;
 const ASSETS = `pcrm-assets-${VERSION}`;
-const OURS = [PAGES, ASSETS];
+const SHELL = `pcrm-shell-${VERSION}`;
+const OURS = [PAGES, ASSETS, SHELL];
 
 // A purge closes caching as well as deleting what is already present. Without
 // this gate, the navigation that follows a lock can immediately recreate an
@@ -49,6 +50,25 @@ const OURS = [PAGES, ASSETS];
 // available while closed, but only a fresh `cache-page` opt-in permits writes.
 let cachingEnabled = false;
 let cacheEpoch = 0;
+
+self.addEventListener("install", (event) => {
+  // Prepare the fallback before this generation can activate. Do not call
+  // skipWaiting here: an update remains waiting until the page explicitly
+  // accepts it.
+  event.waitUntil(
+    (async () => {
+      try {
+        const response = await fetch("/offline", { credentials: "same-origin" });
+        if (!response.ok || response.redirected) throw new Error("offline document unavailable");
+        const cache = await caches.open(SHELL);
+        await cache.put("/offline", response);
+      } catch {
+        // Do not strand an old worker if the server is unavailable mid-deploy.
+        // networkFirst still has its minimal inline Response as a last resort.
+      }
+    })(),
+  );
+});
 
 // No install-time skipWaiting: an update remains waiting until the page sends
 // the explicit activation message below.
@@ -198,7 +218,7 @@ async function networkFirst(request) {
       return cached;
     }
 
-    const shell = await caches.match("/offline");
+    const shell = await caches.match("/offline", { cacheName: SHELL });
     if (shell) return shell;
 
     return new Response(

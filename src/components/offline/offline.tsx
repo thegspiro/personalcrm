@@ -137,7 +137,6 @@ export async function resetOfflineWorker(): Promise<void> {
   }
   await deleteOfflineCachesFromPage();
 }
-
 const PURGE_ACK_TIMEOUT_MS = 2_000;
 
 /** Delete this application's caches without relying on a worker. */
