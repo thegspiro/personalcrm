@@ -39,6 +39,7 @@ import { calendarDateInTz, plainDateFromDb, plainDateKey } from "@/lib/dates";
 import { cadenceMessage } from "@/lib/format";
 import { cadenceStatus, daysSinceLastInteraction, daysUntilTouch } from "@/lib/cadence";
 import { displayName } from "@/lib/utils";
+import { isBirthdayImportantDate, projectContactBirthday } from "@/server/queries/birthdays";
 
 export const dynamic = "force-dynamic";
 
@@ -111,6 +112,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
   const today = calendarDateInTz(new Date(), timezone);
   const daysSince = daysSinceLastInteraction(contact.lastInteractionAt, timezone);
+  const birthday = projectContactBirthday(contact);
 
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
@@ -318,10 +320,15 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
         <DatesSection
           contactId={contact.id}
-          dates={contact.importantDates.map((item) => ({
+          dates={[
+            ...(birthday ? [birthday] : []),
+            ...contact.importantDates.filter(
+              (item) => !(contact.birthDate && isBirthdayImportantDate(item)),
+            ),
+          ].map((item) => ({
             id: item.id,
             label: item.label,
-            date: plainDateFromDb(item.date),
+            date: "canonicalBirthday" in item ? item.date : plainDateFromDb(item.date),
             precision: item.precision,
             recurrence: item.recurrence,
             typeId: item.typeId,
@@ -330,6 +337,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             type: item.type
               ? { label: item.type.label, icon: item.type.icon, color: item.type.color }
               : null,
+            canonicalBirthday: "canonicalBirthday" in item,
           }))}
           types={terms.DATE_TYPE}
         />
