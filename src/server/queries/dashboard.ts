@@ -78,6 +78,8 @@ export interface UpcomingDate {
   term: { label: string; icon: string | null; color: string | null } | null;
   /** The next time it comes round. */
   occursOn: PlainDate;
+  /** Date and precision to render; partial one-time dates stay partial. */
+  displayDate: PlainDate;
   daysAway: number;
   /** Which anniversary this will be, when the original year is known. */
   turning: number | null;
@@ -134,9 +136,13 @@ export async function getUpcomingDates(
       contact: row.contact,
       term: row.type ? { label: row.type.label, icon: row.type.icon, color: row.type.color } : null,
       occursOn,
+      displayDate: row.recurrence === "NONE" ? anchor : occursOn,
       daysAway,
-      turning: hasKnownYear(row.precision) ? yearsSince(anchor, row.precision, occursOn) : null,
-      precision: row.precision,
+      turning:
+        row.recurrence === "ANNUAL" && hasKnownYear(row.precision)
+          ? yearsSince(anchor, row.precision, occursOn)
+          : null,
+      precision: row.recurrence === "NONE" ? row.precision : "DAY",
     });
   }
 

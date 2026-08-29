@@ -261,6 +261,30 @@ describe("projectDateOccurrences", () => {
     ).toEqual(["2026-07-31"]);
   });
 
+  it("keeps future partial one-time dates upcoming without inventing a display day", () => {
+    expect(
+      projectDateOccurrences(
+        { year: 2026, month: 8, day: 1 },
+        "MONTH",
+        "NONE",
+        today,
+        { from: today, to: { year: 2026, month: 8, day: 31 } },
+      ).map(plainDateKey),
+    ).toEqual(["2026-08-01"]);
+
+    // The year is already in progress, so today is the earliest honest sort
+    // key even though callers still render the stored value as just "2026".
+    expect(
+      projectDateOccurrences(
+        { year: 2026, month: 1, day: 1 },
+        "YEAR",
+        "NONE",
+        today,
+        { from: today, to: { year: 2026, month: 12, day: 31 } },
+      ).map(plainDateKey),
+    ).toEqual(["2026-06-15"]);
+  });
+
   it("uses the user's calendar day at a timezone boundary", () => {
     const instant = new Date("2026-07-04T02:00:00Z");
     const newYorkToday = calendarDateInTz(instant, NY);

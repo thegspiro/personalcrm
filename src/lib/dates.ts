@@ -151,16 +151,25 @@ export function projectDateOccurrences(
   window: OccurrenceWindow,
 ): PlainDate[] {
   if (diffPlainDays(window.from, window.to) < 0) return [];
-  if (precision === "YEAR" || precision === "MONTH") return [];
 
   const from = diffPlainDays(today, window.from) >= 0 ? window.from : today;
   if (diffPlainDays(from, window.to) < 0) return [];
 
   if (recurrence === "NONE") {
-    return diffPlainDays(from, anchor) >= 0 && diffPlainDays(anchor, window.to) >= 0
-      ? [anchor]
-      : [];
+    const end =
+      precision === "YEAR"
+        ? { year: anchor.year, month: 12, day: 31 }
+        : precision === "MONTH"
+          ? { ...anchor, day: daysInMonth(anchor.year, anchor.month) }
+          : anchor;
+    if (diffPlainDays(from, end) < 0 || diffPlainDays(anchor, window.to) < 0) return [];
+    // A partial one-time date has no honest exact day. Use the first possible
+    // day still inside the requested window as its sort/distance key; callers
+    // retain the stored anchor and precision for display.
+    return [diffPlainDays(from, anchor) >= 0 ? anchor : from];
   }
+
+  if (precision === "YEAR" || precision === "MONTH") return [];
 
   const occurrences: PlainDate[] = [];
   if (recurrence === "ANNUAL") {
