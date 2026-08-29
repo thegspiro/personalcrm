@@ -17,18 +17,23 @@ test("offers an update action and reloads after the new worker takes control", a
     };
     registration.installing = null;
     registration.active = null;
-    registration.waiting = {
-      postMessage(message) {
+    const waitingWorker = {
+      postMessage(message: unknown) {
         sessionStorage.setItem("worker-activation-message", JSON.stringify(message));
         setTimeout(() => container.dispatchEvent(new Event("controllerchange")), 0);
       },
     };
+    registration.waiting = null;
+    const addRegistrationListener = registration.addEventListener.bind(registration);
+    registration.addEventListener = ((...args: Parameters<EventTarget["addEventListener"]>) => {
+      addRegistrationListener(...args);
+      if (args[0] === "updatefound") {
+        Object.assign(window, { workerUpdateListenerAttached: true });
+      }
+    }) as EventTarget["addEventListener"];
     Object.assign(container, {
       controller: {},
-      register: async () => {
-        Object.assign(window, { workerRegistrationObserved: true });
-        return registration;
-      },
+      register: async () => registration,
       getRegistrations: async () => [registration],
       ready: Promise.resolve(registration),
     });
@@ -38,6 +43,7 @@ test("offers an update action and reloads after the new worker takes control", a
         const worker = new EventTarget() as EventTarget & { state: string };
         worker.state = "installing";
         registration.installing = worker;
+        registration.waiting = waitingWorker;
         registration.dispatchEvent(new Event("updatefound"));
         worker.state = "installed";
         worker.dispatchEvent(new Event("statechange"));
@@ -46,14 +52,15 @@ test("offers an update action and reloads after the new worker takes control", a
   });
 
   await page.goto("/login");
-  // Registration is attached from a React effect. Waiting for the mock to be
-  // called avoids dispatching updatefound before the registrar has subscribed.
+  // Registration is attached from a React effect. Wait for updatefound's
+  // listener itself, rather than merely for register(), so the event cannot be
+  // lost between the promise resolving and the registrar subscribing.
   await expect
     .poll(() =>
       page.evaluate(() =>
         Boolean(
-          (window as unknown as { workerRegistrationObserved?: boolean })
-            .workerRegistrationObserved,
+          (window as unknown as { workerUpdateListenerAttached?: boolean })
+            .workerUpdateListenerAttached,
         ),
       ),
     )
