@@ -54,7 +54,8 @@ describe("service worker update state", () => {
   });
 
   it("counts repeated registration failures", () => {
-    const once = reduceWorkerSnapshot({ update: "idle", failures: 0 }, "failed");
+    const once = reduceWorkerSnapshot({ update: "installing", failures: 0 }, "failed");
+    expect(once).toEqual({ update: "idle", failures: 1 });
     expect(reduceWorkerSnapshot(reduceWorkerSnapshot(once, "failed"), "failed").failures).toBe(3);
   });
 });

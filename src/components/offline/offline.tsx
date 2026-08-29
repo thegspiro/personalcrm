@@ -28,7 +28,7 @@ export function reduceWorkerSnapshot(
   current: WorkerSnapshot,
   event: "installing" | "installed" | "activate" | "activated" | "failed",
 ): WorkerSnapshot {
-  if (event === "failed") return { ...current, failures: current.failures + 1 };
+  if (event === "failed") return { update: "idle", failures: current.failures + 1 };
   if (event === "installing") return { ...current, update: "installing" };
   if (event === "installed") return { ...current, update: "waiting" };
   if (event === "activate") return { ...current, update: "activating" };
@@ -46,6 +46,11 @@ function observeInstalling(registration: ServiceWorkerRegistration) {
   publish("installing");
   const statechange = () => {
     if (worker.state === "installed" && navigator.serviceWorker.controller) publish("installed");
+    // register() can resolve even though fetching or evaluating an updated
+    // worker later fails. Browsers report that case by making the installing
+    // worker redundant, so it must feed the same failure warning as a rejected
+    // registration rather than leaving the UI stuck on "installing".
+    if (worker.state === "redundant") publish("failed");
   };
   worker.addEventListener("statechange", statechange);
 }
