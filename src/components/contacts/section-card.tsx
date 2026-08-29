@@ -107,13 +107,16 @@ export function SectionRow({
   children,
   onDelete,
   deleteLabel = "Delete",
+  deleteConfirm,
   editForm,
   editLabel = "Edit",
   className,
+  id,
 }: {
   children: React.ReactNode;
   onDelete?: () => void;
   deleteLabel?: string;
+  deleteConfirm?: string;
   /**
    * Receives a `close` callback, so a saved edit collapses the form back to
    * the row it corrected.
@@ -121,12 +124,13 @@ export function SectionRow({
   editForm?: (close: () => void) => React.ReactNode;
   editLabel?: string;
   className?: string;
+  id?: string;
 }) {
   const [editing, setEditing] = React.useState(false);
 
   if (editing && editForm) {
     return (
-      <div className={cn("rounded-lg border border-accent-8 bg-card p-3", className)}>
+      <div id={id} tabIndex={-1} className={cn("rounded-lg border border-accent-8 bg-card p-3", className)}>
         {editForm(() => setEditing(false))}
         <button
           type="button"
@@ -141,8 +145,10 @@ export function SectionRow({
 
   return (
     <div
+      id={id}
+      tabIndex={-1}
       className={cn(
-        "group flex items-start gap-2 rounded-lg border border-border/70 px-3 py-2",
+        "group flex items-start gap-2 rounded-lg border border-border/70 px-3 py-2 target:border-accent-9 target:ring-2 target:ring-accent-6",
         className,
       )}
     >
@@ -162,9 +168,11 @@ export function SectionRow({
           {onDelete ? (
             <button
               type="button"
-              onClick={onDelete}
+              onClick={() => {
+                if (!deleteConfirm || window.confirm(deleteConfirm)) onDelete();
+              }}
               aria-label={deleteLabel}
-              className="rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
             >
               <span aria-hidden>×</span>
             </button>

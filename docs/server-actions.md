@@ -96,6 +96,10 @@ list, because a person missing from the form would be silently dropped on save.
 `updateRelationship` re-types both and keeps the `pairId`; `deleteRelationship`
 removes both. `settleDebt` records a date rather than deleting the row.
 
+Important-date and life-event updates and deletes also filter through their
+contact's privacy marker. The timeline exposes these controls, so an id retained
+from an unlocked view must become unreachable when that contact is locked.
+
 **An `update*` writes the whole form.** These are `PUT`s, not `PATCH`es: an
 absent field is stored as absent, not left alone. A form that offers a field
 when adding and not when editing therefore clears it on the first correction,

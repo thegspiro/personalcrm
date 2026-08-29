@@ -205,7 +205,7 @@ export interface DateItem {
  * writes whatever the form holds, so a form without the field would wipe the
  * note on every unrelated edit.
  */
-function ImportantDateFields({
+export function ImportantDateFields({
   formId,
   types,
   item,
@@ -292,7 +292,9 @@ export function DatesSection({
         dates.map((item) => (
           <SectionRow
             key={item.id}
+            id={`important-date-${item.id}`}
             onDelete={() => void run(() => deleteImportantDate(item.id), "Removed")}
+            deleteConfirm={`Delete the important date “${item.label}”?`}
             deleteLabel="Delete date"
             editLabel="Edit date"
             editForm={(close) => (
@@ -347,7 +349,7 @@ export interface LifeEventItem {
  * and `updateLifeEvent` writes both: a form that offered neither would clear a
  * backfilled range and demote a milestone every time you fixed a spelling.
  */
-function LifeEventFields({
+export function LifeEventFields({
   formId,
   types,
   event,
@@ -443,7 +445,9 @@ export function LifeEventsSection({
         events.map((event) => (
           <SectionRow
             key={event.id}
+            id={`life-event-${event.id}`}
             onDelete={() => void run(() => deleteLifeEvent(event.id), "Removed")}
+            deleteConfirm={`Permanently delete the life event “${event.title}” from this person's history?`}
             deleteLabel="Delete life event"
             editLabel="Edit life event"
             editForm={(close) => (
@@ -808,7 +812,7 @@ export function GiftsSection({
       icon="Gift"
       count={gifts.length}
       addLabel="Add a gift idea"
-      defaultOpen={false}
+      defaultOpen
       form={(close) => (
         <form action={add(createGift, close, "Added")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
@@ -823,6 +827,7 @@ export function GiftsSection({
         gifts.map((gift) => (
           <SectionRow
             key={gift.id}
+            id={`gift-${gift.id}`}
             onDelete={() => void run(() => deleteGift(gift.id), "Removed")}
             deleteLabel="Delete gift"
             editLabel="Edit gift"
