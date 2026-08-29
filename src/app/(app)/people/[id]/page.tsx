@@ -30,6 +30,7 @@ import {
   GiftsSection,
   IdeasSection,
   LifeEventsSection,
+  MilestonesSummary,
   RelationshipsSection,
   TasksSection,
 } from "@/components/contacts/contact-sections";
@@ -39,6 +40,7 @@ import { calendarDateInTz, plainDateFromDb, plainDateKey } from "@/lib/dates";
 import { cadenceMessage } from "@/lib/format";
 import { cadenceStatus, daysSinceLastInteraction, daysUntilTouch } from "@/lib/cadence";
 import { displayName } from "@/lib/utils";
+import { recentMilestones } from "@/lib/life-events";
 
 export const dynamic = "force-dynamic";
 
@@ -111,6 +113,21 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
   const today = calendarDateInTz(new Date(), timezone);
   const daysSince = daysSinceLastInteraction(contact.lastInteractionAt, timezone);
+  const lifeEvents = contact.lifeEvents.map((event) => ({
+    id: event.id,
+    title: event.title,
+    description: event.description,
+    typeId: event.typeId,
+    date: plainDateFromDb(event.date),
+    precision: event.precision,
+    endDate: event.endDate ? plainDateFromDb(event.endDate) : null,
+    endPrecision: event.endPrecision,
+    isMilestone: event.isMilestone,
+    type: event.type
+      ? { label: event.type.label, icon: event.type.icon, color: event.type.color }
+      : null,
+  }));
+  const milestones = recentMilestones(lifeEvents);
 
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
@@ -147,6 +164,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
       </div>
 
       <div className="grid min-w-0 gap-3">
+        <MilestonesSummary milestones={milestones} />
         <SectionCard title="Timeline" icon="History" count={timeline.length}>
           {reciprocity.text ? (
             <div className="grid gap-0.5 px-1">
@@ -335,20 +353,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
         <LifeEventsSection
           contactId={contact.id}
-          events={contact.lifeEvents.map((event) => ({
-            id: event.id,
-            title: event.title,
-            description: event.description,
-            typeId: event.typeId,
-            date: plainDateFromDb(event.date),
-            precision: event.precision,
-            endDate: event.endDate ? plainDateFromDb(event.endDate) : null,
-            endPrecision: event.endPrecision,
-            isMilestone: event.isMilestone,
-            type: event.type
-              ? { label: event.type.label, icon: event.type.icon, color: event.type.color }
-              : null,
-          }))}
+          events={lifeEvents}
           types={terms.LIFE_EVENT_TYPE}
         />
 

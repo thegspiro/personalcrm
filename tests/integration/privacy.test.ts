@@ -84,6 +84,10 @@ describe.skipIf(!hasTestDatabase)("privacy filters", () => {
     prisma.interaction.findMany({ where: { ownerId, ...interactionPrivacyWhere(scope) } });
   const tasks = (scope: PrivacyScope) =>
     prisma.task.findMany({ where: { ownerId, ...viaContactPrivacyWhere(scope) } });
+  const milestones = (scope: PrivacyScope) =>
+    prisma.lifeEvent.findMany({
+      where: { ownerId, isMilestone: true, ...viaContactPrivacyWhere(scope) },
+    });
 
   it("withholds private contacts while locked", async () => {
     const locked = await contacts(LOCKED);
@@ -124,6 +128,17 @@ describe.skipIf(!hasTestDatabase)("privacy filters", () => {
     const locked = await tasks(LOCKED);
     expect(locked.map((t) => t.title)).toEqual(["Open task"]);
     expect(await tasks(UNLOCKED)).toHaveLength(2);
+  });
+
+  it("withholds a private contact's milestone while the lock is closed", async () => {
+    await prisma.lifeEvent.createMany({
+      data: [
+        { ownerId, contactId: publicContactId, title: "Public milestone", date: daysAgo(20), isMilestone: true },
+        { ownerId, contactId: privateContactId, title: "Private milestone", date: daysAgo(30), isMilestone: true },
+      ],
+    });
+    expect((await milestones(LOCKED)).map((item) => item.title)).toEqual(["Public milestone"]);
+    expect(await milestones(UNLOCKED)).toHaveLength(2);
   });
 
   it("hides nothing when the lock is switched off", async () => {
