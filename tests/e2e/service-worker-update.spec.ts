@@ -1,9 +1,14 @@
 import { expect, test } from "@playwright/test";
 
 test("offers an update action and reloads after the new worker takes control", async ({ page }) => {
+  let documentLoads = 0;
+  page.on("request", (request) => {
+    if (request.isNavigationRequest() && new URL(request.url()).pathname === "/login") {
+      documentLoads += 1;
+    }
+  });
+
   await page.addInitScript(() => {
-    const loads = Number(sessionStorage.getItem("worker-test-loads") ?? "0") + 1;
-    sessionStorage.setItem("worker-test-loads", String(loads));
     const container = new EventTarget();
     const registration = new EventTarget() as EventTarget & {
       installing: (EventTarget & { state: string }) | null;
@@ -43,9 +48,16 @@ test("offers an update action and reloads after the new worker takes control", a
   await page.goto("/login");
   // Registration is attached from a React effect. Waiting for the mock to be
   // called avoids dispatching updatefound before the registrar has subscribed.
-  await expect.poll(() =>
-    page.evaluate(() => Boolean((window as unknown as { workerRegistrationObserved?: boolean }).workerRegistrationObserved)),
-  ).toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(
+          (window as unknown as { workerRegistrationObserved?: boolean })
+            .workerRegistrationObserved,
+        ),
+      ),
+    )
+    .toBe(true);
   await page.evaluate(() =>
     (window as unknown as { revealWorkerUpdate(): void }).revealWorkerUpdate(),
   );
@@ -57,6 +69,5 @@ test("offers an update action and reloads after the new worker takes control", a
   ]);
   await expect.poll(() => page.evaluate(() => sessionStorage.getItem("worker-activation-message")))
     .toBe(JSON.stringify({ type: "activate-update" }));
-  await expect.poll(() => page.evaluate(() => Number(sessionStorage.getItem("worker-test-loads"))))
-    .toBeGreaterThanOrEqual(2);
+  expect(documentLoads).toBe(2);
 });
