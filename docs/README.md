@@ -67,7 +67,7 @@ Documented so nobody assumes a feature works:
 
 | Gap | State |
 | --- | --- |
-| **Notifications and reminders** | `NotificationChannel` and `ReminderLog` exist and are migrated; `UserPreference.digestHour`/`digestEnabled` and `ImportantDate.reminderDaysBefore` are stored. Nothing sends anything — there is no scheduler, and `node-cron`/`nodemailer` are dependencies that no code imports |
+| **Cadence, task, and digest notifications** | Important dates are delivered through enabled notification channels with retry and deduplication. The other reminder entity types and digest preferences are not scheduled yet |
 | **Nightly backups** | `/config/backups` is created at boot and nothing writes to it — see [backup.md](backup.md) |
 | **Avatar upload** | `Contact.avatarPath` is read and rendered throughout, but no upload path writes it and nothing writes to `/config/uploads` |
 | **Offline writes** | Deliberately absent. Non-GET requests go straight to the network and fail honestly rather than pretending something was saved |
