@@ -30,7 +30,6 @@ import {
   type DietaryKind,
 } from "@/lib/dietary";
 import { parsePlainDate, plainDateKey, type PlainDate } from "@/lib/dates";
-import { reminderPolicyLabel, type ReminderPolicy } from "@/lib/reminders";
 import {
   createDebt,
   createDietaryNeed,
