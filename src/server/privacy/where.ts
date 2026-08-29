@@ -55,3 +55,21 @@ export function viaContactPrivacyWhere(
 ): { contact?: Prisma.ContactWhereInput } {
   return scope.unlocked ? {} : { contact: { isPrivate: false } };
 }
+
+/**
+ * Applied to household lists.
+ *
+ * Household names and notes have no marker of their own, but a household whose
+ * only members are private contacts can identify those contacts even after the
+ * nested member list is filtered. Empty households are retained: they contain
+ * no contact-derived private information.
+ */
+export function householdPrivacyWhere(scope: PrivacyScope): Prisma.HouseholdWhereInput {
+  if (scope.unlocked) return {};
+  return {
+    OR: [
+      { members: { none: {} } },
+      { members: { some: { contact: { isPrivate: false } } } },
+    ],
+  };
+}

@@ -151,6 +151,42 @@ test("visited pages become readable offline", async ({ page }) => {
     .toContain("/people");
 });
 
+test("the additional read-only routes become readable offline", async ({ page, context }) => {
+  // Four network renders, four worker writes, then four cold offline
+  // hydrations can exceed the suite's one-page default on a loaded CI runner.
+  test.setTimeout(90_000);
+  await ensureSignedIn(page);
+  await page.goto("/tasks");
+  await readyWorker(page);
+  await clearPageCache(page);
+
+  const routes = [
+    { path: "/tasks", heading: "Follow-ups" },
+    { path: "/gifts", heading: "Gifts" },
+    { path: "/ideas", heading: "Ideas" },
+    { path: "/family", heading: "Family" },
+  ];
+  for (const route of routes) {
+    await page.goto(route.path);
+    // CacheThisPage intentionally waits before asking the worker. Confirm each
+    // write before navigating so the component's cleanup cannot cancel it.
+    await expect.poll(() => cachedPages(page), { timeout: 15_000 }).toContain(route.path);
+  }
+
+  await context.setOffline(true);
+  try {
+    for (const route of routes) {
+      await page.goto(route.path, { waitUntil: "domcontentloaded" });
+      await expect(page.getByRole("heading", { name: route.heading, level: 2 })).toBeVisible();
+      await expect(page.getByText(/You're offline/)).toBeVisible();
+    }
+  } finally {
+    // Keep this serial file online even when an assertion above fails, so the
+    // failure remains local instead of cascading through cleanup/navigation.
+    await context.setOffline(false);
+  }
+});
+
 test("a worker update removes an old page and its assets together", async ({ page }) => {
   await ensureSignedIn(page);
   await page.goto("/people");
@@ -259,6 +295,16 @@ test("nothing is stored once anyone is marked private", async ({ page }) => {
   await page.goto(url);
   await page.waitForTimeout(3_000);
   expect(await cachedPages(page)).toEqual([]);
+
+  // Every read-only route uses the same account-wide gate. None may opt in
+  // merely because its own result happens not to mention the private person.
+  for (const route of ["/tasks", "/gifts", "/ideas", "/family"]) {
+    await page.goto(route);
+    // CacheThisPage posts after 800ms. Wait beyond that boundary before
+    // asserting absence, otherwise this test can pass just before a bad opt-in.
+    await page.waitForTimeout(2_000);
+    expect(await cachedPages(page)).toEqual([]);
+  }
 });
 
 test("cleaning up: unmark the private contact", async ({ page }) => {

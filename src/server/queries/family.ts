@@ -2,7 +2,11 @@ import "server-only";
 import { cache } from "react";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
-import { contactPrivacyWhere, privacyScope } from "@/server/privacy/filter";
+import {
+  contactPrivacyWhere,
+  householdPrivacyWhere,
+  privacyScope,
+} from "@/server/privacy/filter";
 import {
   endedRole,
   familyMeta,
@@ -285,7 +289,7 @@ export const getFamilyOverview = cache(
       loadFamilyEdges(ownerId),
       loadLinkedPairs(ownerId),
       prisma.household.findMany({
-        where: { ownerId },
+        where: { ownerId, ...householdPrivacyWhere(scope) },
         select: {
           id: true,
           name: true,

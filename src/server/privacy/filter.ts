@@ -6,6 +6,7 @@ export {
   contactPrivacyWhere,
   debtPrivacyWhere,
   factPrivacyWhere,
+  householdPrivacyWhere,
   interactionPrivacyWhere,
   viaContactPrivacyWhere,
   type PrivacyScope,
