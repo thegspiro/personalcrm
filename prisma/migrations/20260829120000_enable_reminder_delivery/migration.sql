@@ -7,5 +7,6 @@ ALTER TABLE `ReminderLog`
   ADD COLUMN `nextAttemptAt` DATETIME(3) NULL,
   MODIFY `sentAt` DATETIME(3) NULL,
   MODIFY `ok` BOOLEAN NOT NULL DEFAULT false;
-CREATE UNIQUE INDEX `ReminderLog_ownerId_entityType_entityId_scheduledFor_offsetDays_channelId_key`
+-- The descriptive Prisma default exceeds MariaDB's 64-character identifier limit.
+CREATE UNIQUE INDEX `ReminderLog_delivery_key`
   ON `ReminderLog`(`ownerId`, `entityType`, `entityId`, `scheduledFor`, `offsetDays`, `channelId`);

@@ -1063,7 +1063,8 @@ model ReminderLog {
   owner   User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   channel NotificationChannel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
 
-  @@unique([ownerId, entityType, entityId, scheduledFor, offsetDays, channelId])
+  // Keep the physical name below MariaDB's 64-character identifier limit.
+  @@unique([ownerId, entityType, entityId, scheduledFor, offsetDays, channelId], map: "ReminderLog_delivery_key")
   @@index([ownerId, sentAt])
   @@index([channelId])
 }
