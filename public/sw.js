@@ -39,6 +39,14 @@ const PAGES = `pcrm-pages-${VERSION}`;
 const ASSETS = `pcrm-assets-${VERSION}`;
 const OURS = [PAGES, ASSETS];
 
+// A purge closes caching as well as deleting what is already present. Without
+// this gate, the navigation that follows a lock can immediately recreate an
+// empty pages cache (and a sign-out can cache login-page assets) before the
+// caller gets a chance to inspect Cache Storage. A cacheable page explicitly
+// opens the gate again through `cache-page`.
+let cachingEnabled = true;
+let cacheEpoch = 0;
+
 self.addEventListener("install", (event) => {
   // Take over promptly: a half-updated worker serving an old shell against a
   // new server is worse than a moment's delay.
@@ -101,13 +109,16 @@ self.addEventListener("message", (event) => {
  * the decision to store is always the server's rather than a guess made here.
  */
 async function cachePage(url) {
+  const epoch = cacheEpoch;
   try {
     const response = await fetch(url, { credentials: "same-origin" });
     if (!response.ok) return;
     // A redirect means we were bounced — to /login or /unlock — and storing
     // that under the original URL would show the wrong page offline.
     if (response.redirected) return;
+    if (epoch !== cacheEpoch) return;
 
+    cachingEnabled = true;
     const cache = await caches.open(PAGES);
     await cache.put(url, response.clone());
   } catch {
@@ -116,6 +127,8 @@ async function cachePage(url) {
 }
 
 async function purgeEverything() {
+  cachingEnabled = false;
+  cacheEpoch += 1;
   const names = await caches.keys();
   await Promise.all(names.filter((name) => name.startsWith("pcrm-")).map((name) => caches.delete(name)));
 }
@@ -162,11 +175,12 @@ self.addEventListener("fetch", (event) => {
  * worse than a spinner. The cache is a fallback, not a speed-up.
  */
 async function networkFirst(request) {
+  const epoch = cacheEpoch;
   try {
     const response = await fetch(request);
     // Only refresh what is already stored. A page that never opted in does not
     // get cached just because you happened to visit it.
-    if (response.ok && !response.redirected) {
+    if (cachingEnabled && epoch === cacheEpoch && response.ok && !response.redirected) {
       const cache = await caches.open(PAGES);
       const existing = await cache.match(request.url);
       if (existing) await cache.put(request.url, response.clone());
@@ -194,11 +208,14 @@ async function networkFirst(request) {
 }
 
 async function cacheFirst(request) {
+  if (!cachingEnabled) return fetch(request);
+  const epoch = cacheEpoch;
+
   const cached = await caches.match(request.url);
   if (cached) return cached;
 
   const response = await fetch(request);
-  if (response.ok) {
+  if (cachingEnabled && epoch === cacheEpoch && response.ok) {
     const cache = await caches.open(ASSETS);
     await cache.put(request.url, response.clone());
   }
