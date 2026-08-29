@@ -151,41 +151,33 @@ test("visited pages become readable offline", async ({ page }) => {
     .toContain("/people");
 });
 
-test("the additional read-only routes become readable offline", async ({ page, context }) => {
-  // Four network renders, four worker writes, then four cold offline
-  // hydrations can exceed the suite's one-page default on a loaded CI runner.
-  test.setTimeout(90_000);
-  await ensureSignedIn(page);
-  await page.goto("/tasks");
-  await readyWorker(page);
-  await clearPageCache(page);
-
-  const routes = [
-    { path: "/tasks", heading: "Follow-ups" },
-    { path: "/gifts", heading: "Gifts" },
-    { path: "/ideas", heading: "Ideas" },
-    { path: "/family", heading: "Family" },
-  ];
-  for (const route of routes) {
+for (const route of [
+  { path: "/tasks", heading: "Follow-ups" },
+  { path: "/gifts", heading: "Gifts" },
+  { path: "/ideas", heading: "Ideas" },
+  { path: "/family", heading: "Family" },
+]) {
+  test(`${route.path} becomes readable offline`, async ({ page, context }) => {
+    await ensureSignedIn(page);
     await page.goto(route.path);
-    // CacheThisPage intentionally waits before asking the worker. Confirm each
-    // write before navigating so the component's cleanup cannot cancel it.
-    await expect.poll(() => cachedPages(page), { timeout: 15_000 }).toContain(route.path);
-  }
+    await readyWorker(page);
+    await clearPageCache(page);
+    await page.goto(route.path);
 
-  await context.setOffline(true);
-  try {
-    for (const route of routes) {
+    // CacheThisPage intentionally waits before asking the worker. Confirm the
+    // write before disconnecting so this tests the saved document, not timing.
+    await expect.poll(() => cachedPages(page), { timeout: 15_000 }).toContain(route.path);
+
+    await context.setOffline(true);
+    try {
       await page.goto(route.path, { waitUntil: "domcontentloaded" });
       await expect(page.getByRole("heading", { name: route.heading, level: 2 })).toBeVisible();
       await expect(page.getByText(/You're offline/)).toBeVisible();
+    } finally {
+      await context.setOffline(false);
     }
-  } finally {
-    // Keep this serial file online even when an assertion above fails, so the
-    // failure remains local instead of cascading through cleanup/navigation.
-    await context.setOffline(false);
-  }
-});
+  });
+}
 
 test("a worker update removes an old page and its assets together", async ({ page }) => {
   await ensureSignedIn(page);
