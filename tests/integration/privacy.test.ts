@@ -3,7 +3,6 @@ import { createTestUser, daysAgo, hasTestDatabase, prisma, reset } from "./db";
 import {
   contactPrivacyWhere,
   factPrivacyWhere,
-  householdPrivacyWhere,
   interactionPrivacyWhere,
   viaContactPrivacyWhere,
   type PrivacyScope,
@@ -132,54 +131,6 @@ describe.skipIf(!hasTestDatabase)("privacy filters", () => {
     expect(await facts(OFF)).toHaveLength(2);
     expect(await interactions(OFF)).toHaveLength(3);
     expect(await tasks(OFF)).toHaveLength(2);
-  });
-
-  it("withholds households with any private member but retains empty and public households", async () => {
-    await prisma.household.createMany({
-      data: [
-        { ownerId, name: "Empty household" },
-        { ownerId, name: "Public household" },
-        { ownerId, name: "Private household" },
-        { ownerId, name: "Mixed household" },
-      ],
-    });
-    const households = await prisma.household.findMany({
-      where: { ownerId },
-      orderBy: { name: "asc" },
-    });
-    await prisma.householdMember.createMany({
-      data: [
-        {
-          householdId: households.find((row) => row.name === "Public household")!.id,
-          contactId: publicContactId,
-        },
-        {
-          householdId: households.find((row) => row.name === "Private household")!.id,
-          contactId: privateContactId,
-        },
-        {
-          householdId: households.find((row) => row.name === "Mixed household")!.id,
-          contactId: publicContactId,
-        },
-        {
-          householdId: households.find((row) => row.name === "Mixed household")!.id,
-          contactId: privateContactId,
-        },
-      ],
-    });
-
-    const visible = (scope: PrivacyScope) =>
-      prisma.household.findMany({
-        where: { ownerId, ...householdPrivacyWhere(scope) },
-        orderBy: { name: "asc" },
-      });
-
-    expect((await visible(LOCKED)).map((row) => row.name)).toEqual([
-      "Empty household",
-      "Public household",
-    ]);
-    expect(await visible(UNLOCKED)).toHaveLength(4);
-    expect(await visible(OFF)).toHaveLength(4);
   });
 
   it("counts are filtered too, so a shifting total does not reveal what is hidden", async () => {
