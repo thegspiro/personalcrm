@@ -5,7 +5,6 @@ test.describe.configure({ mode: "serial" });
 
 const STAMP = `${process.env.E2E_RUN_ID ?? "local"}-${Date.now().toString(36)}`;
 const PERSON = () => `Timeline${test.info().project.name}${STAMP}`.replace(/[^a-z0-9]/gi, "");
-let personUrl = "";
 
 function section(page: Page, title: string) {
   return page.locator("section").filter({ has: page.getByText(title, { exact: true }) }).first();
@@ -23,7 +22,7 @@ async function chooseYear(page: Page, scope: ReturnType<typeof section>, label: 
 
 test("create timeline details", async ({ page }) => {
   await ensureSignedIn(page);
-  personUrl = await createContact(page, PERSON());
+  await createContact(page, PERSON());
 
   const dates = section(page, "Important dates");
   await dates.getByRole("button", { name: "Add a date" }).click();
@@ -46,7 +45,12 @@ test("edit an Important date from global and person timelines", async ({ page })
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(card(page, "Important date from global timeline")).toBeVisible();
 
-  await page.goto(personUrl);
+  const destination = card(page, "Important date from global timeline").getByRole("link", {
+    name: "Open Important date from global timeline",
+  });
+  await destination.click();
+  await expect(page.locator(":focus")).toHaveAttribute("id", /^important-date-/);
+
   await card(page, "Important date from global timeline").getByRole("button", { name: "Edit Important date from global timeline" }).click();
   await page.getByLabel("What is it?").fill("Important date from person timeline");
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -63,7 +67,12 @@ test("edit a Life event from global and person timelines", async ({ page }) => {
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(card(page, "Life event from global timeline")).toBeVisible();
 
-  await page.goto(personUrl);
+  const destination = card(page, "Life event from global timeline").getByRole("link", {
+    name: "Open Life event from global timeline",
+  });
+  await destination.click();
+  await expect(page.locator(":focus")).toHaveAttribute("id", /^life-event-/);
+
   await card(page, "Life event from global timeline").getByRole("button", { name: "Edit Life event from global timeline" }).click();
   await page.getByLabel("What happened?").fill("Life event from person timeline");
   await page.getByRole("button", { name: "Save", exact: true }).click();

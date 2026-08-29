@@ -128,6 +128,15 @@ export function SectionRow({
 }) {
   const [editing, setEditing] = React.useState(false);
 
+  React.useEffect(() => {
+    if (!id || window.location.hash !== `#${id}`) return;
+
+    // Fragment navigation scrolls a generic div into view, but does not move
+    // keyboard focus to it. Moving focus as well makes the destination clear
+    // to screen-reader and keyboard users after following a timeline card.
+    document.getElementById(id)?.focus({ preventScroll: true });
+  }, [id]);
+
   if (editing && editForm) {
     return (
       <div id={id} tabIndex={-1} className={cn("rounded-lg border border-accent-8 bg-card p-3", className)}>
