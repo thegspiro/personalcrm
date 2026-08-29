@@ -134,12 +134,13 @@ describe.skipIf(!hasTestDatabase)("privacy filters", () => {
     expect(await tasks(OFF)).toHaveLength(2);
   });
 
-  it("withholds private-only households but retains empty and public households", async () => {
+  it("withholds households with any private member but retains empty and public households", async () => {
     await prisma.household.createMany({
       data: [
         { ownerId, name: "Empty household" },
         { ownerId, name: "Public household" },
         { ownerId, name: "Private household" },
+        { ownerId, name: "Mixed household" },
       ],
     });
     const households = await prisma.household.findMany({ orderBy: { name: "asc" } });
@@ -151,6 +152,14 @@ describe.skipIf(!hasTestDatabase)("privacy filters", () => {
         },
         {
           householdId: households.find((row) => row.name === "Private household")!.id,
+          contactId: privateContactId,
+        },
+        {
+          householdId: households.find((row) => row.name === "Mixed household")!.id,
+          contactId: publicContactId,
+        },
+        {
+          householdId: households.find((row) => row.name === "Mixed household")!.id,
           contactId: privateContactId,
         },
       ],
@@ -166,8 +175,8 @@ describe.skipIf(!hasTestDatabase)("privacy filters", () => {
       "Empty household",
       "Public household",
     ]);
-    expect(await visible(UNLOCKED)).toHaveLength(3);
-    expect(await visible(OFF)).toHaveLength(3);
+    expect(await visible(UNLOCKED)).toHaveLength(4);
+    expect(await visible(OFF)).toHaveLength(4);
   });
 
   it("counts are filtered too, so a shifting total does not reveal what is hidden", async () => {

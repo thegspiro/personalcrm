@@ -213,7 +213,7 @@ can mutate data while disconnected.
 | `/tasks` | Cacheable read-only | Tasks without a contact and tasks attached to a visible contact only; account-wide gate applies. |
 | `/gifts` | Cacheable read-only | Gifts inherit contact privacy; account-wide gate applies. |
 | `/ideas` | Cacheable read-only | General ideas/plans and those attached to visible contacts only; contact pickers are filtered; account-wide gate applies. |
-| `/family` | Cacheable read-only | Relationships, contacts, suggestions, household members, and private-only households are privacy-filtered; empty households remain visible. The account-wide gate applies, and each `anchor` query is a distinct saved page. |
+| `/family` | Cacheable read-only | Relationships, contacts, suggestions, household members, and every household associated with a private contact are privacy-filtered; empty households remain visible. The account-wide gate applies, and each `anchor` query is a distinct saved page. |
 | `/dating`, `/dating/compare` | Deliberately unavailable | Dating content is never written to offline storage. |
 | `/people/new`, `/people/[id]/edit`, `/people/[id]/backfill` | Deliberately unavailable | Create/edit forms require live reads and server-action validation. |
 | `/settings` | Deliberately unavailable | Contains security, privacy, account, and integration controls. |
