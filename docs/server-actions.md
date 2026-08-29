@@ -4,6 +4,11 @@ There is no REST API. Every mutation is a Next.js **server action** in
 `src/server/actions/`, and the only route handler in the app is
 `GET /api/health`.
 
+Contact birthdays are updated by `updateContactBirthday`. It validates a
+partial date (including `MONTH_DAY`), scopes the contact by owner, and applies
+the live privacy-lock filter before writing `Contact.birthDate`; it never
+creates an `ImportantDate` shadow row.
+
 ## The contract
 
 Every action returns `ActionResult` from

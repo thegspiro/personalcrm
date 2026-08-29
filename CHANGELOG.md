@@ -16,6 +16,19 @@ for what each migration does.
 
 ## [Unreleased]
 
+### Canonical contact birthdays — 2026-08-29
+
+*Schema: none*
+
+#### Changed
+- **A person's birthday now appears everywhere from `Contact.birthDate`.** The
+  Important dates section, unified timeline, and Coming up widget share one
+  projection, so edits cannot leave two birthday records disagreeing. Unknown
+  birth years remain month-and-day values.
+- **Existing birthday-type important dates remain stored for compatibility.**
+  Their notes and reminder settings are inherited by the canonical entry while
+  the legacy row is suppressed. Demo seeding no longer creates duplicate rows.
+
 ### Editing everything else you logged — 2026-08-27
 
 *Schema: none*
