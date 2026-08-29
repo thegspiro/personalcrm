@@ -230,7 +230,7 @@ test("a page that was never saved says so rather than pretending", async ({ page
   await page.goto(`/never-cached-${STAMP}`, { waitUntil: "domcontentloaded" }).catch(() => {});
   await expect(page.getByText("Personal CRM", { exact: true })).toBeVisible();
   await expect(page.getByText(/isn't saved for offline reading/i)).toBeVisible();
-  await expect(page.getByRole("link", { name: "Try again" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
 
   await context.setOffline(false);
 });

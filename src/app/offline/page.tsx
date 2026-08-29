@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Offline",
@@ -34,12 +33,14 @@ export default function OfflinePage() {
             return to a section you previously saved on this device.
           </p>
 
-          <a
-            href=""
-            className="mt-6 flex min-h-11 w-full items-center justify-center rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-accent-10"
-          >
-            Try again
-          </a>
+          <form method="get" className="mt-6">
+            <button
+              type="submit"
+              className="flex min-h-11 w-full cursor-pointer items-center justify-center rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-accent-10"
+            >
+              Try again
+            </button>
+          </form>
 
           <div className="mt-6 border-t pt-5">
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -49,12 +50,16 @@ export default function OfflinePage() {
               Only sections you opened and saved before going offline will be available.
             </p>
             <nav className="mt-3 flex gap-4 text-sm font-medium" aria-label="Previously saved sections">
-              <Link className="text-accent-11 underline-offset-4 hover:underline" href="/" prefetch={false}>
+              {/* Full document navigations let the worker serve cached HTML;
+                  client-side RSC navigations are deliberately never cached. */}
+              {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+              <a className="text-accent-11 underline-offset-4 hover:underline" href="/">
                 Dashboard
-              </Link>
-              <Link className="text-accent-11 underline-offset-4 hover:underline" href="/people" prefetch={false}>
+              </a>
+              {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+              <a className="text-accent-11 underline-offset-4 hover:underline" href="/people">
                 People
-              </Link>
+              </a>
             </nav>
           </div>
         </div>
