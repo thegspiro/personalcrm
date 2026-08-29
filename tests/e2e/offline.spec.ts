@@ -171,12 +171,17 @@ test("the additional read-only routes become readable offline", async ({ page, c
   }
 
   await context.setOffline(true);
-  for (const route of routes) {
-    await page.goto(route.path, { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: route.heading, level: 2 })).toBeVisible();
-    await expect(page.getByText(/You're offline/)).toBeVisible();
+  try {
+    for (const route of routes) {
+      await page.goto(route.path, { waitUntil: "domcontentloaded" });
+      await expect(page.getByRole("heading", { name: route.heading, level: 2 })).toBeVisible();
+      await expect(page.getByText(/You're offline/)).toBeVisible();
+    }
+  } finally {
+    // Keep this serial file online even when an assertion above fails, so the
+    // failure remains local instead of cascading through cleanup/navigation.
+    await context.setOffline(false);
   }
-  await context.setOffline(false);
 });
 
 test("a worker update removes an old page and its assets together", async ({ page }) => {
@@ -292,7 +297,9 @@ test("nothing is stored once anyone is marked private", async ({ page }) => {
   // merely because its own result happens not to mention the private person.
   for (const route of ["/tasks", "/gifts", "/ideas", "/family"]) {
     await page.goto(route);
-    await page.waitForTimeout(1_000);
+    // CacheThisPage posts after 800ms. Wait beyond that boundary before
+    // asserting absence, otherwise this test can pass just before a bad opt-in.
+    await page.waitForTimeout(2_000);
     expect(await cachedPages(page)).toEqual([]);
   }
 });

@@ -223,7 +223,8 @@ can mutate data while disconnected.
 | `/api/health` | Deliberately unavailable | A cached health response would be false; the worker never handles `/api/*`. |
 | `/_not-found` | Deliberately unavailable | Framework error output is not an application data page and never opts in. |
 | `/manifest.webmanifest` | Deliberately unavailable | Installation metadata is fetched from the network and is not a saved application page. |
-| `/icon`, `/apple-icon` | Cacheable read-only | Public generated artwork contains no account data. `/icon` may be stored in the asset cache; neither resource opts a page into the page cache. |
+| `/icon` | Cacheable read-only | Public generated artwork contains no account data and may be stored in the asset cache; it does not opt a page into the page cache. |
+| `/apple-icon` | Deliberately unavailable | Public installation artwork, but it is not on the worker's explicit asset-cache allow-list. |
 
 Versioned Next.js resources may likewise be cached as public assets; doing so
 does not make the route that referenced an asset offline-capable.
