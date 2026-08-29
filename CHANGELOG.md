@@ -16,6 +16,14 @@ for what each migration does.
 
 ## [Unreleased]
 
+### Complete rapid-backfill detail fields — 2026-08-29
+
+*Schema: none*
+
+- Rapid backfill now supports ranged and milestone life events plus recurrence,
+  notes, and reminder policies for important dates, using the same complete
+  field groups as contact profiles.
+
 ### Editing everything else you logged — 2026-08-27
 
 *Schema: none*

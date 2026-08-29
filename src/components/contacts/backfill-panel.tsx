@@ -21,8 +21,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
-import { DateField, DateTimeField } from "@/components/form/date-field";
-import { TermChips, TermSelect, type TermOption } from "@/components/form/term-select";
+import { DateTimeField } from "@/components/form/date-field";
+import { TermChips, type TermOption } from "@/components/form/term-select";
 import type { ActionResult } from "@/server/actions/helpers";
 import { createInteraction, deleteInteraction } from "@/server/actions/interactions";
 import {
@@ -33,6 +33,7 @@ import {
   deleteImportantDate,
   deleteLifeEvent,
 } from "@/server/actions/details";
+import { ImportantDateFields, LifeEventFields } from "./detail-field-groups";
 
 type Kind = "interaction" | "life-event" | "fact" | "important-date";
 
@@ -75,6 +76,7 @@ export function BackfillPanel({
   const [added, setAdded] = React.useState<AddedItem[]>([]);
   const [error, setError] = React.useState<string>();
   const [reachedOutBy, setReachedOutBy] = React.useState<"ME" | "THEM" | "MUTUAL" | null>(null);
+  const [lifeEventReset, setLifeEventReset] = React.useState(0);
 
   // Keeping the form mounted per kind is what preserves the date between
   // entries — remounting would reset it to today every time.
@@ -114,12 +116,19 @@ export function BackfillPanel({
       ]);
     }
 
-    // Clear only the text fields — the date and type stay for the next entry.
+    // Clear authored text so private context cannot leak into the next entry.
+    // Context controls stay put, except range/milestone fields: repeating an
+    // end date or milestone by accident is much costlier than setting it again.
     for (const field of ["title", "notes", "content", "label", "description"]) {
       const input = formRef.current?.elements.namedItem(field);
       if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
         input.value = "";
       }
+    }
+    if (kind === "life-event") {
+      const milestone = formRef.current?.elements.namedItem("isMilestone");
+      if (milestone instanceof HTMLInputElement) milestone.checked = false;
+      setLifeEventReset((current) => current + 1);
     }
     toast.success("Added");
     router.refresh();
@@ -229,20 +238,7 @@ export function BackfillPanel({
 
             {kind === "life-event" ? (
               <form ref={formRef} action={submit} className="grid gap-3" key="life-event">
-                <Field label="What happened?" htmlFor="bf-le-title">
-                  <Input id="bf-le-title" name="title" required placeholder="Started at Deloitte" />
-                </Field>
-                <DateField
-                  name="date"
-                  label="When"
-                  required
-                  presets={["lastYear"]}
-                  hint="Set precision to 'Year only' if that's all you remember."
-                />
-                <TermSelect name="typeId" label="Type" terms={lifeEventTypes} />
-                <Field label="Anything more?" htmlFor="bf-le-description">
-                  <Textarea id="bf-le-description" name="description" rows={2} />
-                </Field>
+                <LifeEventFields formId="bf-le" types={lifeEventTypes} resetEndDateKey={lifeEventReset} />
                 <SubmitButton>Add and keep going</SubmitButton>
               </form>
             ) : null}
@@ -259,11 +255,7 @@ export function BackfillPanel({
 
             {kind === "important-date" ? (
               <form ref={formRef} action={submit} className="grid gap-3" key="important-date">
-                <Field label="What is it?" htmlFor="bf-label">
-                  <Input id="bf-label" name="label" required placeholder="Wedding anniversary" />
-                </Field>
-                <DateField name="date" label="When" required presets={[]} />
-                <TermSelect name="typeId" label="Type" terms={dateTypes} />
+                <ImportantDateFields formId="bf-date" types={dateTypes} />
                 <SubmitButton>Add and keep going</SubmitButton>
               </form>
             ) : null}

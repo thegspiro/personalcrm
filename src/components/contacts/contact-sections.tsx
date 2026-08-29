@@ -25,6 +25,7 @@ import {
   type DietaryKind,
 } from "@/lib/dietary";
 import { plainDateKey, type PlainDate } from "@/lib/dates";
+import { ImportantDateFields, LifeEventFields, type ImportantDateValue, type LifeEventValue } from "./detail-field-groups";
 import {
   createDebt,
   createDietaryNeed,
@@ -187,77 +188,9 @@ export function FactsSection({
 
 // --- important dates -------------------------------------------------------
 
-export interface DateItem {
+export interface DateItem extends ImportantDateValue {
   id: string;
-  label: string;
-  date: PlainDate;
-  precision: DatePrecision;
-  recurrence: "NONE" | "ANNUAL" | "MONTHLY";
-  typeId: string | null;
-  notes: string | null;
   type: { label: string; icon: string | null; color: string | null } | null;
-}
-
-/**
- * Adding a date and correcting one, from one description.
- *
- * Notes are here even though the row does not render them: `updateImportantDate`
- * writes whatever the form holds, so a form without the field would wipe the
- * note on every unrelated edit.
- */
-function ImportantDateFields({
-  formId,
-  types,
-  item,
-}: {
-  formId: string;
-  types: TermOption[];
-  item?: DateItem;
-}) {
-  return (
-    <>
-      <Field label="What is it?" htmlFor={`${formId}-label`}>
-        <Input
-          id={`${formId}-label`}
-          name="label"
-          required
-          defaultValue={item?.label ?? ""}
-          placeholder="Wedding anniversary"
-        />
-      </Field>
-      <DateField
-        name="date"
-        idPrefix={`${formId}-date`}
-        label="When"
-        required
-        presets={[]}
-        defaultValue={item ? plainDateKey(item.date) : undefined}
-        defaultPrecision={item?.precision}
-      />
-      <TermSelect
-        name="typeId"
-        id={`${formId}-typeId`}
-        label="Type"
-        terms={types}
-        defaultValue={item?.typeId}
-      />
-      <Field label="Repeats" htmlFor={`${formId}-recurrence`}>
-        <select
-          id={`${formId}-recurrence`}
-          name="recurrence"
-          defaultValue={item?.recurrence ?? "ANNUAL"}
-          className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
-        >
-          <option value="ANNUAL">Every year</option>
-          <option value="MONTHLY">Every month</option>
-          <option value="NONE">Just once</option>
-        </select>
-      </Field>
-      <Field label="Notes" htmlFor={`${formId}-notes`}>
-        <Textarea id={`${formId}-notes`} name="notes" rows={2} defaultValue={item?.notes ?? ""} />
-      </Field>
-    </>
-  );
 }
 
 export function DatesSection({
@@ -322,16 +255,8 @@ export function DatesSection({
 
 // --- life events -----------------------------------------------------------
 
-export interface LifeEventItem {
+export interface LifeEventItem extends LifeEventValue {
   id: string;
-  title: string;
-  description: string | null;
-  typeId: string | null;
-  date: PlainDate;
-  precision: DatePrecision;
-  endDate: PlainDate | null;
-  endPrecision: DatePrecision | null;
-  isMilestone: boolean;
   type: { label: string; icon: string | null; color: string | null } | null;
 }
 
@@ -347,68 +272,6 @@ export interface LifeEventItem {
  * and `updateLifeEvent` writes both: a form that offered neither would clear a
  * backfilled range and demote a milestone every time you fixed a spelling.
  */
-function LifeEventFields({
-  formId,
-  types,
-  event,
-}: {
-  formId: string;
-  types: TermOption[];
-  event?: LifeEventItem;
-}) {
-  return (
-    <>
-      <Field label="What happened?" htmlFor={`${formId}-title`}>
-        <Input
-          id={`${formId}-title`}
-          name="title"
-          required
-          defaultValue={event?.title ?? ""}
-          placeholder="Moved to Austin"
-        />
-      </Field>
-      <DateField
-        name="date"
-        idPrefix={`${formId}-date`}
-        label="When"
-        required
-        presets={["lastYear"]}
-        defaultValue={event ? plainDateKey(event.date) : undefined}
-        defaultPrecision={event?.precision}
-        hint="Only know the year? Set the precision to 'Year only'."
-      />
-      <DateField
-        name="endDate"
-        idPrefix={`${formId}-endDate`}
-        label="Until"
-        presets={[]}
-        defaultValue={event?.endDate ? plainDateKey(event.endDate) : undefined}
-        defaultPrecision={event?.endPrecision ?? "DAY"}
-        hint="Only for things that ran for a while — a job, a course, a city."
-      />
-      <TermSelect name="typeId" id={`${formId}-typeId`} label="Type" terms={types} defaultValue={event?.typeId} />
-      <Field label="Anything more?" htmlFor={`${formId}-description`}>
-        <Textarea
-          id={`${formId}-description`}
-          name="description"
-          rows={2}
-          defaultValue={event?.description ?? ""}
-        />
-      </Field>
-      <label className="flex items-center gap-2 text-xs text-muted-foreground">
-        <input
-          type="checkbox"
-          name="isMilestone"
-          value="true"
-          defaultChecked={event?.isMilestone ?? false}
-          className="size-4"
-        />
-        One of the big ones
-      </label>
-    </>
-  );
-}
-
 export function LifeEventsSection({
   contactId,
   events,

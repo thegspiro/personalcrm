@@ -75,3 +75,68 @@ test("backfill records a life event at year precision", async ({ page }) => {
   await expect(section.getByRole("paragraph").filter({ hasText: /^2012$/ })).toBeVisible();
   await expect(section.getByText(/January 1, 2012/)).toHaveCount(0);
 });
+
+test("backfills a ranged milestone and a non-annual important date, then undoes both", async ({ page }) => {
+  await ensureSignedIn(page);
+  const name = `Detailed backfill ${test.info().project.name} ${STAMP}`;
+  const contactUrl = await createContact(page, name);
+  await page.goto(`${contactUrl}/backfill`);
+
+  await page.getByRole("button", { name: /Something that happened to them/ }).click();
+  await page.getByLabel("What happened?").fill("Worked in Lisbon");
+  await page.getByRole("button", { name: "When", exact: true }).click();
+  await page.getByPlaceholder("2019, March 2019, 3 years ago…").fill("2018");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Until", exact: true }).click();
+  await page.getByPlaceholder("2019, March 2019, 3 years ago…").fill("2021");
+  await page.keyboard.press("Enter");
+  await page.getByLabel("Type").selectOption({ label: "New job" });
+  await page.getByLabel("Anything more?").fill("Led the launch team");
+  await page.getByLabel("One of the big ones").check();
+  await page.getByRole("button", { name: "Add and keep going" }).click();
+  await expect(page.getByRole("button", { name: "Undo Worked in Lisbon" })).toBeVisible();
+  // A range and milestone are intentionally one-shot; the main date and type remain.
+  await expect(page.getByRole("button", { name: "When", exact: true })).toContainText("2018");
+  await expect(page.getByRole("button", { name: "Until", exact: true })).toContainText("Pick a date");
+  await expect(page.getByLabel("One of the big ones")).not.toBeChecked();
+  await expect(page.getByLabel("Type")).toHaveValue(/.+/);
+
+  await page.getByRole("button", { name: /A date worth remembering/ }).click();
+  await page.getByLabel("What is it?").fill("Visa renewal");
+  await page.getByRole("button", { name: "When", exact: true }).click();
+  await page.getByPlaceholder("2019, March 2019, 3 years ago…").fill("October 2020");
+  await page.keyboard.press("Enter");
+  await page.getByLabel("Type").selectOption({ label: "Other" });
+  await page.getByLabel("Repeats").selectOption("NONE");
+  await page.getByLabel("Reminder days").fill("14, 0");
+  await page.getByLabel("Notes").fill("Bring the original paperwork");
+  await page.getByRole("button", { name: "Add and keep going" }).click();
+  await expect(page.getByRole("button", { name: "Undo Visa renewal" })).toBeVisible();
+  await expect(page.getByLabel("What is it?")).toHaveValue("");
+  await expect(page.getByLabel("Notes")).toHaveValue("");
+  await expect(page.getByLabel("Repeats")).toHaveValue("NONE");
+  await expect(page.getByLabel("Type")).toHaveValue(/.+/);
+
+  // Keep the rapid-entry session alive while a second tab verifies the server round-trip.
+  const profile = await page.context().newPage();
+  await profile.goto(contactUrl);
+  const lifeEvents = profile.locator("section").filter({ hasText: "Life events" }).first();
+  await expect(lifeEvents).toContainText("Worked in Lisbon");
+  await expect(lifeEvents).toContainText("2018–2021");
+  await expect(lifeEvents).toContainText("Milestone");
+  await expect(lifeEvents).toContainText("Led the launch team");
+  const dates = profile.locator("section").filter({ hasText: "Important dates" }).first();
+  await expect(dates).toContainText("Visa renewal");
+  await expect(dates).toContainText("October 2020");
+  const timeline = profile.locator("section").filter({ hasText: "Timeline" }).first();
+  await expect(timeline.locator("article").filter({ hasText: "Worked in Lisbon" })).toContainText("Led the launch team");
+  await expect(timeline.locator("article").filter({ hasText: "Visa renewal" })).toContainText("Bring the original paperwork");
+  await profile.close();
+
+  await page.getByRole("button", { name: "Undo Visa renewal" }).click();
+  await page.getByRole("button", { name: "Undo Worked in Lisbon" }).click();
+  await expect(page.getByRole("button", { name: /Undo (Visa renewal|Worked in Lisbon)/ })).toHaveCount(0);
+  await page.goto(contactUrl);
+  await expect(page.getByText("Visa renewal")).toHaveCount(0);
+  await expect(page.getByText("Worked in Lisbon")).toHaveCount(0);
+});

@@ -1,7 +1,7 @@
 "use server";
 
 import { randomBytes } from "node:crypto";
-import type { TaxonomyKind } from "@prisma/client";
+import { Prisma, type TaxonomyKind } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
 import { debtPrivacyWhere, factPrivacyWhere, privacyScope } from "@/server/privacy/filter";
@@ -1062,13 +1062,13 @@ function debtDirectionOf(value?: string): "THEY_OWE_ME" | "I_OWE_THEM" {
   return value === "I_OWE_THEM" ? "I_OWE_THEM" : "THEY_OWE_ME";
 }
 
-/** "30, 7, 0" -> [30, 7, 0]; empty falls back to the account default. */
-function parseReminderDays(raw?: string): number[] | undefined {
-  if (!raw) return undefined;
+/** "30, 7, 0" -> [30, 7, 0]; null falls back to the account default. */
+function parseReminderDays(raw?: string): number[] | typeof Prisma.DbNull {
+  if (!raw) return Prisma.DbNull;
   const days = raw
     .split(/[,\s]+/)
     .map((part) => Number(part))
     .filter((n) => Number.isFinite(n) && n >= 0 && n <= 365)
     .map((n) => Math.round(n));
-  return days.length > 0 ? [...new Set(days)].sort((a, b) => b - a) : undefined;
+  return days.length > 0 ? [...new Set(days)].sort((a, b) => b - a) : Prisma.DbNull;
 }
