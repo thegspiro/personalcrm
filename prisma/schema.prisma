@@ -1046,20 +1046,24 @@ enum ReminderEntity {
 
 /// Dedupe ledger so a restart never re-sends a reminder.
 model ReminderLog {
-  id           String         @id @default(cuid())
-  ownerId      String
-  entityType   ReminderEntity
-  entityId     String         @db.VarChar(64)
-  scheduledFor DateTime       @db.Date
-  sentAt       DateTime       @default(now())
-  channelId    String?
-  ok           Boolean        @default(true)
-  error        String?        @db.Text
+  id            String         @id @default(cuid())
+  ownerId       String
+  entityType    ReminderEntity
+  entityId      String         @db.VarChar(64)
+  /// The occurrence, not the processing instant. Together with offset/channel it is the idempotency key.
+  scheduledFor  DateTime       @db.Date
+  offsetDays    Int            @default(0)
+  sentAt        DateTime?
+  channelId     String?
+  ok            Boolean        @default(false)
+  attemptCount  Int            @default(0)
+  nextAttemptAt DateTime?
+  error         String?        @db.Text
 
   owner   User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   channel NotificationChannel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
 
-  @@unique([ownerId, entityType, entityId, scheduledFor])
+  @@unique([ownerId, entityType, entityId, scheduledFor, offsetDays, channelId])
   @@index([ownerId, sentAt])
   @@index([channelId])
 }
