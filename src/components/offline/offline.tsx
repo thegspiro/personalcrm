@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { CloudOff } from "lucide-react";
+import { toast } from "sonner";
 
 
 /**
@@ -11,17 +12,136 @@ import { CloudOff } from "lucide-react";
  * store, and telling you when what you are looking at is old.
  */
 
-/** Registers the worker, and wipes its caches when the session ends. */
+export type WorkerUpdateState = "idle" | "installing" | "waiting" | "activating";
+
+type WorkerSnapshot = {
+  update: WorkerUpdateState;
+  failures: number;
+};
+
+const listeners = new Set<() => void>();
+let snapshot: WorkerSnapshot = { update: "idle", failures: 0 };
+const serverSnapshot: WorkerSnapshot = { update: "idle", failures: 0 };
+let retainedRegistration: ServiceWorkerRegistration | null = null;
+
+export function reduceWorkerSnapshot(
+  current: WorkerSnapshot,
+  event: "installing" | "installed" | "activate" | "activated" | "failed",
+): WorkerSnapshot {
+  if (event === "failed") return { update: "idle", failures: current.failures + 1 };
+  if (event === "installing") return { ...current, update: "installing" };
+  if (event === "installed") return { ...current, update: "waiting" };
+  if (event === "activate") return { ...current, update: "activating" };
+  return { ...current, update: "idle", failures: 0 };
+}
+
+function publish(event: Parameters<typeof reduceWorkerSnapshot>[1]) {
+  snapshot = reduceWorkerSnapshot(snapshot, event);
+  listeners.forEach((listener) => listener());
+}
+
+function observeInstalling(registration: ServiceWorkerRegistration) {
+  const worker = registration.installing;
+  if (!worker) return;
+  publish("installing");
+  const statechange = () => {
+    if (worker.state === "installed" && navigator.serviceWorker.controller) publish("installed");
+    // register() can resolve even though fetching or evaluating an updated
+    // worker later fails. Browsers report that case by making the installing
+    // worker redundant, so it must feed the same failure warning as a rejected
+    // registration rather than leaving the UI stuck on "installing".
+    if (worker.state === "redundant") publish("failed");
+  };
+  worker.addEventListener("statechange", statechange);
+}
+
+/** Registers the worker and retains its lifecycle for the update UI. */
 export function ServiceWorkerRegistrar() {
   React.useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.register("/sw.js").catch(() => {
-      // A blocked or unsupported worker just means no offline reading. The app
-      // works exactly as it did before.
-    });
+    let cancelled = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const register = () => {
+      navigator.serviceWorker.register("/sw.js").then((registration) => {
+        if (cancelled) return;
+        retainedRegistration = registration;
+        snapshot = { ...snapshot, failures: 0 };
+        if (registration.waiting && navigator.serviceWorker.controller) publish("installed");
+        observeInstalling(registration);
+        registration.addEventListener("updatefound", () => observeInstalling(registration));
+      }).catch(() => {
+        if (cancelled) return;
+        publish("failed");
+        if (snapshot.failures < 3) retry = setTimeout(register, 1_000);
+      });
+    };
+    register();
+
+    const controllerchange = () => {
+      publish("activated");
+      if (reloadOnControllerChange) window.location.reload();
+    };
+    navigator.serviceWorker.addEventListener("controllerchange", controllerchange);
+    return () => {
+      cancelled = true;
+      clearTimeout(retry);
+      navigator.serviceWorker.removeEventListener("controllerchange", controllerchange);
+    };
   }, []);
 
   return null;
+}
+
+let reloadOnControllerChange = false;
+
+/** Bridges worker lifecycle state to a non-blocking Sonner notification. */
+export function ServiceWorkerUpdateNotification() {
+  const state = React.useSyncExternalStore(
+    (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+    () => snapshot,
+    () => serverSnapshot,
+  );
+
+  React.useEffect(() => {
+    if (state.update !== "waiting") return;
+    toast.info("An update is ready", {
+      id: "service-worker-update",
+      duration: Infinity,
+      action: {
+        label: "Reload to update",
+        onClick: () => {
+          reloadOnControllerChange = true;
+          publish("activate");
+          retainedRegistration?.waiting?.postMessage({ type: "activate-update" });
+        },
+      },
+    });
+  }, [state.update]);
+
+  React.useEffect(() => {
+    if (state.failures < 3) return;
+    toast.warning("Offline reading could not start", {
+      id: "service-worker-registration-failed",
+      description: "The app still works online. You can reset offline data in Settings.",
+      duration: Infinity,
+    });
+  }, [state.failures]);
+  return null;
+}
+
+/** Fully reset the app's worker and its deliberately-prefixed caches. */
+export async function resetOfflineWorker(): Promise<void> {
+  if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+    // The app registers one root-scoped worker. Do not unregister every worker
+    // on the origin: a reverse proxy can host another application under a
+    // different scope, and offline recovery here must not break it.
+    const registration = await navigator.serviceWorker.getRegistration("/");
+    await registration?.unregister();
+  }
+  if (typeof caches !== "undefined") {
+    const names = await caches.keys();
+    await Promise.all(names.filter((name) => name.startsWith("pcrm-")).map((name) => caches.delete(name)));
+  }
 }
 
 /** Tell the worker to throw everything away. */

@@ -116,6 +116,21 @@ quietly writes someone's private notes to disk.
 
 A saved copy of a page seen while unlocked would make the lock decorative.
 
+Settings also has a manual recovery action. It unregisters the Personal CRM
+worker and deletes only caches whose names begin with `pcrm-`, then reloads the
+app. This is deliberately narrower than clearing all origin storage: recovery
+from a broken offline setup must not erase unrelated browser data.
+
+### Updates wait for consent
+
+A newly installed worker waits when an older generation already controls the
+page. The app announces that the update is ready and sends an explicit
+activation message only after “Reload to update” is chosen. It then waits for
+the browser's `controllerchange` event before reloading, so the refreshed page
+cannot race ahead while the old generation is still in control. Repeated
+registration failures are shown as a non-blocking warning with the Settings
+recovery path rather than being silently ignored.
+
 ### Staleness is shown, not hidden
 
 Every offline page carries how old it is, **to the minute** — day-granular

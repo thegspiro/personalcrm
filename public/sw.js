@@ -39,12 +39,6 @@ const PAGES = `pcrm-pages-${VERSION}`;
 const ASSETS = `pcrm-assets-${VERSION}`;
 const OURS = [PAGES, ASSETS];
 
-self.addEventListener("install", (event) => {
-  // Take over promptly: a half-updated worker serving an old shell against a
-  // new server is worse than a moment's delay.
-  event.waitUntil(self.skipWaiting());
-});
-
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
@@ -86,6 +80,12 @@ self.addEventListener("message", (event) => {
   } else if (data.type === "purge") {
     // Sent on lock and on sign-out. Everything goes, including the shell.
     event.waitUntil(purgeEverything());
+  } else if (data.type === "activate-update") {
+    // Keep this message event alive until the browser has accepted the
+    // activation request. Without waitUntil the waiting worker may be stopped
+    // before the promise settles, leaving the page waiting forever for a
+    // controllerchange that never comes.
+    event.waitUntil(self.skipWaiting());
   }
 });
 
