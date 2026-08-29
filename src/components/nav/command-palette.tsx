@@ -36,16 +36,24 @@ export function CommandPalette({ hideDating }: { hideDating: boolean }) {
   >([]);
   const [active, setActive] = React.useState(0);
 
+  const changeOpen = React.useCallback((next: boolean) => {
+    if (next) {
+      setQuery("");
+      setActive(0);
+    }
+    setOpen(next);
+  }, []);
+
   React.useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setOpen((value) => !value);
+        changeOpen(!open);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [changeOpen, open]);
 
   // Debounced so typing does not fire a query per keystroke.
   React.useEffect(() => {
@@ -60,13 +68,6 @@ export function CommandPalette({ hideDating }: { hideDating: boolean }) {
       clearTimeout(timer);
     };
   }, [open, query]);
-
-  React.useEffect(() => {
-    if (open) {
-      setQuery("");
-      setActive(0);
-    }
-  }, [open]);
 
   const go = React.useCallback(
     (href: string) => {
@@ -120,9 +121,7 @@ export function CommandPalette({ hideDating }: { hideDating: boolean }) {
     return [...peopleRows, ...actions, ...routeRows];
   }, [people, query, hideDating, go]);
 
-  React.useEffect(() => {
-    setActive((current) => (current >= rows.length ? 0 : current));
-  }, [rows.length]);
+  const visibleActive = active >= rows.length ? 0 : active;
 
   function onInputKey(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown") {
@@ -133,7 +132,7 @@ export function CommandPalette({ hideDating }: { hideDating: boolean }) {
       setActive((current) => (rows.length === 0 ? 0 : (current - 1 + rows.length) % rows.length));
     } else if (event.key === "Enter") {
       event.preventDefault();
-      rows[active]?.run();
+      rows[visibleActive]?.run();
     }
   }
 
@@ -143,7 +142,7 @@ export function CommandPalette({ hideDating }: { hideDating: boolean }) {
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => changeOpen(true)}
         aria-label="Search"
         aria-keyshortcuts="Meta+K Control+K"
         className="flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -151,7 +150,7 @@ export function CommandPalette({ hideDating }: { hideDating: boolean }) {
         <Search className="size-4" />
       </button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={changeOpen}>
         <DialogContent className="top-[10%] max-w-lg translate-y-0 gap-0 overflow-hidden p-0">
           <VisuallyHidden>
             <DialogTitle>Search and commands</DialogTitle>
@@ -192,7 +191,7 @@ export function CommandPalette({ hideDating }: { hideDating: boolean }) {
                         onMouseEnter={() => setActive(index)}
                         className={cn(
                           "flex min-w-0 w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm",
-                          index === active ? "bg-muted" : "hover:bg-muted/60",
+                          index === visibleActive ? "bg-muted" : "hover:bg-muted/60",
                         )}
                       >
                         <Icon name={row.icon} className="size-4 shrink-0 text-muted-foreground" />
