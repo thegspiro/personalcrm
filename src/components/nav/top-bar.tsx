@@ -32,6 +32,7 @@ export function TopBar({
 }) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   // The theme is only known after hydration; render a stable icon until then.
   useEffect(() => setMounted(true), []);
@@ -97,14 +98,16 @@ export function TopBar({
           <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
-            onSelect={() => {
+            disabled={signingOut}
+            onSelect={async () => {
+              setSigningOut(true);
               // Saved pages must not outlive the session they came from.
-              purgeOfflineCaches();
-              void logoutAction();
+              await purgeOfflineCaches();
+              await logoutAction();
             }}
           >
             <LogOut />
-            Sign out
+            {signingOut ? "Signing out…" : "Sign out"}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
