@@ -37,7 +37,19 @@ const VERSION = "v1";
 const servedFromCache = new Set();
 const PAGES = `pcrm-pages-${VERSION}`;
 const ASSETS = `pcrm-assets-${VERSION}`;
-const OURS = [PAGES, ASSETS];
+const SHELL = `pcrm-shell-${VERSION}`;
+const OURS = [PAGES, ASSETS, SHELL];
+
+// A purge closes caching as well as deleting what is already present. Without
+// this gate, the navigation that follows a lock can immediately recreate an
+// empty pages cache (and a sign-out can cache login-page assets) before the
+// caller gets a chance to inspect Cache Storage. A cacheable page explicitly
+// opens the gate again through `cache-page`.
+// Start closed as well: a browser may terminate and restart the worker between
+// the purge acknowledgement and the following navigation. Cache reads remain
+// available while closed, but only a fresh `cache-page` opt-in permits writes.
+let cachingEnabled = false;
+let cacheEpoch = 0;
 
 // A purge closes caching as well as deleting what is already present. Without
 // this gate, the navigation that follows a lock can immediately recreate an
@@ -50,7 +62,20 @@ let cacheEpoch = 0;
 self.addEventListener("install", (event) => {
   // Take over promptly: a half-updated worker serving an old shell against a
   // new server is worse than a moment's delay.
-  event.waitUntil(self.skipWaiting());
+  event.waitUntil(
+    (async () => {
+      try {
+        const response = await fetch("/offline", { credentials: "same-origin" });
+        if (!response.ok || response.redirected) throw new Error("offline document unavailable");
+        const cache = await caches.open(SHELL);
+        await cache.put("/offline", response);
+      } catch {
+        // Do not strand an old worker if the server is unavailable mid-deploy.
+        // networkFirst still has its minimal inline Response as a last resort.
+      }
+      await self.skipWaiting();
+    })(),
+  );
 });
 
 self.addEventListener("activate", (event) => {
@@ -193,7 +218,7 @@ async function networkFirst(request) {
       return cached;
     }
 
-    const shell = await caches.match("/offline");
+    const shell = await caches.match("/offline", { cacheName: SHELL });
     if (shell) return shell;
 
     return new Response(
@@ -208,9 +233,10 @@ async function networkFirst(request) {
 }
 
 async function cacheFirst(request) {
-  if (!cachingEnabled) return fetch(request);
   const epoch = cacheEpoch;
 
+  // A closed gate prevents writes, not offline reads. This matters when the
+  // browser restarts the worker before loading an already-saved offline page.
   const cached = await caches.match(request.url);
   if (cached) return cached;
 
