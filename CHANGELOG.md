@@ -53,6 +53,10 @@ relationship it threw away both halves of the pair.
   none of them could be entered.
 
 #### Fixed
+- **Life events can no longer store a provably inverted date range.** Exact and
+  partial dates are compared as possible intervals, so ambiguous overlaps such
+  as “2019” through “January 2019” remain valid while an end wholly before the
+  possible start is rejected at the field in both the browser and server.
 - **`updateFact` silently dropped a fact's privacy marker.** It wrote content,
   category and importance and left `isPrivate` out of the update, so the field
   the create path offers had no way back. It is now written — but only when the

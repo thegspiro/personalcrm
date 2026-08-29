@@ -92,6 +92,11 @@ list, because a person missing from the form would be silently dropped on save.
 | Dietary needs | `createDietaryNeed`, `updateDietaryNeed`, `deleteDietaryNeed` |
 | Relationships | `createRelationship`, `updateRelationship`, `deleteRelationship` |
 
+Life-event ranges compare the possible interval represented by each partial
+date. The create and update actions reject only ranges that are definitively
+inverted and return the problem against `endDate`; overlapping fuzzy dates
+remain valid.
+
 `createRelationship` writes **both** reciprocal rows under one `pairId`;
 `updateRelationship` re-types both and keeps the `pairId`; `deleteRelationship`
 removes both. `settleDebt` records a date rather than deleting the row.
