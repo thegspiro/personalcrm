@@ -7,7 +7,12 @@ import {
   type PrivacyScope,
 } from "@/server/privacy/filter";
 import { calendarDateInTz, plainDateFromDb, type PlainDate } from "@/lib/dates";
-import { comparePartialDates, type DatePrecision } from "@/lib/date-precision";
+import { comparePartialDates, overlapsRange, type DatePrecision } from "@/lib/date-precision";
+import {
+  fetchContactBirthdays,
+  isBirthdayImportantDate,
+  type BirthdayProjection,
+} from "./birthdays";
 
 /**
  * The unified timeline.
@@ -47,7 +52,8 @@ export interface TimelineEntry {
   href: string;
   editable?:
     | { kind: "important-date"; recurrence: "NONE" | "ANNUAL" | "MONTHLY"; typeId: string | null; notes: string | null }
-    | { kind: "life-event"; typeId: string | null; description: string | null; endDate: PlainDate | null; endPrecision: DatePrecision | null; isMilestone: boolean };
+    | { kind: "life-event"; typeId: string | null; description: string | null; endDate: PlainDate | null; endPrecision: DatePrecision | null; isMilestone: boolean }
+    | { kind: "contact-birthday"; contactId: string };
 }
 
 export interface TimelineOptions {
@@ -79,11 +85,14 @@ export async function buildTimeline(
 
   // Each source is capped at `take` — after merging we slice again, so no
   // single source can crowd the others out of the window.
-  const [interactions, lifeEvents, importantDates, gifts] = await Promise.all([
+  const [interactions, lifeEvents, importantDates, gifts, birthdays] = await Promise.all([
     kinds.has("interaction") ? fetchInteractions(ownerId, options, take, scope) : [],
     kinds.has("life-event") ? fetchLifeEvents(ownerId, options, take, scope) : [],
     kinds.has("important-date") ? fetchImportantDates(ownerId, options, take, scope) : [],
     kinds.has("gift") ? fetchGifts(ownerId, options, take, scope) : [],
+    kinds.has("important-date")
+      ? fetchContactBirthdays(ownerId, scope, { contactId: options.contactId, activeOnly: false })
+      : [],
   ]);
 
   const now = new Date();
@@ -92,7 +101,25 @@ export async function buildTimeline(
   const entries: TimelineEntry[] = [
     ...interactions.map((row) => interactionEntry(row, timezone, now)),
     ...lifeEvents.map(lifeEventEntry),
-    ...importantDates.map((row) => importantDateEntry(row, today)),
+    ...importantDates
+      .filter(
+        (row) =>
+          !(
+            birthdays.some((birthday) => birthday.contactId === row.contactId) &&
+            isBirthdayImportantDate(row)
+          ),
+      )
+      .map((row) => importantDateEntry(row, today)),
+    ...birthdays
+      .filter((birthday) =>
+        overlapsRange(
+          birthday.date,
+          birthday.precision,
+          options.from ? plainDateFromDb(options.from) : null,
+          options.to ? plainDateFromDb(options.to) : null,
+        ),
+      )
+      .map(birthdayTimelineEntry),
     ...gifts.map(giftEntry),
   ];
 
@@ -284,6 +311,28 @@ function importantDateEntry(row: ImportantDateRow, today: PlainDate): TimelineEn
     contacts: [row.contact],
     href: `/people/${row.contactId}#important-date-${row.id}`,
     editable: { kind: "important-date", recurrence: row.recurrence, typeId: row.typeId, notes: row.notes },
+  };
+}
+
+/**
+ * A timeline is history, so birthdays represent the original birth date, not
+ * a moving next occurrence. Consequently they are never marked upcoming;
+ * annual projection belongs to Coming up. MONTH_DAY retains its unknown-year
+ * anchor and precision rather than inventing a birth year.
+ */
+function birthdayTimelineEntry(row: BirthdayProjection): TimelineEntry {
+  return {
+    id: row.id,
+    kind: "important-date",
+    date: row.date,
+    precision: row.precision,
+    title: row.label,
+    detail: row.notes,
+    upcoming: false,
+    term: row.type,
+    contacts: [row.contact],
+    href: `/people/${row.contactId}#important-date-${row.id}`,
+    editable: { kind: "contact-birthday", contactId: row.contactId },
   };
 }
 

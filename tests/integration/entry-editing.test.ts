@@ -45,6 +45,7 @@ vi.mock("@/server/privacy/lock", () => ({
 }));
 
 const {
+  createLifeEvent,
   updateDebt,
   updateDietaryNeed,
   updateFact,
@@ -94,6 +95,27 @@ describe.skipIf(!hasTestDatabase)("editing an entry", () => {
   });
 
   // --- facts ---------------------------------------------------------------
+
+  describe("a life event range", () => {
+    it("returns an end-date error and does not write a definitively inverted range", async () => {
+      const result = await createLifeEvent(
+        form({
+          contactId: sarahId,
+          title: "Worked abroad",
+          date: "2020-01-01",
+          datePrecision: "YEAR",
+          endDate: "2019-12-01",
+          endDatePrecision: "MONTH",
+        }),
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        fieldErrors: { endDate: "End date must not be before the start date." },
+      });
+      expect(await prisma.lifeEvent.count({ where: { ownerId } })).toBe(0);
+    });
+  });
 
   describe("timeline history behind a private contact", () => {
     it("cannot be changed with remembered date or event ids while locked", async () => {

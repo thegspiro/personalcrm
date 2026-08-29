@@ -4,6 +4,11 @@ There is no REST API. Every mutation is a Next.js **server action** in
 `src/server/actions/`, and the only route handler in the app is
 `GET /api/health`.
 
+Contact birthdays are updated by `updateContactBirthday`. It validates a
+partial date (including `MONTH_DAY`), scopes the contact by owner, and applies
+the live privacy-lock filter before writing `Contact.birthDate`; it never
+creates an `ImportantDate` shadow row.
+
 ## The contract
 
 Every action returns `ActionResult` from
@@ -91,6 +96,11 @@ list, because a person missing from the form would be silently dropped on save.
 | Debts | `createDebt`, `updateDebt`, `settleDebt`, `deleteDebt` |
 | Dietary needs | `createDietaryNeed`, `updateDietaryNeed`, `deleteDietaryNeed` |
 | Relationships | `createRelationship`, `updateRelationship`, `deleteRelationship` |
+
+Life-event ranges compare the possible interval represented by each partial
+date. The create and update actions reject only ranges that are definitively
+inverted and return the problem against `endDate`; overlapping fuzzy dates
+remain valid.
 
 `createRelationship` writes **both** reciprocal rows under one `pairId`;
 `updateRelationship` re-types both and keeps the `pairId`; `deleteRelationship`

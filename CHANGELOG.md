@@ -16,6 +16,19 @@ for what each migration does.
 
 ## [Unreleased]
 
+### Canonical contact birthdays — 2026-08-29
+
+*Schema: none*
+
+#### Changed
+- **A person's birthday now appears everywhere from `Contact.birthDate`.** The
+  Important dates section, unified timeline, and Coming up widget share one
+  projection, so edits cannot leave two birthday records disagreeing. Unknown
+  birth years remain month-and-day values.
+- **Existing birthday-type important dates remain stored for compatibility.**
+  Their notes and reminder settings are inherited by the canonical entry while
+  the legacy row is suppressed. Demo seeding no longer creates duplicate rows.
+
 ### Timeline cards as navigation and editors — 2026-08-29
 
 *Schema: none*
@@ -73,6 +86,10 @@ relationship it threw away both halves of the pair.
   none of them could be entered.
 
 #### Fixed
+- **Life events can no longer store a provably inverted date range.** Exact and
+  partial dates are compared as possible intervals, so ambiguous overlaps such
+  as “2019” through “January 2019” remain valid while an end wholly before the
+  possible start is rejected at the field in both the browser and server.
 - **`updateFact` silently dropped a fact's privacy marker.** It wrote content,
   category and importance and left `isPrivate` out of the update, so the field
   the create path offers had no way back. It is now written — but only when the

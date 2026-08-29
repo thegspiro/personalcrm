@@ -27,11 +27,13 @@ import {
 import { EditInteractionSheet } from "@/components/timeline/edit-interaction";
 import { PrivateText } from "@/components/dating/private-text";
 import {
+  ContactBirthdayFields,
   ImportantDateFields,
   LifeEventFields,
   type DateItem,
   type LifeEventItem,
 } from "@/components/contacts/contact-sections";
+import { updateContactBirthday } from "@/server/actions/contacts";
 import type { TermOption } from "@/components/form/term-select";
 import { SubmitButton } from "@/components/form/submit-button";
 import { useAddAction } from "@/components/form/use-action";
@@ -142,14 +144,16 @@ export function TimelineList({
                       >
                         <Icon name="Pencil" className="size-3.5" />
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => void remove(entry)}
-                        aria-label={`Delete ${entry.title}`}
-                        className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                      >
-                        <Icon name="X" className="size-3.5" />
-                      </button>
+                      {entry.editable?.kind !== "contact-birthday" ? (
+                        <button
+                          type="button"
+                          onClick={() => void remove(entry)}
+                          aria-label={`Delete ${entry.title}`}
+                          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                        >
+                          <Icon name="X" className="size-3.5" />
+                        </button>
+                      ) : null}
                     </span>
                   ) : null}
                 </div>
@@ -203,7 +207,16 @@ export function TimelineList({
             </article>
             {editingDetail === `${entry.kind}-${entry.id}` && entry.editable ? (
               <div className="mt-2 rounded-xl border border-accent-8 bg-card p-3">
-                {entry.editable.kind === "important-date" ? (
+                {entry.editable.kind === "contact-birthday" ? (
+                  <form action={submit(updateContactBirthday, () => setEditingDetail(null), "Birthday saved")} className="grid gap-2.5">
+                    <input type="hidden" name="id" value={entry.editable.contactId} />
+                    <ContactBirthdayFields
+                      formId={`timeline-birthday-${entry.editable.contactId}`}
+                      item={{ date: entry.date, precision: entry.precision }}
+                    />
+                    <SubmitButton size="sm">Save</SubmitButton>
+                  </form>
+                ) : entry.editable.kind === "important-date" ? (
                   <form action={submit(updateImportantDate, () => setEditingDetail(null), "Saved")} className="grid gap-2.5">
                     <input type="hidden" name="id" value={entry.id} />
                     <ImportantDateFields formId={`timeline-date-${entry.id}`} types={dateTypes} item={{
