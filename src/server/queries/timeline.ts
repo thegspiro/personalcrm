@@ -51,7 +51,7 @@ export interface TimelineEntry {
   location?: string | null;
   href: string;
   editable?:
-    | { kind: "important-date"; recurrence: "NONE" | "ANNUAL" | "MONTHLY"; typeId: string | null; notes: string | null }
+    | { kind: "important-date"; recurrence: "NONE" | "ANNUAL" | "MONTHLY"; typeId: string | null; notes: string | null; reminderDaysBefore: number[] | null }
     | { kind: "life-event"; typeId: string | null; description: string | null; endDate: PlainDate | null; endPrecision: DatePrecision | null; isMilestone: boolean }
     | { kind: "contact-birthday"; contactId: string };
 }
@@ -310,7 +310,18 @@ function importantDateEntry(row: ImportantDateRow, today: PlainDate): TimelineEn
     term: row.type ? { label: row.type.label, icon: row.type.icon, color: row.type.color } : null,
     contacts: [row.contact],
     href: `/people/${row.contactId}#important-date-${row.id}`,
-    editable: { kind: "important-date", recurrence: row.recurrence, typeId: row.typeId, notes: row.notes },
+    // The reminder policy travels with the row because the edit form submits
+    // every field it holds: leaving it out would reset a custom policy to the
+    // account default on any unrelated correction made from the timeline.
+    editable: {
+      kind: "important-date",
+      recurrence: row.recurrence,
+      typeId: row.typeId,
+      notes: row.notes,
+      reminderDaysBefore: Array.isArray(row.reminderDaysBefore)
+        ? (row.reminderDaysBefore as number[])
+        : null,
+    },
   };
 }
 

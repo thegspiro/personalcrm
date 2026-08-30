@@ -227,7 +227,9 @@ export function TimelineList({
                     <ImportantDateFields formId={`timeline-date-${entry.id}`} types={dateTypes} item={{
                       id: entry.id, label: entry.title, date: entry.date, precision: entry.precision,
                       recurrence: entry.editable.recurrence, typeId: entry.editable.typeId,
-                      notes: entry.editable.notes, type: entry.term ?? null,
+                      notes: entry.editable.notes,
+                      reminderDaysBefore: entry.editable.reminderDaysBefore,
+                      type: entry.term ?? null,
                     } satisfies DateItem} />
                     <SubmitButton size="sm">Save</SubmitButton>
                   </form>
