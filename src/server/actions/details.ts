@@ -442,6 +442,7 @@ async function planFields(ownerId: string, form: FormData) {
   return {
     categoryId,
     location: str(form, "location") ?? null,
+    address: str(form, "address") ?? null,
     city: str(form, "city") ?? null,
     url: str(form, "url") ?? null,
     estimatedCostCents: cost === undefined ? null : Math.round(cost * 100),

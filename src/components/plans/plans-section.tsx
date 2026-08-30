@@ -44,6 +44,7 @@ export interface PlanItem {
   title: string;
   status: "OPEN" | "PLANNED" | "DONE" | "ARCHIVED";
   location: string | null;
+  address: string | null;
   city: string | null;
   url: string | null;
   estimatedCostCents: number | null;
@@ -156,6 +157,16 @@ function PlanFields({
           />
         </Field>
       </div>
+
+      <Field label="Address" htmlFor={`${formId}-address`}>
+        <Input
+          id={`${formId}-address`}
+          name="address"
+          maxLength={500}
+          defaultValue={plan?.address ?? ""}
+          placeholder="2900 Columbia Pike, Arlington, VA 22204"
+        />
+      </Field>
 
       <div className="grid gap-2.5 sm:grid-cols-2">
         <Field label="Link" htmlFor={`${formId}-url`}>
@@ -345,6 +356,21 @@ export function PlansSection({
                     <span>Anyone</span>
                   )}
                 </div>
+
+                {plan.address ? (
+                  <div className="mt-1 min-w-0 text-xs text-muted-foreground">
+                    <span className="break-words">{plan.address}</span>{" "}
+                    <a
+                      href={`https://www.openstreetmap.org/search?query=${encodeURIComponent(plan.address)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="whitespace-nowrap text-accent-11 hover:underline"
+                      aria-label={`Check ${plan.address} on OpenStreetMap`}
+                    >
+                      Check on OpenStreetMap
+                    </a>
+                  </div>
+                ) : null}
 
                 {plan.url ? (
                   <a

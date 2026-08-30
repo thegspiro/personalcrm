@@ -116,10 +116,35 @@ test("save something to do, then log the date it becomes", async ({ page }) => {
   await plans.getByRole("button", { name: "Movie", exact: true }).click();
   await plans.getByLabel("Where").fill("Alamo Drafthouse");
   await plans.getByLabel("City").fill("Arlington");
+  await plans.getByLabel("Address").fill("2900 Columbia Pike, Arlington, VA 22204");
+  await plans.getByLabel("Notes").fill("Book the back row before Friday.");
   await plans.getByRole("button", { name: "Save", exact: true }).click();
 
   await expect(plans.getByText("Late showing at the Alamo")).toBeVisible();
   await expect(plans.getByText("Alamo Drafthouse")).toBeVisible();
+  await expect(plans.getByText("2900 Columbia Pike, Arlington, VA 22204")).toBeVisible();
+  const mapLink = plans.getByRole("link", { name: /Check .* on OpenStreetMap/ });
+  await expect(mapLink).toHaveAttribute(
+    "href",
+    "https://www.openstreetmap.org/search?query=2900%20Columbia%20Pike%2C%20Arlington%2C%20VA%2022204",
+  );
+
+  await plans.getByRole("button", { name: "Edit plan" }).click();
+  await plans.getByLabel("Address").fill("2900 Columbia Pike, Arlington, VA 22204, United States");
+  await plans.getByLabel("Notes").fill("Book the back row; parking is behind the venue.");
+  await plans.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(
+    plans.getByText("2900 Columbia Pike, Arlington, VA 22204, United States"),
+  ).toBeVisible();
+  await expect(plans.getByText("Book the back row; parking is behind the venue.")).toBeVisible();
+
+  if ((page.viewportSize()?.width ?? 1000) < 640) {
+    const overflow = await plans.evaluate((element) => element.scrollWidth > element.clientWidth);
+    expect(overflow).toBe(false);
+    await expect(
+      plans.getByRole("link", { name: /Check .* on OpenStreetMap/ }),
+    ).toBeVisible();
+  }
 
   // The date log offers it, prefills where it is, and closes it out on save.
   const dates = page
