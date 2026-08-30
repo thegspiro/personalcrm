@@ -30,9 +30,9 @@ import {
   ContactBirthdayFields,
   ImportantDateFields,
   LifeEventFields,
-  type DateItem,
-  type LifeEventItem,
-} from "@/components/contacts/contact-sections";
+  type ImportantDateValue,
+  type LifeEventValue,
+} from "@/components/contacts/detail-field-groups";
 import { updateContactBirthday } from "@/server/actions/contacts";
 import type { TermOption } from "@/components/form/term-select";
 import { SubmitButton } from "@/components/form/submit-button";
@@ -225,23 +225,22 @@ export function TimelineList({
                   <form action={submit(updateImportantDate, () => setEditingDetail(null), "Saved")} className="grid gap-2.5">
                     <input type="hidden" name="id" value={entry.id} />
                     <ImportantDateFields formId={`timeline-date-${entry.id}`} types={dateTypes} item={{
-                      id: entry.id, label: entry.title, date: entry.date, precision: entry.precision,
+                      label: entry.title, date: entry.date, precision: entry.precision,
                       recurrence: entry.editable.recurrence, typeId: entry.editable.typeId,
                       notes: entry.editable.notes,
                       reminderDaysBefore: entry.editable.reminderDaysBefore,
-                      type: entry.term ?? null,
-                    } satisfies DateItem} />
+                    } satisfies ImportantDateValue} />
                     <SubmitButton size="sm">Save</SubmitButton>
                   </form>
                 ) : (
                   <form action={submit(updateLifeEvent, () => setEditingDetail(null), "Saved")} className="grid gap-2.5">
                     <input type="hidden" name="id" value={entry.id} />
                     <LifeEventFields formId={`timeline-event-${entry.id}`} types={lifeEventTypes} event={{
-                      id: entry.id, title: entry.title, description: entry.editable.description,
+                      title: entry.title, description: entry.editable.description,
                       typeId: entry.editable.typeId, date: entry.date, precision: entry.precision,
                       endDate: entry.editable.endDate, endPrecision: entry.editable.endPrecision,
-                      isMilestone: entry.editable.isMilestone, type: entry.term ?? null,
-                    } satisfies LifeEventItem} />
+                      isMilestone: entry.editable.isMilestone,
+                    } satisfies LifeEventValue} />
                     <SubmitButton size="sm">Save</SubmitButton>
                   </form>
                 )}
