@@ -292,6 +292,8 @@ CHANGELOG.d/
 
 Follow the existing fragment format.
 
+CI and `npm run verify` both fail a change that edits `CHANGELOG.md` without deleting the fragments it folded in, so this is a gate rather than a request. A release fold passes because it deletes fragments; a deliberate edit to already-released history passes with `[changelog]` in the commit subject.
+
 `CHANGELOG.md` is assembled during the release process.
 
 Before creating a changelog entry, inspect current `main` to ensure this convention has not changed.

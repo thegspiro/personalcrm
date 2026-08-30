@@ -25,7 +25,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # Full history: the changelog-convention check needs a merge base with
+      # the target branch, which a shallow clone does not have.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -51,6 +55,14 @@ jobs:
 
       - name: Check the pending changelog entries
         run: npm run changelog:check
+
+      # Entries belong in CHANGELOG.d/. Saying so in four guidance files did
+      # not work: of the five pull requests opened in the hour after that
+      # convention shipped, five edited CHANGELOG.md and none added a
+      # fragment — four of them from branches that carried the instruction.
+      - name: Check nothing edited CHANGELOG.md by hand
+        if: github.event_name == 'pull_request'
+        run: node scripts/check-changelog-edit.mjs "${{ github.event.pull_request.base.sha }}"
 
       - name: Build
         # next.config.ts sets eslint.ignoreDuringBuilds, so the lint step above
