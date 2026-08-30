@@ -113,6 +113,32 @@ export function ImportantDateFields({
   );
 }
 
+/** The canonical birthday field shared by the person row and timeline editor. */
+export function ContactBirthdayFields({
+  formId,
+  item,
+}: {
+  formId: string;
+  item: Pick<ImportantDateValue, "date" | "precision">;
+}) {
+  return (
+    <>
+      <DateField
+        name="birthDate"
+        idPrefix={`${formId}-birthday`}
+        label="Birthday"
+        required
+        presets={[]}
+        defaultValue={plainDateKey(item.date)}
+        defaultPrecision={item.precision}
+      />
+      <p className="text-xs text-muted-foreground">
+        Birthday is stored on this person and repeats every year.
+      </p>
+    </>
+  );
+}
+
 export interface LifeEventValue {
   title: string;
   description: string | null;

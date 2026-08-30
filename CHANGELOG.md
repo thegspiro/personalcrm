@@ -67,6 +67,26 @@ for what each migration does.
   Their notes and reminder settings are inherited by the canonical entry while
   the legacy row is suppressed. Demo seeding no longer creates duplicate rows.
 
+### Timeline cards as navigation and editors — 2026-08-29
+
+*Schema: none*
+
+#### Added
+- Timeline cards now navigate through their non-interactive surface to the
+  exact Important date, Life event, Gift, or interaction on the person's page.
+  Edit and delete remain separate, always-visible controls for touch screens.
+- Important dates and life events can be corrected from either timeline using
+  the same complete field sets as their person-page forms. Gifts continue to
+  navigate to their existing inline editor rather than gaining a third copy of
+  that editing UI.
+
+#### Fixed
+- Important-date and life-event updates and deletes now apply the contact
+  privacy filter as well as owner scoping, so a remembered row id cannot reach
+  history belonging to a private contact while the lock is closed.
+- Timeline and person-page deletes require kind-specific confirmation; life
+  events explicitly describe permanent removal from the person's history.
+
 ### Editing everything else you logged — 2026-08-27
 
 *Schema: none*

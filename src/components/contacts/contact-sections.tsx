@@ -31,7 +31,7 @@ import {
 } from "@/lib/dietary";
 import { parsePlainDate, plainDateKey, type PlainDate } from "@/lib/dates";
 import { reminderPolicyLabel, type ReminderPolicy } from "@/lib/reminders";
-import { ImportantDateFields, LifeEventFields, type ImportantDateValue, type LifeEventValue } from "./detail-field-groups";
+import { ContactBirthdayFields, ImportantDateFields, LifeEventFields, type ImportantDateValue, type LifeEventValue } from "./detail-field-groups";
 import {
   createDebt,
   createDietaryNeed,
@@ -240,10 +240,14 @@ export function DatesSection({
         dates.map((item) => (
           <SectionRow
             key={item.id}
+            id={`important-date-${item.id}`}
             onDelete={
               item.canonicalBirthday
                 ? undefined
                 : () => void run(() => deleteImportantDate(item.id), "Removed")
+            }
+            deleteConfirm={
+              item.canonicalBirthday ? undefined : `Delete the important date “${item.label}”?`
             }
             deleteLabel={item.canonicalBirthday ? undefined : "Delete date"}
             editLabel="Edit date"
@@ -254,18 +258,7 @@ export function DatesSection({
                   className="grid gap-2.5"
                 >
                   <input type="hidden" name="id" value={contactId} />
-                  <DateField
-                    name="birthDate"
-                    idPrefix={`date-${item.id}-birthday`}
-                    label="Birthday"
-                    required
-                    presets={[]}
-                    defaultValue={plainDateKey(item.date)}
-                    defaultPrecision={item.precision}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Birthday is stored on this person and repeats every year.
-                  </p>
+                  <ContactBirthdayFields formId={`date-${item.id}`} item={item} />
                   <SubmitButton size="sm">Save</SubmitButton>
                 </form>
               ) : (
@@ -399,7 +392,9 @@ export function LifeEventsSection({
         events.map((event) => (
           <SectionRow
             key={event.id}
+            id={`life-event-${event.id}`}
             onDelete={() => void run(() => deleteLifeEvent(event.id), "Removed")}
+            deleteConfirm={`Permanently delete the life event “${event.title}” from this person's history?`}
             deleteLabel="Delete life event"
             editLabel="Edit life event"
             editForm={(close) => (
@@ -767,7 +762,7 @@ export function GiftsSection({
       icon="Gift"
       count={gifts.length}
       addLabel="Add a gift idea"
-      defaultOpen={false}
+      defaultOpen
       form={(close) => (
         <form action={add(createGift, close, "Added")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
@@ -782,6 +777,7 @@ export function GiftsSection({
         gifts.map((gift) => (
           <SectionRow
             key={gift.id}
+            id={`gift-${gift.id}`}
             onDelete={() => void run(() => deleteGift(gift.id), "Removed")}
             deleteLabel="Delete gift"
             editLabel="Edit gift"
