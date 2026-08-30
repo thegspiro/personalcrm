@@ -204,14 +204,24 @@ async function networkFirst(request) {
     }
     return response;
   } catch {
-    const cached = await caches.match(request.url);
-    if (cached) {
-      servedFromCache.add(request.url);
-      return cached;
+    try {
+      const cached = await caches.match(request.url);
+      if (cached) {
+        servedFromCache.add(request.url);
+        return cached;
+      }
+    } catch {
+      // Cache Storage can reject if its backing store is unavailable or
+      // corrupt. Continue to the independently stored offline document.
     }
 
-    const shell = await caches.match("/offline", { cacheName: SHELL });
-    if (shell) return shell;
+    try {
+      const shellCache = await caches.open(SHELL);
+      const shell = await shellCache.match("/offline");
+      if (shell?.ok) return shell;
+    } catch {
+      // The minimal response below deliberately has no cache dependency.
+    }
 
     return new Response(
       "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>" +
