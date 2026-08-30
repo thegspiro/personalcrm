@@ -40,11 +40,19 @@ npm run dev
 | `npm run db:deploy` | Apply pending migrations (what the container runs) |
 | `npm run db:studio` | Browse the database |
 | `npm run lint` | ESLint (`eslint .`, flat config in `eslint.config.mjs`). `next.config.ts` sets `eslint.ignoreDuringBuilds`, so a build never catches lint — the CI lint job is what does |
+| `npm run lint:sw` | `node --check public/sw.js`. ESLint **ignores** the service worker and it is not TypeScript, so this is the only static check it gets |
+| `npm run changelog` | What is pending in `CHANGELOG.d/`; `changelog:check` validates, `changelog:release` folds them into `CHANGELOG.md` |
+| `npm run verify` | typecheck → lint → lint:sw → changelog:check → test → build, in one command |
 
-Before pushing: `npm run typecheck && npm test && npm run build`, plus
-`npx playwright test` for UI changes. CI (`.github/workflows/ci.yml`) runs the
-same four things on every PR — quality, unit + integration, end-to-end against
-the standalone bundle, and a container build with a clean-volume boot.
+Before pushing: `npm run verify`, plus `npx playwright test` for UI changes. CI
+(`.github/workflows/ci.yml`) runs the same set on every PR — quality, unit +
+integration, end-to-end against the standalone bundle, and a container build
+with a clean-volume boot.
+
+**One `tsc` error reads as three broken jobs.** `next build` typechecks, and
+the end-to-end and container jobs both build first, so a single missing import
+fails Typecheck, End-to-end and Container build together. Treat three red ticks
+as one bug until proven otherwise.
 
 ### Running one test
 
@@ -139,7 +147,29 @@ Path alias `@/*` → `./src/*`.
 5. Sweep it in the relevant delete path. Note `CustomFieldValue.entityId` is
    **not** a foreign key (it points at four tables), so nothing cascades and
    every delete path sweeps it by hand.
-6. Update `docs/data-model.md` and `CHANGELOG.md`.
+6. Update `docs/data-model.md` and add an entry file to `CHANGELOG.d/`
+   (never `CHANGELOG.md` directly — see **Merging** below).
+
+## Merging main into a branch
+
+Merge before final validation, then **validate the merged tree, not just your
+own edits**. A clean merge is not a verified merge — git resolves text, not
+meaning, and all of these merged with no conflict reported:
+
+- Both sides added the same name to one import list → `tsc` redeclaration.
+- Both sides added the same `let` to `public/sw.js` → the worker stopped
+  parsing, so it never installed and offline reading died silently. Nothing
+  static catches that except `npm run lint:sw`.
+- A test kept driving a label main had renamed → the file merged perfectly.
+- A page gained a widget on each side; the destructuring named only one.
+
+Re-run `npm run verify` and the e2e suite *after* merging. Resolve conflicts by
+understanding both intents, never by taking one side wholesale; when both sides
+add something in the same place, the answer is usually both.
+
+Changelog entries go in `CHANGELOG.d/`, one file per change, precisely so that
+two branches cannot collide over the top of `## [Unreleased]` — which was this
+repository's most common conflict, and on several branches its only one.
 
 ## Things that look optional but are not
 

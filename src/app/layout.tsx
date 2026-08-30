@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Toaster } from "sonner";
 import { ThemeProvider, appearanceBootScript } from "@/components/providers/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { ServiceWorkerRegistrar } from "@/components/offline/offline";
+import { ServiceWorkerRegistrar, ServiceWorkerUpdateNotification } from "@/components/offline/offline";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -35,6 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <TooltipProvider delayDuration={300}>{children}</TooltipProvider>
           <ServiceWorkerRegistrar />
+          <ServiceWorkerUpdateNotification />
           <Toaster
             position="top-center"
             richColors
