@@ -8,6 +8,7 @@ import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { useAction, useAddAction } from "@/components/form/use-action";
 import { ACCENTS } from "@/components/providers/theme-provider";
+import { useHydrated } from "@/components/providers/use-hydrated";
 import { updateAppearance, updateDefaults } from "@/server/actions/settings";
 
 const CADENCE_PRESETS = [
@@ -38,8 +39,7 @@ export function AppearanceSettings({
   const { theme, setTheme } = useTheme();
   // next-themes only knows the theme after hydration; without this guard every
   // option renders unselected on first paint.
-  const [mounted, setMounted] = React.useState(false);
-  React.useEffect(() => setMounted(true), []);
+  const mounted = useHydrated();
   const [currentAccent, setCurrentAccent] = React.useState(accent);
   const [currentDensity, setCurrentDensity] = React.useState(density);
 
@@ -48,12 +48,12 @@ export function AppearanceSettings({
     const form = new FormData();
     if (next.accent) {
       setCurrentAccent(next.accent);
-      document.documentElement.dataset.accent = next.accent;
+      document.documentElement.setAttribute("data-accent", next.accent);
       form.set("accent", next.accent);
     }
     if (next.density) {
       setCurrentDensity(next.density);
-      document.documentElement.dataset.density = next.density;
+      document.documentElement.setAttribute("data-density", next.density);
       form.set("density", next.density);
     }
     void run(() => updateAppearance(form));

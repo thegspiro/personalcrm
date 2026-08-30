@@ -61,4 +61,17 @@ describe("taxonomy seeds", () => {
       expect(seed.color, `${seed.slug} has no colour`).toBeTruthy();
     }
   });
+
+  it("significant moments cover formal milestones and personal memories", () => {
+    const moments = TAXONOMY_SEEDS.LIFE_EVENT_TYPE;
+    const slugs = moments.map((seed) => seed.slug);
+    expect(slugs).toEqual(expect.arrayContaining([
+      "met", "became-friends", "adoption", "recovery", "health-milestone",
+      "achievement", "shared-memory", "first-time", "celebration",
+    ]));
+    expect(new Set(moments.map((seed) => seed.metadata?.group))).toEqual(new Set([
+      "Relationships", "Family", "Work and education", "Home and travel",
+      "Personal growth", "Memory",
+    ]));
+  });
 });

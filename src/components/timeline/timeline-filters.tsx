@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 
 const KINDS = [
   { value: "interaction", label: "Interactions" },
-  { value: "life-event", label: "Life events" },
+  { value: "life-event", label: "Significant moments" },
   { value: "important-date", label: "Dates" },
   { value: "gift", label: "Gifts" },
 ];

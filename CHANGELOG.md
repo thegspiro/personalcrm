@@ -21,6 +21,20 @@ for what each migration does.
 
 ## [Unreleased]
 
+### Significant moments — 2026-08-29
+
+*Schema: none*
+
+#### Changed
+- **Profiles now call life events “Significant moments.”** The broader language
+  covers formal changes and personal memories without changing the `LifeEvent`
+  persistence model or its server actions. Rapid backfill also makes clear that
+  these are historical moments rather than automatically recurring dates.
+- **The life-event taxonomy now includes relationships, family, work and
+  education, home and travel, personal growth, and memory choices.** The picker
+  groups these defaults, and startup provisioning adds the new terms to existing
+  accounts without a schema migration.
+
 ### Canonical contact birthdays — 2026-08-29
 
 *Schema: none*

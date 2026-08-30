@@ -547,10 +547,10 @@ export function LifeEventsSection({
 
   return (
     <SectionCard
-      title="Life events"
+      title="Significant moments"
       icon="Milestone"
       count={events.length}
-      addLabel="Add a life event"
+      addLabel="Add a significant moment"
       form={(close) => (
         <LifeEventForm
           action={add(createLifeEvent, close, "Event added")}
@@ -564,7 +564,8 @@ export function LifeEventsSection({
     >
       {events.length === 0 ? (
         <SectionEmpty>
-          Nothing recorded. Good for backfilling history — jobs, moves, milestones.
+          Record the moments that shaped their life—moves, achievements, relationships,
+          recoveries, and memories worth keeping.
         </SectionEmpty>
       ) : (
         events.map((event) => (
