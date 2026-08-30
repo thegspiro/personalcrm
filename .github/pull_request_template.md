@@ -63,5 +63,5 @@ you watched.
 
 ## Documentation
 
-- [ ] `CHANGELOG.md` updated for anything user-visible
+- [ ] A `CHANGELOG.d/` entry added for anything user-visible (not `CHANGELOG.md` itself)
 - [ ] The relevant `docs/` page updated — the table in `CONTRIBUTING.md` says which

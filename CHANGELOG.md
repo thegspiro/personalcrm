@@ -1,10 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- Added clear per-date reminder timing choices, including account defaults, custom offsets, and an explicit no-reminders policy.
-- Added timezone-aware important-date delivery through enabled notification channels, with privacy filtering, retries, and duplicate prevention.
-
 All notable changes to this project are recorded here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
@@ -20,6 +15,13 @@ for what each migration does.
 ---
 
 ## [Unreleased]
+
+<!--
+  Do not add entries here by hand. One file per change goes in CHANGELOG.d/,
+  and `npm run changelog:release` folds them in below — which is what keeps two
+  branches from conflicting over the top of this section. See
+  CHANGELOG.d/README.md.
+-->
 
 ### Offline update recovery — 2026-08-29
 
@@ -37,6 +39,19 @@ for what each migration does.
 #### Fixed
 - Repeated service-worker registration failures now produce a persistent but
   non-blocking warning instead of silently disabling offline reading.
+
+### Reminders for important dates — 2026-08-29
+
+*Schema: `20260829120000_enable_reminder_delivery`*
+
+#### Added
+- **Per-date reminder timing.** A date can use the account default, fire on the
+  day, a week or a month before, take a custom set of offsets, or be silenced
+  outright — chosen per date rather than inherited from one global setting.
+- **Delivery through enabled notification channels**, anchored to the account's
+  timezone. Private contacts are filtered out of the send, failures are retried,
+  and the ledger prevents the same reminder going twice.
+
 ### Historical timeline and projected important dates — 2026-08-29
 
 *Schema: none*
