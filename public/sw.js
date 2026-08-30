@@ -52,8 +52,9 @@ let cachingEnabled = false;
 let cacheEpoch = 0;
 
 self.addEventListener("install", (event) => {
-  // Take over promptly: a half-updated worker serving an old shell against a
-  // new server is worse than a moment's delay.
+  // Prepare the fallback before this generation can activate. Do not call
+  // skipWaiting here: an update remains waiting until the page explicitly
+  // accepts it.
   event.waitUntil(
     (async () => {
       try {
@@ -65,11 +66,12 @@ self.addEventListener("install", (event) => {
         // Do not strand an old worker if the server is unavailable mid-deploy.
         // networkFirst still has its minimal inline Response as a last resort.
       }
-      await self.skipWaiting();
     })(),
   );
 });
 
+// No install-time skipWaiting: an update remains waiting until the page sends
+// the explicit activation message below.
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
@@ -116,6 +118,12 @@ self.addEventListener("message", (event) => {
         event.ports[0]?.postMessage({ purged: true });
       })(),
     );
+  } else if (data.type === "activate-update") {
+    // Keep this message event alive until the browser has accepted the
+    // activation request. Without waitUntil the waiting worker may be stopped
+    // before the promise settles, leaving the page waiting forever for a
+    // controllerchange that never comes.
+    event.waitUntil(self.skipWaiting());
   }
 });
 

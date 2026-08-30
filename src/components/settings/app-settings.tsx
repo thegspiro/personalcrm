@@ -1,6 +1,8 @@
 "use client";
 
 import { InstallApp } from "@/components/pwa/install";
+import { resetOfflineWorker } from "@/components/offline/offline";
+import { Button } from "@/components/ui/button";
 
 /**
  * Installing the app, after the first run.
@@ -19,7 +21,6 @@ export function AppSettings({ installedAt }: { installedAt: string | null }) {
           own icon. It still needs your server to be reachable — installing does not put a
           copy of your data on the device.
         </p>
-
         <div className="mt-3">
           <InstallApp alreadyInstalled={Boolean(installedAt)} />
         </div>
@@ -38,6 +39,14 @@ export function AppSettings({ installedAt }: { installedAt: string | null }) {
           say how old that copy is. Nothing is cached unless the page asks, and everything is
           wiped when you lock the app or sign out.
         </p>
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-3"
+          onClick={() => void resetOfflineWorker().finally(() => window.location.reload())}
+        >
+          Reset offline data
+        </Button>
       </section>
     </div>
   );
