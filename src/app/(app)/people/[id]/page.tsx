@@ -33,6 +33,7 @@ import {
   RelationshipsSection,
   TasksSection,
 } from "@/components/contacts/contact-sections";
+import { MilestonesSummary } from "@/components/contacts/milestones-summary";
 import { TimelineList } from "@/components/timeline/timeline-list";
 import { SectionCard } from "@/components/contacts/section-card";
 import { calendarDateInTz, plainDateFromDb, plainDateKey } from "@/lib/dates";
@@ -118,6 +119,28 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
   const daysSince = daysSinceLastInteraction(contact.lastInteractionAt, timezone);
   const birthday = projectContactBirthday(contact);
 
+  // Mapped once and shared: the summary above the timeline and the full section
+  // below it read the same rows, so a milestone cannot render one way in one
+  // place and another way in the other.
+  const lifeEvents = contact.lifeEvents.map((event) => ({
+    id: event.id,
+    title: event.title,
+    description: event.description,
+    typeId: event.typeId,
+    date: plainDateFromDb(event.date),
+    precision: event.precision,
+    endDate: event.endDate ? plainDateFromDb(event.endDate) : null,
+    endPrecision: event.endPrecision,
+    isMilestone: event.isMilestone,
+    type: event.type
+      ? { label: event.type.label, icon: event.type.icon, color: event.type.color }
+      : null,
+  }));
+
+  // A summary, not a second home: the rows are already ordered newest first, and
+  // every one of them still appears in the section below.
+  const milestones = lifeEvents.filter((event) => event.isMilestone).slice(0, 3);
+
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
       {cacheable ? <CacheThisPage /> : null}
@@ -154,6 +177,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
       <div className="grid min-w-0 gap-3">
         <UpcomingDatesWidget dates={upcomingDates} />
+        <MilestonesSummary milestones={milestones} />
         <SectionCard title="Timeline" icon="History" count={timeline.length}>
           {reciprocity.text ? (
             <div className="grid gap-0.5 px-1">
@@ -338,6 +362,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             recurrence: item.recurrence,
             typeId: item.typeId,
             notes: item.notes,
+            reminderDaysBefore: Array.isArray(item.reminderDaysBefore) ? item.reminderDaysBefore as number[] : null,
             type: item.type
               ? { label: item.type.label, icon: item.type.icon, color: item.type.color }
               : null,
@@ -348,20 +373,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
         <LifeEventsSection
           contactId={contact.id}
-          events={contact.lifeEvents.map((event) => ({
-            id: event.id,
-            title: event.title,
-            description: event.description,
-            typeId: event.typeId,
-            date: plainDateFromDb(event.date),
-            precision: event.precision,
-            endDate: event.endDate ? plainDateFromDb(event.endDate) : null,
-            endPrecision: event.endPrecision,
-            isMilestone: event.isMilestone,
-            type: event.type
-              ? { label: event.type.label, icon: event.type.icon, color: event.type.color }
-              : null,
-          }))}
+          events={lifeEvents}
           types={terms.LIFE_EVENT_TYPE}
         />
 

@@ -160,10 +160,10 @@ Path alias `@/*` → `./src/*`.
 
 ## Not implemented (do not assume otherwise)
 
-`NotificationChannel` / `ReminderLog` are migrated but nothing sends anything —
-`node-cron` and `nodemailer` are dependencies no code imports, so `digestHour`,
-`digestEnabled` and `reminderDaysBefore` are stored and never acted on. Nothing
-writes to `/config/backups` or `/config/uploads` (`Contact.avatarPath` is
+Important-date reminders are delivered through enabled `NotificationChannel`
+rows by the hourly scheduler. Cadence, task, and digest notifications are not
+yet implemented, so `digestHour` and `digestEnabled` are still stored only.
+Nothing writes to `/config/backups` or `/config/uploads` (`Contact.avatarPath` is
 rendered but never set). Full list in [docs/README.md](docs/README.md#known-gaps).
 
 ## Commits

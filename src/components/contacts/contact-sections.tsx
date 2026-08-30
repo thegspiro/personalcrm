@@ -30,6 +30,7 @@ import {
   type DietaryKind,
 } from "@/lib/dietary";
 import { parsePlainDate, plainDateKey, type PlainDate } from "@/lib/dates";
+import { reminderPolicyLabel, type ReminderPolicy } from "@/lib/reminders";
 import {
   createDebt,
   createDietaryNeed,
@@ -201,6 +202,7 @@ export interface DateItem {
   recurrence: "NONE" | "ANNUAL" | "MONTHLY";
   typeId: string | null;
   notes: string | null;
+  reminderDaysBefore: ReminderPolicy;
   type: { label: string; icon: string | null; color: string | null } | null;
   canonicalBirthday?: boolean;
 }
@@ -221,6 +223,18 @@ function ImportantDateFields({
   types: TermOption[];
   item?: DateItem;
 }) {
+  const policy = item?.reminderDaysBefore;
+  const reminderMode = policy === null || policy === undefined
+    ? "default"
+    : policy.length === 0
+      ? "disabled"
+      : policy.length === 1 && policy[0] === 0
+        ? "on-day"
+        : policy.length === 1 && policy[0] === 7
+          ? "week"
+          : policy.length === 1 && policy[0] === 30
+            ? "month"
+            : "custom";
   return (
     <>
       <Field label="What is it?" htmlFor={`${formId}-label`}>
@@ -259,6 +273,34 @@ function ImportantDateFields({
           <option value="MONTHLY">Every month</option>
           <option value="NONE">Just once</option>
         </select>
+      </Field>
+      <Field label="Reminder timing" htmlFor={`${formId}-reminderMode`}>
+        <select
+          id={`${formId}-reminderMode`}
+          name="reminderMode"
+          defaultValue={reminderMode}
+          className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+        >
+          <option value="default">Use my account default (1 week before and on the day)</option>
+          <option value="on-day">On the day</option>
+          <option value="week">1 week before</option>
+          <option value="month">1 month before</option>
+          <option value="custom">Custom offsets</option>
+          <option value="disabled">Do not remind me</option>
+        </select>
+      </Field>
+      <Field
+        label="Custom days before"
+        htmlFor={`${formId}-reminderDaysBefore`}
+        hint="Comma-separated. Use 0 for “On the day,” 7 for “1 week before,” or 30 for “1 month before.”"
+      >
+        <Input
+          id={`${formId}-reminderDaysBefore`}
+          name="reminderDaysBefore"
+          inputMode="numeric"
+          defaultValue={item?.reminderDaysBefore?.join(", ") ?? "7, 0"}
+          placeholder="30, 7, 0"
+        />
       </Field>
       <Field label="Notes" htmlFor={`${formId}-notes`}>
         <Textarea id={`${formId}-notes`} name="notes" rows={2} defaultValue={item?.notes ?? ""} />
@@ -346,6 +388,7 @@ export function DatesSection({
               {formatPartialDate(item.date, item.precision)}
               {item.recurrence === "ANNUAL" ? " · yearly" : item.recurrence === "MONTHLY" ? " · monthly" : ""}
             </p>
+            <p className="text-xs text-muted-foreground">{reminderPolicyLabel(item.reminderDaysBefore)}</p>
           </SectionRow>
         ))
       )}
@@ -505,6 +548,7 @@ export function LifeEventsSection({
 
   return (
     <SectionCard
+      id="life-events"
       title="Significant moments"
       icon="Milestone"
       count={events.length}
