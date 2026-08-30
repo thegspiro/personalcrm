@@ -352,9 +352,11 @@ you *do* it.
 | `contactId` | `cuid?` | Null = something you would do with anyone, not saved against one person |
 | `title` | `varchar(191)` | |
 | `categoryId` | `cuid?` | → `TaxonomyTerm` (`PLAN_CATEGORY`), `SET NULL` — so a place, a film, a show and whatever else you invent live in one list you control |
-| `location` / `city` | `varchar(191)?` / `varchar(120)?` | The venue, park, cinema, trailhead — or your own kitchen |
+| `location` / `address` | `varchar(191)?` / `varchar(500)?` | The venue plus an optional complete street address or directions |
 | `url` | `varchar(500)?` | The listing, the menu, the trailer, the ticket page |
 | `estimatedCostCents` | `int?` | With `currency`, default `USD` |
+| `notes` | `text?` | Free-form preparation context, including personal accessibility or dietary needs without reducing them to enums |
+| `checklist` | `json` | A validated list of up to 25 `{ id, text, completed }` items. Suggestions begin only in the editor and are never completed automatically |
 | `status` | `PlanStatus` | `OPEN` \| `PLANNED` \| `DONE` \| `ARCHIVED` |
 | `plannedFor` | `date?` | Pencilled in, before there is anything logged to point at |
 | `usedAt` | `datetime?` | |
@@ -362,6 +364,8 @@ you *do* it.
 
 Deliberately not confined to the dating layer — a hike with a friend and a first
 date are the same object, so it hangs off any `Contact`, or off nobody.
+Checklist data inherits the plan's ownership and contact privacy filtering; it
+does not add a separately queried or cacheable child row.
 
 ### `Task`
 
@@ -564,6 +568,7 @@ the `init-migrate` s6 oneshot).
 | `20260824182152_add_dietary_debts_and_reach_out` | `Debt`, `DietaryNeed`, `Interaction.reachedOutBy` |
 | `20260825094500_add_plans` | `Plan`, `PlanStatus`, and `PLAN_CATEGORY` on `TaxonomyKind` |
 | `20260825120000_add_onboarding_state` | `UserPreference.onboardingCompletedAt` |
+| `20260830120000_expand_plan_practical_details` | Renames `Plan.city` to the wider `address` without losing values and adds the validated JSON checklist |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).

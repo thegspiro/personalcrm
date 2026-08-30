@@ -881,7 +881,8 @@ model Plan {
   categoryId String?
   /// The venue, park, cinema, trailhead — or your own kitchen.
   location   String? @db.VarChar(191)
-  city       String? @db.VarChar(120)
+  /// Full street address or other directions suitable for finding the venue.
+  address    String? @db.VarChar(500)
   /// The listing, the menu, the trailer, the ticket page.
   url        String? @db.VarChar(500)
 
@@ -889,6 +890,8 @@ model Plan {
   currency           String @default("USD") @db.VarChar(8)
 
   notes      String?    @db.Text
+  /// Local, user-edited preparation steps; each item has id, text and completed.
+  checklist  Json       @default("[]")
   status     PlanStatus @default(OPEN)
   /// Pencilled in, before there is anything logged to point at.
   plannedFor DateTime?  @db.Date

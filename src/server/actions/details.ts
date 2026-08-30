@@ -14,6 +14,7 @@ import { calendarDateInTz, plainDateFromDb, plainDateToDb } from "@/lib/dates";
 import { isValidPartialDateRange } from "@/lib/date-precision";
 import { dietaryKindOf } from "@/lib/dietary";
 import { parseReminderDays } from "@/lib/reminders";
+import { planChecklistSchema } from "@/lib/plan-checklist";
 import {
   type ActionResult,
   bool,
@@ -438,14 +439,24 @@ async function planFields(ownerId: string, form: FormData) {
     if (!term) return null;
   }
 
+  let checklistValue: unknown;
+  try {
+    checklistValue = JSON.parse(str(form, "checklist") ?? "[]");
+  } catch {
+    return null;
+  }
+  const checklist = planChecklistSchema.safeParse(checklistValue);
+  if (!checklist.success) return null;
+
   const cost = num(form, "estimatedCost");
   return {
     categoryId,
     location: str(form, "location") ?? null,
-    city: str(form, "city") ?? null,
+    address: str(form, "address") ?? null,
     url: str(form, "url") ?? null,
     estimatedCostCents: cost === undefined ? null : Math.round(cost * 100),
     notes: str(form, "notes") ?? null,
+    checklist: checklist.data as Prisma.InputJsonValue,
     plannedFor: plainDate(form, "plannedFor") ?? null,
   };
 }
@@ -459,7 +470,7 @@ export async function createPlan(form: FormData): Promise<ActionResult<{ id: str
   if (contactId && !(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
 
   const fields = await planFields(ownerId, form);
-  if (!fields) return fail("Unknown category.");
+  if (!fields) return fail("Invalid category or checklist.");
 
   const created = await prisma.plan.create({
     data: {
@@ -490,7 +501,7 @@ export async function updatePlan(form: FormData): Promise<ActionResult> {
   if (!title) return fail("What do you want to do?");
 
   const fields = await planFields(ownerId, form);
-  if (!fields) return fail("Unknown category.");
+  if (!fields) return fail("Invalid category or checklist.");
 
   await prisma.plan.update({ where: { id }, data: { title, ...fields } });
 

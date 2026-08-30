@@ -286,7 +286,7 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
         title: plan.title,
         categoryId: term("PLAN_CATEGORY", plan.category),
         location: plan.location ?? null,
-        city: plan.city ?? null,
+        address: plan.city ?? null,
         url: plan.url ?? null,
         estimatedCostCents: plan.costCents ?? null,
         notes: plan.notes ?? null,
