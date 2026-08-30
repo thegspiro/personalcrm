@@ -28,6 +28,10 @@ test("create timeline details", async ({ page }) => {
   await dates.getByRole("button", { name: "Add a date" }).click();
   await dates.getByLabel("What is it?").fill("Original important date");
   await chooseYear(page, dates, "When", "2011");
+  // One-time, so it belongs to the historical timeline this spec edits from.
+  // A repeating date is a projection with no single past occurrence and lives
+  // in Coming up instead.
+  await dates.getByLabel("Repeats").selectOption("NONE");
   await dates.getByRole("button", { name: "Add", exact: true }).click();
 
   const events = section(page, "Significant moments");
