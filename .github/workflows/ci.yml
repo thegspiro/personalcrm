@@ -41,6 +41,16 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # eslint.config.mjs ignores public/sw.js and it is not TypeScript, so
+      # nothing else here would notice a service worker that does not parse.
+      # A duplicate `let` from a merge once shipped a worker that never
+      # installed, and only the end-to-end job caught it, eight minutes in.
+      - name: Check the service worker parses
+        run: npm run lint:sw
+
+      - name: Check the pending changelog entries
+        run: npm run changelog:check
+
       - name: Build
         # next.config.ts sets eslint.ignoreDuringBuilds, so the lint step above
         # is the only thing standing between a lint error and main.
