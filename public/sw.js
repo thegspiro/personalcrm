@@ -51,14 +51,6 @@ const OURS = [PAGES, ASSETS, SHELL];
 let cachingEnabled = false;
 let cacheEpoch = 0;
 
-// A purge closes caching as well as deleting what is already present. Without
-// this gate, the navigation that follows a lock can immediately recreate an
-// empty pages cache (and a sign-out can cache login-page assets) before the
-// caller gets a chance to inspect Cache Storage. A cacheable page explicitly
-// opens the gate again through `cache-page`.
-let cachingEnabled = true;
-let cacheEpoch = 0;
-
 self.addEventListener("install", (event) => {
   // Take over promptly: a half-updated worker serving an old shell against a
   // new server is worse than a moment's delay.
