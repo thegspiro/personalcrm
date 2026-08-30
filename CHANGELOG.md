@@ -22,6 +22,42 @@ for what each migration does.
 
 ## [Unreleased]
 
+<!--
+  Do not add entries here by hand. One file per change goes in CHANGELOG.d/,
+  and `npm run changelog:release` folds them in below — which is what keeps two
+  branches from conflicting over the top of this section. See
+  CHANGELOG.d/README.md.
+-->
+
+### Offline update recovery — 2026-08-29
+
+*Schema: none*
+
+#### Added
+- **An explicit service-worker update prompt.** When a new offline worker is
+  ready, the app offers “Reload to update”; it activates that worker only after
+  the user accepts and reloads once the browser confirms the new worker is in
+  control.
+- **Offline recovery in Settings.** “Reset offline data” unregisters the app's
+  worker, removes Personal CRM caches, and reloads so a broken offline setup can
+  start cleanly.
+
+#### Fixed
+- Repeated service-worker registration failures now produce a persistent but
+  non-blocking warning instead of silently disabling offline reading.
+
+### Reminders for important dates — 2026-08-29
+
+*Schema: `20260829120000_enable_reminder_delivery`*
+
+#### Added
+- **Per-date reminder timing.** A date can use the account default, fire on the
+  day, a week or a month before, take a custom set of offsets, or be silenced
+  outright — chosen per date rather than inherited from one global setting.
+- **Delivery through enabled notification channels**, anchored to the account's
+  timezone. Private contacts are filtered out of the send, failures are retried,
+  and the ledger prevents the same reminder going twice.
+
 ### Historical timeline and projected important dates — 2026-08-29
 
 *Schema: none*

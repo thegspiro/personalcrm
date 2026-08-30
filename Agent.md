@@ -202,7 +202,7 @@ For any persistence change:
    values and precision after migration, not merely migration exit status.
 10. Regenerate Prisma artifacts by the established command; never hand-edit
     generated client output. Update `docs/data-model.md`, migration/upgrade and
-    operational guidance where relevant, and `CHANGELOG.md` when required.
+    operational guidance where relevant, and a `CHANGELOG.d/` entry when required.
 
 Never treat generated SQL or a successful empty-schema migration as proof that
 an upgrade preserves production data.
@@ -218,13 +218,29 @@ Run each command separately when useful so outcomes are attributable:
 ```bash
 npm run typecheck   # tsc --noEmit
 npm run lint        # eslint .; build intentionally ignores lint
+npm run lint:sw     # parse public/sw.js as a classic script
 npm test            # vitest run: unit plus integration when configured
 npm run build       # Next.js production/standalone build
 ```
 
+`npm run verify` chains all of them, plus `changelog:check`, in the order CI
+runs them. Use it as the gate and fall back to the individual commands when a
+failure needs isolating.
+
 `npm run lint` is mandatory even though the historical pre-push shorthand in
 the docs lists typecheck, tests, and build: `next.config.ts` sets
 `eslint.ignoreDuringBuilds`, while CI has an independent lint step.
+
+`npm run lint:sw` is not redundant with it. `eslint.config.mjs` ignores
+`public/sw.js` outright and the file is not TypeScript, so it is the only
+static check the service worker gets. A merge once left a duplicate `let` in
+it; the worker stopped parsing, never installed, and offline reading failed
+silently until the end-to-end job caught it minutes later.
+
+A single `tsc` error normally presents as three failed jobs, not one: `next
+build` typechecks, and the end-to-end and container jobs both build before
+doing anything else. Diagnose the typecheck failure first and re-run rather
+than opening three investigations.
 
 ### Unit and integration tests
 
@@ -259,7 +275,8 @@ the exact limitation; do not call E2E passing.
 `.github/workflows/ci.yml` is part of the product contract. On pushes to main
 and pull requests it verifies:
 
-- Node 22 install, Prisma generation, typecheck, lint, and production build;
+- Node 22 install, Prisma generation, typecheck, lint, the service-worker parse
+  check, the changelog-entry check, and a production build;
 - unit and integration tests against MariaDB, plus an assertion that integration
   suites did not skip;
 - migrations, a standalone production bundle, and the complete Playwright suite
@@ -278,7 +295,7 @@ Inspect cross-links and known gaps so one page does not contradict another.
 
 | Change | Required documentation review/update |
 | --- | --- |
-| User-visible behavior | `CHANGELOG.md` and relevant feature/operator guide |
+| User-visible behavior | A new `CHANGELOG.d/` entry and the relevant feature/operator guide |
 | Schema, constraints, taxonomy, persistence | `docs/data-model.md`; migration/upgrade notes and changelog as applicable |
 | Server action or write contract | `docs/server-actions.md` |
 | Layering, data flow, subsystem, startup | `docs/architecture.md` |
@@ -300,8 +317,24 @@ update the known-gap inventory and all relevant operational guidance.
   casually; if explicitly necessary, prefer `--force-with-lease`.
 - Resolve text conflicts by understanding both intents and checking renamed
   APIs, schemas, migrations, tests, and callers. Never choose an entire “ours”
-  or “theirs” version blindly. Regenerate lockfiles/generated metadata through
-  their normal tools and rerun affected validation.
+  or “theirs” version blindly. When both sides add something at the same point,
+  the answer is usually both, in a defensible order. Regenerate
+  lockfiles/generated metadata through their normal tools and rerun affected
+  validation.
+- **A clean merge is not a verified merge.** Rerun the full gate on the merged
+  tree, not only after your own edits. Git reconciles text without regard to
+  meaning, and each of the following merged with no conflict reported: two
+  branches adding the same name to one import list (a `tsc` redeclaration); two
+  branches adding the same `let` to `public/sw.js` (a worker that no longer
+  parsed, so offline reading died silently); a test still driving a label that
+  main had renamed; and a page given one new widget per side whose
+  destructuring named only one of them. Conflict count is not a proxy for risk.
+- Prefer merging main into the branch over rebasing when the branch is shared,
+  so existing checkouts stay valid.
+- Changelog entries belong in `CHANGELOG.d/`, one file per change, never in
+  `CHANGELOG.md` directly. Every change otherwise competes for the top of
+  `## [Unreleased]`, which made it the most frequent conflict in this
+  repository and on several branches the only one.
 - Do not hand-merge opaque binaries. Establish the authoritative source,
   regenerate, or escalate.
 - Before committing and reporting completion, inspect `git status`, the staged
@@ -336,14 +369,18 @@ update the known-gap inventory and all relevant operational guidance.
   validated where applicable; reset lists, deletes, and privacy safeguards were
   updated.
 - [ ] Regression tests were added or updated without weakening coverage.
-- [ ] `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build` ran;
-  actual outcomes and skipped integration suites are recorded.
+- [ ] `npm run verify` ran to completion (typecheck, lint, `lint:sw`,
+  `changelog:check`, tests, build); actual outcomes and skipped integration
+  suites are recorded.
+- [ ] If main was merged in, the gate was rerun *after* the merge rather than
+  only before it.
 - [ ] Applicable Playwright and container/migration checks ran, or their exact
   environmental limitations are recorded.
 - [ ] Every encountered error, including pre-existing errors, has a recorded
   investigation and root-cause resolution, or a substantiated escalation when
   safe repair genuinely exceeds scope.
-- [ ] Documentation and changelog match verified current behavior and known gaps.
+- [ ] Documentation matches verified current behavior and known gaps, and any
+  user-visible change carries a new `CHANGELOG.d/` entry.
 - [ ] `git status`, staged changes, and the full base diff contain no secrets,
   debug code, accidental generated/binary artifacts, or unrelated changes.
 - [ ] Commit message explains the decision and what it prevents.

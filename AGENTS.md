@@ -64,6 +64,10 @@ For text conflicts:
 - Check for renamed APIs, schema changes, migrations, tests, and call sites that may make one side stale.
 - Run targeted tests immediately after resolution, then the broader required validation.
 
+**A clean merge is not a verified merge.** The absence of a reported conflict says the text reconciled, not that the result is coherent, so rerun the full gate on the merged tree rather than only after your own edits. Each of the following merged without git reporting anything: two branches adding the same name to one import list, which `tsc` rejected as a redeclaration; two branches adding the same `let` to `public/sw.js`, which left a worker that no longer parsed; a test still driving a label `main` had renamed, in a file that merged perfectly; and a page given one new widget per side whose destructuring named only one of them. Conflict count is not a proxy for risk.
+
+When both sides add something at the same point, the coherent result is usually both of them, in a defensible order — not a choice between them.
+
 For conflicts involving migrations, dependency lockfiles, or generated metadata, understand how the file is produced before editing it. Regenerate when that is the repository's established workflow rather than hand-editing generated output blindly.
 
 ## Binary and Generated Files
@@ -120,7 +124,7 @@ For Prisma schema changes:
 6. Add new tables to the integration-test reset list described in `CLAUDE.md`.
 7. Update privacy counting/filtering for tables carrying private data.
 8. Test both a fresh schema and an upgrade path when the change affects persistence.
-9. Update the appropriate documentation and `CHANGELOG.md` when required by the repository conventions.
+9. Update the appropriate documentation, and add a `CHANGELOG.d/` entry when the change is user-visible.
 
 Never use a generated migration as evidence that a migration is safe. Inspect its effect on existing data.
 
@@ -128,15 +132,19 @@ Never use a generated migration as evidence that a migration is safe. Inspect it
 
 GitHub Actions is part of the implementation contract. A change is not complete merely because the code looks correct locally.
 
-The repository's documented pre-push baseline is:
+The repository's pre-push baseline is a single command:
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+npm run verify
 ```
 
-Run `npm run lint` as part of validation because the Next.js build is configured not to catch lint failures.
+It chains typecheck, `eslint`, `npm run lint:sw`, `npm run changelog:check`, the unit and integration suites, and a production build — the same set CI runs. Run the individual commands when a failure needs isolating.
+
+`npm run lint` matters because the Next.js build is configured not to catch lint failures. `npm run lint:sw` matters for a different reason: `eslint.config.mjs` ignores `public/sw.js` and the file is not TypeScript, so it is the service worker's only static check. A merge once left a duplicate `let` there; the worker stopped parsing, never installed, and offline reading failed silently until the end-to-end job caught it minutes later.
+
+It parses with classic-script grammar rather than running `node --check`, which is not equivalent: `package.json` declares `"type": "module"`, so node would accept `import`, `export` and top-level `await` in that file, while both registrations of it omit `{ type: "module" }` and get a classic worker that rejects all three. A gate that accepts what the browser refuses is worse than none, because it is trusted.
+
+One `tsc` error normally surfaces as three failed jobs rather than one, because `next build` typechecks and both the end-to-end and container jobs build first. Diagnose the typecheck failure before opening three investigations.
 
 For UI changes, also run:
 
@@ -177,6 +185,8 @@ Do not delete a failing test merely because the implementation changed. Determin
 ## Documentation
 
 The documentation under `docs/` is part of the product. Keep it synchronized with behavior. Follow `CONTRIBUTING.md` and `CLAUDE.md` to determine which documentation a change affects.
+
+User-visible changes get a new file in `CHANGELOG.d/`, never an edit to `CHANGELOG.md` itself. One file per change is what keeps two branches from competing for the top of `## [Unreleased]` — historically this repository's most frequent merge conflict, and on several branches its only one. `npm run changelog:release` folds them in at release time.
 
 Do not document functionality that is not implemented. The known-gap section in `CLAUDE.md` exists specifically to prevent agents from assuming migrated models, dependencies, or configuration fields imply working features.
 

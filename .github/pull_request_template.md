@@ -21,7 +21,7 @@ what CI cannot: a migration against real data, a phone you held, a restart
 you watched.
 -->
 
-- [ ] `npm run typecheck && npm test && npm run build`
+- [ ] `npm run verify` — typecheck, lint, the service-worker and changelog checks, tests, build
 - [ ] `npx playwright test` — required for UI changes
 - [ ] Integration tests actually ran (`TEST_DATABASE_URL` set), not skipped
 
@@ -63,5 +63,5 @@ you watched.
 
 ## Documentation
 
-- [ ] `CHANGELOG.md` updated for anything user-visible
+- [ ] A `CHANGELOG.d/` entry added for anything user-visible (not `CHANGELOG.md` itself)
 - [ ] The relevant `docs/` page updated — the table in `CONTRIBUTING.md` says which
