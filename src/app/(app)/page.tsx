@@ -151,7 +151,7 @@ export default async function HomePage() {
       />
     ),
     "dating-pipeline": datingSummary ? (
-      <DatingPipelineWidget data={datingSummary} timezone={timezone} />
+      <DatingPipelineWidget data={datingSummary} timezone={timezone} now={new Date()} />
     ) : null,
     stats: stats ? <StatsWidget stats={stats} /> : null,
   };
