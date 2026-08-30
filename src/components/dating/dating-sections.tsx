@@ -30,6 +30,7 @@ import {
   updateFlag,
   upsertRomanticProfile,
 } from "@/server/actions/dating";
+import { createPlan } from "@/server/actions/details";
 
 function useRun() {
   const router = useRouter();
@@ -336,6 +337,8 @@ export interface DateLogItem {
   chemistry: number | null;
   conversationQuality: number | null;
   notes: string | null;
+  wouldDoAgain: boolean | null;
+  nextTimeNotes: string | null;
   isPrivate: boolean;
   activityTypeId: string | null;
   activityLabel: string | null;
@@ -346,6 +349,8 @@ export interface PlanOption {
   id: string;
   title: string;
   location: string | null;
+  city: string | null;
+  notes: string | null;
 }
 
 const WHO_PAID_LABELS: Record<string, string> = {
@@ -461,6 +466,21 @@ function DateEntryFields({
           placeholder="What did you talk about? How did it feel?"
         />
       </Field>
+      <fieldset className="grid gap-2 rounded-lg border border-border/70 p-3">
+        <legend className="px-1 text-xs font-medium">Optional post-date reflection</legend>
+        <span className="text-xs text-muted-foreground">Would you do this again?</span>
+        <div className="flex gap-4 text-sm">
+          <label className="flex items-center gap-2">
+            <input type="radio" name="wouldDoAgain" value="true" defaultChecked={entry?.wouldDoAgain === true} /> Yes
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="radio" name="wouldDoAgain" value="false" defaultChecked={entry?.wouldDoAgain === false} /> No
+          </label>
+        </div>
+        <Field label="Remember for next time" htmlFor={`${formId}-next-time`}>
+          <Textarea id={`${formId}-next-time`} name="nextTimeNotes" rows={2} defaultValue={entry?.nextTimeNotes ?? ""} placeholder="What would make a repeat even better?" />
+        </Field>
+      </fieldset>
       <label className="flex items-center gap-2 text-xs text-muted-foreground">
         <input
           type="checkbox"
@@ -492,12 +512,14 @@ export function DateLogSection({
   const run = useRun();
   // The venue is prefilled from a picked idea, so it has to be controlled.
   const [venue, setVenue] = React.useState("");
+  const [pickedPlan, setPickedPlan] = React.useState<PlanOption | null>(null);
 
   function add(close: () => void) {
     return async (form: FormData) => {
       form.set("contactId", contactId);
       if (await run(() => createDateEntry(form), "Date logged")) {
         setVenue("");
+        setPickedPlan(null);
         close();
       }
     };
@@ -526,6 +548,7 @@ export function DateLogSection({
                 defaultValue=""
                 onChange={(event) => {
                   const picked = plans.find((plan) => plan.id === event.target.value);
+                  setPickedPlan(picked ?? null);
                   if (picked) setVenue(picked.location ?? picked.title);
                 }}
                 className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
@@ -538,6 +561,14 @@ export function DateLogSection({
                 ))}
               </select>
             </Field>
+          ) : null}
+          {pickedPlan ? (
+            <div className="grid gap-1 rounded-lg border border-border/70 bg-muted/30 p-3 text-xs">
+              <p className="font-medium">Planning context (not copied into your reflection)</p>
+              {pickedPlan.location ? <p>Venue: {pickedPlan.location}</p> : null}
+              {pickedPlan.city ? <p>Address / city: {pickedPlan.city}</p> : null}
+              {pickedPlan.notes ? <p className="whitespace-pre-line">Preparation notes: {pickedPlan.notes}</p> : null}
+            </div>
           ) : null}
           <DateEntryFields
             formId="date-new"
@@ -591,9 +622,50 @@ export function DateLogSection({
                 {entry.notes}
               </PrivateText>
             ) : null}
+            {entry.wouldDoAgain !== null ? (
+              <Badge variant={entry.wouldDoAgain ? "success" : "muted"} className="mt-1">
+                {entry.wouldDoAgain ? "Worth repeating" : "Would not repeat"}
+              </Badge>
+            ) : null}
+            {entry.nextTimeNotes ? (
+              <PrivateText enabled={blurPrivate} className="mt-1 block whitespace-pre-line text-xs text-muted-foreground">
+                Next time: {entry.nextTimeNotes}
+              </PrivateText>
+            ) : null}
           </SectionRow>
         ))
       )}
+      {dates.some((entry) => entry.wouldDoAgain) ? (
+        <details className="rounded-lg border border-border/70 p-3">
+          <summary className="cursor-pointer text-sm font-medium">Past dates worth repeating</summary>
+          <div className="mt-3 grid gap-3">
+            {dates.filter((entry) => entry.wouldDoAgain).map((entry) => (
+              <form
+                key={entry.id}
+                action={async (form) => {
+                  form.set("contactId", contactId);
+                  form.set("title", form.has("copyActivity") ? (entry.activityLabel ?? "Repeat a great date") : "Repeat a great date");
+                  if (form.has("copyVenue")) form.set("location", entry.venue ?? "");
+                  if (form.has("copyAddress")) form.set("city", entry.city ?? "");
+                  await run(() => createPlan(form), "Plan saved for next time");
+                }}
+                className="grid gap-2 rounded-md bg-muted/30 p-2 text-xs"
+              >
+                <p className="font-medium">{entry.activityLabel ?? "Date"}{entry.venue ? ` — ${entry.venue}` : ""}</p>
+                {entry.city ? <p>Address / city: {entry.city}</p> : null}
+                {entry.nextTimeNotes ? <PrivateText enabled={blurPrivate}>Remember: {entry.nextTimeNotes}</PrivateText> : null}
+                <div className="flex flex-wrap gap-3">
+                  <label><input type="checkbox" name="copyActivity" defaultChecked /> Activity</label>
+                  <label><input type="checkbox" name="copyVenue" defaultChecked /> Venue</label>
+                  <label><input type="checkbox" name="copyAddress" defaultChecked /> Address / city</label>
+                </div>
+                <p className="text-muted-foreground">Private reflection is never copied into planning notes.</p>
+                <SubmitButton size="sm">Plan this again</SubmitButton>
+              </form>
+            ))}
+          </div>
+        </details>
+      ) : null}
     </SectionCard>
   );
 }

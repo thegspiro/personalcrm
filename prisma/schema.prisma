@@ -824,9 +824,9 @@ model DateEntry {
   /// nth date with this person, maintained on write.
   sequence            Int?
   activityTypeId      String?
-  venue               String? @db.VarChar(191)
-  city                String? @db.VarChar(120)
-  whoPaid             WhoPaid @default(UNSPECIFIED)
+  venue               String?  @db.VarChar(191)
+  city                String?  @db.VarChar(120)
+  whoPaid             WhoPaid  @default(UNSPECIFIED)
   costCents           Int?
   /// 1-5
   rating              Int?
@@ -834,7 +834,11 @@ model DateEntry {
   chemistry           Int?
   /// 1-5
   conversationQuality Int?
-  notes               String? @db.Text
+  notes               String?  @db.Text
+  /// Optional post-date reflection. Null means it was never answered.
+  wouldDoAgain        Boolean?
+  /// Private retrospective guidance, distinct from a Plan's preparation notes.
+  nextTimeNotes       String?  @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
