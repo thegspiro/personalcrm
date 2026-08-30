@@ -37,6 +37,11 @@ the diff: what is different now, and what it means for their data.
 
 ## Commands
 
+Release folds entries in by date rather than stacking each batch on top, so
+running it twice — a delayed branch contributing an older entry — still leaves
+the section in date order. The heading date is validated as a real calendar
+day, so `2026-99-99` is caught here rather than folded in permanently.
+
 ```bash
 npm run changelog            # what is pending
 npm run changelog:check      # validate the fragments (CI runs this)

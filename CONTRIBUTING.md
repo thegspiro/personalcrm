@@ -19,7 +19,7 @@ npm run dev
 | `npm run verify` | Everything below that CI also runs — the one to use before pushing |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | ESLint |
-| `npm run lint:sw` | `node --check public/sw.js`, which nothing else covers |
+| `npm run lint:sw` | Parses `public/sw.js` as a classic script — nothing else checks it |
 | `npm test` | Unit + integration (Vitest) |
 | `npm run changelog` | What is pending in `CHANGELOG.d/` |
 | `npm run test:watch` | Vitest in watch mode |

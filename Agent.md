@@ -218,7 +218,7 @@ Run each command separately when useful so outcomes are attributable:
 ```bash
 npm run typecheck   # tsc --noEmit
 npm run lint        # eslint .; build intentionally ignores lint
-npm run lint:sw     # node --check public/sw.js
+npm run lint:sw     # parse public/sw.js as a classic script
 npm test            # vitest run: unit plus integration when configured
 npm run build       # Next.js production/standalone build
 ```

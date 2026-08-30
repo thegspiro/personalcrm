@@ -140,7 +140,9 @@ npm run verify
 
 It chains typecheck, `eslint`, `npm run lint:sw`, `npm run changelog:check`, the unit and integration suites, and a production build — the same set CI runs. Run the individual commands when a failure needs isolating.
 
-`npm run lint` matters because the Next.js build is configured not to catch lint failures. `npm run lint:sw` matters for a different reason: `eslint.config.mjs` ignores `public/sw.js` and the file is not TypeScript, so `node --check` is the only static check the service worker gets. A merge once left a duplicate `let` there; the worker stopped parsing, never installed, and offline reading failed silently until the end-to-end job caught it minutes later.
+`npm run lint` matters because the Next.js build is configured not to catch lint failures. `npm run lint:sw` matters for a different reason: `eslint.config.mjs` ignores `public/sw.js` and the file is not TypeScript, so it is the service worker's only static check. A merge once left a duplicate `let` there; the worker stopped parsing, never installed, and offline reading failed silently until the end-to-end job caught it minutes later.
+
+It parses with classic-script grammar rather than running `node --check`, which is not equivalent: `package.json` declares `"type": "module"`, so node would accept `import`, `export` and top-level `await` in that file, while both registrations of it omit `{ type: "module" }` and get a classic worker that rejects all three. A gate that accepts what the browser refuses is worse than none, because it is trusted.
 
 One `tsc` error normally surfaces as three failed jobs rather than one, because `next build` typechecks and both the end-to-end and container jobs build first. Diagnose the typecheck failure before opening three investigations.
 
