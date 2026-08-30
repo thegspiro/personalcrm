@@ -132,14 +132,30 @@ next project for a reason that has nothing to do with it. It cleans up, and
 ## Running everything
 
 ```bash
-npm run typecheck                     # tsc --noEmit
-npm test                              # unit + integration
-npm run build                         # production build
+npm run verify                        # everything below, in CI's order
 npx playwright test                   # against a running instance
 ```
 
+`verify` is:
+
+```bash
+npm run typecheck                     # tsc --noEmit
+npm run lint                          # eslint .
+npm run lint:sw                       # node --check public/sw.js
+npm run changelog:check               # CHANGELOG.d/ entries are well formed
+npm test                              # unit + integration
+npm run build                         # production build
+```
+
 These are what a change is expected to pass locally before it is pushed; CI
-runs the same set on every pull request.
+runs the same set on every pull request. Run them individually when a failure
+needs isolating — `verify` stops at the first one that fails.
+
+**One `tsc` error usually looks like three broken jobs.** `next build`
+typechecks, and the end-to-end and container jobs both build before they do
+anything else, so a single missing import fails Typecheck, End-to-end and
+Container build together. Read the typecheck output first; the other two
+usually have nothing of their own wrong with them.
 
 ## CI
 
@@ -148,7 +164,7 @@ request, on pushes to `main`, and on demand. Four jobs, all independent:
 
 | Job | Does | Why it exists |
 | --- | --- | --- |
-| **Typecheck, lint, build** | `tsc --noEmit`, `eslint .`, `next build` | The cheapest signal, so it does not queue behind a database |
+| **Typecheck, lint, build** | `tsc --noEmit`, `eslint .`, `node --check public/sw.js`, the changelog-entry check, `next build` | The cheapest signal, so it does not queue behind a database |
 | **Unit and integration tests** | Vitest against a MariaDB service container | The suites that need a real database |
 | **End-to-end tests** | Playwright against the **standalone bundle**, on an empty database | What actually ships, not `next dev` |
 | **Container build and boot** | Builds the image, boots it on an empty volume, restarts it | The container is the product |
@@ -166,6 +182,13 @@ fails the build if any of them skipped.
 **Lint is only enforced here.** `next.config.ts` sets
 `eslint.ignoreDuringBuilds`, so a build never fails on lint. The lint job is the
 only thing between a lint error and `main`.
+
+**The service worker is checked separately because nothing else checks it.**
+`eslint.config.mjs` ignores `public/sw.js` and it is not TypeScript, so
+`node --check` is its only static gate. A merge once put two `let cachingEnabled`
+declarations in it: the worker was a `SyntaxError`, so it never installed and
+offline reading stopped working, and the eight-minute end-to-end job was the
+first thing to notice. `npm run lint:sw` notices in about fifty milliseconds.
 
 **The E2E job runs the standalone bundle.** `npm run build` produces
 `.next/standalone`, and the workflow copies `public/` and `.next/static` into it
@@ -203,3 +226,5 @@ Everything else, `react-hooks/rules-of-hooks` included, fails the build.
 | An `isPrivate` column | A line in `countPrivateRows`, plus privacy coverage |
 | A new write path | Integration coverage that the denormalised activity fields survive backdating and deletion |
 | A new page or widget | It must appear in `layout.spec.ts`'s route sweep |
+| Anything user-visible | An entry in [`CHANGELOG.d/`](../CHANGELOG.d/README.md) |
+| A merge of `main` into the branch | The whole set again, on the merged tree — see [CONTRIBUTING.md](../CONTRIBUTING.md#merging-main-into-a-long-lived-branch) |

@@ -23,7 +23,8 @@ packaged as one container with the database built in.
 | [server-actions.md](server-actions.md) | The write surface, action by action |
 | [privacy.md](privacy.md) | The PIN lock, offline caching, and where data can go |
 | [testing.md](testing.md) | The three suites and what a change must pass |
-| [../CHANGELOG.md](../CHANGELOG.md) | What changed, when, and why |
+| [../CHANGELOG.md](../CHANGELOG.md) | What changed, when, and why — released history |
+| [../CHANGELOG.d/](../CHANGELOG.d/README.md) | Entries for changes not yet folded into it |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Development setup and the rules that are not style preferences |
 | [deployment.md](deployment.md) | Health endpoint, logs, and the operational detail behind the guides above |
 

@@ -16,8 +16,12 @@ npm run dev
 | --- | --- |
 | `npm run dev` | Development server |
 | `npm run build` | Production build |
+| `npm run verify` | Everything below that CI also runs — the one to use before pushing |
 | `npm run typecheck` | `tsc --noEmit` |
+| `npm run lint` | ESLint |
+| `npm run lint:sw` | `node --check public/sw.js`, which nothing else covers |
 | `npm test` | Unit + integration (Vitest) |
+| `npm run changelog` | What is pending in `CHANGELOG.d/` |
 | `npm run test:watch` | Vitest in watch mode |
 | `npx playwright test` | End-to-end, against a running instance |
 | `npm run db:migrate` | Create and apply a migration |
@@ -32,12 +36,46 @@ name ends in `_test` — or the integration suites skip. See
 ## Before pushing
 
 ```bash
-npm run typecheck && npm test && npm run build
+npm run verify
 ```
 
-and, for anything touching the UI, `npx playwright test` against a running
-instance. CI runs the same checks on every pull request — see
+That is typecheck, lint, the service-worker parse check, the changelog check,
+the unit and integration suites, and a production build — the same set CI runs,
+in one command so that running it is easier than remembering it. For anything
+touching the UI, add `npx playwright test` against a running instance. See
 [docs/testing.md](docs/testing.md#ci).
+
+**One `tsc` error usually reads as three broken jobs.** `next build`
+typechecks, and both the end-to-end and container jobs build before they do
+anything else, so a single missing import fails Typecheck, End-to-end *and*
+Container build at once. Three red ticks are one bug until proven otherwise —
+read the typecheck output first and re-run before chasing the other two.
+
+## Merging `main` into a long-lived branch
+
+Do this before final validation, not after — and then **validate the merge, not
+just your own edits**. A clean merge is not a verified merge. Git resolves text;
+it has no idea what the text means, and every one of these merged without
+reporting a conflict:
+
+- Two branches added the same name to one import list. Git kept both. `tsc`
+  rejected the redeclaration.
+- Two branches added the same `let` to `public/sw.js` at different points. Git
+  kept both, and the service worker stopped parsing — so it never installed,
+  and offline reading silently died.
+- A branch's test kept driving a label that `main` had renamed. The test file
+  merged perfectly; nothing overlapped.
+- A page gained one widget on each side, and the destructuring that named them
+  only mentioned one.
+
+So: `git merge origin/main`, resolve whatever git *does* flag, then run
+`npm run verify` and the end-to-end suite again on the merged tree. Resolve a
+conflict by understanding both intents — never by taking one side wholesale
+because it applies cleanly. When both sides add something to the same place,
+the answer is usually both, in a sensible order.
+
+If the branch you are merging into is someone else's, merge rather than rebase:
+a merge commit keeps their checkout valid.
 
 ## Where code goes
 
@@ -90,8 +128,9 @@ These have each been a bug already.
    the private row is written to disk.
 5. Add it to a delete path if it should not outlive its parent, and to the
    custom-field sweep if it can carry custom values.
-6. Document it in [docs/data-model.md](docs/data-model.md) and add a line to
-   [CHANGELOG.md](CHANGELOG.md).
+6. Document it in [docs/data-model.md](docs/data-model.md) and add an entry to
+   [`CHANGELOG.d/`](CHANGELOG.d/README.md), naming the migration on its
+   `*Schema:*` line.
 
 ## Migrations
 
@@ -136,6 +175,16 @@ is a record of how the work happened, not a rule for future commits.
 description in. Its conditional sections are the same invariants listed above —
 delete the ones that do not apply rather than ticking them unread.
 
+## Changelog
+
+Entries go in [`CHANGELOG.d/`](CHANGELOG.d/README.md), one file per change,
+never into `CHANGELOG.md` directly. `npm run changelog:release` folds them in.
+
+The reason is merge behaviour rather than tidiness: every change wants the top
+of `## [Unreleased]`, so two branches that both edit `CHANGELOG.md` conflict by
+construction. It was the most common conflict in this repository by a wide
+margin, and on several branches the only one. Two new files never conflict.
+
 ## Documentation
 
 Update the docs in the same commit as the change:
@@ -147,7 +196,7 @@ Update the docs in the same commit as the change:
 | Layering, startup, or a subsystem | [docs/architecture.md](docs/architecture.md) |
 | The lock, offline rules, or the AI layer | [docs/privacy.md](docs/privacy.md) |
 | An environment variable or `/config` | [docs/configuration.md](docs/configuration.md) |
-| Anything user-visible | [CHANGELOG.md](CHANGELOG.md) |
+| Anything user-visible | A new file in [`CHANGELOG.d/`](CHANGELOG.d/README.md) — never `CHANGELOG.md` itself |
 
 A comment in the code explaining a non-obvious decision is worth more than a
 paragraph in a document nobody opens — the schema and `src/lib/` are written
