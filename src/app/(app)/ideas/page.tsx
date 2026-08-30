@@ -10,7 +10,7 @@ import { PlansSection } from "@/components/plans/plans-section";
 import { IdeaList } from "@/components/lists/idea-list";
 import { plainDateFromDb } from "@/lib/dates";
 import { displayName } from "@/lib/utils";
-import { privacyScope, viaContactPrivacyWhere } from "@/server/privacy/filter";
+import { privacyScope, viaOptionalContactPrivacyWhere } from "@/server/privacy/filter";
 import { offlineCacheable } from "@/server/privacy/offline";
 import { CacheThisPage } from "@/components/offline/offline";
 
@@ -33,7 +33,7 @@ export default async function IdeasPage() {
       where: {
         ownerId: user.id,
         status: "OPEN",
-        OR: [{ contactId: null }, viaContactPrivacyWhere(scope)],
+        ...viaOptionalContactPrivacyWhere(scope),
       },
       include: { contact: { select: { id: true, firstName: true, lastName: true } } },
       orderBy: { createdAt: "desc" },

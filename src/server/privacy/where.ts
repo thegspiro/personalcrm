@@ -57,6 +57,25 @@ export function viaContactPrivacyWhere(
 }
 
 /**
+ * Applied where the contact relation is optional — a follow-up or an idea can
+ * stand on its own, with no one attached.
+ *
+ * It has to be one fragment rather than `viaContactPrivacyWhere` dropped into
+ * an `OR` beside `{ contactId: null }`, because that fragment is `{}` when
+ * unlocked and an empty member of an `OR` matches nothing rather than
+ * everything. That inversion emptied the whole list for exactly the accounts
+ * entitled to see all of it — including every account that never switched the
+ * lock on, which is unlocked by definition.
+ */
+export function viaOptionalContactPrivacyWhere(scope: PrivacyScope): {
+  OR?: Array<{ contactId?: null; contact?: Prisma.ContactWhereInput }>;
+} {
+  return scope.unlocked
+    ? {}
+    : { OR: [{ contactId: null }, { contact: { isPrivate: false } }] };
+}
+
+/**
  * Applied to household lists.
  *
  * Household names and notes have no marker of their own, but a household whose

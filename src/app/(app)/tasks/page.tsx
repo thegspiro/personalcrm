@@ -3,7 +3,7 @@ import { getUserContext } from "@/server/user/context";
 import { prisma } from "@/server/db/client";
 import { TaskList } from "@/components/lists/task-list";
 import { plainDateFromDb } from "@/lib/dates";
-import { privacyScope, viaContactPrivacyWhere } from "@/server/privacy/filter";
+import { privacyScope, viaOptionalContactPrivacyWhere } from "@/server/privacy/filter";
 import { offlineCacheable } from "@/server/privacy/offline";
 import { CacheThisPage } from "@/components/offline/offline";
 
@@ -18,7 +18,7 @@ export default async function TasksPage() {
     prisma.task.findMany({
       where: {
         ownerId: user.id,
-        OR: [{ contactId: null }, viaContactPrivacyWhere(scope)],
+        ...viaOptionalContactPrivacyWhere(scope),
       },
       include: { contact: { select: { id: true, firstName: true, lastName: true } } },
       orderBy: [{ completedAt: "asc" }, { dueDate: { sort: "asc", nulls: "last" } }],

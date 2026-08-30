@@ -9,6 +9,7 @@ export {
   householdPrivacyWhere,
   interactionPrivacyWhere,
   viaContactPrivacyWhere,
+  viaOptionalContactPrivacyWhere,
   type PrivacyScope,
 } from "./where";
 
