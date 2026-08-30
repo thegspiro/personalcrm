@@ -23,6 +23,22 @@ for what each migration does.
 
 ### Historical timeline and projected important dates — 2026-08-29
 
+*Schema: none*
+
+#### Changed
+- **The timeline is explicitly historical.** Recurring important-date
+  definitions no longer appear once at their original anchor year, and future
+  one-time dates no longer appear as history. Upcoming annual, monthly, and
+  one-time dates now live in a separate **Coming up** section on the dashboard,
+  global timeline, and person page.
+- **Every Coming up surface uses one recurrence projection policy.** Projected
+  occurrences are displayed and sorted by the date on which they next happen,
+  while a known original year is retained for age and anniversary calculations.
+  The shared policy observes February 29 on February 28 in common years and
+  clamps monthly occurrences to the final day of shorter months. Future
+  one-time month- and year-only dates remain partial rather than disappearing
+  or acquiring a made-up day.
+
 ### Complete rapid-backfill detail fields — 2026-08-29
 
 *Schema: none*
