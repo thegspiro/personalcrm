@@ -127,6 +127,76 @@ export function todayInTz(timeZone: string, now: Date = new Date()): PlainDate {
 }
 
 export type Recurrence = "NONE" | "ANNUAL" | "MONTHLY";
+export type OccurrencePrecision = "DAY" | "MONTH" | "YEAR" | "MONTH_DAY";
+
+export interface OccurrenceWindow {
+  from: PlainDate;
+  to: PlainDate;
+}
+
+/**
+ * Project a stored important date into an inclusive calendar window.
+ *
+ * This is the single recurrence policy used by every surface. Only dates with
+ * a known month and day can recur: projecting a month- or year-only value
+ * would invent precision. `today` is deliberately separate from the display
+ * window so callers cannot accidentally turn a past one-time date into an
+ * upcoming item by asking for a historical range.
+ */
+export function projectDateOccurrences(
+  anchor: PlainDate,
+  precision: OccurrencePrecision,
+  recurrence: Recurrence,
+  today: PlainDate,
+  window: OccurrenceWindow,
+): PlainDate[] {
+  if (diffPlainDays(window.from, window.to) < 0) return [];
+
+  const from = diffPlainDays(today, window.from) >= 0 ? window.from : today;
+  if (diffPlainDays(from, window.to) < 0) return [];
+
+  if (recurrence === "NONE") {
+    const end =
+      precision === "YEAR"
+        ? { year: anchor.year, month: 12, day: 31 }
+        : precision === "MONTH"
+          ? { ...anchor, day: daysInMonth(anchor.year, anchor.month) }
+          : anchor;
+    if (diffPlainDays(from, end) < 0 || diffPlainDays(anchor, window.to) < 0) return [];
+    // A partial one-time date has no honest exact day. Use the first possible
+    // day still inside the requested window as its sort/distance key; callers
+    // retain the stored anchor and precision for display.
+    return [diffPlainDays(from, anchor) >= 0 ? anchor : from];
+  }
+
+  if (precision === "YEAR" || precision === "MONTH") return [];
+
+  const occurrences: PlainDate[] = [];
+  if (recurrence === "ANNUAL") {
+    for (let year = from.year; year <= window.to.year; year++) {
+      const candidate = clampToMonth(year, anchor.month, anchor.day);
+      if (diffPlainDays(from, candidate) >= 0 && diffPlainDays(candidate, window.to) >= 0) {
+        occurrences.push(candidate);
+      }
+    }
+    return occurrences;
+  }
+
+  let year = from.year;
+  let month = from.month;
+  while (year < window.to.year || (year === window.to.year && month <= window.to.month)) {
+    const candidate = clampToMonth(year, month, anchor.day);
+    if (diffPlainDays(from, candidate) >= 0 && diffPlainDays(candidate, window.to) >= 0) {
+      occurrences.push(candidate);
+    }
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+  }
+  return occurrences;
+}
 
 /**
  * The next time a recurring date lands on or after `from`.
@@ -143,28 +213,10 @@ export function nextOccurrence(
   if (recurrence === "NONE") {
     return diffPlainDays(from, anchor) >= 0 ? anchor : null;
   }
-
-  if (recurrence === "ANNUAL") {
-    for (let year = from.year; year <= from.year + 8; year++) {
-      const candidate = clampToMonth(year, anchor.month, anchor.day);
-      if (diffPlainDays(from, candidate) >= 0) return candidate;
-    }
-    return null;
-  }
-
-  // MONTHLY
-  let year = from.year;
-  let month = from.month;
-  for (let i = 0; i < 24; i++) {
-    const candidate = clampToMonth(year, month, anchor.day);
-    if (diffPlainDays(from, candidate) >= 0) return candidate;
-    month += 1;
-    if (month > 12) {
-      month = 1;
-      year += 1;
-    }
-  }
-  return null;
+  return projectDateOccurrences(anchor, "DAY", recurrence, from, {
+    from,
+    to: { year: from.year + 8, month: 12, day: 31 },
+  })[0] ?? null;
 }
 
 export function daysInMonth(year: number, month: number): number {

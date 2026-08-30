@@ -11,7 +11,7 @@ import {
   addPlainDays,
   calendarDateInTz,
   diffPlainDays,
-  nextOccurrence,
+  projectDateOccurrences,
   plainDateFromDb,
 } from "@/lib/dates";
 import { hasKnownYear, yearsSince, type DatePrecision } from "@/lib/date-precision";
@@ -79,6 +79,8 @@ export interface UpcomingDate {
   term: { label: string; icon: string | null; color: string | null } | null;
   /** The next time it comes round. */
   occursOn: PlainDate;
+  /** Date and precision to render; partial one-time dates stay partial. */
+  displayDate: PlainDate;
   daysAway: number;
   /** Which anniversary this will be, when the original year is known. */
   turning: number | null;
@@ -98,6 +100,7 @@ export async function getUpcomingDates(
   timezone: string,
   windowDays = 45,
   limit = 8,
+  contactId?: string,
 ): Promise<UpcomingDate[]> {
   const today = calendarDateInTz(new Date(), timezone);
   const horizon = addPlainDays(today, windowDays);
@@ -107,6 +110,7 @@ export async function getUpcomingDates(
     prisma.importantDate.findMany({
       where: {
         ownerId,
+        ...(contactId ? { contactId } : {}),
         contact: { isArchived: false, ...(privacy.unlocked ? {} : { isPrivate: false }) },
       },
       include: {
@@ -114,7 +118,7 @@ export async function getUpcomingDates(
         contact: { select: { id: true, firstName: true, lastName: true } },
       },
     }),
-    fetchContactBirthdays(ownerId, privacy),
+    fetchContactBirthdays(ownerId, privacy, { contactId }),
   ]);
 
   const upcoming: UpcomingDate[] = [];
@@ -131,10 +135,15 @@ export async function getUpcomingDates(
   ];
 
   for (const row of sources) {
-    if (row.precision === "YEAR" || row.precision === "MONTH") continue;
-
     const anchor = "canonicalBirthday" in row ? row.date : plainDateFromDb(row.date);
-    const occursOn = nextOccurrence(anchor, today, row.recurrence);
+    // The shared projection already declines a recurring partial date, and for a
+    // one-time one it returns the first possible day inside the window while the
+    // stored anchor and precision go on to `displayDate` -- so "in 2019" is
+    // still shown as "2019" rather than being resolved to a day nobody gave.
+    const occursOn = projectDateOccurrences(anchor, row.precision, row.recurrence, today, {
+      from: today,
+      to: horizon,
+    })[0];
     if (!occursOn) continue;
 
     const daysAway = diffPlainDays(today, occursOn);
@@ -146,9 +155,13 @@ export async function getUpcomingDates(
       contact: row.contact,
       term: row.type ? { label: row.type.label, icon: row.type.icon, color: row.type.color } : null,
       occursOn,
+      displayDate: row.recurrence === "NONE" ? anchor : occursOn,
       daysAway,
-      turning: hasKnownYear(row.precision) ? yearsSince(anchor, row.precision, occursOn) : null,
-      precision: row.precision,
+      turning:
+        row.recurrence === "ANNUAL" && hasKnownYear(row.precision)
+          ? yearsSince(anchor, row.precision, occursOn)
+          : null,
+      precision: row.recurrence === "NONE" ? row.precision : "DAY",
     });
   }
 

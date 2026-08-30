@@ -108,7 +108,7 @@ export function UpcomingDatesWidget({ dates }: { dates: UpcomingDate[] }) {
                     ) : null}
                   </span>
                   <span className="block truncate text-xs text-muted-foreground">
-                    {item.label} · {formatPartialDate(item.occursOn, "MONTH_DAY", { short: true })}
+                    {item.label} · {formatPartialDate(item.displayDate, item.precision, { short: true })}
                   </span>
                 </span>
                 <span className="shrink-0 whitespace-nowrap text-[11px] font-medium text-muted-foreground">

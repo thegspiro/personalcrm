@@ -6,6 +6,8 @@ import { buildTimeline, type TimelineKind } from "@/server/queries/timeline";
 import { TimelineList } from "@/components/timeline/timeline-list";
 import { TimelineFilters } from "@/components/timeline/timeline-filters";
 import { calendarDateInTz, parsePlainDate, plainDateToDb } from "@/lib/dates";
+import { getUpcomingDates } from "@/server/queries/dashboard";
+import { UpcomingDatesWidget } from "@/components/dashboard/widgets";
 import { listTermsByKind } from "@/server/taxonomy/queries";
 
 export const metadata: Metadata = { title: "Timeline" };
@@ -39,7 +41,7 @@ export default async function TimelinePage({
   const fromPlain = first("from") ? parsePlainDate(first("from")!) : null;
   const toPlain = first("to") ? parsePlainDate(first("to")!) : null;
 
-  const [entries, terms] = await Promise.all([
+  const [entries, upcomingDates, terms] = await Promise.all([
     buildTimeline(user.id, timezone, {
       kinds,
       search: first("q"),
@@ -47,6 +49,7 @@ export default async function TimelinePage({
       to: toPlain ? plainDateToDb(toPlain) : undefined,
       take: 100,
     }),
+    getUpcomingDates(user.id, timezone, 366, 100),
     listTermsByKind(user.id, ["DATE_TYPE", "LIFE_EVENT_TYPE"]),
   ]);
 
@@ -58,7 +61,7 @@ export default async function TimelinePage({
       <div>
         <h2 className="text-lg font-semibold tracking-tight">Timeline</h2>
         <p className="text-xs text-muted-foreground">
-          Everything, newest first — including history you backfilled.
+          History, newest first — recurring reminders are projected separately below.
         </p>
       </div>
 
@@ -74,6 +77,8 @@ export default async function TimelinePage({
         emptyTitle="Nothing to show"
         emptyDescription="Log an interaction, or widen the filters."
       />
+
+      <UpcomingDatesWidget dates={upcomingDates} />
     </div>
   );
 }
