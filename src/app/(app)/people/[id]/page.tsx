@@ -255,6 +255,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                 id: plan.id,
                 title: plan.title,
                 location: plan.location,
+                city: plan.city,
+                notes: plan.notes,
               }))}
               dates={dateEntries.map((entry) => ({
                 id: entry.id,
@@ -268,6 +270,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                 chemistry: entry.chemistry,
                 conversationQuality: entry.conversationQuality,
                 notes: entry.notes,
+                wouldDoAgain: entry.wouldDoAgain,
+                nextTimeNotes: entry.nextTimeNotes,
                 isPrivate: entry.interaction.isPrivate,
                 activityTypeId: entry.activityTypeId,
                 activityLabel: entry.activityType?.label ?? null,

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added nullable post-date reflections and an owner-scoped “Past dates worth
+  repeating” workflow that can copy selected logistics into a new plan without
+  leaking private commentary or pre-date preparation notes across fields.
 - Added clear per-date reminder timing choices, including account defaults, custom offsets, and an explicit no-reminders policy.
 - Added timezone-aware important-date delivery through enabled notification channels, with privacy filtering, retries, and duplicate prevention.
 
