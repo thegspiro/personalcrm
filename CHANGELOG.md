@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Added clear per-date reminder timing choices, including account defaults, custom offsets, and an explicit no-reminders policy.
+- Added timezone-aware important-date delivery through enabled notification channels, with privacy filtering, retries, and duplicate prevention.
+
 All notable changes to this project are recorded here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
@@ -23,6 +28,17 @@ for what each migration does.
 - Rapid backfill now supports ranged and milestone life events plus recurrence,
   notes, and reminder policies for important dates, using the same complete
   field groups as contact profiles.
+
+### Milestones at a glance — 2026-08-29
+
+*Schema: none*
+
+#### Added
+- **A dedicated milestone summary on person profiles.** Up to the three most
+  recent marked life events now appear above the timeline, with a link to the
+  complete Life events section. Dates keep their recorded precision and ranges,
+  and every milestone remains in the chronological history rather than being
+  moved or copied into a new record.
 
 ### Significant moments — 2026-08-29
 

@@ -108,7 +108,8 @@ test("backfills a ranged milestone and a non-annual important date, then undoes 
   await page.keyboard.press("Enter");
   await page.getByLabel("Type").selectOption({ label: "Other" });
   await page.getByLabel("Repeats").selectOption("NONE");
-  await page.getByLabel("Reminder days").fill("14, 0");
+  await page.getByLabel("Reminder timing").selectOption("custom");
+  await page.getByLabel("Custom days before").fill("14, 0");
   await page.getByLabel("Notes").fill("Bring the original paperwork");
   await page.getByRole("button", { name: "Add and keep going" }).click();
   await expect(page.getByRole("button", { name: "Undo Visa renewal" })).toBeVisible();
@@ -128,6 +129,8 @@ test("backfills a ranged milestone and a non-annual important date, then undoes 
   const dates = profile.locator("section").filter({ hasText: "Important dates" }).first();
   await expect(dates).toContainText("Visa renewal");
   await expect(dates).toContainText("October 2020");
+  // The custom policy survived the round trip rather than falling back to the default.
+  await expect(dates).toContainText("14 days before");
   const timeline = profile.locator("section").filter({ hasText: "Timeline" }).first();
   await expect(timeline.locator("article").filter({ hasText: "Worked in Lisbon" })).toContainText("Led the launch team");
   await expect(timeline.locator("article").filter({ hasText: "Visa renewal" })).toContainText("Bring the original paperwork");

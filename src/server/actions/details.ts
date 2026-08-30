@@ -8,6 +8,7 @@ import { debtPrivacyWhere, factPrivacyWhere, privacyScope } from "@/server/priva
 import { calendarDateInTz, plainDateFromDb, plainDateToDb } from "@/lib/dates";
 import { isValidPartialDateRange } from "@/lib/date-precision";
 import { dietaryKindOf } from "@/lib/dietary";
+import { parseReminderDays } from "@/lib/reminders";
 import {
   type ActionResult,
   bool,
@@ -154,6 +155,8 @@ export async function createImportantDate(form: FormData): Promise<ActionResult<
 
   const type = await termFromForm(ownerId, form, "typeId", "DATE_TYPE");
   if (!type.ok) return fail(UNKNOWN_TERM);
+  const reminders = reminderPolicy(form);
+  if (!reminders.ok) return fail(reminders.error);
 
   const created = await prisma.importantDate.create({
     data: {
@@ -165,7 +168,7 @@ export async function createImportantDate(form: FormData): Promise<ActionResult<
       precision: when.precision,
       recurrence: recurrenceOf(str(form, "recurrence")),
       notes: str(form, "notes") ?? null,
-      reminderDaysBefore: parseReminderDays(str(form, "reminderDaysBefore")),
+      reminderDaysBefore: reminders.value ?? Prisma.DbNull,
     },
   });
 
@@ -189,6 +192,8 @@ export async function updateImportantDate(form: FormData): Promise<ActionResult>
 
   const type = await termFromForm(ownerId, form, "typeId", "DATE_TYPE");
   if (!type.ok) return fail(UNKNOWN_TERM);
+  const reminders = reminderPolicy(form);
+  if (!reminders.ok) return fail(reminders.error);
 
   await prisma.importantDate.update({
     where: { id },
@@ -199,7 +204,7 @@ export async function updateImportantDate(form: FormData): Promise<ActionResult>
       precision: when.precision,
       recurrence: recurrenceOf(str(form, "recurrence")),
       notes: str(form, "notes") ?? null,
-      reminderDaysBefore: parseReminderDays(str(form, "reminderDaysBefore")),
+      reminderDaysBefore: reminders.value ?? Prisma.DbNull,
     },
   });
 
@@ -1080,13 +1085,15 @@ function debtDirectionOf(value?: string): "THEY_OWE_ME" | "I_OWE_THEM" {
   return value === "I_OWE_THEM" ? "I_OWE_THEM" : "THEY_OWE_ME";
 }
 
-/** "30, 7, 0" -> [30, 7, 0]; null falls back to the account default. */
-function parseReminderDays(raw?: string): number[] | typeof Prisma.DbNull {
-  if (!raw) return Prisma.DbNull;
-  const days = raw
-    .split(/[,\s]+/)
-    .map((part) => Number(part))
-    .filter((n) => Number.isFinite(n) && n >= 0 && n <= 365)
-    .map((n) => Math.round(n));
-  return days.length > 0 ? [...new Set(days)].sort((a, b) => b - a) : Prisma.DbNull;
+function reminderPolicy(
+  form: FormData,
+): { ok: true; value: number[] | null } | { ok: false; error: string } {
+  try {
+    return {
+      ok: true,
+      value: parseReminderDays(str(form, "reminderMode"), str(form, "reminderDaysBefore")),
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Invalid reminder policy." };
+  }
 }

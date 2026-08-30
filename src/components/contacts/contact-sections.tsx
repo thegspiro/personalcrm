@@ -30,6 +30,7 @@ import {
   type DietaryKind,
 } from "@/lib/dietary";
 import { parsePlainDate, plainDateKey, type PlainDate } from "@/lib/dates";
+import { reminderPolicyLabel, type ReminderPolicy } from "@/lib/reminders";
 import { ImportantDateFields, LifeEventFields, type ImportantDateValue, type LifeEventValue } from "./detail-field-groups";
 import {
   createDebt,
@@ -196,6 +197,13 @@ export function FactsSection({
 
 export interface DateItem extends ImportantDateValue {
   id: string;
+  label: string;
+  date: PlainDate;
+  precision: DatePrecision;
+  recurrence: "NONE" | "ANNUAL" | "MONTHLY";
+  typeId: string | null;
+  notes: string | null;
+  reminderDaysBefore: ReminderPolicy;
   type: { label: string; icon: string | null; color: string | null } | null;
   canonicalBirthday?: boolean;
 }
@@ -279,6 +287,7 @@ export function DatesSection({
               {formatPartialDate(item.date, item.precision)}
               {item.recurrence === "ANNUAL" ? " · yearly" : item.recurrence === "MONTHLY" ? " · monthly" : ""}
             </p>
+            <p className="text-xs text-muted-foreground">{reminderPolicyLabel(item.reminderDaysBefore)}</p>
           </SectionRow>
         ))
       )}
@@ -365,6 +374,7 @@ export function LifeEventsSection({
 
   return (
     <SectionCard
+      id="life-events"
       title="Significant moments"
       icon="Milestone"
       count={events.length}
