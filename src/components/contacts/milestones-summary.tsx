@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Icon } from "@/components/nav/icon";
 import { formatPartialRange } from "@/lib/date-precision";
-import type { LifeEventItem } from "./contact-sections";
+import type { LifeEventItem } from "./sections/life-events";
 
 export function MilestonesSummary({ milestones }: { milestones: LifeEventItem[] }) {
   if (milestones.length === 0) return null;
