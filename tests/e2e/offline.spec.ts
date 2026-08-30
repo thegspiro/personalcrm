@@ -151,22 +151,23 @@ test("visited pages become readable offline", async ({ page }) => {
     .toContain("/people");
 });
 
-for (const route of ["/tasks", "/gifts", "/ideas", "/family"]) {
-  test(`${route} opts into the offline page cache`, async ({ page }) => {
-    await ensureSignedIn(page);
-    await page.goto(route);
-    await readyWorker(page);
-    await clearPageCache(page);
-    await page.goto(route);
+test("the additional read-only routes opt into the offline page cache", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto("/tasks");
+  await readyWorker(page);
+  await clearPageCache(page);
 
-    // The existing /people scenario below exercises an actual disconnected
-    // navigation and the stale-page banner. These route-specific regressions
-    // only need to prove that each server component rendered CacheThisPage;
-    // repeating cold offline hydration for every route made CI depend on
-    // browser HTTP-cache timing rather than the route's opt-in contract.
-    await expect.poll(() => cachedPages(page), { timeout: 15_000 }).toContain(route);
-  });
-}
+  // The /people scenario below exercises an actual disconnected navigation
+  // and stale-page banner. Each named step here proves the corresponding
+  // server component rendered CacheThisPage without paying for a fresh browser
+  // context and service-worker installation per route on CI.
+  for (const route of ["/tasks", "/gifts", "/ideas", "/family"]) {
+    await test.step(`${route} opts in`, async () => {
+      await page.goto(route);
+      await expect.poll(() => cachedPages(page), { timeout: 15_000 }).toContain(route);
+    });
+  }
+});
 
 test("a worker update removes an old page and its assets together", async ({ page }) => {
   await ensureSignedIn(page);
