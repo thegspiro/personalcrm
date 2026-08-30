@@ -110,9 +110,14 @@ export function TimelineList({
                 entry.upcoming && "border-dashed",
               )}
             >
-              <Link href={entry.href} aria-label={`Open ${entry.title}`} className="absolute inset-0 z-0 rounded-xl focus-visible:ring-2 focus-visible:ring-ring">
-                <span className="sr-only">Open {entry.title}</span>
-              </Link>
+              {/* The aria-label is the accessible name on its own. A duplicate
+                  sr-only copy of the title inside would only add a second
+                  rendering of the same text to the card. */}
+              <Link
+                href={entry.href}
+                aria-label={`Open ${entry.title}`}
+                className="absolute inset-0 z-0 rounded-xl focus-visible:ring-2 focus-visible:ring-ring"
+              />
               <span
                 className={cn(
                   "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full",

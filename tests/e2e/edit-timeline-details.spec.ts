@@ -30,8 +30,8 @@ test("create timeline details", async ({ page }) => {
   await chooseYear(page, dates, "When", "2011");
   await dates.getByRole("button", { name: "Add", exact: true }).click();
 
-  const events = section(page, "Life events");
-  await events.getByRole("button", { name: "Add a life event" }).click();
+  const events = section(page, "Significant moments");
+  await events.getByRole("button", { name: "Add a significant moment" }).click();
   await events.getByLabel("What happened?").fill("Original life event");
   await chooseYear(page, events, "When", "2012");
   await events.getByRole("button", { name: "Add", exact: true }).click();
@@ -76,7 +76,7 @@ test("edit a Life event from global and person timelines", async ({ page }) => {
   await card(page, "Life event from global timeline").getByRole("button", { name: "Edit Life event from global timeline" }).click();
   await page.getByLabel("What happened?").fill("Life event from person timeline");
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(section(page, "Life events").getByText("Life event from person timeline")).toBeVisible();
+  await expect(section(page, "Significant moments").getByText("Life event from person timeline")).toBeVisible();
   await page.goto("/timeline");
   await expect(card(page, "Life event from person timeline")).toBeVisible();
 });

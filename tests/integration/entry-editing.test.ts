@@ -52,7 +52,6 @@ const {
   updateFact,
   updateGift,
   updateImportantDate,
-  updateLifeEvent,
   updateIdea,
   updateRelationship,
   updateTask,
