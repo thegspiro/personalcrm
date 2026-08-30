@@ -186,6 +186,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             entries={timeline}
             today={today}
             timezone={timezone}
+            dateTypes={terms.DATE_TYPE}
+            lifeEventTypes={terms.LIFE_EVENT_TYPE}
             showContacts={false}
             blurSensitive={prefs.blurPrivateNotes}
             emptyTitle="Nothing logged yet"
@@ -357,7 +359,9 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             recurrence: item.recurrence,
             typeId: item.typeId,
             notes: item.notes,
-            reminderDaysBefore: Array.isArray(item.reminderDaysBefore) ? item.reminderDaysBefore as number[] : null,
+            reminderDaysBefore: Array.isArray(item.reminderDaysBefore)
+              ? item.reminderDaysBefore.filter((day): day is number => typeof day === "number")
+              : null,
             type: item.type
               ? { label: item.type.label, icon: item.type.icon, color: item.type.color }
               : null,
