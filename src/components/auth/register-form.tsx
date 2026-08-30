@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef } from "react";
 import { AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,14 +19,16 @@ export function RegisterForm({
   submitLabel: string;
 }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(action, {});
-  const [timezone, setTimezone] = useState("");
+  const timezoneRef = useRef<HTMLInputElement>(null);
 
   // Default the account's timezone to the browser's, which is almost always right.
   useEffect(() => {
     try {
-      setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone ?? "");
+      if (timezoneRef.current) {
+        timezoneRef.current.value = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
+      }
     } catch {
-      setTimezone("");
+      // An empty value makes the server use its validated default timezone.
     }
   }, []);
 
@@ -44,7 +46,7 @@ export function RegisterForm({
         </p>
       ) : null}
 
-      <input type="hidden" name="timezone" value={timezone} />
+      <input ref={timezoneRef} type="hidden" name="timezone" defaultValue="" />
 
       <Field label="Your name" htmlFor="name" error={state.fieldErrors?.name}>
         <Input id="name" name="name" autoComplete="name" autoFocus required placeholder="Alex Rivera" />

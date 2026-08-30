@@ -127,12 +127,12 @@ export function PreferencesStep({
     const form = new FormData();
     if (next.accent) {
       setCurrentAccent(next.accent);
-      document.documentElement.dataset.accent = next.accent;
+      document.documentElement.setAttribute("data-accent", next.accent);
       form.set("accent", next.accent);
     }
     if (next.density) {
       setCurrentDensity(next.density);
-      document.documentElement.dataset.density = next.density;
+      document.documentElement.setAttribute("data-density", next.density);
       form.set("density", next.density);
     }
     void updateAppearance(form);
