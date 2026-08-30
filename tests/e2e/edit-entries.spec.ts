@@ -80,8 +80,8 @@ test("a life event can be moved to a year it is only known to", async ({ page })
   await ensureSignedIn(page);
   await page.goto(personUrl);
 
-  const events = section(page, "Life events");
-  await events.getByRole("button", { name: "Add a life event" }).click();
+  const events = section(page, "Significant moments");
+  await events.getByRole("button", { name: "Add a significant moment" }).click();
   await events.getByLabel("What happened?").fill("Moved to Austin");
   // The presets live inside the picker's popover, which renders in a portal —
   // outside the section, so it is addressed from the page.

@@ -14,7 +14,12 @@ import { TermChips, TermSelect, type TermOption } from "@/components/form/term-s
 import { ContactPicker, type PickerContact } from "@/components/form/contact-picker";
 import { SectionCard, SectionEmpty, SectionRow } from "./section-card";
 import { useAction, useAddAction } from "@/components/form/use-action";
-import { formatPartialDate, formatPartialRange, type DatePrecision } from "@/lib/date-precision";
+import {
+  formatPartialDate,
+  formatPartialRange,
+  isValidPartialDateRange,
+  type DatePrecision,
+} from "@/lib/date-precision";
 import { formatMoney, termColorClasses } from "@/lib/format";
 import { summarizeDebts, type DebtDirection } from "@/lib/debts";
 import {
@@ -24,7 +29,7 @@ import {
   mustAvoid,
   type DietaryKind,
 } from "@/lib/dietary";
-import { plainDateKey, type PlainDate } from "@/lib/dates";
+import { parsePlainDate, plainDateKey, type PlainDate } from "@/lib/dates";
 import { ImportantDateFields, LifeEventFields, type ImportantDateValue, type LifeEventValue } from "./detail-field-groups";
 import {
   createDebt,
@@ -58,6 +63,7 @@ import {
   updateRelationship,
   updateTask,
 } from "@/server/actions/details";
+import { updateContactBirthday } from "@/server/actions/contacts";
 
 // --- facts -----------------------------------------------------------------
 
@@ -191,6 +197,7 @@ export function FactsSection({
 export interface DateItem extends ImportantDateValue {
   id: string;
   type: { label: string; icon: string | null; color: string | null } | null;
+  canonicalBirthday?: boolean;
 }
 
 export function DatesSection({
@@ -225,15 +232,41 @@ export function DatesSection({
         dates.map((item) => (
           <SectionRow
             key={item.id}
-            onDelete={() => void run(() => deleteImportantDate(item.id), "Removed")}
-            deleteLabel="Delete date"
+            onDelete={
+              item.canonicalBirthday
+                ? undefined
+                : () => void run(() => deleteImportantDate(item.id), "Removed")
+            }
+            deleteLabel={item.canonicalBirthday ? undefined : "Delete date"}
             editLabel="Edit date"
             editForm={(close) => (
-              <form action={add(updateImportantDate, close, "Saved")} className="grid gap-2.5">
-                <input type="hidden" name="id" value={item.id} />
-                <ImportantDateFields formId={`date-${item.id}`} types={types} item={item} />
-                <SubmitButton size="sm">Save</SubmitButton>
-              </form>
+              item.canonicalBirthday ? (
+                <form
+                  action={add(updateContactBirthday, close, "Birthday saved")}
+                  className="grid gap-2.5"
+                >
+                  <input type="hidden" name="id" value={contactId} />
+                  <DateField
+                    name="birthDate"
+                    idPrefix={`date-${item.id}-birthday`}
+                    label="Birthday"
+                    required
+                    presets={[]}
+                    defaultValue={plainDateKey(item.date)}
+                    defaultPrecision={item.precision}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Birthday is stored on this person and repeats every year.
+                  </p>
+                  <SubmitButton size="sm">Save</SubmitButton>
+                </form>
+              ) : (
+                <form action={add(updateImportantDate, close, "Saved")} className="grid gap-2.5">
+                  <input type="hidden" name="id" value={item.id} />
+                  <ImportantDateFields formId={`date-${item.id}`} types={types} item={item} />
+                  <SubmitButton size="sm">Save</SubmitButton>
+                </form>
+              )
             )}
           >
             <div className="flex items-center gap-2">
@@ -272,6 +305,52 @@ export interface LifeEventItem extends LifeEventValue {
  * and `updateLifeEvent` writes both: a form that offered neither would clear a
  * backfilled range and demote a milestone every time you fixed a spelling.
  */
+const LIFE_EVENT_RANGE_ERROR = "End date must not be before the start date.";
+
+function LifeEventForm({
+  action,
+  formId,
+  types,
+  event,
+  contactId,
+  children,
+}: {
+  action: (form: FormData) => void | Promise<void>;
+  formId: string;
+  types: TermOption[];
+  event?: LifeEventItem;
+  contactId?: string;
+  children: React.ReactNode;
+}) {
+  const [endDateError, setEndDateError] = React.useState<string>();
+
+  function validateRange(submission: React.FormEvent<HTMLFormElement>) {
+    const data = new FormData(submission.currentTarget);
+    const start = parsePlainDate(String(data.get("date") ?? ""));
+    const endRaw = String(data.get("endDate") ?? "");
+    const end = endRaw ? parsePlainDate(endRaw) : null;
+    if (!start || (endRaw && !end)) return;
+
+    const valid = isValidPartialDateRange(
+      { date: start, precision: String(data.get("datePrecision")) as DatePrecision },
+      end
+        ? { date: end, precision: String(data.get("endDatePrecision")) as DatePrecision }
+        : null,
+    );
+    setEndDateError(valid ? undefined : LIFE_EVENT_RANGE_ERROR);
+    if (!valid) submission.preventDefault();
+  }
+
+  return (
+    <form action={action} onSubmit={validateRange} className="grid gap-2.5">
+      {contactId ? <input type="hidden" name="contactId" value={contactId} /> : null}
+      {event ? <input type="hidden" name="id" value={event.id} /> : null}
+      <LifeEventFields formId={formId} types={types} event={event} endDateError={endDateError} />
+      {children}
+    </form>
+  );
+}
+
 export function LifeEventsSection({
   contactId,
   events,
@@ -286,21 +365,25 @@ export function LifeEventsSection({
 
   return (
     <SectionCard
-      title="Life events"
+      title="Significant moments"
       icon="Milestone"
       count={events.length}
-      addLabel="Add a life event"
+      addLabel="Add a significant moment"
       form={(close) => (
-        <form action={add(createLifeEvent, close, "Event added")} className="grid gap-2.5">
-          <input type="hidden" name="contactId" value={contactId} />
-          <LifeEventFields formId="event-new" types={types} />
+        <LifeEventForm
+          action={add(createLifeEvent, close, "Event added")}
+          formId="event-new"
+          types={types}
+          contactId={contactId}
+        >
           <SubmitButton size="sm">Add</SubmitButton>
-        </form>
+        </LifeEventForm>
       )}
     >
       {events.length === 0 ? (
         <SectionEmpty>
-          Nothing recorded. Good for backfilling history — jobs, moves, milestones.
+          Record the moments that shaped their life—moves, achievements, relationships,
+          recoveries, and memories worth keeping.
         </SectionEmpty>
       ) : (
         events.map((event) => (
@@ -310,11 +393,14 @@ export function LifeEventsSection({
             deleteLabel="Delete life event"
             editLabel="Edit life event"
             editForm={(close) => (
-              <form action={add(updateLifeEvent, close, "Saved")} className="grid gap-2.5">
-                <input type="hidden" name="id" value={event.id} />
-                <LifeEventFields formId={`event-${event.id}`} types={types} event={event} />
+              <LifeEventForm
+                action={add(updateLifeEvent, close, "Saved")}
+                formId={`event-${event.id}`}
+                types={types}
+                event={event}
+              >
                 <SubmitButton size="sm">Save</SubmitButton>
-              </form>
+              </LifeEventForm>
             )}
           >
             <div className="flex items-center gap-2">

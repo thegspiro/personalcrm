@@ -59,7 +59,7 @@ test("backfill records a life event at year precision", async ({ page }) => {
   const contactUrl = await createContact(page, name);
   await page.goto(`${contactUrl}/backfill`);
 
-  await page.getByRole("button", { name: /Something that happened to them/ }).click();
+  await page.getByRole("button", { name: "A significant moment" }).click();
   await page.getByLabel("What happened?").fill("Graduated");
   await page.getByRole("button", { name: "When", exact: true }).click();
   await page.getByPlaceholder("2019, March 2019, 3 years ago…").fill("2012");
@@ -70,7 +70,7 @@ test("backfill records a life event at year precision", async ({ page }) => {
 
   // The year survives the round-trip and is not rendered as January 1st.
   await page.goto(contactUrl);
-  const section = page.locator("section").filter({ hasText: "Life events" }).first();
+  const section = page.locator("section").filter({ hasText: "Significant moments" }).first();
   await expect(section.getByText("Graduated")).toBeVisible();
   await expect(section.getByRole("paragraph").filter({ hasText: /^2012$/ })).toBeVisible();
   await expect(section.getByText(/January 1, 2012/)).toHaveCount(0);
@@ -82,7 +82,7 @@ test("backfills a ranged milestone and a non-annual important date, then undoes 
   const contactUrl = await createContact(page, name);
   await page.goto(`${contactUrl}/backfill`);
 
-  await page.getByRole("button", { name: /Something that happened to them/ }).click();
+  await page.getByRole("button", { name: /A significant moment/ }).click();
   await page.getByLabel("What happened?").fill("Worked in Lisbon");
   await page.getByRole("button", { name: "When", exact: true }).click();
   await page.getByPlaceholder("2019, March 2019, 3 years ago…").fill("2018");
@@ -120,9 +120,9 @@ test("backfills a ranged milestone and a non-annual important date, then undoes 
   // Keep the rapid-entry session alive while a second tab verifies the server round-trip.
   const profile = await page.context().newPage();
   await profile.goto(contactUrl);
-  const lifeEvents = profile.locator("section").filter({ hasText: "Life events" }).first();
+  const lifeEvents = profile.locator("section").filter({ hasText: "Significant moments" }).first();
   await expect(lifeEvents).toContainText("Worked in Lisbon");
-  await expect(lifeEvents).toContainText("2018–2021");
+  await expect(lifeEvents).toContainText("2018 – 2021");
   await expect(lifeEvents).toContainText("Milestone");
   await expect(lifeEvents).toContainText("Led the launch team");
   const dates = profile.locator("section").filter({ hasText: "Important dates" }).first();

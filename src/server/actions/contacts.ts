@@ -11,6 +11,7 @@ import {
 } from "@/server/services/custom-field-values";
 import { snoozeUntil as snoozeDate } from "@/lib/cadence";
 import { slugify } from "@/lib/utils";
+import { contactPrivacyWhere, privacyScope } from "@/server/privacy/filter";
 import {
   type ActionResult,
   bool,
@@ -167,6 +168,30 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
     throw error;
   }
 
+  revalidateContact(id);
+  return ok();
+}
+
+/** Edit the canonical birthday without creating an ImportantDate shadow row. */
+export async function updateContactBirthday(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  const birth = partialDate(form, "birthDate");
+  if (!id || !birth) return fail("A birthday is required.");
+
+  // A server action is a public POST endpoint. Besides ownership, apply the
+  // live lock so a stale open sheet cannot edit a private contact after lock.
+  const scope = await privacyScope();
+  const contact = await prisma.contact.findFirst({
+    where: { id, ownerId, ...contactPrivacyWhere(scope) },
+    select: { id: true },
+  });
+  if (!contact) return fail("Contact not found.");
+
+  await prisma.contact.update({
+    where: { id },
+    data: { birthDate: birth.date, birthDatePrecision: birth.precision },
+  });
   revalidateContact(id);
   return ok();
 }

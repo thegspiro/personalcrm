@@ -61,14 +61,14 @@ export interface LifeEventValue {
   isMilestone: boolean;
 }
 
-export function LifeEventFields({ formId, types, event, resetEndDateKey }: { formId: string; types: TermOption[]; event?: LifeEventValue; resetEndDateKey?: number }) {
+export function LifeEventFields({ formId, types, event, resetEndDateKey, endDateError }: { formId: string; types: TermOption[]; event?: LifeEventValue; resetEndDateKey?: number; endDateError?: string }) {
   return (
     <>
       <Field label="What happened?" htmlFor={`${formId}-title`}>
         <Input id={`${formId}-title`} name="title" required defaultValue={event?.title ?? ""} placeholder="Moved to Austin" />
       </Field>
       <DateField name="date" idPrefix={`${formId}-date`} label="When" required presets={["lastYear"]} defaultValue={event ? plainDateKey(event.date) : undefined} defaultPrecision={event?.precision} hint="Only know the year? Set the precision to 'Year only'." />
-      <DateField key={resetEndDateKey} name="endDate" idPrefix={`${formId}-endDate`} label="Until" presets={[]} defaultValue={event?.endDate ? plainDateKey(event.endDate) : undefined} defaultPrecision={event?.endPrecision ?? "DAY"} hint="Only for things that ran for a while — a job, a course, a city." />
+      <DateField key={resetEndDateKey} name="endDate" idPrefix={`${formId}-endDate`} label="Until" presets={[]} defaultValue={event?.endDate ? plainDateKey(event.endDate) : undefined} defaultPrecision={event?.endPrecision ?? "DAY"} hint="Only for things that ran for a while — a job, a course, a city." error={endDateError} />
       <TermSelect name="typeId" id={`${formId}-typeId`} label="Type" terms={types} defaultValue={event?.typeId} />
       <Field label="Anything more?" htmlFor={`${formId}-description`}>
         <Textarea id={`${formId}-description`} name="description" rows={2} defaultValue={event?.description ?? ""} />
