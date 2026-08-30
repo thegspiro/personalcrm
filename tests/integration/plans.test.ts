@@ -1,5 +1,33 @@
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestUser, daysAgo, hasTestDatabase, prisma, reset } from "./db";
+
+const state = vi.hoisted(() => ({ ownerId: "" }));
+
+vi.mock("@/server/db/client", async () => {
+  const { prisma: client } = await import("./db");
+  return { prisma: client };
+});
+vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+vi.mock("@/server/user/context", () => ({
+  getUserContext: async () => ({
+    user: { id: state.ownerId },
+    prefs: {},
+    timezone: "America/New_York",
+  }),
+}));
+vi.mock("@/server/privacy/lock", () => ({
+  getPrivacyState: async () => ({ enabled: false, unlocked: true }),
+  requireUnlocked: async () => ({ ok: true }),
+}));
+
+const { createPlan, updatePlan } = await import("@/server/actions/details");
+const { listPlans } = await import("@/server/queries/plans");
+
+function form(values: Record<string, string>): FormData {
+  const data = new FormData();
+  for (const [key, value] of Object.entries(values)) data.set(key, value);
+  return data;
+}
 
 /**
  * Plans — the things you mean to do with people.
@@ -14,6 +42,7 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     await reset();
     const user = await createTestUser();
     ownerId = user.id;
+    state.ownerId = user.id;
   });
 
   afterAll(async () => {
@@ -66,6 +95,69 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     expect(stored.category?.slug).toBe("movie");
     expect(stored.location).toBe("Alamo Drafthouse");
     expect(stored.estimatedCostCents).toBe(4400);
+  });
+
+  it("creates, reads and updates an address without crossing owner boundaries", async () => {
+    const other = await createTestUser();
+    const created = await createPlan(
+      form({
+        title: "Late showing at the Alamo",
+        location: "  Alamo Drafthouse  ",
+        address: "  2900 Columbia Pike, Arlington, VA 22204  ",
+        city: "  Arlington  ",
+      }),
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error(created.error);
+
+    await prisma.plan.create({
+      data: {
+        ownerId: other.id,
+        title: "Someone else's reservation",
+        address: "1 Private Way",
+      },
+    });
+
+    const visible = await listPlans(ownerId);
+    expect(visible).toHaveLength(1);
+    expect(visible[0]).toMatchObject({
+      id: created.data?.id,
+      location: "Alamo Drafthouse",
+      address: "2900 Columbia Pike, Arlington, VA 22204",
+      city: "Arlington",
+    });
+
+    const updated = await updatePlan(
+      form({
+        id: created.data?.id ?? "",
+        title: "Late showing at the Alamo",
+        location: "Alamo Drafthouse",
+        address: "2900 Columbia Pike, Arlington, VA 22204, United States",
+        city: "Arlington",
+      }),
+    );
+    expect(updated.ok).toBe(true);
+    await expect(
+      prisma.plan.findFirstOrThrow({ where: { id: created.data?.id, ownerId } }),
+    ).resolves.toMatchObject({
+      address: "2900 Columbia Pike, Arlington, VA 22204, United States",
+    });
+
+    state.ownerId = other.id;
+    const blocked = await updatePlan(
+      form({
+        id: created.data?.id ?? "",
+        title: "Stolen plan",
+        address: "Changed by another owner",
+      }),
+    );
+    expect(blocked).toMatchObject({ ok: false, error: "Not found." });
+    await expect(
+      prisma.plan.findUniqueOrThrow({ where: { id: created.data?.id } }),
+    ).resolves.toMatchObject({
+      title: "Late showing at the Alamo",
+      address: "2900 Columbia Pike, Arlington, VA 22204, United States",
+    });
   });
 
   it("saves against a friend as readily as against a date", async () => {

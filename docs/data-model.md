@@ -352,7 +352,9 @@ you *do* it.
 | `contactId` | `cuid?` | Null = something you would do with anyone, not saved against one person |
 | `title` | `varchar(191)` | |
 | `categoryId` | `cuid?` | → `TaxonomyTerm` (`PLAN_CATEGORY`), `SET NULL` — so a place, a film, a show and whatever else you invent live in one list you control |
-| `location` / `city` | `varchar(191)?` / `varchar(120)?` | The venue, park, cinema, trailhead — or your own kitchen |
+| `location` | `varchar(191)?` | The human-readable venue name: a park, cinema, trailhead — or your own kitchen |
+| `address` | `varchar(500)?` | The optional complete street address, kept separate from the venue name |
+| `city` | `varchar(120)?` | A compact place label for list display |
 | `url` | `varchar(500)?` | The listing, the menu, the trailer, the ticket page |
 | `estimatedCostCents` | `int?` | With `currency`, default `USD` |
 | `status` | `PlanStatus` | `OPEN` \| `PLANNED` \| `DONE` \| `ARCHIVED` |
@@ -564,6 +566,7 @@ the `init-migrate` s6 oneshot).
 | `20260824182152_add_dietary_debts_and_reach_out` | `Debt`, `DietaryNeed`, `Interaction.reachedOutBy` |
 | `20260825094500_add_plans` | `Plan`, `PlanStatus`, and `PLAN_CATEGORY` on `TaxonomyKind` |
 | `20260825120000_add_onboarding_state` | `UserPreference.onboardingCompletedAt` |
+| `20260830120000_add_plan_address` | Optional full street address on `Plan` |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).

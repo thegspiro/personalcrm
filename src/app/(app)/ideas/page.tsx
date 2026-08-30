@@ -60,6 +60,7 @@ export default async function IdeasPage() {
           title: plan.title,
           status: plan.status,
           location: plan.location,
+          address: plan.address,
           city: plan.city,
           url: plan.url,
           estimatedCostCents: plan.estimatedCostCents,

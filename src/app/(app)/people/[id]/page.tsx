@@ -331,6 +331,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             title: plan.title,
             status: plan.status,
             location: plan.location,
+            address: plan.address,
             city: plan.city,
             url: plan.url,
             estimatedCostCents: plan.estimatedCostCents,

@@ -97,6 +97,14 @@ list, because a person missing from the form would be silently dropped on save.
 | Dietary needs | `createDietaryNeed`, `updateDietaryNeed`, `deleteDietaryNeed` |
 | Relationships | `createRelationship`, `updateRelationship`, `deleteRelationship` |
 
+Plan create and update forms accept `location` as the human-readable venue
+name, `address` as an optional complete street address, and `city` as the
+compact list label. All three use the shared normalized-string handling: outer
+whitespace is removed and an empty value is stored as null. Opening a stored
+address in OpenStreetMap to check it is an explicit user action; the server
+does not geocode it, claim that the address was validated, or send it to a
+third party automatically.
+
 Life-event ranges compare the possible interval represented by each partial
 date. The create and update actions reject only ranges that are definitively
 inverted and return the problem against `endDate`; overlapping fuzzy dates

@@ -881,6 +881,8 @@ model Plan {
   categoryId String?
   /// The venue, park, cinema, trailhead — or your own kitchen.
   location   String? @db.VarChar(191)
+  /// The complete street address, kept separate from the venue name.
+  address    String? @db.VarChar(500)
   city       String? @db.VarChar(120)
   /// The listing, the menu, the trailer, the ticket page.
   url        String? @db.VarChar(500)
