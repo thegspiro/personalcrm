@@ -20,9 +20,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
-import { SubmitButton } from "@/components/form/submit-button";
-import { DateField, DateTimeField } from "@/components/form/date-field";
-import { TermChips, TermSelect, type TermOption } from "@/components/form/term-select";
+import { DateTimeField } from "@/components/form/date-field";
+import { TermChips, type TermOption } from "@/components/form/term-select";
 import type { ActionResult } from "@/server/actions/helpers";
 import { createInteraction, deleteInteraction } from "@/server/actions/interactions";
 import {
@@ -33,6 +32,7 @@ import {
   deleteImportantDate,
   deleteLifeEvent,
 } from "@/server/actions/details";
+import { ImportantDateFields, LifeEventFields } from "./detail-field-groups";
 
 type Kind = "interaction" | "life-event" | "fact" | "important-date";
 
@@ -75,10 +75,33 @@ export function BackfillPanel({
   const [added, setAdded] = React.useState<AddedItem[]>([]);
   const [error, setError] = React.useState<string>();
   const [reachedOutBy, setReachedOutBy] = React.useState<"ME" | "THEM" | "MUTUAL" | null>(null);
+  const [lifeEventReset, setLifeEventReset] = React.useState(0);
 
   // Keeping the form mounted per kind is what preserves the date between
   // entries — remounting would reset it to today every time.
   const formRef = React.useRef<HTMLFormElement>(null);
+  const [pending, setPending] = React.useState(false);
+
+  /**
+   * Submitted by hand rather than through `<form action>`.
+   *
+   * React resets a form once its action resolves, and that reset is a native
+   * one — it puts every field back to its default behind React's back. This
+   * panel decides for itself what survives an entry (see `submit`): the date,
+   * the type and the recurrence are meant to carry over to the next one, and
+   * the automatic reset silently undid all three. Owning the submit is what
+   * makes the clearing below the whole story rather than half of it.
+   */
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (pending) return;
+    setPending(true);
+    try {
+      await submit(new FormData(event.currentTarget));
+    } finally {
+      setPending(false);
+    }
+  }
 
   async function submit(form: FormData) {
     form.set("contactId", contactId);
@@ -114,12 +137,19 @@ export function BackfillPanel({
       ]);
     }
 
-    // Clear only the text fields — the date and type stay for the next entry.
+    // Clear authored text so private context cannot leak into the next entry.
+    // Context controls stay put, except range/milestone fields: repeating an
+    // end date or milestone by accident is much costlier than setting it again.
     for (const field of ["title", "notes", "content", "label", "description"]) {
       const input = formRef.current?.elements.namedItem(field);
       if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
         input.value = "";
       }
+    }
+    if (kind === "life-event") {
+      const milestone = formRef.current?.elements.namedItem("isMilestone");
+      if (milestone instanceof HTMLInputElement) milestone.checked = false;
+      setLifeEventReset((current) => current + 1);
     }
     toast.success("Added");
     router.refresh();
@@ -180,7 +210,7 @@ export function BackfillPanel({
             {/* One form per kind, so switching kinds swaps fields but staying on
                 a kind preserves everything you already set. */}
             {kind === "interaction" ? (
-              <form ref={formRef} action={submit} className="grid gap-3" key="interaction">
+              <form ref={formRef} onSubmit={handleSubmit} className="grid gap-3" key="interaction">
                 <TermChips name="typeId" label="What was it?" terms={interactionTypes} allowEmpty={false} />
                 {/* Deliberately not cleared between entries: reconstructing a
                     stretch of history usually means a run of the same answer,
@@ -223,48 +253,31 @@ export function BackfillPanel({
                 <Field label="Notes" htmlFor="bf-notes">
                   <Textarea id="bf-notes" name="notes" rows={2} />
                 </Field>
-                <SubmitButton>Add and keep going</SubmitButton>
+                <Button type="submit" loading={pending}>Add and keep going</Button>
               </form>
             ) : null}
 
             {kind === "life-event" ? (
-              <form ref={formRef} action={submit} className="grid gap-3" key="life-event">
-                <Field label="What happened?" htmlFor="bf-le-title">
-                  <Input id="bf-le-title" name="title" required placeholder="Started at Deloitte" />
-                </Field>
-                <DateField
-                  name="date"
-                  label="When"
-                  required
-                  presets={["lastYear"]}
-                  hint="Set precision to 'Year only' if that's all you remember."
-                />
-                <TermSelect name="typeId" label="Type" terms={lifeEventTypes} />
-                <Field label="Anything more?" htmlFor="bf-le-description">
-                  <Textarea id="bf-le-description" name="description" rows={2} />
-                </Field>
-                <SubmitButton>Add and keep going</SubmitButton>
+              <form ref={formRef} onSubmit={handleSubmit} className="grid gap-3" key="life-event">
+                <LifeEventFields formId="bf-le" types={lifeEventTypes} resetEndDateKey={lifeEventReset} />
+                <Button type="submit" loading={pending}>Add and keep going</Button>
               </form>
             ) : null}
 
             {kind === "fact" ? (
-              <form ref={formRef} action={submit} className="grid gap-3" key="fact">
+              <form ref={formRef} onSubmit={handleSubmit} className="grid gap-3" key="fact">
                 <Field label="What should you remember?" htmlFor="bf-content">
                   <Textarea id="bf-content" name="content" rows={2} required />
                 </Field>
                 <TermChips name="categoryId" label="Category" terms={factCategories} />
-                <SubmitButton>Add and keep going</SubmitButton>
+                <Button type="submit" loading={pending}>Add and keep going</Button>
               </form>
             ) : null}
 
             {kind === "important-date" ? (
-              <form ref={formRef} action={submit} className="grid gap-3" key="important-date">
-                <Field label="What is it?" htmlFor="bf-label">
-                  <Input id="bf-label" name="label" required placeholder="Wedding anniversary" />
-                </Field>
-                <DateField name="date" label="When" required presets={[]} />
-                <TermSelect name="typeId" label="Type" terms={dateTypes} />
-                <SubmitButton>Add and keep going</SubmitButton>
+              <form ref={formRef} onSubmit={handleSubmit} className="grid gap-3" key="important-date">
+                <ImportantDateFields formId="bf-date" types={dateTypes} />
+                <Button type="submit" loading={pending}>Add and keep going</Button>
               </form>
             ) : null}
           </CardContent>

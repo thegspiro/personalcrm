@@ -23,6 +23,14 @@ for what each migration does.
 
 ### Historical timeline and projected important dates — 2026-08-29
 
+### Complete rapid-backfill detail fields — 2026-08-29
+
+*Schema: none*
+
+- Rapid backfill now supports ranged and milestone life events plus recurrence,
+  notes, and reminder policies for important dates, using the same complete
+  field groups as contact profiles.
+
 ### Milestones at a glance — 2026-08-29
 
 *Schema: none*
