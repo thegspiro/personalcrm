@@ -23,16 +23,6 @@ for what each migration does.
 
 ### Offline update recovery — 2026-08-29
 
-### Complete rapid-backfill detail fields — 2026-08-29
-
-*Schema: none*
-
-- Rapid backfill now supports ranged and milestone life events plus recurrence,
-  notes, and reminder policies for important dates, using the same complete
-  field groups as contact profiles.
-
-### Milestones at a glance — 2026-08-29
-
 *Schema: none*
 
 #### Added
@@ -48,6 +38,19 @@ for what each migration does.
 - Repeated service-worker registration failures now produce a persistent but
   non-blocking warning instead of silently disabling offline reading.
 
+### Complete rapid-backfill detail fields — 2026-08-29
+
+*Schema: none*
+
+- Rapid backfill now supports ranged and milestone life events plus recurrence,
+  notes, and reminder policies for important dates, using the same complete
+  field groups as contact profiles.
+
+### Milestones at a glance — 2026-08-29
+
+*Schema: none*
+
+#### Added
 - **A dedicated milestone summary on person profiles.** Up to the three most
   recent marked life events now appear above the timeline, with a link to the
   complete Life events section. Dates keep their recorded precision and ranges,
