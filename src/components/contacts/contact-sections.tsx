@@ -31,6 +31,7 @@ import {
 } from "@/lib/dietary";
 import { parsePlainDate, plainDateKey, type PlainDate } from "@/lib/dates";
 import { reminderPolicyLabel, type ReminderPolicy } from "@/lib/reminders";
+import { ContactBirthdayFields, ImportantDateFields, LifeEventFields, type ImportantDateValue, type LifeEventValue } from "./detail-field-groups";
 import {
   createDebt,
   createDietaryNeed,
@@ -194,7 +195,7 @@ export function FactsSection({
 
 // --- important dates -------------------------------------------------------
 
-export interface DateItem {
+export interface DateItem extends ImportantDateValue {
   id: string;
   label: string;
   date: PlainDate;
@@ -205,108 +206,6 @@ export interface DateItem {
   reminderDaysBefore: ReminderPolicy;
   type: { label: string; icon: string | null; color: string | null } | null;
   canonicalBirthday?: boolean;
-}
-
-/**
- * Adding a date and correcting one, from one description.
- *
- * Notes are here even though the row does not render them: `updateImportantDate`
- * writes whatever the form holds, so a form without the field would wipe the
- * note on every unrelated edit.
- */
-function ImportantDateFields({
-  formId,
-  types,
-  item,
-}: {
-  formId: string;
-  types: TermOption[];
-  item?: DateItem;
-}) {
-  const policy = item?.reminderDaysBefore;
-  const reminderMode = policy === null || policy === undefined
-    ? "default"
-    : policy.length === 0
-      ? "disabled"
-      : policy.length === 1 && policy[0] === 0
-        ? "on-day"
-        : policy.length === 1 && policy[0] === 7
-          ? "week"
-          : policy.length === 1 && policy[0] === 30
-            ? "month"
-            : "custom";
-  return (
-    <>
-      <Field label="What is it?" htmlFor={`${formId}-label`}>
-        <Input
-          id={`${formId}-label`}
-          name="label"
-          required
-          defaultValue={item?.label ?? ""}
-          placeholder="Wedding anniversary"
-        />
-      </Field>
-      <DateField
-        name="date"
-        idPrefix={`${formId}-date`}
-        label="When"
-        required
-        presets={[]}
-        defaultValue={item ? plainDateKey(item.date) : undefined}
-        defaultPrecision={item?.precision}
-      />
-      <TermSelect
-        name="typeId"
-        id={`${formId}-typeId`}
-        label="Type"
-        terms={types}
-        defaultValue={item?.typeId}
-      />
-      <Field label="Repeats" htmlFor={`${formId}-recurrence`}>
-        <select
-          id={`${formId}-recurrence`}
-          name="recurrence"
-          defaultValue={item?.recurrence ?? "ANNUAL"}
-          className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
-        >
-          <option value="ANNUAL">Every year</option>
-          <option value="MONTHLY">Every month</option>
-          <option value="NONE">Just once</option>
-        </select>
-      </Field>
-      <Field label="Reminder timing" htmlFor={`${formId}-reminderMode`}>
-        <select
-          id={`${formId}-reminderMode`}
-          name="reminderMode"
-          defaultValue={reminderMode}
-          className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
-        >
-          <option value="default">Use my account default (1 week before and on the day)</option>
-          <option value="on-day">On the day</option>
-          <option value="week">1 week before</option>
-          <option value="month">1 month before</option>
-          <option value="custom">Custom offsets</option>
-          <option value="disabled">Do not remind me</option>
-        </select>
-      </Field>
-      <Field
-        label="Custom days before"
-        htmlFor={`${formId}-reminderDaysBefore`}
-        hint="Comma-separated. Use 0 for “On the day,” 7 for “1 week before,” or 30 for “1 month before.”"
-      >
-        <Input
-          id={`${formId}-reminderDaysBefore`}
-          name="reminderDaysBefore"
-          inputMode="numeric"
-          defaultValue={item?.reminderDaysBefore?.join(", ") ?? "7, 0"}
-          placeholder="30, 7, 0"
-        />
-      </Field>
-      <Field label="Notes" htmlFor={`${formId}-notes`}>
-        <Textarea id={`${formId}-notes`} name="notes" rows={2} defaultValue={item?.notes ?? ""} />
-      </Field>
-    </>
-  );
 }
 
 export function DatesSection({
@@ -341,10 +240,14 @@ export function DatesSection({
         dates.map((item) => (
           <SectionRow
             key={item.id}
+            id={`important-date-${item.id}`}
             onDelete={
               item.canonicalBirthday
                 ? undefined
                 : () => void run(() => deleteImportantDate(item.id), "Removed")
+            }
+            deleteConfirm={
+              item.canonicalBirthday ? undefined : `Delete the important date “${item.label}”?`
             }
             deleteLabel={item.canonicalBirthday ? undefined : "Delete date"}
             editLabel="Edit date"
@@ -355,18 +258,7 @@ export function DatesSection({
                   className="grid gap-2.5"
                 >
                   <input type="hidden" name="id" value={contactId} />
-                  <DateField
-                    name="birthDate"
-                    idPrefix={`date-${item.id}-birthday`}
-                    label="Birthday"
-                    required
-                    presets={[]}
-                    defaultValue={plainDateKey(item.date)}
-                    defaultPrecision={item.precision}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Birthday is stored on this person and repeats every year.
-                  </p>
+                  <ContactBirthdayFields formId={`date-${item.id}`} item={item} />
                   <SubmitButton size="sm">Save</SubmitButton>
                 </form>
               ) : (
@@ -398,16 +290,8 @@ export function DatesSection({
 
 // --- life events -----------------------------------------------------------
 
-export interface LifeEventItem {
+export interface LifeEventItem extends LifeEventValue {
   id: string;
-  title: string;
-  description: string | null;
-  typeId: string | null;
-  date: PlainDate;
-  precision: DatePrecision;
-  endDate: PlainDate | null;
-  endPrecision: DatePrecision | null;
-  isMilestone: boolean;
   type: { label: string; icon: string | null; color: string | null } | null;
 }
 
@@ -423,71 +307,6 @@ export interface LifeEventItem {
  * and `updateLifeEvent` writes both: a form that offered neither would clear a
  * backfilled range and demote a milestone every time you fixed a spelling.
  */
-function LifeEventFields({
-  formId,
-  types,
-  event,
-  endDateError,
-}: {
-  formId: string;
-  types: TermOption[];
-  event?: LifeEventItem;
-  endDateError?: string;
-}) {
-  return (
-    <>
-      <Field label="What happened?" htmlFor={`${formId}-title`}>
-        <Input
-          id={`${formId}-title`}
-          name="title"
-          required
-          defaultValue={event?.title ?? ""}
-          placeholder="Moved to Austin"
-        />
-      </Field>
-      <DateField
-        name="date"
-        idPrefix={`${formId}-date`}
-        label="When"
-        required
-        presets={["lastYear"]}
-        defaultValue={event ? plainDateKey(event.date) : undefined}
-        defaultPrecision={event?.precision}
-        hint="Only know the year? Set the precision to 'Year only'."
-      />
-      <DateField
-        name="endDate"
-        idPrefix={`${formId}-endDate`}
-        label="Until"
-        presets={[]}
-        defaultValue={event?.endDate ? plainDateKey(event.endDate) : undefined}
-        defaultPrecision={event?.endPrecision ?? "DAY"}
-        hint="Only for things that ran for a while — a job, a course, a city."
-        error={endDateError}
-      />
-      <TermSelect name="typeId" id={`${formId}-typeId`} label="Type" terms={types} defaultValue={event?.typeId} />
-      <Field label="Anything more?" htmlFor={`${formId}-description`}>
-        <Textarea
-          id={`${formId}-description`}
-          name="description"
-          rows={2}
-          defaultValue={event?.description ?? ""}
-        />
-      </Field>
-      <label className="flex items-center gap-2 text-xs text-muted-foreground">
-        <input
-          type="checkbox"
-          name="isMilestone"
-          value="true"
-          defaultChecked={event?.isMilestone ?? false}
-          className="size-4"
-        />
-        One of the big ones
-      </label>
-    </>
-  );
-}
-
 const LIFE_EVENT_RANGE_ERROR = "End date must not be before the start date.";
 
 function LifeEventForm({
@@ -573,7 +392,9 @@ export function LifeEventsSection({
         events.map((event) => (
           <SectionRow
             key={event.id}
+            id={`life-event-${event.id}`}
             onDelete={() => void run(() => deleteLifeEvent(event.id), "Removed")}
+            deleteConfirm={`Permanently delete the life event “${event.title}” from this person's history?`}
             deleteLabel="Delete life event"
             editLabel="Edit life event"
             editForm={(close) => (
@@ -941,7 +762,7 @@ export function GiftsSection({
       icon="Gift"
       count={gifts.length}
       addLabel="Add a gift idea"
-      defaultOpen={false}
+      defaultOpen
       form={(close) => (
         <form action={add(createGift, close, "Added")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
@@ -956,6 +777,7 @@ export function GiftsSection({
         gifts.map((gift) => (
           <SectionRow
             key={gift.id}
+            id={`gift-${gift.id}`}
             onDelete={() => void run(() => deleteGift(gift.id), "Removed")}
             deleteLabel="Delete gift"
             editLabel="Edit gift"

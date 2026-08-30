@@ -18,8 +18,25 @@ import {
 import type { PlainDate } from "@/lib/dates";
 import type { TimelineEntry } from "@/server/queries/timeline";
 import { deleteInteraction } from "@/server/actions/interactions";
+import {
+  deleteImportantDate,
+  deleteLifeEvent,
+  updateImportantDate,
+  updateLifeEvent,
+} from "@/server/actions/details";
 import { EditInteractionSheet } from "@/components/timeline/edit-interaction";
 import { PrivateText } from "@/components/dating/private-text";
+import {
+  ContactBirthdayFields,
+  ImportantDateFields,
+  LifeEventFields,
+  type ImportantDateValue,
+  type LifeEventValue,
+} from "@/components/contacts/detail-field-groups";
+import { updateContactBirthday } from "@/server/actions/contacts";
+import type { TermOption } from "@/components/form/term-select";
+import { SubmitButton } from "@/components/form/submit-button";
+import { useAddAction } from "@/components/form/use-action";
 
 /**
  * The unified feed.
@@ -37,6 +54,8 @@ export function TimelineList({
   blurSensitive = false,
   emptyTitle = "Nothing here yet",
   emptyDescription,
+  dateTypes = [],
+  lifeEventTypes = [],
 }: {
   entries: TimelineEntry[];
   today: PlainDate;
@@ -46,18 +65,30 @@ export function TimelineList({
   blurSensitive?: boolean;
   emptyTitle?: string;
   emptyDescription?: string;
+  dateTypes?: TermOption[];
+  lifeEventTypes?: TermOption[];
 }) {
   const router = useRouter();
   const [editing, setEditing] = React.useState<string | null>(null);
+  const [editingDetail, setEditingDetail] = React.useState<string | null>(null);
+  const submit = useAddAction();
 
   if (entries.length === 0) {
     return <EmptyState icon={<Icon name="History" />} title={emptyTitle} description={emptyDescription} />;
   }
 
   async function remove(entry: TimelineEntry) {
-    if (entry.kind !== "interaction") return;
-    if (!confirm("Delete this interaction?")) return;
-    const result = await deleteInteraction(entry.id);
+    const wording = entry.kind === "life-event"
+      ? `Permanently delete the life event “${entry.title}” from this person's history?`
+      : entry.kind === "important-date"
+        ? `Delete the important date “${entry.title}”?`
+        : `Delete the interaction “${entry.title}”?`;
+    if (!confirm(wording)) return;
+    const result = entry.kind === "life-event"
+      ? await deleteLifeEvent(entry.id)
+      : entry.kind === "important-date"
+        ? await deleteImportantDate(entry.id)
+        : await deleteInteraction(entry.id);
     if (!result.ok) {
       toast.error(result.error ?? "Could not delete.");
       return;
@@ -72,11 +103,21 @@ export function TimelineList({
         {entries.map((entry) => (
           <li key={`${entry.kind}-${entry.id}`}>
             <article
+              id={`timeline-entry-${entry.kind}-${entry.id}`}
+              tabIndex={-1}
               className={cn(
-                "group relative flex gap-3 rounded-xl border border-border bg-card px-3 py-2.5",
+                "group relative flex gap-3 rounded-xl border border-border bg-card px-3 py-2.5 target:border-accent-9 target:ring-2 target:ring-accent-6",
                 entry.upcoming && "border-dashed",
               )}
             >
+              {/* The aria-label is the accessible name on its own. A duplicate
+                  sr-only copy of the title inside would only add a second
+                  rendering of the same text to the card. */}
+              <Link
+                href={entry.href}
+                aria-label={`Open ${entry.title}`}
+                className="absolute inset-0 z-0 rounded-xl focus-visible:ring-2 focus-visible:ring-ring"
+              />
               <span
                 className={cn(
                   "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full",
@@ -98,24 +139,26 @@ export function TimelineList({
                     sit on top of the date at zero opacity — invisible, still
                     tappable, and covering the one thing they overlapped.
                   */}
-                  {entry.kind === "interaction" ? (
-                    <span className="flex shrink-0 gap-0.5 self-start">
+                  {entry.kind === "interaction" || entry.editable ? (
+                    <span className="relative z-10 flex shrink-0 gap-0.5 self-start">
                       <button
                         type="button"
-                        onClick={() => setEditing(entry.id)}
+                        onClick={() => entry.kind === "interaction" ? setEditing(entry.id) : setEditingDetail(`${entry.kind}-${entry.id}`)}
                         aria-label={`Edit ${entry.title}`}
                         className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                       >
                         <Icon name="Pencil" className="size-3.5" />
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => void remove(entry)}
-                        aria-label={`Delete ${entry.title}`}
-                        className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                      >
-                        <Icon name="X" className="size-3.5" />
-                      </button>
+                      {entry.editable?.kind !== "contact-birthday" ? (
+                        <button
+                          type="button"
+                          onClick={() => void remove(entry)}
+                          aria-label={`Delete ${entry.title}`}
+                          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                        >
+                          <Icon name="X" className="size-3.5" />
+                        </button>
+                      ) : null}
                     </span>
                   ) : null}
                 </div>
@@ -146,7 +189,7 @@ export function TimelineList({
                       <Link
                         key={contact.id}
                         href={`/people/${contact.id}`}
-                        className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+                        className="relative z-10 rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground hover:text-foreground"
                       >
                         {displayName(contact)}
                       </Link>
@@ -167,6 +210,43 @@ export function TimelineList({
                 ) : null}
               </div>
             </article>
+            {editingDetail === `${entry.kind}-${entry.id}` && entry.editable ? (
+              <div className="mt-2 rounded-xl border border-accent-8 bg-card p-3">
+                {entry.editable.kind === "contact-birthday" ? (
+                  <form action={submit(updateContactBirthday, () => setEditingDetail(null), "Birthday saved")} className="grid gap-2.5">
+                    <input type="hidden" name="id" value={entry.editable.contactId} />
+                    <ContactBirthdayFields
+                      formId={`timeline-birthday-${entry.editable.contactId}`}
+                      item={{ date: entry.date, precision: entry.precision }}
+                    />
+                    <SubmitButton size="sm">Save</SubmitButton>
+                  </form>
+                ) : entry.editable.kind === "important-date" ? (
+                  <form action={submit(updateImportantDate, () => setEditingDetail(null), "Saved")} className="grid gap-2.5">
+                    <input type="hidden" name="id" value={entry.id} />
+                    <ImportantDateFields formId={`timeline-date-${entry.id}`} types={dateTypes} item={{
+                      label: entry.title, date: entry.date, precision: entry.precision,
+                      recurrence: entry.editable.recurrence, typeId: entry.editable.typeId,
+                      notes: entry.editable.notes,
+                      reminderDaysBefore: entry.editable.reminderDaysBefore,
+                    } satisfies ImportantDateValue} />
+                    <SubmitButton size="sm">Save</SubmitButton>
+                  </form>
+                ) : (
+                  <form action={submit(updateLifeEvent, () => setEditingDetail(null), "Saved")} className="grid gap-2.5">
+                    <input type="hidden" name="id" value={entry.id} />
+                    <LifeEventFields formId={`timeline-event-${entry.id}`} types={lifeEventTypes} event={{
+                      title: entry.title, description: entry.editable.description,
+                      typeId: entry.editable.typeId, date: entry.date, precision: entry.precision,
+                      endDate: entry.editable.endDate, endPrecision: entry.editable.endPrecision,
+                      isMilestone: entry.editable.isMilestone,
+                    } satisfies LifeEventValue} />
+                    <SubmitButton size="sm">Save</SubmitButton>
+                  </form>
+                )}
+                <button type="button" onClick={() => setEditingDetail(null)} className="mt-2 w-full text-xs text-muted-foreground">Cancel</button>
+              </div>
+            ) : null}
           </li>
         ))}
       </ol>

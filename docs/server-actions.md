@@ -106,12 +106,18 @@ remain valid.
 `updateRelationship` re-types both and keeps the `pairId`; `deleteRelationship`
 removes both. `settleDebt` records a date rather than deleting the row.
 
+Important-date and life-event updates and deletes also filter through their
+contact's privacy marker. The timeline exposes these controls, so an id retained
+from an unlocked view must become unreachable when that contact is locked.
+
 **An `update*` writes the whole form.** These are `PUT`s, not `PATCH`es: an
 absent field is stored as absent, not left alone. A form that offers a field
 when adding and not when editing therefore clears it on the first correction,
 which is why the add and edit forms for each entry are rendered from one shared
-field-set component rather than written twice. The three deliberate exceptions
-each keep a state change out of a text correction: `updateGift` falls back to
+field-set component rather than written twice. An empty Important-date reminder
+policy is explicitly stored as database null so it returns to the account
+default rather than retaining a previous per-date override. The three deliberate
+exceptions each keep a state change out of a text correction: `updateGift` falls back to
 the stored status, `updateDebt` never touches `settledOn`, and `updateTask`
 never touches `completedAt`.
 
