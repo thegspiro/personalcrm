@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/server/db/client";
 import { provisionTaxonomies } from "@/server/taxonomy/provision";
 import { purgeExpiredSessions } from "@/server/auth/session";
+import { startReminderScheduler } from "@/server/reminder-scheduler";
 
 let started = false;
 
@@ -13,6 +14,7 @@ let started = false;
 export async function runStartupTasks(): Promise<void> {
   if (started) return;
   started = true;
+  startReminderScheduler();
 
   try {
     // An upgrade can add new default taxonomy terms; existing accounts get them
