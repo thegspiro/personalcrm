@@ -38,7 +38,7 @@ type Kind = "interaction" | "life-event" | "fact" | "important-date";
 
 const KINDS: Array<{ value: Kind; label: string; hint: string }> = [
   { value: "interaction", label: "Something you did", hint: "A meal, a call, a trip — with a date in the past." },
-  { value: "life-event", label: "Something that happened to them", hint: "A job, a move, a milestone. A year on its own is fine." },
+  { value: "life-event", label: "A significant moment", hint: "Historical, one-time moments—not dates that recur automatically." },
   { value: "fact", label: "Something to remember", hint: "A habit, a preference, a story. No date needed." },
   { value: "important-date", label: "A date worth remembering", hint: "Birthdays and anniversaries that come round." },
 ];
