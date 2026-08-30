@@ -20,6 +20,14 @@ export function fail(error: string): ActionResult<never> {
   return { ok: false, error };
 }
 
+export function fieldError(field: string, message: string): ActionResult<never> {
+  return {
+    ok: false,
+    error: "Please check the highlighted fields.",
+    fieldErrors: { [field]: message },
+  };
+}
+
 export function invalid(error: z.ZodError): ActionResult<never> {
   const fieldErrors: Record<string, string> = {};
   for (const issue of error.issues) {

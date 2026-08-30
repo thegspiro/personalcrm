@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { LogOut, Moon, Settings, Sun, User as UserIcon } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -18,6 +18,7 @@ import { logoutAction } from "@/server/actions/auth";
 import { purgeOfflineCaches } from "@/components/offline/offline";
 import { CommandPalette } from "./command-palette";
 import { cn, initialsOf } from "@/lib/utils";
+import { useHydrated } from "@/components/providers/use-hydrated";
 
 export function TopBar({
   name,
@@ -31,10 +32,8 @@ export function TopBar({
   hideDating?: boolean;
 }) {
   const { resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  // The theme is only known after hydration; render a stable icon until then.
-  useEffect(() => setMounted(true), []);
+  const mounted = useHydrated();
+  const [signingOut, setSigningOut] = useState(false);
 
   const [first, ...rest] = name.split(" ");
 
@@ -97,14 +96,16 @@ export function TopBar({
           <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
-            onSelect={() => {
+            disabled={signingOut}
+            onSelect={async () => {
+              setSigningOut(true);
               // Saved pages must not outlive the session they came from.
-              purgeOfflineCaches();
-              void logoutAction();
+              await purgeOfflineCaches();
+              await logoutAction();
             }}
           >
             <LogOut />
-            Sign out
+            {signingOut ? "Signing out…" : "Sign out"}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
