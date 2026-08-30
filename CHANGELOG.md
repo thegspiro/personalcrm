@@ -21,6 +21,22 @@ for what each migration does.
 
 ## [Unreleased]
 
+### Offline update recovery — 2026-08-29
+
+*Schema: none*
+
+#### Added
+- **An explicit service-worker update prompt.** When a new offline worker is
+  ready, the app offers “Reload to update”; it activates that worker only after
+  the user accepts and reloads once the browser confirms the new worker is in
+  control.
+- **Offline recovery in Settings.** “Reset offline data” unregisters the app's
+  worker, removes Personal CRM caches, and reloads so a broken offline setup can
+  start cleanly.
+
+#### Fixed
+- Repeated service-worker registration failures now produce a persistent but
+  non-blocking warning instead of silently disabling offline reading.
 ### Historical timeline and projected important dates — 2026-08-29
 
 *Schema: none*
