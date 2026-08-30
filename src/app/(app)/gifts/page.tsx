@@ -7,6 +7,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/nav/icon";
 import { GiftList } from "@/components/lists/gift-list";
 import { plainDateFromDb } from "@/lib/dates";
+import { offlineCacheable } from "@/server/privacy/offline";
+import { CacheThisPage } from "@/components/offline/offline";
 
 export const metadata: Metadata = { title: "Gifts" };
 export const dynamic = "force-dynamic";
@@ -15,7 +17,7 @@ export default async function GiftsPage() {
   const { user } = await getUserContext();
   const scope = await privacyScope();
 
-  const [gifts, occasions] = await Promise.all([
+  const [gifts, occasions, cacheable] = await Promise.all([
     prisma.gift.findMany({
       // A gift names the person it is for, so listing one bought for a private
       // contact discloses that contact while the lock is closed.
@@ -28,6 +30,7 @@ export default async function GiftsPage() {
       take: 200,
     }),
     listTerms(user.id, "GIFT_OCCASION"),
+    offlineCacheable(user.id),
   ]);
 
   return (
@@ -62,6 +65,7 @@ export default async function GiftsPage() {
           occasions={occasions}
         />
       )}
+      {cacheable ? <CacheThisPage /> : null}
     </div>
   );
 }
