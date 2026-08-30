@@ -185,16 +185,25 @@ test("a worker update removes an old page and its assets together", async ({ pag
     const oldRegistration = await navigator.serviceWorker.getRegistration();
     await oldRegistration?.unregister();
     const nextRegistration = await navigator.serviceWorker.register(`/sw.js?e2e-version=${Date.now()}`);
+
+    const worker =
+      nextRegistration.installing ?? nextRegistration.waiting ?? nextRegistration.active;
+    if (!worker) throw new Error("the new registration produced no worker");
+
     await new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(() => reject(new Error("updated worker did not activate")), 15_000);
-      const finish = () => {
-        if (!nextRegistration.active) return;
+      const check = () => {
+        // An update no longer takes over on its own: it waits until the page
+        // accepts it. Accept it the way the update prompt's "Reload to update"
+        // does, otherwise this worker sits in `installed` for ever and the
+        // generation it replaces is never purged.
+        if (worker.state === "installed") worker.postMessage({ type: "activate-update" });
+        if (worker.state !== "activated") return;
         window.clearTimeout(timeout);
         resolve();
       };
-      if (nextRegistration.active) finish();
-      else if (nextRegistration.installing) nextRegistration.installing.addEventListener("statechange", finish);
-      else nextRegistration.addEventListener("updatefound", () => nextRegistration.installing?.addEventListener("statechange", finish));
+      worker.addEventListener("statechange", check);
+      check();
     });
   });
 

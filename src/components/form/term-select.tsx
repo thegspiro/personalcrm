@@ -11,6 +11,7 @@ export interface TermOption {
   label: string;
   icon: string | null;
   color: string | null;
+  metadata?: unknown;
 }
 
 /**
@@ -121,6 +122,7 @@ export function TermSelect({
   className?: string;
 }) {
   const elementId = id ?? name;
+  const grouped = terms.some((term) => termGroup(term) !== null);
   return (
     <div className={cn("grid gap-1.5", className)}>
       {label ? <Label htmlFor={elementId}>{label}</Label> : null}
@@ -131,12 +133,32 @@ export function TermSelect({
         className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <option value="">{placeholder}</option>
-        {terms.map((term) => (
-          <option key={term.id} value={term.id}>
-            {term.label}
-          </option>
-        ))}
+        {grouped ? <GroupedOptions terms={terms} /> : terms.map((term) => <TermOptionElement key={term.id} term={term} />)}
       </select>
     </div>
   );
+}
+
+function termGroup(term: TermOption): string | null {
+  if (!term.metadata || typeof term.metadata !== "object" || Array.isArray(term.metadata)) return null;
+  const group = (term.metadata as { group?: unknown }).group;
+  return typeof group === "string" && group.length > 0 ? group : null;
+}
+
+function TermOptionElement({ term }: { term: TermOption }) {
+  return <option value={term.id}>{term.label}</option>;
+}
+
+/** Group seeded terms while leaving user-created, ungrouped terms available. */
+function GroupedOptions({ terms }: { terms: TermOption[] }) {
+  const groups = new Map<string, TermOption[]>();
+  for (const term of terms) {
+    const group = termGroup(term) ?? "Other";
+    groups.set(group, [...(groups.get(group) ?? []), term]);
+  }
+  return [...groups].map(([group, options]) => (
+    <optgroup key={group} label={group}>
+      {options.map((term) => <TermOptionElement key={term.id} term={term} />)}
+    </optgroup>
+  ));
 }

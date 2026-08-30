@@ -59,7 +59,7 @@ test("backfill records a life event at year precision", async ({ page }) => {
   const contactUrl = await createContact(page, name);
   await page.goto(`${contactUrl}/backfill`);
 
-  await page.getByRole("button", { name: /Something that happened to them/ }).click();
+  await page.getByRole("button", { name: "A significant moment" }).click();
   await page.getByLabel("What happened?").fill("Graduated");
   await page.getByRole("button", { name: "When", exact: true }).click();
   await page.getByPlaceholder("2019, March 2019, 3 years ago…").fill("2012");
@@ -70,7 +70,7 @@ test("backfill records a life event at year precision", async ({ page }) => {
 
   // The year survives the round-trip and is not rendered as January 1st.
   await page.goto(contactUrl);
-  const section = page.locator("section").filter({ hasText: "Life events" }).first();
+  const section = page.locator("section").filter({ hasText: "Significant moments" }).first();
   await expect(section.getByText("Graduated")).toBeVisible();
   await expect(section.getByRole("paragraph").filter({ hasText: /^2012$/ })).toBeVisible();
   await expect(section.getByText(/January 1, 2012/)).toHaveCount(0);

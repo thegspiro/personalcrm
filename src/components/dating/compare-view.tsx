@@ -70,7 +70,7 @@ const KIDS_LABELS: Record<string, string> = {
 /** Up to this many people can be held side by side before it stops being readable. */
 const MAX_SELECTED = 3;
 
-export function CompareView({ rows }: { rows: CompareItem[] }) {
+export function CompareView({ rows, now }: { rows: CompareItem[]; now: Date }) {
   const [sortKey, setSortKey] = React.useState<SortKey>("overallRating");
   const [ascending, setAscending] = React.useState(false);
   const [selected, setSelected] = React.useState<string[]>([]);
@@ -190,7 +190,7 @@ export function CompareView({ rows }: { rows: CompareItem[] }) {
                 </td>
                 <td className="px-3 py-2 text-right text-xs text-muted-foreground">
                   {row.lastInteractionAt
-                    ? `${Math.round((Date.now() - row.lastInteractionAt.getTime()) / 86_400_000)}d`
+                    ? `${Math.round((now.getTime() - row.lastInteractionAt.getTime()) / 86_400_000)}d`
                     : "—"}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-xs">
