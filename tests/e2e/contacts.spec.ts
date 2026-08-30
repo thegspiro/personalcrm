@@ -86,7 +86,7 @@ test("record a life event known only to the year", async ({ page }) => {
   const name = personName(page);
   await openPerson(page, `${name} Case`);
 
-  const section = page.locator("section").filter({ hasText: "Life events" }).first();
+  const section = page.locator("section").filter({ hasText: "Significant moments" }).first();
   await section.getByRole("button", { name: /Add/ }).click();
 
   await section.getByLabel("What happened?").fill("Moved to Denver");
@@ -170,7 +170,7 @@ test("timeline filters narrow the feed", async ({ page }) => {
   await ensureSignedIn(page);
   await page.goto("/timeline");
 
-  await page.getByRole("button", { name: "Life events" }).click();
+  await page.getByRole("button", { name: "Significant moments" }).click();
   await expect(page.getByText("Moved to Denver").first()).toBeVisible();
   await expect(page.getByText("Coffee from months ago")).toHaveCount(0);
 

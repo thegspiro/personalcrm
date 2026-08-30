@@ -88,7 +88,7 @@ list, because a person missing from the form would be silently dropped on save.
 | --- | --- |
 | Facts | `createFact`, `updateFact`, `deleteFact` |
 | Important dates | `createImportantDate`, `updateImportantDate`, `deleteImportantDate` |
-| Life events | `createLifeEvent`, `updateLifeEvent`, `deleteLifeEvent` |
+| Significant moments (`LifeEvent`) | `createLifeEvent`, `updateLifeEvent`, `deleteLifeEvent` |
 | Ideas | `createIdea`, `updateIdea`, `setIdeaStatus`, `deleteIdea` |
 | Plans | `createPlan`, `updatePlan`, `setPlanStatus`, `deletePlan` |
 | Tasks | `createTask`, `updateTask`, `setTaskDone`, `deleteTask` |
