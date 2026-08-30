@@ -21,6 +21,17 @@ for what each migration does.
 
 ## [Unreleased]
 
+### Milestones at a glance — 2026-08-29
+
+*Schema: none*
+
+#### Added
+- **A dedicated milestone summary on person profiles.** Up to the three most
+  recent marked life events now appear above the timeline, with a link to the
+  complete Life events section. Dates keep their recorded precision and ranges,
+  and every milestone remains in the chronological history rather than being
+  moved or copied into a new record.
+
 ### Significant moments — 2026-08-29
 
 *Schema: none*

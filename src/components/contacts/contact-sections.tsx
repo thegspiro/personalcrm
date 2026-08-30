@@ -548,6 +548,7 @@ export function LifeEventsSection({
 
   return (
     <SectionCard
+      id="life-events"
       title="Significant moments"
       icon="Milestone"
       count={events.length}
