@@ -40,7 +40,7 @@ npm run dev
 | `npm run db:deploy` | Apply pending migrations (what the container runs) |
 | `npm run db:studio` | Browse the database |
 | `npm run lint` | ESLint (`eslint .`, flat config in `eslint.config.mjs`). `next.config.ts` sets `eslint.ignoreDuringBuilds`, so a build never catches lint — the CI lint job is what does |
-| `npm run lint:sw` | `node --check public/sw.js`. ESLint **ignores** the service worker and it is not TypeScript, so this is the only static check it gets |
+| `npm run lint:sw` | Parses `public/sw.js` with **classic-script** grammar. ESLint ignores the worker and it is not TypeScript, so this is its only static check — and `node --check` is not equivalent, since `type: "module"` makes it accept `export` and top-level `await` that a classic worker rejects |
 | `npm run changelog` | What is pending in `CHANGELOG.d/`; `changelog:check` validates, `changelog:release` folds them into `CHANGELOG.md` |
 | `npm run verify` | typecheck → lint → lint:sw → changelog:check → test → build, in one command |
 

@@ -37,10 +37,24 @@ function fragments() {
  * seconds and it being noticed at release, when whoever is releasing has no
  * idea what the entry was meant to say.
  */
+/** A real calendar day, not merely four-two-two digits. */
+function isRealDate(value) {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
+
 function problems({ name, body }) {
   const found = [];
+  const heading = body.split("\n")[0] ?? "";
+  const date = (heading.match(/—\s*(\d{4}-\d{2}-\d{2})/) ?? [])[1];
   if (!body.startsWith("### ")) found.push("must begin with a `### Title — YYYY-MM-DD` heading");
-  if (!/—\s*\d{4}-\d{2}-\d{2}/.test(body.split("\n")[0] ?? "")) found.push("heading needs an em-dashed ISO date");
+  if (!date) found.push("heading needs an em-dashed ISO date");
+  // `2026-99-99` matches the digit pattern and sorts, so the shape check alone
+  // would let a typo through and be folded in permanently at release.
+  else if (!isRealDate(date)) found.push(`heading date ${date} is not a real calendar day`);
   if (!/^\*Schema:/m.test(body)) found.push("needs a `*Schema: …*` line naming its migrations, or `none`");
   if (!/^-\s|\n-\s/.test(body)) found.push("needs at least one bullet");
   return found.map((problem) => `${name}: ${problem}`);
@@ -87,8 +101,29 @@ if (command === "list") {
   const note = rest.match(/^\s*<!--[\s\S]*?-->/);
   const after = start + UNRELEASED.length + (note ? note[0].length : 0);
 
-  const assembled = entries.map((entry) => entry.body).join("\n\n");
-  writeFileSync(FILE, `${changelog.slice(0, after)}\n\n${assembled}\n${changelog.slice(after)}`);
+  // Merge into what is already under [Unreleased] rather than always stacking
+  // on top. Release can run more than once before a version is cut — a delayed
+  // branch contributes an older-dated entry — and inserting each batch at the
+  // top would put 09-01 above 09-02, which is not the order this file promises.
+  const nextSection = changelog.indexOf("\n## ", after);
+  const end = nextSection === -1 ? changelog.length : nextSection;
+  const existing = changelog
+    .slice(after, end)
+    .split(/\n(?=### )/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  const dateOf = (block) => (block.match(/—\s*(\d{4}-\d{2}-\d{2})/) ?? [])[1] ?? "";
+  const blocks = [...entries.map((entry) => entry.body), ...existing];
+
+  // Only reorder when every block carries a date. Anything else is hand-written
+  // content whose order someone chose, and guessing at it is worse than leaving
+  // the new entries on top.
+  const ordered = blocks.every(dateOf)
+    ? [...blocks].sort((a, b) => dateOf(b).localeCompare(dateOf(a)))
+    : blocks;
+
+  writeFileSync(FILE, `${changelog.slice(0, after)}\n\n${ordered.join("\n\n")}\n${changelog.slice(end)}`);
   for (const entry of entries) unlinkSync(join(DIR, entry.name));
   console.log(`Folded ${entries.length} ${entries.length === 1 ? "entry" : "entries"} into ${FILE}.`);
 } else {

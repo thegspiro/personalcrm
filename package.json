@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "node server.js",
     "lint": "eslint .",
-    "lint:sw": "node --check public/sw.js",
+    "lint:sw": "node scripts/check-sw.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",

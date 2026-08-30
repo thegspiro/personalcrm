@@ -45,6 +45,7 @@ jobs:
       # nothing else here would notice a service worker that does not parse.
       # A duplicate `let` from a merge once shipped a worker that never
       # installed, and only the end-to-end job caught it, eight minutes in.
+      # Parsed as a classic script, which is what the browser registers it as.
       - name: Check the service worker parses
         run: npm run lint:sw
 

@@ -141,7 +141,7 @@ npx playwright test                   # against a running instance
 ```bash
 npm run typecheck                     # tsc --noEmit
 npm run lint                          # eslint .
-npm run lint:sw                       # node --check public/sw.js
+npm run lint:sw                       # public/sw.js parses as a classic script
 npm run changelog:check               # CHANGELOG.d/ entries are well formed
 npm test                              # unit + integration
 npm run build                         # production build
@@ -164,7 +164,7 @@ request, on pushes to `main`, and on demand. Four jobs, all independent:
 
 | Job | Does | Why it exists |
 | --- | --- | --- |
-| **Typecheck, lint, build** | `tsc --noEmit`, `eslint .`, `node --check public/sw.js`, the changelog-entry check, `next build` | The cheapest signal, so it does not queue behind a database |
+| **Typecheck, lint, build** | `tsc --noEmit`, `eslint .`, the service-worker parse check, the changelog-entry check, `next build` | The cheapest signal, so it does not queue behind a database |
 | **Unit and integration tests** | Vitest against a MariaDB service container | The suites that need a real database |
 | **End-to-end tests** | Playwright against the **standalone bundle**, on an empty database | What actually ships, not `next dev` |
 | **Container build and boot** | Builds the image, boots it on an empty volume, restarts it | The container is the product |
@@ -185,10 +185,19 @@ only thing between a lint error and `main`.
 
 **The service worker is checked separately because nothing else checks it.**
 `eslint.config.mjs` ignores `public/sw.js` and it is not TypeScript, so
-`node --check` is its only static gate. A merge once put two `let cachingEnabled`
-declarations in it: the worker was a `SyntaxError`, so it never installed and
-offline reading stopped working, and the eight-minute end-to-end job was the
-first thing to notice. `npm run lint:sw` notices in about fifty milliseconds.
+`npm run lint:sw` is its only static gate. A merge once put two
+`let cachingEnabled` declarations in it: the worker was a `SyntaxError`, so it
+never installed and offline reading stopped working, and the eight-minute
+end-to-end job was the first thing to notice. The check notices in about fifty
+milliseconds.
+
+It compiles the file with **classic-script** grammar via `vm.Script` rather
+than running `node --check`. Those are not the same test here: `package.json`
+declares `"type": "module"`, so `node --check` parses `public/sw.js` as a module
+and accepts `import`, `export` and top-level `await` — none of which a classic
+worker can run, and both registrations of the file (`offline.tsx` and
+`offline.spec.ts`) omit `{ type: "module" }`. A gate that accepts syntax the
+browser rejects is worse than no gate, because it gets trusted.
 
 **The E2E job runs the standalone bundle.** `npm run build` produces
 `.next/standalone`, and the workflow copies `public/` and `.next/static` into it
