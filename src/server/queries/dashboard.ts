@@ -15,6 +15,7 @@ import {
   plainDateFromDb,
 } from "@/lib/dates";
 import { hasKnownYear, yearsSince, type DatePrecision } from "@/lib/date-precision";
+import { fetchContactBirthdays, isBirthdayImportantDate } from "./birthdays";
 
 export interface OverdueContact {
   id: string;
@@ -105,22 +106,40 @@ export async function getUpcomingDates(
   const horizon = addPlainDays(today, windowDays);
 
   const privacy = await privacyScope();
-  const rows = await prisma.importantDate.findMany({
-    where: {
-      ownerId,
-      ...(contactId ? { contactId } : {}),
-      contact: { isArchived: false, ...(privacy.unlocked ? {} : { isPrivate: false }) },
-    },
-    include: {
-      type: true,
-      contact: { select: { id: true, firstName: true, lastName: true } },
-    },
-  });
+  const [rows, birthdays] = await Promise.all([
+    prisma.importantDate.findMany({
+      where: {
+        ownerId,
+        ...(contactId ? { contactId } : {}),
+        contact: { isArchived: false, ...(privacy.unlocked ? {} : { isPrivate: false }) },
+      },
+      include: {
+        type: true,
+        contact: { select: { id: true, firstName: true, lastName: true } },
+      },
+    }),
+    fetchContactBirthdays(ownerId, privacy, { contactId }),
+  ]);
 
   const upcoming: UpcomingDate[] = [];
 
-  for (const row of rows) {
-    const anchor = plainDateFromDb(row.date);
+  // Contact.birthDate is authoritative. Birthday-typed legacy rows remain in
+  // storage for reminder compatibility, but are hidden when a canonical value
+  // exists so an account never sees the same birthday twice.
+  const canonicalContactIds = new Set(birthdays.map((birthday) => birthday.contactId));
+  const sources = [
+    ...birthdays,
+    ...rows.filter(
+      (row) => !(canonicalContactIds.has(row.contactId) && isBirthdayImportantDate(row)),
+    ),
+  ];
+
+  for (const row of sources) {
+    const anchor = "canonicalBirthday" in row ? row.date : plainDateFromDb(row.date);
+    // The shared projection already declines a recurring partial date, and for a
+    // one-time one it returns the first possible day inside the window while the
+    // stored anchor and precision go on to `displayDate` -- so "in 2019" is
+    // still shown as "2019" rather than being resolved to a day nobody gave.
     const occursOn = projectDateOccurrences(anchor, row.precision, row.recurrence, today, {
       from: today,
       to: horizon,

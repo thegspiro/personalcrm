@@ -45,6 +45,8 @@ vi.mock("@/server/privacy/lock", () => ({
 }));
 
 const {
+  createLifeEvent,
+  updateLifeEvent,
   updateDebt,
   updateDietaryNeed,
   updateFact,
@@ -92,6 +94,64 @@ describe.skipIf(!hasTestDatabase)("editing an entry", () => {
   });
 
   // --- facts ---------------------------------------------------------------
+
+  describe("a life event range", () => {
+    it("returns an end-date error and does not write a definitively inverted range", async () => {
+      const result = await createLifeEvent(
+        form({
+          contactId: sarahId,
+          title: "Worked abroad",
+          date: "2020-01-01",
+          datePrecision: "YEAR",
+          endDate: "2019-12-01",
+          endDatePrecision: "MONTH",
+        }),
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        fieldErrors: { endDate: "End date must not be before the start date." },
+      });
+      expect(await prisma.lifeEvent.count({ where: { ownerId } })).toBe(0);
+    });
+
+    it("leaves the existing range intact when an edit would invert it", async () => {
+      const event = await prisma.lifeEvent.create({
+        data: {
+          ownerId,
+          contactId: sarahId,
+          title: "Worked abroad",
+          date: new Date("2019-01-01T00:00:00.000Z"),
+          precision: "YEAR",
+          endDate: new Date("2020-01-01T00:00:00.000Z"),
+          endPrecision: "YEAR",
+        },
+      });
+
+      const result = await updateLifeEvent(
+        form({
+          id: event.id,
+          title: "Worked overseas",
+          date: "2021-01-01",
+          datePrecision: "YEAR",
+          endDate: "2020-12-01",
+          endDatePrecision: "MONTH",
+        }),
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        fieldErrors: { endDate: "End date must not be before the start date." },
+      });
+      expect(await prisma.lifeEvent.findUniqueOrThrow({ where: { id: event.id } })).toMatchObject({
+        title: "Worked abroad",
+        date: new Date("2019-01-01T00:00:00.000Z"),
+        precision: "YEAR",
+        endDate: new Date("2020-01-01T00:00:00.000Z"),
+        endPrecision: "YEAR",
+      });
+    });
+  });
 
   describe("a fact", () => {
     it("keeps the category the form names and drops the one it clears", async () => {

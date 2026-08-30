@@ -70,8 +70,8 @@ export function usePwaInstall() {
 
   React.useEffect(() => {
     if (runningStandalone()) {
-      setState("installed");
-      return;
+      const installed = setTimeout(() => setState("installed"), 0);
+      return () => clearTimeout(installed);
     }
 
     const onBeforeInstallPrompt = (event: Event) => {

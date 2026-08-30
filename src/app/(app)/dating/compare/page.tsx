@@ -39,7 +39,7 @@ export default async function ComparePage() {
         </div>
       </div>
 
-      <CompareView rows={rows} />
+      <CompareView rows={rows} now={new Date()} />
     </div>
   );
 }

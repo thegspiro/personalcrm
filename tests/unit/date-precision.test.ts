@@ -4,6 +4,7 @@ import {
   comparePartialDates,
   formatPartialDate,
   formatPartialRange,
+  isValidPartialDateRange,
   normalizeToPrecision,
   overlapsRange,
   parsePartialDate,
@@ -121,6 +122,61 @@ describe("precisionRange", () => {
     const { start, end } = precisionRange(MAR_14_2019, "DAY");
     expect(plainDateKey(start)).toBe("2019-03-14");
     expect(plainDateKey(end)).toBe("2019-03-14");
+  });
+});
+
+describe("isValidPartialDateRange", () => {
+  const partial = (
+    year: number,
+    month: number,
+    day: number,
+    precision: "DAY" | "MONTH" | "YEAR" | "MONTH_DAY",
+  ) => ({ date: { year, month, day }, precision });
+
+  it("accepts exact, equal, and open-ended ranges", () => {
+    const start = partial(2019, 3, 14, "DAY");
+    expect(isValidPartialDateRange(start, partial(2019, 3, 15, "DAY"))).toBe(true);
+    expect(isValidPartialDateRange(start, partial(2019, 3, 14, "DAY"))).toBe(true);
+    expect(isValidPartialDateRange(start, null)).toBe(true);
+  });
+
+  it("accepts chronological month-only and year-only ranges", () => {
+    expect(
+      isValidPartialDateRange(partial(2019, 3, 1, "MONTH"), partial(2019, 6, 1, "MONTH")),
+    ).toBe(true);
+    expect(
+      isValidPartialDateRange(partial(2019, 1, 1, "YEAR"), partial(2020, 1, 1, "YEAR")),
+    ).toBe(true);
+  });
+
+  it("allows mixed-precision intervals that have an ambiguous overlap", () => {
+    expect(
+      isValidPartialDateRange(partial(2019, 1, 1, "YEAR"), partial(2019, 1, 1, "MONTH")),
+    ).toBe(true);
+    expect(
+      isValidPartialDateRange(partial(2019, 3, 1, "MONTH"), partial(2019, 3, 14, "DAY")),
+    ).toBe(true);
+  });
+
+  it("accepts an unknown-year endpoint because it cannot prove an inversion", () => {
+    expect(
+      isValidPartialDateRange(
+        partial(2020, 1, 1, "YEAR"),
+        partial(UNKNOWN_YEAR, 3, 14, "MONTH_DAY"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects only definitively inverted exact and fuzzy ranges", () => {
+    expect(
+      isValidPartialDateRange(partial(2019, 3, 15, "DAY"), partial(2019, 3, 14, "DAY")),
+    ).toBe(false);
+    expect(
+      isValidPartialDateRange(partial(2020, 1, 1, "YEAR"), partial(2019, 12, 1, "MONTH")),
+    ).toBe(false);
+    expect(
+      isValidPartialDateRange(partial(2020, 2, 1, "MONTH"), partial(2020, 1, 1, "YEAR")),
+    ).toBe(true);
   });
 });
 

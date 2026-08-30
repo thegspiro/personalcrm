@@ -50,7 +50,7 @@ packaged as one container with the database built in.
 | Area | Route | Notes |
 | --- | --- | --- |
 | Dashboard | `/` | Arrangeable widgets |
-| People | `/people` | Contacts, facts, dates, life events, gifts, debts, dietary needs |
+| People | `/people` | Contacts, facts, dates, significant moments, gifts, debts, dietary needs |
 | Timeline | `/timeline` | Every interaction, unified |
 | Family | `/family` | Households, relationship graph, generation banding, suggestions |
 | Dating | `/dating` | Optional layer; pipeline, date log, flags, comparison |

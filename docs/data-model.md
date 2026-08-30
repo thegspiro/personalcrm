@@ -136,7 +136,7 @@ Unique: `(ownerId, kind, slug)`. Indexes: `(ownerId, kind, sortOrder)`,
 | `CONTACT_METHOD_TYPE` | Phone, email, social handles |
 | `MEETING_SOURCE` | Where you met someone, dating apps included |
 | `GIFT_OCCASION` | Why a gift was given |
-| `LIFE_EVENT_TYPE` | Things that happen in someone's life |
+| `LIFE_EVENT_TYPE` | Significant moments: life changes, milestones, and memories |
 | `DATING_STAGE` | The columns of the dating pipeline |
 | `DATE_ACTIVITY_TYPE` | What you did on a date |
 | `PLAN_CATEGORY` | Kinds of thing to do — a place, a film, a show, something to try |
@@ -298,11 +298,13 @@ Coming up and retain their partial display.
 
 ### `LifeEvent`
 
-Something that happened **to** a person — on their timeline, not yours.
+A significant moment in a person's life — a formal change, milestone, or
+personal memory on their timeline, not yours. The user-facing name is broader,
+but the persistence model deliberately remains `LifeEvent`.
 
 Deliberately not an `Interaction` (which assumes you were there) and not an
 `ImportantDate` (which assumes you want reminding annually). "Her father died in
-2019" is context, not an anniversary.
+2019" and "the trip where we became friends" are context, not anniversaries.
 
 Adds `endDate` / `endPrecision` for events that span a period, and
 `isMilestone` to pin one to the top of the profile.

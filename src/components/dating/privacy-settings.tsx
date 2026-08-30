@@ -38,18 +38,18 @@ export function PrivacySettings({
   const [changingPin, setChangingPin] = React.useState(false);
   const [locking, setLocking] = React.useState(false);
 
-  const [pinState, pinAction] = useActionState<ActionResult, FormData>(setPinAction, { ok: true });
-  const [clearState, clearAction] = useActionState<ActionResult, FormData>(clearPinAction, { ok: true });
-
-  React.useEffect(() => {
-    if (pinState.ok && pinState.error === undefined && changingPin) {
-      // The action succeeded; collapse the form.
+  async function savePin(previous: ActionResult, form: FormData): Promise<ActionResult> {
+    const result = await setPinAction(previous, form);
+    if (result.ok) {
       setChangingPin(false);
       toast.success("PIN saved");
       router.refresh();
     }
-    // Only react to a fresh result.
-  }, [pinState]); // eslint-disable-line react-hooks/exhaustive-deps
+    return result;
+  }
+
+  const [pinState, pinAction] = useActionState<ActionResult, FormData>(savePin, { ok: true });
+  const [clearState, clearAction] = useActionState<ActionResult, FormData>(clearPinAction, { ok: true });
 
   async function savePreferences(next: { lock?: boolean; hide?: boolean; blur?: boolean }) {
     const form = new FormData();

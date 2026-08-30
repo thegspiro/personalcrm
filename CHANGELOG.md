@@ -18,6 +18,8 @@ for what each migration does.
 
 ### Historical timeline and projected important dates — 2026-08-29
 
+### Significant moments — 2026-08-29
+
 *Schema: none*
 
 #### Changed
@@ -33,6 +35,28 @@ for what each migration does.
   clamps monthly occurrences to the final day of shorter months. Future
   one-time month- and year-only dates remain partial rather than disappearing
   or acquiring a made-up day.
+
+- **Profiles now call life events “Significant moments.”** The broader language
+  covers formal changes and personal memories without changing the `LifeEvent`
+  persistence model or its server actions. Rapid backfill also makes clear that
+  these are historical moments rather than automatically recurring dates.
+- **The life-event taxonomy now includes relationships, family, work and
+  education, home and travel, personal growth, and memory choices.** The picker
+  groups these defaults, and startup provisioning adds the new terms to existing
+  accounts without a schema migration.
+
+### Canonical contact birthdays — 2026-08-29
+
+*Schema: none*
+
+#### Changed
+- **A person's birthday now appears everywhere from `Contact.birthDate`.** The
+  Important dates section, unified timeline, and Coming up widget share one
+  projection, so edits cannot leave two birthday records disagreeing. Unknown
+  birth years remain month-and-day values.
+- **Existing birthday-type important dates remain stored for compatibility.**
+  Their notes and reminder settings are inherited by the canonical entry while
+  the legacy row is suppressed. Demo seeding no longer creates duplicate rows.
 
 ### Editing everything else you logged — 2026-08-27
 
@@ -71,6 +95,10 @@ relationship it threw away both halves of the pair.
   none of them could be entered.
 
 #### Fixed
+- **Life events can no longer store a provably inverted date range.** Exact and
+  partial dates are compared as possible intervals, so ambiguous overlaps such
+  as “2019” through “January 2019” remain valid while an end wholly before the
+  possible start is rejected at the field in both the browser and server.
 - **`updateFact` silently dropped a fact's privacy marker.** It wrote content,
   category and importance and left `isPrivate` out of the update, so the field
   the create path offers had no way back. It is now written — but only when the

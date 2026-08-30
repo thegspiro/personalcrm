@@ -185,6 +185,25 @@ export function precisionRange(
 }
 
 /**
+ * Whether a partial-date range has at least one possible chronological
+ * interpretation. An end is invalid only when its latest possible day is
+ * before the earliest possible start day. Overlapping fuzzy intervals are
+ * deliberately accepted: January 2019 can be the end of an event remembered
+ * only as starting sometime in 2019.
+ *
+ * A MONTH_DAY has no known year, so either endpoint can always be placed in a
+ * year that makes the range chronological. It therefore cannot prove a range
+ * impossible on its own.
+ */
+export function isValidPartialDateRange(start: PartialDate, end: PartialDate | null): boolean {
+  if (!end || !hasKnownYear(start.precision) || !hasKnownYear(end.precision)) return true;
+
+  const earliestStart = precisionRange(start.date, start.precision).start;
+  const latestEnd = precisionRange(end.date, end.precision).end;
+  return diffPlainDays(earliestStart, latestEnd) >= 0;
+}
+
+/**
  * Sort key for a feed mixing precisions. Fuzzy dates sort by the start of their
  * range, so "2019" sits with early 2019 rather than drifting to the end.
  */

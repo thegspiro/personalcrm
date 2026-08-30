@@ -285,9 +285,11 @@ export interface DatingWidgetData {
 export function DatingPipelineWidget({
   data,
   timezone,
+  now,
 }: {
   data: DatingWidgetData;
   timezone: string;
+  now: Date;
 }) {
   return (
     <WidgetShell
@@ -350,7 +352,7 @@ export function DatingPipelineWidget({
                     {person.lastInteractionAt ? (
                       <span className="opacity-60">
                         {" "}
-                        · {Math.round((Date.now() - person.lastInteractionAt.getTime()) / 86_400_000)}d
+                        · {Math.round((now.getTime() - person.lastInteractionAt.getTime()) / 86_400_000)}d
                       </span>
                     ) : null}
                   </Link>

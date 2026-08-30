@@ -138,20 +138,6 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
     });
     contactIds.set(p.firstName, contact.id);
 
-    if (p.birth) {
-      await prisma.importantDate.create({
-        data: {
-          ownerId,
-          contactId: contact.id,
-          typeId: term("DATE_TYPE", "birthday"),
-          label: "Birthday",
-          date: dateOnly(...p.birth),
-          recurrence: "ANNUAL",
-          reminderDaysBefore: [30, 7, 0] as never,
-        },
-      });
-    }
-
     if (isRomanticSeed(p)) {
       const r = p;
       await prisma.romanticProfile.create({
