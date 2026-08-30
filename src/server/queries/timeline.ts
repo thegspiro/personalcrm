@@ -53,6 +53,10 @@ export interface TimelineEntry {
   reachedOutBy?: string | null;
   location?: string | null;
   href: string;
+  editable?:
+    | { kind: "important-date"; recurrence: "NONE" | "ANNUAL" | "MONTHLY"; typeId: string | null; notes: string | null; reminderDaysBefore: number[] | null }
+    | { kind: "life-event"; typeId: string | null; description: string | null; endDate: PlainDate | null; endPrecision: DatePrecision | null; isMilestone: boolean }
+    | { kind: "contact-birthday"; contactId: string };
 }
 
 export interface TimelineOptions {
@@ -293,7 +297,7 @@ function interactionEntry(row: InteractionRow, timezone: string, now: Date): Tim
     sentiment: row.sentiment,
     reachedOutBy: row.reachedOutBy,
     location: row.location,
-    href: contacts[0] ? `/people/${contacts[0].id}` : "/timeline",
+    href: contacts[0] ? `/people/${contacts[0].id}#timeline-entry-interaction-${row.id}` : "/timeline",
   };
 }
 
@@ -307,7 +311,10 @@ function lifeEventEntry(row: LifeEventRow): TimelineEntry {
     detail: row.description,
     term: row.type ? { label: row.type.label, icon: row.type.icon, color: row.type.color } : null,
     contacts: [row.contact],
-    href: `/people/${row.contactId}`,
+    href: `/people/${row.contactId}#life-event-${row.id}`,
+    editable: { kind: "life-event", typeId: row.typeId, description: row.description,
+      endDate: row.endDate ? plainDateFromDb(row.endDate) : null, endPrecision: row.endPrecision,
+      isMilestone: row.isMilestone },
   };
 }
 
@@ -322,7 +329,19 @@ function importantDateEntry(row: ImportantDateRow): TimelineEntry {
     detail: row.notes,
     term: row.type ? { label: row.type.label, icon: row.type.icon, color: row.type.color } : null,
     contacts: [row.contact],
-    href: `/people/${row.contactId}`,
+    href: `/people/${row.contactId}#important-date-${row.id}`,
+    // The reminder policy travels with the row because the edit form submits
+    // every field it holds: leaving it out would reset a custom policy to the
+    // account default on any unrelated correction made from the timeline.
+    editable: {
+      kind: "important-date",
+      recurrence: row.recurrence,
+      typeId: row.typeId,
+      notes: row.notes,
+      reminderDaysBefore: Array.isArray(row.reminderDaysBefore)
+        ? (row.reminderDaysBefore as number[])
+        : null,
+    },
   };
 }
 
@@ -343,7 +362,8 @@ function birthdayTimelineEntry(row: BirthdayProjection): TimelineEntry {
     upcoming: false,
     term: row.type,
     contacts: [row.contact],
-    href: `/people/${row.contactId}`,
+    href: `/people/${row.contactId}#important-date-${row.id}`,
+    editable: { kind: "contact-birthday", contactId: row.contactId },
   };
 }
 
@@ -359,7 +379,7 @@ function giftEntry(row: GiftRow): TimelineEntry {
       ? { label: row.occasion.label, icon: row.occasion.icon, color: row.occasion.color }
       : { label: "Gift", icon: "Gift", color: "pink" },
     contacts: [row.contact],
-    href: `/people/${row.contactId}`,
+    href: `/people/${row.contactId}#gift-${row.id}`,
   };
 }
 

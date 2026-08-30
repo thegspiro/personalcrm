@@ -8,6 +8,7 @@ import { TimelineFilters } from "@/components/timeline/timeline-filters";
 import { calendarDateInTz, parsePlainDate, plainDateToDb } from "@/lib/dates";
 import { getUpcomingDates } from "@/server/queries/dashboard";
 import { UpcomingDatesWidget } from "@/components/dashboard/widgets";
+import { listTermsByKind } from "@/server/taxonomy/queries";
 
 export const metadata: Metadata = { title: "Timeline" };
 export const dynamic = "force-dynamic";
@@ -40,7 +41,7 @@ export default async function TimelinePage({
   const fromPlain = first("from") ? parsePlainDate(first("from")!) : null;
   const toPlain = first("to") ? parsePlainDate(first("to")!) : null;
 
-  const [entries, upcomingDates] = await Promise.all([
+  const [entries, upcomingDates, terms] = await Promise.all([
     buildTimeline(user.id, timezone, {
       kinds,
       search: first("q"),
@@ -49,6 +50,7 @@ export default async function TimelinePage({
       take: 100,
     }),
     getUpcomingDates(user.id, timezone, 366, 100),
+    listTermsByKind(user.id, ["DATE_TYPE", "LIFE_EVENT_TYPE"]),
   ]);
 
   const today = calendarDateInTz(new Date(), timezone);
@@ -69,6 +71,8 @@ export default async function TimelinePage({
         entries={entries}
         today={today}
         timezone={timezone}
+        dateTypes={terms.DATE_TYPE}
+        lifeEventTypes={terms.LIFE_EVENT_TYPE}
         blurSensitive={prefs.blurPrivateNotes}
         emptyTitle="Nothing to show"
         emptyDescription="Log an interaction, or widen the filters."

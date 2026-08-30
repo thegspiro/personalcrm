@@ -4,7 +4,12 @@ import { randomBytes } from "node:crypto";
 import { Prisma, type TaxonomyKind } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
-import { debtPrivacyWhere, factPrivacyWhere, privacyScope } from "@/server/privacy/filter";
+import {
+  debtPrivacyWhere,
+  factPrivacyWhere,
+  privacyScope,
+  viaContactPrivacyWhere,
+} from "@/server/privacy/filter";
 import { calendarDateInTz, plainDateFromDb, plainDateToDb } from "@/lib/dates";
 import { isValidPartialDateRange } from "@/lib/date-precision";
 import { dietaryKindOf } from "@/lib/dietary";
@@ -181,7 +186,7 @@ export async function updateImportantDate(form: FormData): Promise<ActionResult>
   const id = str(form, "id");
   if (!id) return fail("Missing date.");
   const existing = await prisma.importantDate.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...viaContactPrivacyWhere(await privacyScope()) },
     select: { contactId: true },
   });
   if (!existing) return fail("Not found.");
@@ -215,7 +220,7 @@ export async function updateImportantDate(form: FormData): Promise<ActionResult>
 export async function deleteImportantDate(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
   const existing = await prisma.importantDate.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...viaContactPrivacyWhere(await privacyScope()) },
     select: { contactId: true },
   });
   if (!existing) return fail("Not found.");
@@ -271,7 +276,7 @@ export async function updateLifeEvent(form: FormData): Promise<ActionResult> {
   const id = str(form, "id");
   if (!id) return fail("Missing event.");
   const existing = await prisma.lifeEvent.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...viaContactPrivacyWhere(await privacyScope()) },
     select: { contactId: true },
   });
   if (!existing) return fail("Not found.");
@@ -313,7 +318,7 @@ export async function updateLifeEvent(form: FormData): Promise<ActionResult> {
 export async function deleteLifeEvent(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
   const existing = await prisma.lifeEvent.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...viaContactPrivacyWhere(await privacyScope()) },
     select: { contactId: true },
   });
   if (!existing) return fail("Not found.");

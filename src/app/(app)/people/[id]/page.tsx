@@ -191,6 +191,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             entries={timeline}
             today={today}
             timezone={timezone}
+            dateTypes={terms.DATE_TYPE}
+            lifeEventTypes={terms.LIFE_EVENT_TYPE}
             showContacts={false}
             blurSensitive={prefs.blurPrivateNotes}
             emptyTitle="Nothing logged yet"

@@ -51,6 +51,7 @@ const {
   updateDietaryNeed,
   updateFact,
   updateGift,
+  updateImportantDate,
   updateIdea,
   updateRelationship,
   updateTask,
@@ -150,6 +151,30 @@ describe.skipIf(!hasTestDatabase)("editing an entry", () => {
         endDate: new Date("2020-01-01T00:00:00.000Z"),
         endPrecision: "YEAR",
       });
+    });
+  });
+
+  describe("timeline history behind a private contact", () => {
+    it("cannot be changed with remembered date or event ids while locked", async () => {
+      const privateContact = await prisma.contact.create({
+        data: { ownerId, firstName: "Hidden", isPrivate: true },
+      });
+      const [date, event] = await Promise.all([
+        prisma.importantDate.create({
+          data: { ownerId, contactId: privateContact.id, label: "Anniversary", date: new Date("2020-01-02T00:00:00Z") },
+        }),
+        prisma.lifeEvent.create({
+          data: { ownerId, contactId: privateContact.id, title: "Moved home", date: new Date("2020-01-02T00:00:00Z") },
+        }),
+      ]);
+
+      state.enabled = true;
+      state.unlocked = false;
+
+      expect(await updateImportantDate(form({ id: date.id, label: "Exposed", date: "2021-02-03" }))).toMatchObject({ ok: false });
+      expect(await updateLifeEvent(form({ id: event.id, title: "Exposed", date: "2021-02-03" }))).toMatchObject({ ok: false });
+      expect((await prisma.importantDate.findUniqueOrThrow({ where: { id: date.id } })).label).toBe("Anniversary");
+      expect((await prisma.lifeEvent.findUniqueOrThrow({ where: { id: event.id } })).title).toBe("Moved home");
     });
   });
 
