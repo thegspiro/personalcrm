@@ -9,6 +9,8 @@ import { displayName } from "@/lib/utils";
 import { FamilyTree } from "@/components/family/family-tree";
 import { Households, FamilyEmpty } from "@/components/family/households";
 import { SuggestionList } from "@/components/family/suggestions";
+import { offlineCacheable } from "@/server/privacy/offline";
+import { CacheThisPage } from "@/components/offline/offline";
 
 export const metadata: Metadata = { title: "Family" };
 export const dynamic = "force-dynamic";
@@ -22,7 +24,7 @@ export default async function FamilyPage({
   const { anchor } = await searchParams;
   const scope = await privacyScope();
 
-  const [overview, relationshipTerms, contacts] = await Promise.all([
+  const [overview, relationshipTerms, contacts, cacheable] = await Promise.all([
     getFamilyOverview(user.id, anchor),
     listTerms(user.id, "RELATIONSHIP_TYPE"),
     prisma.contact.findMany({
@@ -31,6 +33,7 @@ export default async function FamilyPage({
       orderBy: [{ lastInteractionAt: "desc" }, { firstName: "asc" }],
       take: 500,
     }),
+    offlineCacheable(user.id),
   ]);
 
   const familyTypes = relationshipTerms
@@ -88,6 +91,7 @@ export default async function FamilyPage({
       ) : (
         <FamilyEmpty />
       )}
+      {cacheable ? <CacheThisPage /> : null}
     </div>
   );
 }

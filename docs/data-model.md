@@ -478,19 +478,22 @@ survives widgets being added or removed.
 
 ## Notifications
 
-Schema is in place; delivery is not yet wired (see [below](#not-yet-wired)).
+Enabled channels receive due important-date reminders from the hourly scheduler.
 
 ### `NotificationChannel`
 
 `kind`: `EMAIL` | `NTFY` | `GOTIFY` | `DISCORD` | `WEBHOOK`; `name`; `config`
-JSON (channel-specific — SMTP host, topic URL, webhook URL); `isEnabled`.
+JSON (channel-specific); `isEnabled`. Email uses `host`, optional `port`,
+`secure`, optional `user`/`pass`, and required `from`/`to`. HTTP-backed channels
+use `url` and an optional bearer `token`.
 
 ### `ReminderLog`
 
-The dedupe ledger, so a restart never re-sends a reminder. Unique on
-`(ownerId, entityType, entityId, scheduledFor)` with `entityType` a
-`ReminderEntity` (`IMPORTANT_DATE` | `CADENCE` | `TASK` | `DIGEST`). Records
-`ok` and `error` so a failed send is visible rather than silent.
+The dedupe/retry ledger, so a restart never re-sends a reminder. Unique on
+`(ownerId, entityType, entityId, scheduledFor, offsetDays, channelId)` with
+`entityType` a `ReminderEntity` (`IMPORTANT_DATE` | `CADENCE` | `TASK` |
+`DIGEST`). Records `attemptCount`, `nextAttemptAt`, `ok`, and `error`; failed
+sends retry with exponential delay up to five attempts.
 
 ---
 
@@ -564,9 +567,7 @@ writes yet. Documented here so nobody assumes the feature works:
 
 | Table / column | State |
 | --- | --- |
-| `NotificationChannel`, `ReminderLog` | No sender, no scheduler. `node-cron` and `nodemailer` are dependencies but nothing imports them |
 | `UserPreference.digestHour`, `digestEnabled` | Stored, not acted on |
-| `ImportantDate.reminderDaysBefore` | Stored, not acted on |
 | `Contact.avatarPath` | Read and rendered everywhere, but nothing uploads an image to set it |
 
 `/config/backups` is likewise created at boot but nothing writes to it — the

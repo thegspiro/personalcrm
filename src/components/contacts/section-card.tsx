@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
  * inline editing everywhere, and on a phone a nested modal is a dead end.
  */
 export function SectionCard({
+  id,
   title,
   icon,
   count,
@@ -21,6 +22,7 @@ export function SectionCard({
   defaultOpen = true,
   children,
 }: {
+  id?: string;
   title: string;
   icon: string;
   count?: number;
@@ -38,7 +40,7 @@ export function SectionCard({
   const [adding, setAdding] = React.useState(false);
 
   return (
-    <section className="min-w-0 rounded-xl border border-border bg-card">
+    <section id={id} className="min-w-0 scroll-mt-4 rounded-xl border border-border bg-card">
       <div className="flex items-center gap-2 px-4 py-3">
         <button
           type="button"

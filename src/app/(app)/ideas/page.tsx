@@ -10,6 +10,9 @@ import { PlansSection } from "@/components/plans/plans-section";
 import { IdeaList } from "@/components/lists/idea-list";
 import { plainDateFromDb } from "@/lib/dates";
 import { displayName } from "@/lib/utils";
+import { privacyScope, viaOptionalContactPrivacyWhere } from "@/server/privacy/filter";
+import { offlineCacheable } from "@/server/privacy/offline";
+import { CacheThisPage } from "@/components/offline/offline";
 
 export const metadata: Metadata = { title: "Ideas" };
 export const dynamic = "force-dynamic";
@@ -23,10 +26,15 @@ export const dynamic = "force-dynamic";
  */
 export default async function IdeasPage() {
   const { user } = await getUserContext();
+  const scope = await privacyScope();
 
-  const [ideas, plans, planCategories, contacts] = await Promise.all([
+  const [ideas, plans, planCategories, contacts, cacheable] = await Promise.all([
     prisma.idea.findMany({
-      where: { ownerId: user.id, status: "OPEN" },
+      where: {
+        ownerId: user.id,
+        status: "OPEN",
+        ...viaOptionalContactPrivacyWhere(scope),
+      },
       include: { contact: { select: { id: true, firstName: true, lastName: true } } },
       orderBy: { createdAt: "desc" },
       take: 200,
@@ -34,6 +42,7 @@ export default async function IdeasPage() {
     listPlans(user.id),
     listTerms(user.id, "PLAN_CATEGORY"),
     listContactOptions(user.id),
+    offlineCacheable(user.id),
   ]);
 
   return (
@@ -94,6 +103,7 @@ export default async function IdeasPage() {
           />
         )}
       </div>
+      {cacheable ? <CacheThisPage /> : null}
     </div>
   );
 }

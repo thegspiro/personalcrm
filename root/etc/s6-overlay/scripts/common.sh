@@ -23,7 +23,7 @@ read_secret() {
         const value = data[process.argv[2]];
         if (typeof value === "string" && value) process.stdout.write(value);
       } catch { /* handled by the caller checking for empty output */ }
-    ' "${SECRETS_FILE}" "${key}"
+    ' -- "${SECRETS_FILE}" "${key}"
 }
 
 # Create /config/secrets.json on first boot with a random database password and
@@ -44,7 +44,7 @@ ensure_secrets() {
       if (!data.dbPassword) data.dbPassword = crypto.randomBytes(24).toString("base64url");
       if (!data.authSecret) data.authSecret = crypto.randomBytes(48).toString("base64url");
       fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
-    ' "${SECRETS_FILE}"
+    ' -- "${SECRETS_FILE}"
 
     chown "${PUID:-99}:${PGID:-100}" "${SECRETS_FILE}"
     chmod 600 "${SECRETS_FILE}"
@@ -64,8 +64,14 @@ export_runtime_env() {
         fi
         # The password is URL-encoded: base64url can't produce reserved
         # characters, but an operator-supplied one could.
+        #
+        # `--` is not decoration. base64url's alphabet includes `-`, so roughly
+        # one generated password in sixty-four starts with one, and node reads
+        # that as an option it does not have: "node: bad option: -JRaFy...",
+        # exit 9, and the container refuses to boot on a fresh volume. It fails
+        # only for the unlucky, which is the worst way for it to fail.
         local encoded
-        encoded="$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "${password}")"
+        encoded="$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' -- "${password}")"
         export DATABASE_URL="mysql://${DB_USER}:${encoded}@127.0.0.1:3306/${DB_NAME}"
     fi
 
