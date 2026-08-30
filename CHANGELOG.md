@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Added clear per-date reminder timing choices, including account defaults, custom offsets, and an explicit no-reminders policy.
+- Added timezone-aware important-date delivery through enabled notification channels, with privacy filtering, retries, and duplicate prevention.
+
 All notable changes to this project are recorded here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
@@ -18,6 +23,8 @@ for what each migration does.
 
 ### Offline update recovery — 2026-08-29
 
+### Milestones at a glance — 2026-08-29
+
 *Schema: none*
 
 #### Added
@@ -32,6 +39,12 @@ for what each migration does.
 #### Fixed
 - Repeated service-worker registration failures now produce a persistent but
   non-blocking warning instead of silently disabling offline reading.
+
+- **A dedicated milestone summary on person profiles.** Up to the three most
+  recent marked life events now appear above the timeline, with a link to the
+  complete Life events section. Dates keep their recorded precision and ranges,
+  and every milestone remains in the chronological history rather than being
+  moved or copied into a new record.
 
 ### Significant moments — 2026-08-29
 

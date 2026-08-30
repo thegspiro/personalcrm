@@ -3,19 +3,29 @@ import { getUserContext } from "@/server/user/context";
 import { prisma } from "@/server/db/client";
 import { TaskList } from "@/components/lists/task-list";
 import { plainDateFromDb } from "@/lib/dates";
+import { privacyScope, viaOptionalContactPrivacyWhere } from "@/server/privacy/filter";
+import { offlineCacheable } from "@/server/privacy/offline";
+import { CacheThisPage } from "@/components/offline/offline";
 
 export const metadata: Metadata = { title: "Follow-ups" };
 export const dynamic = "force-dynamic";
 
 export default async function TasksPage() {
   const { user, timezone } = await getUserContext();
+  const scope = await privacyScope();
 
-  const tasks = await prisma.task.findMany({
-    where: { ownerId: user.id },
-    include: { contact: { select: { id: true, firstName: true, lastName: true } } },
-    orderBy: [{ completedAt: "asc" }, { dueDate: { sort: "asc", nulls: "last" } }],
-    take: 200,
-  });
+  const [tasks, cacheable] = await Promise.all([
+    prisma.task.findMany({
+      where: {
+        ownerId: user.id,
+        ...viaOptionalContactPrivacyWhere(scope),
+      },
+      include: { contact: { select: { id: true, firstName: true, lastName: true } } },
+      orderBy: [{ completedAt: "asc" }, { dueDate: { sort: "asc", nulls: "last" } }],
+      take: 200,
+    }),
+    offlineCacheable(user.id),
+  ]);
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
@@ -35,6 +45,7 @@ export default async function TasksPage() {
         }))}
         timezone={timezone}
       />
+      {cacheable ? <CacheThisPage /> : null}
     </div>
   );
 }

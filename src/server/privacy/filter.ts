@@ -6,8 +6,10 @@ export {
   contactPrivacyWhere,
   debtPrivacyWhere,
   factPrivacyWhere,
+  householdPrivacyWhere,
   interactionPrivacyWhere,
   viaContactPrivacyWhere,
+  viaOptionalContactPrivacyWhere,
   type PrivacyScope,
 } from "./where";
 

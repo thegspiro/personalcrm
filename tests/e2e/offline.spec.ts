@@ -158,6 +158,24 @@ test("visited pages become readable offline", async ({ page }) => {
     .toContain("/people");
 });
 
+test("the additional read-only routes opt into the offline page cache", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto("/tasks");
+  await readyWorker(page);
+  await clearPageCache(page);
+
+  // The /people scenario below exercises an actual disconnected navigation
+  // and stale-page banner. Each named step here proves the corresponding
+  // server component rendered CacheThisPage without paying for a fresh browser
+  // context and service-worker installation per route on CI.
+  for (const route of ["/tasks", "/gifts", "/ideas", "/family"]) {
+    await test.step(`${route} opts in`, async () => {
+      await page.goto(route);
+      await expect.poll(() => cachedPages(page), { timeout: 15_000 }).toContain(route);
+    });
+  }
+});
+
 test("a worker update removes an old page and its assets together", async ({ page }) => {
   await ensureSignedIn(page);
   await page.goto("/people");
@@ -277,6 +295,16 @@ test("nothing is stored once anyone is marked private", async ({ page }) => {
   await page.goto(url);
   await page.waitForTimeout(3_000);
   expect(await cachedPages(page)).toEqual([]);
+
+  // Every read-only route uses the same account-wide gate. None may opt in
+  // merely because its own result happens not to mention the private person.
+  for (const route of ["/tasks", "/gifts", "/ideas", "/family"]) {
+    await page.goto(route);
+    // CacheThisPage posts after 800ms. Wait beyond that boundary before
+    // asserting absence, otherwise this test can pass just before a bad opt-in.
+    await page.waitForTimeout(2_000);
+    expect(await cachedPages(page)).toEqual([]);
+  }
 });
 
 test("cleaning up: unmark the private contact", async ({ page }) => {
