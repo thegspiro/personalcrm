@@ -45,6 +45,8 @@ export interface PrivacyState {
   unlocked: boolean;
   /** Seconds until a locked-out user may try again, or 0. */
   retryAfterSeconds: number;
+  /** Epoch milliseconds when this session will close without more activity. */
+  unlockedUntilMs: number | null;
 }
 
 function hashToken(token: string): string {
@@ -90,14 +92,20 @@ export const getPrivacyState = cache(async (): Promise<PrivacyState> => {
 
   // With the lock off, nothing is gated — including anything marked private.
   if (!enabled) {
-    return { pinSet, enabled: false, unlocked: true, retryAfterSeconds };
+    return { pinSet, enabled: false, unlocked: true, retryAfterSeconds, unlockedUntilMs: null };
   }
 
   const session = await currentSession();
   const unlockedAt = session?.privacyUnlockedAt ?? null;
   const unlocked = Boolean(unlockedAt && Date.now() - unlockedAt.getTime() < IDLE_TIMEOUT_MS);
 
-  return { pinSet, enabled: true, unlocked, retryAfterSeconds };
+  return {
+    pinSet,
+    enabled: true,
+    unlocked,
+    retryAfterSeconds,
+    unlockedUntilMs: unlocked && unlockedAt ? unlockedAt.getTime() + IDLE_TIMEOUT_MS : null,
+  };
 });
 
 export interface UnlockResult {
@@ -197,7 +205,13 @@ export async function setPin(newPin: string, currentPin?: string): Promise<Unloc
   }
 
   // Setting a PIN implies you can see your own data right now.
-  await touchUnlock();
+  const session = await currentSession();
+  if (session) {
+    await prisma.session.update({
+      where: { id: session.id },
+      data: { privacyUnlockedAt: new Date() },
+    });
+  }
   return { ok: true };
 }
 
@@ -222,7 +236,13 @@ export async function unlock(pin: string): Promise<UnlockResult> {
 
   const result = await verifyPin(user.id, pin, "That PIN is wrong.");
   if (!result.ok) return result;
-  await touchUnlock();
+  const session = await currentSession();
+  if (session) {
+    await prisma.session.update({
+      where: { id: session.id },
+      data: { privacyUnlockedAt: new Date() },
+    });
+  }
   return { ok: true };
 }
 
@@ -243,9 +263,15 @@ export async function lock(): Promise<void> {
  */
 export async function touchUnlock(): Promise<void> {
   const session = await currentSession();
-  if (!session) return;
-  await prisma.session.update({
-    where: { id: session.id },
+  if (!session?.privacyUnlockedAt) return;
+  // One write per minute is enough to implement a sliding timeout. Without
+  // the timestamp predicate, every click in an active session would become a
+  // database write; the predicate also makes concurrent browser tabs cheap.
+  await prisma.session.updateMany({
+    where: {
+      id: session.id,
+      privacyUnlockedAt: { lt: new Date(Date.now() - 60_000) },
+    },
     data: { privacyUnlockedAt: new Date() },
   });
 }

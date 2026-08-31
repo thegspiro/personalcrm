@@ -9,6 +9,8 @@ import { listTerms } from "@/server/taxonomy/queries";
 import { fieldsFor } from "@/server/queries/custom-fields";
 import { QuickLogFab } from "@/components/nav/quick-log-fab";
 import { OfflineBanner } from "@/components/offline/offline";
+import { PrivacyIdleGuard } from "@/components/dating/privacy-idle-guard";
+import { getPrivacyState } from "@/server/privacy/lock";
 
 export const dynamic = "force-dynamic";
 
@@ -22,10 +24,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   // Loaded once for the whole shell so the floating log button works from any
   // screen without each page having to supply it.
-  const [contacts, interactionTypes, interactionFields] = await Promise.all([
+  const [contacts, interactionTypes, interactionFields, privacy] = await Promise.all([
     listContactOptions(user.id),
     listTerms(user.id, "INTERACTION_TYPE"),
     fieldsFor(user.id, "INTERACTION", null),
+    getPrivacyState(),
   ]);
 
   return (
@@ -33,7 +36,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <AppearanceSync accent={prefs.accent} density={prefs.density} />
       <Sidebar hideDating={prefs.hideDating} />
       <div className="lg:pl-60">
-        <TopBar name={user.name} email={user.email} hideDating={prefs.hideDating} />
+        <TopBar
+          name={user.name}
+          email={user.email}
+          hideDating={prefs.hideDating}
+          privacyControl={<PrivacyIdleGuard unlockedUntilMs={privacy.unlockedUntilMs} />}
+        />
         <main className="pb-nav mx-auto w-full max-w-5xl px-4 pt-4 lg:px-6 lg:pb-10">
           {/* Rendered on the server, so it says how old this copy actually is
               rather than when the browser noticed it was offline. */}

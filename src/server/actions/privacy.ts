@@ -9,6 +9,7 @@ import {
   lock,
   requireUnlocked,
   setPin,
+  touchUnlock,
   unlock,
 } from "@/server/privacy/lock";
 import { type ActionResult, bool, fail, ok, owner, str } from "./helpers";
@@ -39,6 +40,14 @@ export async function lockPrivacyAction(): Promise<void> {
   await lock();
   revalidateEverything();
   redirect("/");
+}
+
+/** Refresh an already-open privacy session after real browser activity. */
+export async function touchPrivacyAction(): Promise<ActionResult> {
+  const state = await getPrivacyState();
+  if (!state.enabled || !state.unlocked) return fail("The privacy lock is closed.");
+  await touchUnlock();
+  return ok();
 }
 
 export async function setPinAction(

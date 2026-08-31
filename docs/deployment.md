@@ -68,6 +68,10 @@ keeps the secret with the stack that owns the database.
 - Forward `Host` and the usual `X-Forwarded-*` headers.
 - Server actions accept bodies up to **8 MB** — raise `client_max_body_size`
   / equivalent to match.
+- The application sends clickjacking, MIME-sniffing, referrer and browser
+  permissions headers itself. Sensitive routes also send `private, no-store`.
+  HTTPS deployments add HSTS when `APP_URL` is an `https://` URL; terminate TLS
+  consistently before enabling it because browsers remember that decision.
 - The app serves on `3000` inside the container.
 
 ## What happens on first boot

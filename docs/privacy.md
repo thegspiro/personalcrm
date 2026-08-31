@@ -25,8 +25,16 @@ Two design decisions carry the whole thing:
 never client state. A client cannot claim to be unlocked, and the unlock dies
 with the session rather than lingering after sign-out.
 
-An unlock lasts **15 minutes of inactivity** (`IDLE_TIMEOUT_MS`), refreshed as
-you use the app.
+An unlock lasts **15 minutes of inactivity** (`IDLE_TIMEOUT_MS`). While the app
+is open, real pointer, keyboard, touch or scroll activity refreshes the
+server-side lease at most once per minute. Walking away closes the lock in the
+browser as well as on the server, so already-rendered sensitive content does
+not remain on screen. An always-visible **Private open** control locks it
+immediately.
+
+The browser timer is only prompt presentation protection. Every protected read
+and write still checks the server timestamp, so suppressing JavaScript or
+posting an action directly cannot extend or bypass the lock.
 
 ### Enforcement is in the query layer, not in components
 

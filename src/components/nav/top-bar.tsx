@@ -25,11 +25,13 @@ export function TopBar({
   email,
   title,
   hideDating = false,
+  privacyControl,
 }: {
   name: string;
   email: string;
   title?: string;
   hideDating?: boolean;
+  privacyControl?: React.ReactNode;
 }) {
   const { resolvedTheme, setTheme } = useTheme();
   const mounted = useHydrated();
@@ -52,6 +54,7 @@ export function TopBar({
       {!title ? <div className="hidden flex-1 lg:block" /> : null}
 
       <CommandPalette hideDating={hideDating} />
+      {privacyControl}
 
       <Button
         variant="ghost"
