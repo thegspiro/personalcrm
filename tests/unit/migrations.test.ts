@@ -23,4 +23,21 @@ describe("MariaDB migrations", () => {
     const tooLong = identifiers.filter(({ name }) => Buffer.byteLength(name, "utf8") > 64);
     expect(tooLong, `MariaDB limits identifiers to 64 bytes: ${JSON.stringify(tooLong)}`).toEqual([]);
   });
+
+  it("backfills places within an owner and keeps the text each row was written with", () => {
+    const sql = readFileSync(
+      join(migrationsRoot, "20260831120000_add_locations", "migration.sql"),
+      "utf8",
+    );
+
+    // Two accounts may both have a "Corner Cafe". Joining on normalizedName
+    // alone would point one owner's history at the other's place.
+    expect(sql).toContain("l.`ownerId` = i.`ownerId`");
+    expect(sql).toContain("l.`ownerId` = p.`ownerId`");
+
+    // The canonical id is additive: the free-text column stays, so the upgrade
+    // is lossless even when two historical spellings are later merged.
+    expect(sql).toContain("ADD COLUMN `locationId`");
+    expect(sql).not.toMatch(/DROP COLUMN `location`/);
+  });
 });
