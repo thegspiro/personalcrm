@@ -46,6 +46,7 @@ export default async function TimelinePage({
       kinds,
       search: first("q"),
       location: first("location"),
+      locationId: first("locationId"),
       from: fromPlain ? plainDateToDb(fromPlain) : undefined,
       to: toPlain ? plainDateToDb(toPlain) : undefined,
       take: 100,

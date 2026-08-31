@@ -46,6 +46,38 @@ export async function listLocations(ownerId: string, search?: string) {
   }));
 }
 
+/**
+ * A lightweight list of places, for the quick-add parser.
+ *
+ * Privacy-filtered with the same predicate the Places directory uses: the set
+ * of places you have been is itself a disclosure, so somewhere known only
+ * through hidden interactions is not offered back while the lock is closed.
+ *
+ * The two halves are combined with `AND` rather than spread into one object.
+ * `interactionPrivacyWhere` also keys on `participants`, so a spread silently
+ * replaces a sibling filter — the bug fixed in `listContactLocations`.
+ */
+export async function listLocationOptions(ownerId: string) {
+  const scope = await privacyScope();
+  return prisma.location.findMany({
+    where: {
+      ownerId,
+      isArchived: false,
+      AND: [
+        { OR: [
+          { interactions: { some: { ownerId, ...interactionPrivacyWhere(scope) } } },
+          { plans: { some: { ownerId, ...viaOptionalContactPrivacyWhere(scope) } } },
+        ] },
+      ],
+    },
+    select: { id: true, name: true },
+    // By name, not by recency: a "most recently visited" order derived from
+    // unfiltered visits is a signal that shifts when the lock opens.
+    orderBy: { name: "asc" },
+    take: 500,
+  });
+}
+
 export async function getLocation(ownerId: string, id: string) {
   const scope = await privacyScope();
   const visibleInteraction = { ownerId, ...interactionPrivacyWhere(scope) };

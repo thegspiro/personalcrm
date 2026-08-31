@@ -19,12 +19,15 @@ vi.mock("@/server/privacy/lock", () => ({
   recordProtectedReadActivity: async () => ({ ok: false }) as const,
 }));
 
-const { getLocation, listContactLocations, listLocations } = await import(
+const { getLocation, listContactLocations, listLocationOptions, listLocations } = await import(
   "@/server/queries/locations"
 );
 const { normalizeLocationName, resolveLocation } = await import(
   "@/server/services/locations"
 );
+const { buildTimeline } = await import("@/server/queries/timeline");
+
+const TZ = "America/New_York";
 
 /**
  * A place is a second route to an interaction, and so a second way to leak
@@ -131,6 +134,87 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
     const detail = await getLocation(state.ownerId, cafe.id);
     expect(detail?.name).toBe("Corner Cafe");
     expect(detail?.interactions[0]?.location).toBe(" Corner   Cafe ");
+  });
+
+  it("does not offer quick add a place known only through a hidden visit", async () => {
+    const secret = await prisma.contact.create({
+      data: { ownerId: state.ownerId, firstName: "Secret", isPrivate: true },
+    });
+    const ada = await prisma.contact.create({
+      data: { ownerId: state.ownerId, firstName: "Ada" },
+    });
+    const hidden = await place(state.ownerId, "Quiet Bar");
+    const open = await place(state.ownerId, "Corner Cafe");
+    await visit(hidden.id, [secret.id], { label: "Quiet Bar" });
+    await visit(open.id, [ada.id]);
+
+    // Which places you have been is itself a disclosure, so the parser is fed
+    // the same filtered set the Places directory shows.
+    const locked = await listLocationOptions(state.ownerId);
+    expect(locked.map((row) => row.name)).toEqual(["Corner Cafe"]);
+
+    state.unlocked = true;
+    const unlocked = await listLocationOptions(state.ownerId);
+    expect(unlocked.map((row) => row.name).sort()).toEqual(["Corner Cafe", "Quiet Bar"]);
+  });
+
+  it("still resolves a hidden place by name rather than duplicating it", async () => {
+    const secret = await prisma.contact.create({
+      data: { ownerId: state.ownerId, firstName: "Secret", isPrivate: true },
+    });
+    const hidden = await place(state.ownerId, "Quiet Bar");
+    await visit(hidden.id, [secret.id], { label: "Quiet Bar" });
+
+    // Locked, the parser cannot name it back at you — but typing it yourself
+    // must still land on the row that exists, not create a second one.
+    expect(await listLocationOptions(state.ownerId)).toEqual([]);
+    const resolved = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "quiet bar"),
+    );
+    expect(resolved?.id).toBe(hidden.id);
+    expect(await prisma.location.count({ where: { ownerId: state.ownerId } })).toBe(1);
+  });
+
+  it("filters the timeline on the place, not just the label that was typed", async () => {
+    state.unlocked = true;
+    const cafe = await place(state.ownerId, "Corner Cafe");
+    await visit(cafe.id, [], { label: "Corner Cafe" });
+    // The label is kept exactly as typed while the place collapses whitespace,
+    // so a filter that only compared the label dropped this one even though
+    // the query had already admitted it on `normalizedName`.
+    await visit(cafe.id, [], { label: " Corner   Cafe " });
+
+    const byName = await buildTimeline(state.ownerId, TZ, { location: "Corner Cafe" });
+    expect(byName).toHaveLength(2);
+
+    // Case folding has to agree with the normalizer the rows were written with.
+    expect(await buildTimeline(state.ownerId, TZ, { location: "corner cafe" })).toHaveLength(2);
+
+    // The id filter never compares strings at all.
+    expect(await buildTimeline(state.ownerId, TZ, { locationId: cafe.id })).toHaveLength(2);
+  });
+
+  it("keeps the place filter from admitting entries that have no place", async () => {
+    state.unlocked = true;
+    const ada = await prisma.contact.create({
+      data: { ownerId: state.ownerId, firstName: "Ada" },
+    });
+    const cafe = await place(state.ownerId, "Corner Cafe");
+    await visit(cafe.id, [ada.id]);
+    await prisma.gift.create({
+      data: {
+        ownerId: state.ownerId,
+        contactId: ada.id,
+        name: "A book",
+        status: "GIVEN",
+        occurredOn: new Date(),
+      },
+    });
+
+    // A gift carries no location; filtering by a place must not sweep it in.
+    const filtered = await buildTimeline(state.ownerId, TZ, { locationId: cafe.id });
+    expect(filtered.every((entry) => entry.kind === "interaction")).toBe(true);
+    expect(filtered).toHaveLength(1);
   });
 
   it("resolves the same name to one place per owner, never across owners", async () => {

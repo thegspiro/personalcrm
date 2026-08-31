@@ -261,6 +261,25 @@ function QuickAddPreviewForm({
         </Field>
       </div>
 
+      <Field
+        label="Where"
+        htmlFor="qa-location"
+        hint={
+          preview.place?.via === "known"
+            ? "a place you already have"
+            : preview.place
+              ? "a new place"
+              : undefined
+        }
+      >
+        <Input
+          id="qa-location"
+          name="location"
+          defaultValue={preview.place?.name ?? ""}
+          placeholder="Northside Cafe"
+        />
+      </Field>
+
       <Field label="Type" htmlFor="qa-type">
         <select
           id="qa-type"

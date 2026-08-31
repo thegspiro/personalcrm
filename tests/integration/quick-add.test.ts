@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
 import { recomputeContactActivity } from "@/server/services/contact-activity";
+import { resolveLocation } from "@/server/services/locations";
 import { zonedStartOfDay, parsePlainDate } from "@/lib/dates";
 
 /**
@@ -38,6 +39,7 @@ describe.skipIf(!hasTestDatabase)("confirming a quick add", () => {
     newNames?: string[];
     dateKey: string;
     title: string;
+    location?: string;
   }) {
     return prisma.$transaction(async (tx) => {
       const created: string[] = [];
@@ -50,11 +52,18 @@ describe.skipIf(!hasTestDatabase)("confirming a quick add", () => {
         created.push(person.id);
       }
       const contactIds = [...(opts.contactIds ?? []), ...created];
+      // `str()` trims the ends and nothing else, so the label reaching the
+      // write keeps its interior spacing. Mirrored here so what this exercises
+      // is the real value the action would resolve and store.
+      const label = opts.location?.trim() || null;
+      const place = await resolveLocation(tx, ownerId, label ?? undefined);
       const row = await tx.interaction.create({
         data: {
           ownerId,
           occurredAt: occurredAtFor(opts.dateKey),
           title: opts.title,
+          location: label,
+          locationId: place?.id ?? null,
           participants: { create: contactIds.map((contactId) => ({ contactId })) },
         },
         select: { id: true },
@@ -162,6 +171,47 @@ describe.skipIf(!hasTestDatabase)("confirming a quick add", () => {
 
     expect(await prisma.contact.count({ where: { ownerId } })).toBe(0);
     expect(await prisma.interaction.count({ where: { ownerId } })).toBe(0);
+  });
+
+  it("links the interaction to a place and reuses it however it is typed", async () => {
+    const sarah = await prisma.contact.create({ data: { ownerId, firstName: "Sarah" } });
+
+    await logQuickAdd({
+      contactIds: [sarah.id],
+      dateKey: "2026-03-11",
+      title: "Coffee with Sarah",
+      location: "Northside Cafe",
+    });
+    // The same venue typed with different case and spacing is the same place,
+    // not a near-duplicate row alongside the first.
+    await logQuickAdd({
+      contactIds: [sarah.id],
+      dateKey: "2026-03-12",
+      title: "Coffee with Sarah",
+      location: "  northside   cafe ",
+    });
+
+    const places = await prisma.location.findMany({ where: { ownerId } });
+    expect(places).toHaveLength(1);
+    expect(places[0].name).toBe("Northside Cafe");
+
+    const logged = await prisma.interaction.findMany({
+      where: { ownerId },
+      orderBy: { occurredAt: "asc" },
+      select: { location: true, locationId: true },
+    });
+    expect(logged.map((row) => row.locationId)).toEqual([places[0].id, places[0].id]);
+    // The verbatim label is kept per interaction, as everywhere else.
+    expect(logged.map((row) => row.location)).toEqual(["Northside Cafe", "northside   cafe"]);
+  });
+
+  it("records no place when the line named none", async () => {
+    const sarah = await prisma.contact.create({ data: { ownerId, firstName: "Sarah" } });
+    await logQuickAdd({ contactIds: [sarah.id], dateKey: "2026-03-11", title: "Coffee" });
+
+    expect(await prisma.location.count({ where: { ownerId } })).toBe(0);
+    const [row] = await prisma.interaction.findMany({ where: { ownerId } });
+    expect(row.locationId).toBeNull();
   });
 });
 

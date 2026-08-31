@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { assistanceAvailable, currentProviderConfig } from "./config";
 import { completeJson, verifyProvider, type ProviderConfig } from "./providers";
-import { quickParse, type QuickParseResult } from "@/lib/quick-parse";
+import { matchKnownLocation, quickParse, type QuickParseResult } from "@/lib/quick-parse";
 import { parsePlainDate } from "@/lib/dates";
 
 /**
@@ -26,6 +26,12 @@ const QuickAddSchema = z.object({
   people: z.array(z.string()).default([]),
   typeSlug: z.string().nullable().default(null),
   date: z.string().nullable().default(null),
+  /**
+   * The venue as written in the line, never an id — same rule as `people`. It
+   * is re-matched against the user's own places locally, so the model cannot
+   * name a place it was not shown or address one by row.
+   */
+  place: z.string().nullable().default(null),
   title: z.string().default(""),
   notes: z.string().nullable().default(null),
 });
@@ -75,7 +81,7 @@ function buildPrompt(context: Parameters<typeof quickParse>[1]): string {
     "Reply with a single JSON object and nothing else — no prose, no code fences.",
     "",
     "Shape:",
-    '{"people":["name as written"],"typeSlug":"slug or null","date":"YYYY-MM-DD or null","title":"short title","notes":"extra commentary or null"}',
+    '{"people":["name as written"],"typeSlug":"slug or null","date":"YYYY-MM-DD or null","place":"venue as written or null","title":"short title","notes":"extra commentary or null"}',
     "",
     `Today is ${today} in timezone ${context.timeZone}. Resolve relative dates against that.`,
     "Prefer the past: a bare weekday means the one just gone, because people log things after they happen.",
@@ -84,6 +90,11 @@ function buildPrompt(context: Parameters<typeof quickParse>[1]): string {
     names ? `People already known: ${names}` : "The user has no contacts recorded yet.",
     "",
     "Return names exactly as they appear in the input. Never invent a person who is not mentioned.",
+    // The user's own place names are deliberately NOT listed here, unlike their
+    // contacts: it would be a second disclosure for much less gain, since the
+    // local parser already proposes an unrecorded venue and the answer is
+    // re-matched locally either way. A decision, not an omission.
+    "`place` is a venue named in the line — a cafe, a restaurant, a park. Not somebody's home, and not a city on its own.",
   ].join("\n");
 }
 
@@ -101,7 +112,22 @@ function merge(
   context: Parameters<typeof quickParse>[1],
 ): QuickParseResult {
   const namesOnly = parsed.people.filter(Boolean).join(" and ");
-  const resolved = namesOnly ? quickParse(namesOnly, { ...context, types: [] }) : null;
+  // `types` and `locations` are stripped: this re-parse exists only to resolve
+  // names, and a bare list of them must not accidentally match a venue.
+  const resolved = namesOnly
+    ? quickParse(namesOnly, { ...context, types: [], locations: [] })
+    : null;
+
+  // The venue goes back through the local matcher too. A name the model
+  // invented simply fails to match and stands as a proposal, which the confirm
+  // step shows before anything is written.
+  const place = parsed.place?.trim()
+    ? (matchKnownLocation(parsed.place.trim(), context.locations).place ?? {
+        location: null,
+        matchedText: parsed.place.trim(),
+        via: "preposition" as const,
+      })
+    : fallback.place;
 
   const type =
     parsed.typeSlug === null
@@ -117,6 +143,7 @@ function merge(
     type,
     date,
     dateText: parsed.date ?? fallback.dateText,
+    place,
     title: parsed.title.trim() || fallback.title,
     notes: parsed.notes?.trim() || fallback.notes,
   };

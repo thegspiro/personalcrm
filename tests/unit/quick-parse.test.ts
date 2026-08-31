@@ -5,6 +5,7 @@ import {
   touchesPrivateContact,
   type ParseContact,
   type ParseType,
+  type ParseLocation,
 } from "@/lib/quick-parse";
 
 /**
@@ -39,8 +40,18 @@ const TYPES: ParseType[] = [
   { id: "t-meal", slug: "meal", label: "Meal" },
 ];
 
-function parse(input: string, contacts: ParseContact[] = CONTACTS) {
-  return quickParse(input, { contacts, types: TYPES, now: NOW, timeZone: TZ });
+const LOCATIONS: ParseLocation[] = [
+  { id: "l-north", name: "Northside Cafe" },
+  { id: "l-coffee-house", name: "The Coffee House" },
+  { id: "l-alamo", name: "The Alamo" },
+];
+
+function parse(
+  input: string,
+  contacts: ParseContact[] = CONTACTS,
+  locations: ParseLocation[] = [],
+) {
+  return quickParse(input, { contacts, types: TYPES, locations, now: NOW, timeZone: TZ });
 }
 
 describe("people", () => {
@@ -212,6 +223,7 @@ describe("dates", () => {
     const result = quickParse("coffee with Sarah today", {
       contacts: CONTACTS,
       types: TYPES,
+      locations: [],
       now: lateNight,
       timeZone: TZ,
     });
@@ -245,6 +257,7 @@ describe("interaction types", () => {
     const result = quickParse("pub quiz with Sarah", {
       contacts: CONTACTS,
       types: custom,
+      locations: [],
       now: NOW,
       timeZone: TZ,
     });
@@ -389,5 +402,128 @@ describe("empty input", () => {
     expect(result.ambiguous).toEqual([]);
     expect(result.title).toBe("");
     expect(needsDisambiguation(result)).toBe(false);
+  });
+});
+
+describe("places", () => {
+  it("captures a venue instead of putting it in the title", () => {
+    const result = parse("Coffee with Sarah at Northside Cafe");
+
+    expect(result.place?.matchedText).toBe("Northside Cafe");
+    expect(result.place?.location).toBeNull();
+    expect(result.place?.via).toBe("preposition");
+    expect(result.contacts.map((m) => m.contact.id)).toEqual(["sarah"]);
+    expect(result.title).not.toContain("Northside");
+  });
+
+  it("never offers the words of a venue as people to create", () => {
+    // The regression this whole pass exists for: "Northside" and "Cafe" were
+    // offered as new contacts, pre-ticked, so confirming the line made two.
+    const result = parse("Coffee with Sarah at Northside Cafe");
+    expect(result.unknownNames).toEqual([]);
+  });
+
+  it("never offers a date word as a person to create", () => {
+    // Strangers used to be decided before the date reader had run.
+    expect(parse("coffee with Sarah Tuesday").unknownNames).toEqual([]);
+    expect(parse("coffee with Sarah last Tuesday").unknownNames).toEqual([]);
+  });
+
+  it("does not read a bare city after 'in' as a place", () => {
+    // Only "at" is a venue cue. "in" carries far too much else — "talked in
+    // Spanish", "wrote in French" would each become a place, and a junk place
+    // is the more expensive mistake. The cost is that a bare city is still
+    // offered as someone to create, which is the lesser wrong and is one
+    // unticked box rather than a row nobody asked for.
+    const result = parse("dinner in Boston");
+    expect(result.place).toBeNull();
+    expect(result.unknownNames).toEqual(["Boston"]);
+  });
+
+  it("reads a city as a place once it is recorded as one", () => {
+    // The escape hatch for the case above: name it once and it matches ever
+    // after, without the parser having to guess what a city is.
+    const withCity = [...LOCATIONS, { id: "l-boston", name: "Boston" }];
+    const result = parse("dinner at Boston", CONTACTS, withCity);
+    expect(result.place?.location?.id).toBe("l-boston");
+    expect(result.unknownNames).toEqual([]);
+  });
+
+  it("matches a place the account already has, by id", () => {
+    const result = parse("coffee with Sarah at Northside Cafe", CONTACTS, LOCATIONS);
+    expect(result.place?.via).toBe("known");
+    expect(result.place?.location?.id).toBe("l-north");
+  });
+
+  it("folds case and repeated whitespace when matching a known place", () => {
+    const result = parse("coffee at   northside   cafe", CONTACTS, LOCATIONS);
+    expect(result.place?.location?.id).toBe("l-north");
+  });
+
+  it("finds a known place named without a preposition", () => {
+    const result = parse("Northside Cafe with Sarah", CONTACTS, LOCATIONS);
+    expect(result.place?.location?.id).toBe("l-north");
+  });
+
+  it("does not let the type reader tear a word out of a place name", () => {
+    // "The Coffee House" contains "coffee", which is also a type label. Places
+    // run first precisely so the venue survives intact.
+    const result = parse("met Priya at The Coffee House", CONTACTS, LOCATIONS);
+    expect(result.place?.location?.id).toBe("l-coffee-house");
+    expect(result.contacts.map((m) => m.contact.id)).toEqual(["priya"]);
+  });
+
+  it("keeps a leading 'the' rather than quietly matching a different place", () => {
+    // `normalizeLocationName` holds "The Alamo" and "Alamo" apart, and the
+    // parser must not disagree with it.
+    const result = parse("drinks at The Alamo");
+    expect(result.place?.matchedText).toBe("The Alamo");
+  });
+
+  it("prefers a person over a place named after one", () => {
+    const withDiner = [...LOCATIONS, { id: "l-sarahs", name: "Sarah's Diner" }];
+    const result = parse("coffee at Sarah's Diner", CONTACTS, withDiner);
+
+    // Sarah is a contact, so she is masked before places are looked at. Filing
+    // this against the person is the documented precedence.
+    expect(result.contacts.map((m) => m.contact.id)).toEqual(["sarah"]);
+    expect(result.place?.location?.id).not.toBe("l-sarahs");
+  });
+
+  it("treats somewhere ordinary as no place at all", () => {
+    for (const line of ["drinks at home", "call at the office", "lunch at work"]) {
+      expect(parse(line).place, line).toBeNull();
+      expect(parse(line).unknownNames, line).toEqual([]);
+    }
+  });
+
+  it("does not take a date into the venue name", () => {
+    const result = parse("coffee with Sarah at Northside Cafe yesterday");
+    expect(result.place?.matchedText).toBe("Northside Cafe");
+    expect(result.date).toEqual({ year: 2026, month: 3, day: 10 });
+  });
+
+  it("stops the venue at a comma so the notes survive", () => {
+    const result = parse("Coffee with Sarah at Northside Cafe, she got the promotion");
+    expect(result.place?.matchedText).toBe("Northside Cafe");
+    expect(result.notes).toBe("she got the promotion");
+  });
+
+  it("reads a possessive as somebody's home, not a venue", () => {
+    // "at Bob's" is Bob's place. Creating a venue called "Bob's" would be the
+    // wrong record and would lose the person entirely.
+    const result = parse("drinks at Bob's afterwards");
+    expect(result.place).toBeNull();
+    expect(result.unknownNames).toEqual(["Bob"]);
+  });
+
+  it("leaves no mask characters behind in the title or notes", () => {
+    const result = parse("Coffee with Sarah at Northside Cafe, good chat");
+    expect(result.title).not.toMatch(/[-]/);
+    expect(result.notes ?? "").not.toMatch(/[-]/);
+  });
+
+  it("has no place when the line names none", () => {
+    expect(parse("coffee with Sarah yesterday").place).toBeNull();
   });
 });
