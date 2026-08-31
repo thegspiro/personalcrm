@@ -177,3 +177,32 @@ test("timeline filters narrow the feed", async ({ page }) => {
   await page.getByRole("button", { name: "Everything" }).click();
   await expect(page.getByText("Coffee from months ago").first()).toBeVisible();
 });
+
+test("one marriage entry appears on both spouse profiles", async ({ page }) => {
+  await ensureSignedIn(page);
+  const first = `${personName(page)} Case`;
+  const spouse = `Spouse ${test.info().project.name} ${STAMP}`;
+
+  await page.goto("/people/new");
+  await page.getByLabel("First name").fill(spouse);
+  await page.getByRole("button", { name: "Add person" }).click();
+  const spouseUrl = page.url();
+
+  await openPerson(page, first);
+  const firstUrl = page.url();
+  const section = page.locator("section").filter({ hasText: "Significant moments" }).first();
+  await section.getByRole("button", { name: /Add/ }).click();
+  await section.getByLabel("What happened?").fill("Our wedding day");
+  await section.getByRole("button", { name: "When", exact: true }).click();
+  await page.getByPlaceholder("2019, March 2019, 3 years ago…").fill("2024-06-15");
+  await page.keyboard.press("Enter");
+  await section.getByRole("button", { name: "Got married" }).click();
+  await section.getByLabel(/Spouse \(for a dated/).selectOption({ label: spouse });
+  await section.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(section.getByText("Our wedding day")).toBeVisible();
+
+  await page.goto(spouseUrl);
+  await expect(page.locator("section").filter({ hasText: "Significant moments" }).first().getByText("Our wedding day")).toBeVisible();
+  await expect(page.getByText("Spouse", { exact: true })).toBeVisible();
+  expect(firstUrl).not.toBe(spouseUrl);
+});

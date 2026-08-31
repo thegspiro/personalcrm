@@ -148,6 +148,7 @@ export interface LifeEventValue {
   endDate: PlainDate | null;
   endPrecision: DatePrecision | null;
   isMilestone: boolean;
+  isPrivate?: boolean;
 }
 
 export function LifeEventFields({ formId, types, event, resetEndDateKey, endDateError }: { formId: string; types: TermOption[]; event?: LifeEventValue; resetEndDateKey?: number; endDateError?: string }) {
@@ -165,6 +166,10 @@ export function LifeEventFields({ formId, types, event, resetEndDateKey, endDate
       <label className="flex items-center gap-2 text-xs text-muted-foreground">
         <input type="checkbox" name="isMilestone" value="true" defaultChecked={event?.isMilestone ?? false} className="size-4" />
         One of the big ones
+      </label>
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <input type="checkbox" name="isPrivate" value="true" defaultChecked={event?.isPrivate ?? false} className="size-4" />
+        Private event
       </label>
     </>
   );

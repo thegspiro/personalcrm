@@ -8,6 +8,7 @@ export {
   factPrivacyWhere,
   householdPrivacyWhere,
   interactionPrivacyWhere,
+  lifeEventPrivacyWhere,
   viaContactPrivacyWhere,
   viaOptionalContactPrivacyWhere,
   type PrivacyScope,

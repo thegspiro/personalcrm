@@ -130,6 +130,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     endDate: event.endDate ? plainDateFromDb(event.endDate) : null,
     endPrecision: event.endPrecision,
     isMilestone: event.isMilestone,
+    isPrivate: event.isPrivate,
+    participants: event.participants.map(({ contact: person }) => person),
     type: event.type
       ? { label: event.type.label, icon: event.type.icon, color: event.type.color }
       : null,
@@ -378,6 +380,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           contactId={contact.id}
           events={lifeEvents}
           types={terms.LIFE_EVENT_TYPE}
+          contacts={contactOptions}
         />
 
         <TasksSection

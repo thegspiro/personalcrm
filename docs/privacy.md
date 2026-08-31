@@ -195,3 +195,10 @@ because smaller local models do all three.
 - No outbound request at all unless assisted reading is switched on and
   configured.
 - No third-party fonts, scripts or asset CDNs at runtime.
+
+### Shared life events
+
+A shared life event is withheld while locked if the event itself **or any one of
+its participants** is private. The same rule is applied to timeline/profile
+queries and private-row counting for offline eligibility: showing only the
+public participant would still disclose the private person's involvement.

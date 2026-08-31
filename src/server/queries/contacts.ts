@@ -11,6 +11,7 @@ import {
   contactPrivacyWhere,
   factPrivacyWhere,
   interactionPrivacyWhere,
+  lifeEventPrivacyWhere,
   privacyScope,
   type PrivacyScope,
 } from "@/server/privacy/filter";
@@ -146,10 +147,6 @@ const DETAIL_INCLUDE = {
     orderBy: [{ importance: "desc" }, { createdAt: "desc" }],
   },
   importantDates: { include: { type: true }, orderBy: { date: "asc" } },
-  lifeEvents: {
-    include: { type: true },
-    orderBy: [{ date: "desc" }],
-  },
   ideas: { orderBy: [{ status: "asc" }, { createdAt: "desc" }] },
   tasks: { orderBy: [{ completedAt: "asc" }, { dueDate: "asc" }] },
   gifts: { include: { occasion: true }, orderBy: { createdAt: "desc" } },
@@ -167,7 +164,14 @@ const DETAIL_INCLUDE = {
   flags: { orderBy: [{ kind: "asc" }, { severity: "desc" }] },
 } satisfies Prisma.ContactInclude;
 
-export type ContactDetail = Prisma.ContactGetPayload<{ include: typeof DETAIL_INCLUDE }>;
+const LIFE_EVENT_INCLUDE = {
+  type: true,
+  participants: { include: { contact: { select: { id: true, firstName: true, lastName: true, isPrivate: true } } } },
+} satisfies Prisma.LifeEventInclude;
+
+export type ContactDetail = Prisma.ContactGetPayload<{ include: typeof DETAIL_INCLUDE }> & {
+  lifeEvents: Prisma.LifeEventGetPayload<{ include: typeof LIFE_EVENT_INCLUDE }>[];
+};
 
 export const getContact = cache(
   async (ownerId: string, id: string): Promise<ContactDetail | null> => {
@@ -177,6 +181,15 @@ export const getContact = cache(
       include: DETAIL_INCLUDE,
     });
     if (!contact) return null;
+    const lifeEvents = await prisma.lifeEvent.findMany({
+      where: {
+        ownerId,
+        participants: { some: { contactId: id } },
+        ...lifeEventPrivacyWhere(scope),
+      },
+      include: LIFE_EVENT_INCLUDE,
+      orderBy: { date: "desc" },
+    });
 
     // Facts carry their own marker, so a single private note about an
     // otherwise ordinary person stays hidden.
@@ -192,7 +205,7 @@ export const getContact = cache(
       // the page payload even though the section never renders it.
       contact.debts = contact.debts.filter((debt) => !debt.isPrivate);
     }
-    return contact;
+    return Object.assign(contact, { lifeEvents });
   },
 );
 

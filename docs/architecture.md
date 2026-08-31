@@ -250,3 +250,11 @@ Two classes of bug were frequent enough to earn a permanent test
   containers that legitimately scroll.
 - **Input font size.** Anything under 16px makes iOS zoom in on focus and never
   zoom back out. The floor sits outside `@layer` so no utility can defeat it.
+
+### Shared historical events
+
+Life events use explicit `LifeEventParticipant` edges rather than belonging to
+one contact. Reads select events through those edges and apply privacy to the
+whole participant set. A dated marriage event can transactionally maintain a
+reciprocal spouse relationship pair; the former is historical context and the
+latter is the current relationship graph, so neither is inferred from notes.

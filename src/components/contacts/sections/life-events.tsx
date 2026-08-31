@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { Icon } from "@/components/nav/icon";
 import { Badge } from "@/components/ui/badge";
 import { SubmitButton } from "@/components/form/submit-button";
@@ -11,10 +12,14 @@ import { formatPartialRange, isValidPartialDateRange, type DatePrecision } from 
 import { parsePlainDate } from "@/lib/dates";
 import { LifeEventFields, type LifeEventValue } from "../detail-field-groups";
 import { createLifeEvent, deleteLifeEvent, updateLifeEvent } from "@/server/actions/details";
+import { ContactPicker, type PickerContact } from "@/components/form/contact-picker";
+import { displayName } from "@/lib/utils";
 
 export interface LifeEventItem extends LifeEventValue {
   id: string;
   type: { label: string; icon: string | null; color: string | null } | null;
+  isPrivate: boolean;
+  participants: PickerContact[];
 }
 
 /**
@@ -37,6 +42,7 @@ function LifeEventForm({
   types,
   event,
   contactId,
+  contacts,
   children,
 }: {
   action: (form: FormData) => void | Promise<void>;
@@ -44,6 +50,7 @@ function LifeEventForm({
   types: TermOption[];
   event?: LifeEventItem;
   contactId?: string;
+  contacts: PickerContact[];
   children: React.ReactNode;
 }) {
   const [endDateError, setEndDateError] = React.useState<string>();
@@ -67,9 +74,18 @@ function LifeEventForm({
 
   return (
     <form action={action} onSubmit={validateRange} className="grid gap-2.5">
-      {contactId ? <input type="hidden" name="contactId" value={contactId} /> : null}
       {event ? <input type="hidden" name="id" value={event.id} /> : null}
+      <ContactPicker name="contactIds" label="Participants" contacts={contacts} required
+        defaultSelected={event?.participants.map((person) => person.id) ?? (contactId ? [contactId] : [])} />
       <LifeEventFields formId={formId} types={types} event={event} endDateError={endDateError} />
+      <label className="grid gap-1 text-xs text-muted-foreground">
+        Spouse (for a dated “Got married” event)
+        <select name="spouseContactId" defaultValue="" className="h-10 rounded-lg border border-input bg-card px-3 text-sm text-foreground">
+          <option value="">Choose the spouse explicitly</option>
+          {contacts.filter((person) => person.id !== contactId).map((person) => <option key={person.id} value={person.id}>{displayName(person)}</option>)}
+        </select>
+        <span>This adds the spouse as a participant and maintains the separate, ongoing spouse relationship.</span>
+      </label>
       {children}
     </form>
   );
@@ -79,10 +95,12 @@ export function LifeEventsSection({
   contactId,
   events,
   types,
+  contacts,
 }: {
   contactId: string;
   events: LifeEventItem[];
   types: TermOption[];
+  contacts: PickerContact[];
 }) {
   const run = useAction();
   const add = useAddAction();
@@ -100,6 +118,7 @@ export function LifeEventsSection({
           formId="event-new"
           types={types}
           contactId={contactId}
+          contacts={contacts}
         >
           <SubmitButton size="sm">Add</SubmitButton>
         </LifeEventForm>
@@ -125,6 +144,7 @@ export function LifeEventsSection({
                 formId={`event-${event.id}`}
                 types={types}
                 event={event}
+                contacts={contacts}
               >
                 <SubmitButton size="sm">Save</SubmitButton>
               </LifeEventForm>
@@ -139,6 +159,11 @@ export function LifeEventsSection({
             </div>
             <p className="text-xs text-muted-foreground">
               {formatPartialRange(event.date, event.precision, event.endDate, event.endPrecision)}
+            </p>
+            <p className="flex flex-wrap gap-x-2 text-xs text-muted-foreground">
+              {event.participants.map((person) => (
+                <Link key={person.id} href={`/people/${person.id}`} className="underline-offset-2 hover:underline">{displayName(person)}</Link>
+              ))}
             </p>
             {event.description ? (
               <p className="mt-0.5 text-xs text-muted-foreground">{event.description}</p>

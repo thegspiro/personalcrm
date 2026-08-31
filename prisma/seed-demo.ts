@@ -459,7 +459,7 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
     await prisma.lifeEvent.create({
       data: {
         ownerId,
-        contactId,
+        participants: { create: { contactId } },
         typeId: term("LIFE_EVENT_TYPE", type),
         title,
         description: description ?? null,

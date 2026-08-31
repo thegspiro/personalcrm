@@ -46,6 +46,7 @@ vi.mock("@/server/privacy/lock", () => ({
 
 const {
   createLifeEvent,
+  deleteLifeEvent,
   updateLifeEvent,
   updateDebt,
   updateDietaryNeed,
@@ -96,6 +97,40 @@ describe.skipIf(!hasTestDatabase)("editing an entry", () => {
 
   // --- facts ---------------------------------------------------------------
 
+  describe("life event participants", () => {
+    function eventForm(values: Record<string, string>, contacts: string[]) {
+      const data = form(values);
+      contacts.forEach((id) => data.append("contactIds", id));
+      return data;
+    }
+
+    it("scopes every participant to the owner", async () => {
+      const outsider = await prisma.contact.create({ data: { ownerId: strangerId, firstName: "Outsider" } });
+      const result = await createLifeEvent(eventForm({ title: "Shared", date: "2020-01-01" }, [sarahId, outsider.id]));
+      expect(result.ok).toBe(false);
+      expect(await prisma.lifeEvent.count({ where: { ownerId } })).toBe(0);
+    });
+
+    it("creates reciprocal spouse links and edits and deletes all participant edges", async () => {
+      const married = await prisma.taxonomyTerm.findFirstOrThrow({ where: { ownerId, kind: "LIFE_EVENT_TYPE", slug: "married" } });
+      const created = await createLifeEvent(eventForm({ title: "Wedding", date: "2020-06-01", typeId: married.id, spouseContactId: marcusId }, [sarahId]));
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      expect(await prisma.lifeEventParticipant.count({ where: { lifeEventId: created.data!.id } })).toBe(2);
+      const pair = await prisma.relationship.findMany({ where: { ownerId, type: { slug: "spouse" } } });
+      expect(pair).toHaveLength(2);
+      expect(new Set(pair.map((row) => row.pairId)).size).toBe(1);
+
+      const edited = await updateLifeEvent(eventForm({ id: created.data!.id, title: "Wedding day", date: "2020-06-01" }, [sarahId]));
+      expect(edited.ok).toBe(true);
+      expect(await prisma.lifeEventParticipant.findMany({ where: { lifeEventId: created.data!.id } })).toHaveLength(1);
+      expect(await prisma.relationship.count({ where: { ownerId, pairId: pair[0].pairId } })).toBe(0);
+
+      expect((await deleteLifeEvent(created.data!.id)).ok).toBe(true);
+      expect(await prisma.lifeEventParticipant.count({ where: { lifeEventId: created.data!.id } })).toBe(0);
+    });
+  });
+
   describe("a life event range", () => {
     it("returns an end-date error and does not write a definitively inverted range", async () => {
       const result = await createLifeEvent(
@@ -120,7 +155,7 @@ describe.skipIf(!hasTestDatabase)("editing an entry", () => {
       const event = await prisma.lifeEvent.create({
         data: {
           ownerId,
-          contactId: sarahId,
+          participants: { create: { contactId: sarahId } },
           title: "Worked abroad",
           date: new Date("2019-01-01T00:00:00.000Z"),
           precision: "YEAR",
@@ -164,7 +199,7 @@ describe.skipIf(!hasTestDatabase)("editing an entry", () => {
           data: { ownerId, contactId: privateContact.id, label: "Anniversary", date: new Date("2020-01-02T00:00:00Z") },
         }),
         prisma.lifeEvent.create({
-          data: { ownerId, contactId: privateContact.id, title: "Moved home", date: new Date("2020-01-02T00:00:00Z") },
+          data: { ownerId, participants: { create: { contactId: privateContact.id } }, title: "Moved home", date: new Date("2020-01-02T00:00:00Z") },
         }),
       ]);
 

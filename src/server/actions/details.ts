@@ -7,6 +7,7 @@ import { prisma } from "@/server/db/client";
 import {
   debtPrivacyWhere,
   factPrivacyWhere,
+  lifeEventPrivacyWhere,
   privacyScope,
   viaContactPrivacyWhere,
 } from "@/server/privacy/filter";
@@ -232,43 +233,88 @@ export async function deleteImportantDate(id: string): Promise<ActionResult> {
 
 // --- life events -----------------------------------------------------------
 
+function participantIds(form: FormData): string[] {
+  const submitted = form.getAll("contactIds").map(String);
+  const legacySingle = str(form, "contactId");
+  if (legacySingle) submitted.push(legacySingle);
+  return [...new Set(submitted.map((id) => id.trim()).filter(Boolean))];
+}
+
+async function ownedParticipants(ownerId: string, ids: string[]) {
+  if (ids.length === 0) return null;
+  const contacts = await prisma.contact.findMany({
+    where: { ownerId, id: { in: ids } },
+    select: { id: true },
+  });
+  return contacts.length === ids.length ? ids : null;
+}
+
+async function syncSpousePair(
+  tx: Prisma.TransactionClient,
+  ownerId: string,
+  participantIds: string[],
+  existingPairId?: string | null,
+): Promise<string | null> {
+  if (participantIds.length !== 2) return null;
+  const spouse = await tx.taxonomyTerm.findFirst({
+    where: { ownerId, kind: "RELATIONSHIP_TYPE", slug: "spouse" },
+    select: { id: true },
+  });
+  if (!spouse) return null;
+  const pairId = existingPairId ?? randomBytes(8).toString("hex");
+  const existing = existingPairId
+    ? await tx.relationship.findMany({ where: { ownerId, pairId }, orderBy: { id: "asc" } })
+    : [];
+  const directions = [
+    { fromContactId: participantIds[0], toContactId: participantIds[1] },
+    { fromContactId: participantIds[1], toContactId: participantIds[0] },
+  ];
+  if (existing.length === 2) {
+    for (let index = 0; index < 2; index += 1) {
+      await tx.relationship.update({
+        where: { id: existing[index].id },
+        data: { ...directions[index], typeId: spouse.id },
+      });
+    }
+  } else {
+    if (existing.length) await tx.relationship.deleteMany({ where: { ownerId, pairId } });
+    await tx.relationship.createMany({
+      data: directions.map((direction) => ({ ownerId, ...direction, typeId: spouse.id, pairId })),
+    });
+  }
+  return pairId;
+}
+
 export async function createLifeEvent(form: FormData): Promise<ActionResult<{ id: string }>> {
   const { ownerId } = await owner();
-  const contactId = str(form, "contactId");
+  const ids = await ownedParticipants(ownerId, participantIds(form));
   const title = str(form, "title");
   const when = partialDate(form, "date");
-  if (!contactId || !title || !when) return fail("A title and a date are required.");
-  if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
-
+  if (!ids || !title || !when) return fail("A title, a date, and at least one participant are required.");
   const end = partialDate(form, "endDate");
-  if (
-    !isValidPartialDateRange(
-      { date: plainDateFromDb(when.date), precision: when.precision },
-      end ? { date: plainDateFromDb(end.date), precision: end.precision } : null,
-    )
-  ) {
+  if (!isValidPartialDateRange({ date: plainDateFromDb(when.date), precision: when.precision }, end ? { date: plainDateFromDb(end.date), precision: end.precision } : null))
     return fieldError("endDate", "End date must not be before the start date.");
-  }
-
   const type = await termFromForm(ownerId, form, "typeId", "LIFE_EVENT_TYPE");
   if (!type.ok) return fail(UNKNOWN_TERM);
+  const marker = await privacyMarker(form, false);
+  if (!marker.ok) return fail(marker.error);
+  const typeRow = type.id ? await prisma.taxonomyTerm.findUnique({ where: { id: type.id }, select: { slug: true } }) : null;
+  const spouseId = str(form, "spouseContactId");
+  const finalIds = spouseId && !ids.includes(spouseId) ? await ownedParticipants(ownerId, [...ids, spouseId]) : ids;
+  if (!finalIds) return fail("Contact not found.");
+  if (typeRow?.slug === "married" && finalIds.length !== 2) return fail("A marriage event needs exactly two participants, including the spouse.");
 
-  const created = await prisma.lifeEvent.create({
-    data: {
-      ownerId,
-      contactId,
-      title,
-      typeId: type.id,
-      description: str(form, "description") ?? null,
-      date: when.date,
-      precision: when.precision,
-      endDate: end?.date ?? null,
-      endPrecision: end?.precision ?? null,
-      isMilestone: bool(form, "isMilestone"),
-    },
+  const created = await prisma.$transaction(async (tx) => {
+    const spouseRelationshipPairId = typeRow?.slug === "married" ? await syncSpousePair(tx, ownerId, finalIds) : null;
+    return tx.lifeEvent.create({ data: {
+      ownerId, title, typeId: type.id, description: str(form, "description") ?? null,
+      date: when.date, precision: when.precision, endDate: end?.date ?? null,
+      endPrecision: end?.precision ?? null, isMilestone: bool(form, "isMilestone"),
+      isPrivate: marker.isPrivate, spouseRelationshipPairId,
+      participants: { create: finalIds.map((contactId) => ({ contactId })) },
+    } });
   });
-
-  touch(contactId);
+  finalIds.forEach(touch);
   return ok({ id: created.id });
 }
 
@@ -277,54 +323,55 @@ export async function updateLifeEvent(form: FormData): Promise<ActionResult> {
   const id = str(form, "id");
   if (!id) return fail("Missing event.");
   const existing = await prisma.lifeEvent.findFirst({
-    where: { id, ownerId, ...viaContactPrivacyWhere(await privacyScope()) },
-    select: { contactId: true },
+    where: { id, ownerId, ...lifeEventPrivacyWhere(await privacyScope()) },
+    include: { participants: { select: { contactId: true } } },
   });
   if (!existing) return fail("Not found.");
-
+  const ids = await ownedParticipants(ownerId, participantIds(form));
   const title = str(form, "title");
   const when = partialDate(form, "date");
-  if (!title || !when) return fail("A title and a date are required.");
+  if (!ids || !title || !when) return fail("A title, a date, and at least one participant are required.");
   const end = partialDate(form, "endDate");
-  if (
-    !isValidPartialDateRange(
-      { date: plainDateFromDb(when.date), precision: when.precision },
-      end ? { date: plainDateFromDb(end.date), precision: end.precision } : null,
-    )
-  ) {
+  if (!isValidPartialDateRange({ date: plainDateFromDb(when.date), precision: when.precision }, end ? { date: plainDateFromDb(end.date), precision: end.precision } : null))
     return fieldError("endDate", "End date must not be before the start date.");
-  }
-
   const type = await termFromForm(ownerId, form, "typeId", "LIFE_EVENT_TYPE");
   if (!type.ok) return fail(UNKNOWN_TERM);
+  const marker = await privacyMarker(form, existing.isPrivate);
+  if (!marker.ok) return fail(marker.error);
+  const typeRow = type.id ? await prisma.taxonomyTerm.findUnique({ where: { id: type.id }, select: { slug: true } }) : null;
+  const spouseId = str(form, "spouseContactId");
+  const finalIds = spouseId && !ids.includes(spouseId) ? await ownedParticipants(ownerId, [...ids, spouseId]) : ids;
+  if (!finalIds) return fail("Contact not found.");
+  if (typeRow?.slug === "married" && finalIds.length !== 2) return fail("A marriage event needs exactly two participants, including the spouse.");
 
-  await prisma.lifeEvent.update({
-    where: { id },
-    data: {
-      title,
-      typeId: type.id,
-      description: str(form, "description") ?? null,
-      date: when.date,
-      precision: when.precision,
-      endDate: end?.date ?? null,
-      endPrecision: end?.precision ?? null,
-      isMilestone: bool(form, "isMilestone"),
-    },
+  await prisma.$transaction(async (tx) => {
+    let pairId = existing.spouseRelationshipPairId;
+    if (typeRow?.slug === "married") pairId = await syncSpousePair(tx, ownerId, finalIds, pairId);
+    else if (pairId) { await tx.relationship.deleteMany({ where: { ownerId, pairId } }); pairId = null; }
+    await tx.lifeEvent.update({ where: { id }, data: {
+      title, typeId: type.id, description: str(form, "description") ?? null,
+      date: when.date, precision: when.precision, endDate: end?.date ?? null,
+      endPrecision: end?.precision ?? null, isMilestone: bool(form, "isMilestone"),
+      isPrivate: marker.isPrivate, spouseRelationshipPairId: pairId,
+      participants: { deleteMany: {}, create: finalIds.map((contactId) => ({ contactId })) },
+    } });
   });
-
-  touch(existing.contactId);
+  new Set([...existing.participants.map((p) => p.contactId), ...finalIds]).forEach(touch);
   return ok();
 }
 
 export async function deleteLifeEvent(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
   const existing = await prisma.lifeEvent.findFirst({
-    where: { id, ownerId, ...viaContactPrivacyWhere(await privacyScope()) },
-    select: { contactId: true },
+    where: { id, ownerId, ...lifeEventPrivacyWhere(await privacyScope()) },
+    include: { participants: { select: { contactId: true } } },
   });
   if (!existing) return fail("Not found.");
-  await prisma.lifeEvent.delete({ where: { id } });
-  touch(existing.contactId);
+  await prisma.$transaction(async (tx) => {
+    if (existing.spouseRelationshipPairId) await tx.relationship.deleteMany({ where: { ownerId, pairId: existing.spouseRelationshipPairId } });
+    await tx.lifeEvent.delete({ where: { id } });
+  });
+  existing.participants.forEach((p) => touch(p.contactId));
   return ok();
 }
 

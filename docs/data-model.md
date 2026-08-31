@@ -588,3 +588,14 @@ writes yet. Documented here so nobody assumes the feature works:
 `/config/backups` is likewise created at boot but nothing writes to it — the
 nightly dump described in the README is not implemented. Back up `/config`
 yourself.
+
+#### Life-event participants
+
+`LifeEventParticipant` is the explicit many-to-many edge between `LifeEvent` and
+`Contact`, keyed by `(lifeEventId, contactId)`. The migration copies every
+legacy `LifeEvent.contactId` into this table before removing the redundant
+column, so existing timelines retain their owner. Shared events carry their own
+`isPrivate` marker; a private participant also makes the complete shared event
+private while the lock is closed. Marriage events may retain the identifier of
+the reciprocal spouse relationship pair they maintain, but the dated event and
+the ongoing relationship remain separate records with separate meanings.

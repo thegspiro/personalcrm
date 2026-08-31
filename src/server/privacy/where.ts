@@ -49,6 +49,15 @@ export function interactionPrivacyWhere(scope: PrivacyScope): Prisma.Interaction
   };
 }
 
+/** Shared life events are private if the row or any named participant is private. */
+export function lifeEventPrivacyWhere(scope: PrivacyScope): Prisma.LifeEventWhereInput {
+  if (scope.unlocked) return {};
+  return {
+    isPrivate: false,
+    participants: { none: { contact: { isPrivate: true } } },
+  };
+}
+
 /** Applied to anything reached through a contact relation. */
 export function viaContactPrivacyWhere(
   scope: PrivacyScope,

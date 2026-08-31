@@ -4,6 +4,7 @@ import {
   contactPrivacyWhere,
   factPrivacyWhere,
   interactionPrivacyWhere,
+  lifeEventPrivacyWhere,
   viaContactPrivacyWhere,
   type PrivacyScope,
 } from "@/server/privacy/where";
@@ -86,7 +87,7 @@ describe.skipIf(!hasTestDatabase)("privacy filters", () => {
     prisma.task.findMany({ where: { ownerId, ...viaContactPrivacyWhere(scope) } });
   const milestones = (scope: PrivacyScope) =>
     prisma.lifeEvent.findMany({
-      where: { ownerId, isMilestone: true, ...viaContactPrivacyWhere(scope) },
+      where: { ownerId, isMilestone: true, ...lifeEventPrivacyWhere(scope) },
     });
 
   it("withholds private contacts while locked", async () => {
@@ -130,13 +131,17 @@ describe.skipIf(!hasTestDatabase)("privacy filters", () => {
     expect(await tasks(UNLOCKED)).toHaveLength(2);
   });
 
+  it("withholds a shared event when either the event or any participant is private", async () => {
+    await prisma.lifeEvent.create({ data: { ownerId, title: "Shared secret", date: daysAgo(1), participants: { create: [{ contactId: publicContactId }, { contactId: privateContactId }] } } });
+    await prisma.lifeEvent.create({ data: { ownerId, title: "Private row", date: daysAgo(1), isPrivate: true, participants: { create: { contactId: publicContactId } } } });
+    const locked = await prisma.lifeEvent.findMany({ where: { ownerId, ...lifeEventPrivacyWhere(LOCKED) } });
+    expect(locked).toHaveLength(0);
+    expect(await prisma.lifeEvent.count({ where: { ownerId, ...lifeEventPrivacyWhere(UNLOCKED) } })).toBe(2);
+  });
+
   it("withholds a private contact's milestone while the lock is closed", async () => {
-    await prisma.lifeEvent.createMany({
-      data: [
-        { ownerId, contactId: publicContactId, title: "Public milestone", date: daysAgo(20), isMilestone: true },
-        { ownerId, contactId: privateContactId, title: "Private milestone", date: daysAgo(30), isMilestone: true },
-      ],
-    });
+    await prisma.lifeEvent.create({ data: { ownerId, title: "Public milestone", date: daysAgo(20), isMilestone: true, participants: { create: { contactId: publicContactId } } } });
+    await prisma.lifeEvent.create({ data: { ownerId, title: "Private milestone", date: daysAgo(30), isMilestone: true, participants: { create: { contactId: privateContactId } } } });
     expect((await milestones(LOCKED)).map((item) => item.title)).toEqual(["Public milestone"]);
     expect(await milestones(UNLOCKED)).toHaveLength(2);
   });

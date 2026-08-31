@@ -235,6 +235,7 @@ export function TimelineList({
                 ) : (
                   <form action={submit(updateLifeEvent, () => setEditingDetail(null), "Saved")} className="grid gap-2.5">
                     <input type="hidden" name="id" value={entry.id} />
+                    {entry.contacts.map((person) => <input key={person.id} type="hidden" name="contactIds" value={person.id} />)}
                     <LifeEventFields formId={`timeline-event-${entry.id}`} types={lifeEventTypes} event={{
                       title: entry.title, description: entry.editable.description,
                       typeId: entry.editable.typeId, date: entry.date, precision: entry.precision,

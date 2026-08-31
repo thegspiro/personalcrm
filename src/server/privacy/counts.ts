@@ -22,6 +22,9 @@ export async function countPrivateRows(db: Db, ownerId: string): Promise<number>
     db.fact.count({ where: { ownerId, isPrivate: true } }),
     db.interaction.count({ where: { ownerId, isPrivate: true } }),
     db.debt.count({ where: { ownerId, isPrivate: true } }),
+    db.lifeEvent.count({
+      where: { ownerId, OR: [{ isPrivate: true }, { participants: { some: { contact: { isPrivate: true } } } }] },
+    }),
   ]);
 
   return counts.reduce((total, count) => total + count, 0);
