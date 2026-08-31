@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Required for a merge queue: the queue builds each entry on its own ref and
+  # waits for these same checks there. Without this trigger they never start,
+  # and every enqueued pull request sits until it times out.
+  merge_group:
   workflow_dispatch:
 
 # A newer push to the same branch makes the running one irrelevant.
@@ -60,9 +64,13 @@ jobs:
       # not work: of the five pull requests opened in the hour after that
       # convention shipped, five edited CHANGELOG.md and none added a
       # fragment — four of them from branches that carried the instruction.
+      #
+      # The merge_group payload has no `pull_request`, so the base sha comes
+      # from `merge_group` there. Gating this on pull_request alone would skip
+      # the check in the queue -- which is the run that decides what lands.
       - name: Check nothing edited CHANGELOG.md by hand
-        if: github.event_name == 'pull_request'
-        run: node scripts/check-changelog-edit.mjs "${{ github.event.pull_request.base.sha }}"
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        run: node scripts/check-changelog-edit.mjs "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}"
 
       - name: Build
         # next.config.ts sets eslint.ignoreDuringBuilds, so the lint step above
