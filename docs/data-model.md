@@ -266,6 +266,16 @@ Join table, PK `(interactionId, contactId)`, cascading from both. An
 interaction is withheld while locked if it is itself private **or** any
 participant is.
 
+### `Location`
+
+An owner-scoped reusable place shared by interactions and plans. `name` is the
+display label and `(ownerId, normalizedName)` is unique; normalization only
+folds case and whitespace so similarly named real-world venues are never
+silently merged. Address, contact details, notes, coordinates, aliases and an
+archive flag hold optional practical metadata. `Interaction.location` and
+`Plan.location` retain the exact historical text while their optional
+`locationId` points at the canonical place (`SET NULL`).
+
 ### `Fact`
 
 "Things to know" about a person. `contactId` (cascade), `categoryId` →

@@ -16,13 +16,14 @@ export const PRIMARY_NAV: NavItem[] = [
     href: "/more",
     label: "More",
     icon: "Menu",
-    match: ["/more", "/settings", "/tasks", "/ideas", "/gifts", "/family"],
+    match: ["/more", "/settings", "/tasks", "/ideas", "/gifts", "/family", "/locations"],
   },
 ];
 
 // The bottom bar's five slots are full, so Family lives here — reachable from
 // the sidebar on a desktop and from /more on a phone.
 export const SECONDARY_NAV: NavItem[] = [
+  { href: "/locations", label: "Places", icon: "MapPin", match: ["/locations"] },
   { href: "/family", label: "Family", icon: "Home", match: ["/family"] },
   { href: "/tasks", label: "Follow-ups", icon: "CircleCheck" },
   { href: "/ideas", label: "Ideas", icon: "Lightbulb" },

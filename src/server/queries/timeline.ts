@@ -67,6 +67,7 @@ export interface TimelineOptions {
   from?: Date;
   to?: Date;
   search?: string;
+  location?: string;
   take?: number;
 }
 
@@ -125,14 +126,21 @@ export async function buildTimeline(
     ...gifts.map(giftEntry),
   ];
 
+  const located = options.location?.trim()
+    ? entries.filter((entry) => entry.kind === "interaction" && entry.location?.toLowerCase() === options.location!.trim().toLowerCase())
+    : entries;
   const search = options.search?.trim().toLowerCase();
   const filtered = search
-    ? entries.filter(
+    ? located.filter(
         (entry) =>
           entry.title.toLowerCase().includes(search) ||
-          entry.detail?.toLowerCase().includes(search),
+          entry.detail?.toLowerCase().includes(search) ||
+          entry.location?.toLowerCase().includes(search) ||
+          entry.contacts.some((contact) =>
+            `${contact.firstName} ${contact.lastName ?? ""}`.toLowerCase().includes(search),
+          ),
       )
-    : entries;
+    : located;
 
   return filtered
     .sort((a, b) =>
@@ -175,6 +183,26 @@ async function fetchInteractions(
       ...interactionPrivacyWhere(scope),
       ...contactFilter(options.contactId),
       ...(options.typeIds?.length ? { typeId: { in: options.typeIds } } : {}),
+      ...(options.search?.trim()
+        ? {
+            OR: [
+              { title: { contains: options.search.trim() } },
+              { notes: { contains: options.search.trim() } },
+              { location: { contains: options.search.trim() } },
+              { place: { name: { contains: options.search.trim() } } },
+              { participants: { some: { contact: { OR: [
+                { firstName: { contains: options.search.trim() } },
+                { lastName: { contains: options.search.trim() } },
+              ] } } } },
+            ],
+          }
+        : {}),
+      ...(options.location?.trim()
+        ? { AND: [{ OR: [
+            { location: { equals: options.location.trim() } },
+            { place: { normalizedName: options.location.trim().toLowerCase() } },
+          ] }] }
+        : {}),
     },
     include: {
       type: true,
