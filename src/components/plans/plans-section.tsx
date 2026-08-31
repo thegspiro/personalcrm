@@ -336,7 +336,11 @@ export function PlansSection({
 
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                   {plan.location ? <span>{plan.location}</span> : null}
-                  {plan.address ? <span>{plan.address}</span> : null}
+                  {plan.address ? (
+                    // Free text up to 500 characters, so a long unbroken one has to be
+                    // allowed to break: layout.spec.ts asserts no route scrolls sideways.
+                    <span className="min-w-0 break-words [overflow-wrap:anywhere]">{plan.address}</span>
+                  ) : null}
                   {plan.plannedFor ? (
                     <span>
                       {formatPartialDate(plan.plannedFor, "DAY", {
