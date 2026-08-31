@@ -68,6 +68,14 @@ keeps the secret with the stack that owns the database.
 - Forward `Host` and the usual `X-Forwarded-*` headers.
 - Server actions accept bodies up to **8 MB** — raise `client_max_body_size`
   / equivalent to match.
+- The application sends clickjacking, MIME-sniffing, referrer and browser
+  permissions headers itself. Dating, unlock and settings also send
+  `private, no-store`, so nothing the closed lock hides is left in a cache.
+- **Send `Strict-Transport-Security` from the proxy, not the app.** Next
+  resolves header rules during `next build` and bakes them into the image, so
+  the application cannot know whether your deployment is served over HTTPS —
+  and an HSTS header sent by a plain-http install is remembered by the browser
+  and locks you out of your own instance.
 - The app serves on `3000` inside the container.
 
 ## What happens on first boot
