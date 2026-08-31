@@ -355,8 +355,10 @@ export function matchKnownLocation(
     const at = found.index;
     const matchedText = found[0];
     // Swallow a preposition immediately before it, or the title keeps a
-    // dangling "at" once the venue is gone.
-    const before = text.slice(0, at).replace(/\b(?:at|@)\s*$/i, "");
+    // dangling "at" once the venue is gone. The boundary belongs to "at"
+    // alone: "@" is not a word character, so `\b@` cannot match after a space
+    // and the sign survived into the title as a one-character name.
+    const before = text.slice(0, at).replace(/(?:\bat|@)\s*$/i, "");
 
     const withoutPlace = (before + PLACE_MASK + text.slice(at + matchedText.length))
       .replace(/\s{2,}/g, " ")
@@ -385,12 +387,24 @@ function prepositionalPlace(
 
   const start = match.index + match[1].length;
   // Commentary after a comma or dash is notes, not part of the venue.
-  const phrase = match[2].split(/\s*(?:,|\s[–—-]\s)/)[0].trim();
-  if (!phrase) return { place: null, withoutPlace: text };
+  const tail = match[2].split(/\s*(?:,|\s[–—-]\s)/)[0];
 
-  // A mask means the phrase leans on a name or a place already taken —
-  // "at Sarah's place" must not become a venue called "Sarah's place".
-  if (ANY_MASK_PATTERN.test(phrase)) return { place: null, withoutPlace: text };
+  // A mask ENDS the venue rather than disqualifying it. Rejecting any phrase
+  // containing one looked equivalent and was not: in "Coffee at Northside Cafe
+  // with Sarah" the participant is already masked *inside* the phrase, so the
+  // whole venue was thrown away and "Northside" and "Cafe" came back as people
+  // to create — pre-ticked, which is the exact harm this pass exists to stop.
+  //
+  // A mask at the very start still rejects, because that is the other shape:
+  // "at Sarah's place" is somebody's home, not a venue.
+  const maskAt = tail.search(ANY_MASK_PATTERN);
+  const cut = maskAt === -1 ? tail.length : maskAt;
+  // Trailing joining words are what led into the name we just stopped at.
+  const phrase = tail
+    .slice(0, cut)
+    .replace(/\s+(?:with|and|for|to)\s*$/i, "")
+    .trim();
+  if (!phrase) return { place: null, withoutPlace: text };
 
   const words = phrase.split(/\s+/);
   if (words.length > 6) return { place: null, withoutPlace: text };
@@ -412,10 +426,10 @@ function prepositionalPlace(
   });
   if (!namesSomewhere) return { place: null, withoutPlace: text };
 
-  // Consume the preposition and the phrase together, leaving whatever followed
-  // (the notes after a comma) in place.
+  // Consume the preposition and everything up to where the venue stopped,
+  // leaving the participant mask and any notes after a comma in place.
   const phraseStart = match.index + match[0].length - match[2].length;
-  const withoutPlace = (text.slice(0, start) + PLACE_MASK + text.slice(phraseStart + phrase.length))
+  const withoutPlace = (text.slice(0, start) + PLACE_MASK + text.slice(phraseStart + cut))
     .replace(/\s{2,}/g, " ")
     .trim();
 

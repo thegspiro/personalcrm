@@ -89,7 +89,15 @@ export function GeoSettings({ enabled, usable, provider, baseUrl, providers }: G
               htmlFor="geo-base"
               hint="Anything that answers the Nominatim /search API."
             >
+              {/*
+                Keyed on the provider so switching remounts the field. Two
+                editable providers can now be chosen between, and `defaultValue`
+                only applies on mount — so without this, moving from Photon to a
+                self-hosted Nominatim kept the Photon URL and saved the new
+                dialect against the old endpoint, which just returns nothing.
+              */}
               <Input
+                key={selected}
                 id="geo-base"
                 name="baseUrl"
                 defaultValue={selected === provider ? baseUrl : definition.defaultBaseUrl}

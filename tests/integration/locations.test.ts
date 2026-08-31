@@ -305,6 +305,57 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       );
     });
 
+    it("refuses every rename while locked, so a name cannot probe for a hidden place", async () => {
+      const secret = await prisma.contact.create({
+        data: { ownerId: state.ownerId, firstName: "Secret", isPrivate: true },
+      });
+      const ada = await prisma.contact.create({
+        data: { ownerId: state.ownerId, firstName: "Ada" },
+      });
+      const hidden = await place(state.ownerId, "Quiet Bar");
+      const visible = await place(state.ownerId, "Corner Cafe");
+      await visit(hidden.id, [secret.id], { label: "Quiet Bar" });
+      await visit(visible.id, [ada.id]);
+
+      // Renaming onto a hidden place's exact name used to answer "you already
+      // have a different place with that name", which confirmed it exists —
+      // while asking for it directly deliberately says only "not found".
+      const onto = await updateLocation(formFor({ id: visible.id, name: "Quiet Bar" }));
+      // A name nothing is using at all.
+      const free = await updateLocation(formFor({ id: visible.id, name: "Somewhere New" }));
+
+      // Identical answers: the refusal cannot be used to tell the two apart,
+      // which is the whole point. Softer wording would not have helped — the
+      // signal was the refusal, not the sentence.
+      expect(onto.ok).toBe(false);
+      expect(free.ok).toBe(false);
+      expect(onto.fieldErrors?.name).toBe(free.fieldErrors?.name);
+      expect(onto.fieldErrors?.name).toMatch(/unlock/i);
+
+      expect((await prisma.location.findUniqueOrThrow({ where: { id: visible.id } })).name).toBe(
+        "Corner Cafe",
+      );
+    });
+
+    it("still edits everything except the name while locked", async () => {
+      const ada = await prisma.contact.create({
+        data: { ownerId: state.ownerId, firstName: "Ada" },
+      });
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, [ada.id]);
+
+      // Only the name can probe for a hidden place, so only the name is held
+      // back. Locking the whole panel would be a tax for no gain.
+      const result = await updateLocation(
+        formFor({ id: cafe.id, name: "Corner Cafe", city: "Arlington" }),
+      );
+
+      expect(result.ok).toBe(true);
+      expect((await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } })).city).toBe(
+        "Arlington",
+      );
+    });
+
     it("will not edit a place the lock is hiding, and says only 'not found'", async () => {
       const secret = await prisma.contact.create({
         data: { ownerId: state.ownerId, firstName: "Secret", isPrivate: true },
@@ -385,6 +436,52 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       expect(saved.osmId).toBe(123456789n);
       expect(saved.city).toBe("Arlington");
       expect(Number(saved.latitude)).toBeCloseTo(38.8809, 4);
+    });
+
+    it("clears the previous OSM object when a later candidate has none", async () => {
+      state.unlocked = true;
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, []);
+
+      await applyLocationLookup(
+        formFor({ id: cafe.id, osmType: "W", osmId: "123456789", latitude: "38.8", longitude: "-77.1" }),
+      );
+      // A coarser second candidate — a town, say — carries no OSM object.
+      await applyLocationLookup(formFor({ id: cafe.id, city: "Arlington" }));
+
+      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      // Left as `undefined` these kept their old values, so the map link — which
+      // prefers the OSM object — opened the place you had just replaced.
+      expect(saved.osmType).toBeNull();
+      expect(saved.osmId).toBeNull();
+      expect(saved.latitude).toBeNull();
+      expect(saved.city).toBe("Arlington");
+    });
+
+    it("refuses a provider value too long for its column instead of throwing", async () => {
+      state.unlocked = true;
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, []);
+
+      // These come from an endpoint the app does not control, so an oversized
+      // one has to come back as a result rather than a database error.
+      const result = await applyLocationLookup(
+        formFor({ id: cafe.id, address: "x".repeat(501) }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect((await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } })).address).toBeNull();
+    });
+
+    it("refuses an OSM id that would not fit the column", async () => {
+      state.unlocked = true;
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, []);
+
+      const result = await applyLocationLookup(
+        formFor({ id: cafe.id, osmType: "N", osmId: "99999999999999999999" }),
+      );
+      expect(result.ok).toBe(false);
     });
 
     it("ignores half a coordinate pair rather than placing it wrongly", async () => {

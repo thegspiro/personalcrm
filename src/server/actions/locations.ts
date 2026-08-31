@@ -32,6 +32,29 @@ const schema = z.object({
 });
 
 /**
+ * What an accepted lookup candidate may contain.
+ *
+ * Bounded to the same column limits `updateLocation` enforces, because the
+ * values come from an endpoint the app does not control.
+ */
+const lookupSchema = z.object({
+  address: z.string().trim().max(500).optional(),
+  city: z.string().trim().max(120).optional(),
+  region: z.string().trim().max(120).optional(),
+  country: z.string().trim().max(120).optional(),
+  latitude: z.coerce.number().min(-90).max(90).optional(),
+  longitude: z.coerce.number().min(-180).max(180).optional(),
+  osmType: z.enum(["N", "W", "R"]).optional(),
+  // Digits only, and inside a signed 64-bit column. OSM ids passed 2^32 long
+  // ago and keep climbing, so this is a string until the moment it is written.
+  osmId: z
+    .string()
+    .regex(/^\d+$/)
+    .refine((value) => BigInt(value) <= 9223372036854775807n)
+    .optional(),
+});
+
+/**
  * The row, but only if the lock would let this person see it.
  *
  * Scoping by `{ id, ownerId }` alone is not enough. While the lock is closed, a
@@ -80,6 +103,23 @@ export async function updateLocation(form: FormData): Promise<ActionResult> {
   const normalizedName = normalizeLocationName(name);
 
   if (normalizedName !== existing.normalizedName) {
+    // Renaming is refused outright while the lock is closed — every rename,
+    // not only the ones that collide.
+    //
+    // Enforcing uniqueness necessarily answers "is this name already taken",
+    // and a name that is taken but matches nothing you can see is a place the
+    // lock is hiding. So the collision check below was an oracle: guess a
+    // hidden place's name and the error confirmed it exists, while asking for
+    // it directly deliberately says only "not found". Softening the wording
+    // would not have helped; the signal is the refusal, not the sentence.
+    //
+    // This answer depends on nothing hidden, so it discloses nothing. Every
+    // other field stays editable while locked — only the name can probe.
+    const scope = await privacyScope();
+    if (scope.enabled && !scope.unlocked) {
+      return fieldError("name", "Unlock to rename a place.");
+    }
+
     const clash = await prisma.location.findUnique({
       where: { ownerId_normalizedName: { ownerId, normalizedName } },
       select: { id: true },
@@ -124,41 +164,47 @@ export async function applyLocationLookup(form: FormData): Promise<ActionResult>
   if (!id) return fail("Which place?");
   if (!(await visibleLocation(ownerId, id))) return fail("That place wasn't found.");
 
-  const osmType = str(form, "osmType");
-  if (osmType && !["N", "W", "R"].includes(osmType)) return fail("That result looks wrong.");
+  // These values arrive through a client-posted form and originate with an
+  // external provider, so they are bounded here like any other input rather
+  // than trusted to fit. An oversized result would otherwise make the database
+  // reject the update and this action throw instead of returning a result.
+  const parsed = lookupSchema.safeParse({
+    address: str(form, "address"),
+    city: str(form, "city"),
+    region: str(form, "region"),
+    country: str(form, "country"),
+    latitude: str(form, "latitude"),
+    longitude: str(form, "longitude"),
+    osmType: str(form, "osmType"),
+    osmId: str(form, "osmId"),
+  });
+  if (!parsed.success) return fail("That result didn't look like a place.");
 
-  const coordinate = (key: string) => {
-    const raw = str(form, key);
-    if (!raw) return null;
-    const value = Number(raw);
-    return Number.isFinite(value) ? raw : null;
-  };
-
-  // OSM ids are past 2^32 and still climbing, so the column is a BIGINT and the
-  // posted digits have to become one rather than a float that loses precision.
-  const rawOsmId = str(form, "osmId");
-  let osmId: bigint | undefined;
-  if (rawOsmId !== undefined) {
-    if (!/^\d+$/.test(rawOsmId)) return fail("That result looks wrong.");
-    osmId = BigInt(rawOsmId);
-  }
-
-  const latitude = coordinate("latitude");
-  const longitude = coordinate("longitude");
+  const { latitude, longitude, osmType, osmId } = parsed.data;
   // Half a pair puts a place in the wrong hemisphere rather than nowhere.
-  const bothCoordinates = latitude !== null && longitude !== null;
+  const bothCoordinates = latitude !== undefined && longitude !== undefined;
 
   await prisma.location.update({
     where: { id },
     data: {
-      address: str(form, "address") ?? undefined,
-      city: str(form, "city") ?? undefined,
-      region: str(form, "region") ?? undefined,
-      country: str(form, "country") ?? undefined,
-      latitude: bothCoordinates ? latitude : undefined,
-      longitude: bothCoordinates ? longitude : undefined,
-      osmType: osmType ?? undefined,
-      osmId,
+      // Descriptive text is filled in when the candidate has it and left alone
+      // when it does not, so accepting a coarse result cannot wipe an address
+      // typed by hand.
+      address: parsed.data.address ?? undefined,
+      city: parsed.data.city ?? undefined,
+      region: parsed.data.region ?? undefined,
+      country: parsed.data.country ?? undefined,
+
+      // Identity is different: it is replaced as a whole, nulling whatever the
+      // accepted candidate does not supply. Left as `undefined` these kept the
+      // previous values, so picking a second candidate could leave the old OSM
+      // object and coordinates in place while the address described the new
+      // one — and `mapLinkFor` prefers identity, so the map opened the place
+      // you had just replaced.
+      latitude: bothCoordinates ? latitude : null,
+      longitude: bothCoordinates ? longitude : null,
+      osmType: osmType ?? null,
+      osmId: osmId === undefined ? null : BigInt(osmId),
     },
   });
 

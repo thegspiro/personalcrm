@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   GEO_PROVIDERS,
   geoProviderById,
+  isRateLimited,
   readNominatim,
   readPhoton,
 } from "@/server/geo/providers";
@@ -122,5 +123,24 @@ describe("reading Photon", () => {
     expect(readPhoton(null)).toEqual([]);
     expect(readPhoton({ features: "nope" })).toEqual([]);
     expect(readPhoton({ features: [{ properties: {} }] })).toEqual([]);
+  });
+});
+
+describe("respecting a shared endpoint", () => {
+  it("gates the public Nominatim, whose policy caps an app at one request a second", () => {
+    expect(isRateLimited("https://nominatim.openstreetmap.org")).toBe(true);
+    expect(isRateLimited("https://Nominatim.OpenStreetMap.org/")).toBe(true);
+  });
+
+  it("does not gate an endpoint you run yourself", () => {
+    // Your own box is nobody else's to protect, and a queue there would only
+    // make the button feel slow.
+    expect(isRateLimited("http://localhost:8080")).toBe(false);
+    expect(isRateLimited("https://photon.komoot.io")).toBe(false);
+    expect(isRateLimited("http://nominatim.internal.example")).toBe(false);
+  });
+
+  it("treats an unparseable endpoint as ungated rather than throwing", () => {
+    expect(isRateLimited("not a url")).toBe(false);
   });
 });

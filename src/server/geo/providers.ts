@@ -92,6 +92,49 @@ const USER_AGENT = "personalcrm (self-hosted personal relationship manager)";
 const TIMEOUT_MS = 8_000;
 
 /**
+ * Endpoints run for everyone, on somebody else's donated hardware.
+ *
+ * Nominatim's policy caps an application at one request a second across all of
+ * its users. A button press is not a fast loop, but two people on one
+ * installation clicking at once are two requests in the same instant, and the
+ * penalty is throttling or a block that this module would surface as "found
+ * nothing" — indistinguishable from a bad address. A self-hosted endpoint is
+ * nobody else's to protect, so it is not gated.
+ */
+const RATE_LIMITED_HOSTS = new Set(["nominatim.openstreetmap.org"]);
+
+/** A little over a second, since the limit is a ceiling rather than a target. */
+const MIN_INTERVAL_MS = 1_100;
+
+export function isRateLimited(baseUrl: string): boolean {
+  try {
+    return RATE_LIMITED_HOSTS.has(new URL(baseUrl).host.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+// Installation-wide because the module is a singleton in the server process,
+// which for this app is the whole installation.
+let queue: Promise<unknown> = Promise.resolve();
+let lastRequestAt = 0;
+
+function spaceOutRequests(baseUrl: string): Promise<void> {
+  if (!isRateLimited(baseUrl)) return Promise.resolve();
+
+  const turn = queue.then(async () => {
+    const since = Date.now() - lastRequestAt;
+    if (since < MIN_INTERVAL_MS) {
+      await new Promise((resolve) => setTimeout(resolve, MIN_INTERVAL_MS - since));
+    }
+    lastRequestAt = Date.now();
+  });
+  // The queue must not stay rejected, or one failure blocks every later call.
+  queue = turn.catch(() => {});
+  return turn;
+}
+
+/**
  * Ask for candidates. Returns an empty list for every failure.
  *
  * Same trade as the AI layer: a lookup that quietly finds nothing is better
@@ -112,6 +155,10 @@ export async function searchAddress(
     dialect === "photon"
       ? `${base}/api?q=${encodeURIComponent(trimmed)}&limit=${limit}`
       : `${base}/search?q=${encodeURIComponent(trimmed)}&format=jsonv2&addressdetails=1&limit=${limit}`;
+
+  // Waited out before the timeout starts, so queueing does not eat the budget
+  // the request itself gets.
+  await spaceOutRequests(base);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);

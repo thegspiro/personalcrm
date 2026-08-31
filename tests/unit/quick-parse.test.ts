@@ -527,3 +527,50 @@ describe("places", () => {
     expect(parse("coffee with Sarah yesterday").place).toBeNull();
   });
 });
+
+describe("places named before the person", () => {
+  it("keeps the venue when a participant follows it", () => {
+    // The participant is already a mask by the time the venue is read, and it
+    // sits inside the "at ..." phrase. Rejecting any phrase containing a mask
+    // threw the whole venue away and offered its words as people to create.
+    const result = parse("Coffee at Northside Cafe with Sarah");
+
+    expect(result.place?.matchedText).toBe("Northside Cafe");
+    expect(result.unknownNames).toEqual([]);
+    expect(result.contacts.map((m) => m.contact.id)).toEqual(["sarah"]);
+    expect(result.title).not.toContain("Northside");
+  });
+
+  it("matches a known place named before the person", () => {
+    const result = parse("Coffee at Northside Cafe with Sarah", CONTACTS, LOCATIONS);
+    expect(result.place?.location?.id).toBe("l-north");
+    expect(result.unknownNames).toEqual([]);
+  });
+
+  it("still refuses a possessive, which is a person's home", () => {
+    // The other shape a mask takes in that position, and the reason the guard
+    // exists: a mask at the very start still rejects.
+    const result = parse("drinks at Sarah's place with Priya");
+    expect(result.place).toBeNull();
+  });
+
+  it("stops the venue at the person rather than swallowing the joining word", () => {
+    const result = parse("Coffee at The Alamo and Sarah came too");
+    expect(result.place?.matchedText).toBe("The Alamo");
+  });
+
+  it("takes the at-sign with the venue instead of leaving it as the title", () => {
+    // "@" is not a word character, so a `\b` before it never matched after a
+    // space and the sign survived as a one-character title.
+    const result = parse("Coffee with Sarah @ Northside Cafe", CONTACTS, LOCATIONS);
+    expect(result.place?.location?.id).toBe("l-north");
+    expect(result.title).toBe("Coffee with Sarah");
+    expect(result.title).not.toContain("@");
+  });
+
+  it("reads an at-sign venue it does not know yet", () => {
+    const result = parse("Coffee with Sarah @ Northside Cafe");
+    expect(result.place?.matchedText).toBe("Northside Cafe");
+    expect(result.unknownNames).toEqual([]);
+  });
+});
