@@ -49,6 +49,13 @@ where-fragments applied to the queries themselves:
 **Counts are filtered too.** A total that shifts when you unlock is itself a
 disclosure.
 
+Location history is derived exclusively from interactions admitted by
+`interactionPrivacyWhere`. A private interaction, or any interaction with a
+private participant, contributes neither a visit nor a participant name or
+distinct-person count while locked. Location pages use the normal
+`offlineCacheable` decision; they never opt into caching merely because the
+location row itself has no private marker.
+
 The module is deliberately pure and free of request context so it can be tested
 directly against a database; [`filter.ts`](../src/server/privacy/filter.ts)
 supplies the live scope.

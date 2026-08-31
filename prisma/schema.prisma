@@ -55,6 +55,7 @@ model User {
   tags                 Tag[]
   relationships        Relationship[]
   interactions         Interaction[]
+  locations            Location[]
   facts                Fact[]
   importantDates       ImportantDate[]
   ideas                Idea[]
@@ -107,12 +108,12 @@ model UserPreference {
   digestEnabled      Boolean @default(true)
 
   /// Require the PIN before showing the dating module or anything private.
-  privacyLockEnabled Boolean  @default(false)
+  privacyLockEnabled Boolean @default(false)
   /// Hide the dating module from navigation and the dashboard entirely.
-  hideDating         Boolean  @default(false)
+  hideDating         Boolean @default(false)
   /// Blur private notes until tapped — a second, weaker layer for shoulder
   /// surfing after the lock has already been opened.
-  blurPrivateNotes   Boolean  @default(true)
+  blurPrivateNotes   Boolean @default(true)
 
   /// First-run onboarding: when the welcome flow was finished or skipped.
   /// Null means the wizard still has something to say, and the app shell
@@ -122,7 +123,7 @@ model UserPreference {
   /// hint for the setup checklist — an install on a second device never
   /// reaches this row, so nothing is gated on it.
   pwaInstalledAt        DateTime?
-  updatedAt          DateTime @updatedAt
+  updatedAt             DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -374,13 +375,15 @@ model Interaction {
   /// silently attributed to whoever the default would have named.
   reachedOutBy    ReachedOutBy @default(UNSPECIFIED)
   location        String?      @db.VarChar(191)
+  locationId      String?
   /// Hidden everywhere until the privacy lock is opened.
   isPrivate       Boolean      @default(false)
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
-  owner User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  type  TaxonomyTerm? @relation("InteractionType", fields: [typeId], references: [id], onDelete: SetNull)
+  owner          User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  type           TaxonomyTerm? @relation("InteractionType", fields: [typeId], references: [id], onDelete: SetNull)
+  locationRecord Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   participants    InteractionParticipant[]
   dateEntry       DateEntry?
@@ -390,6 +393,25 @@ model Interaction {
 
   @@index([ownerId, occurredAt])
   @@index([typeId])
+  @@index([locationId])
+}
+
+/// An owner-specific place resolved from the lossless text recorded on an interaction.
+model Location {
+  id             String   @id @default(cuid())
+  ownerId        String
+  displayName    String   @db.VarChar(191)
+  normalizedName String   @db.VarChar(191)
+  address        String?  @db.VarChar(255)
+  details        String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  interactions Interaction[]
+
+  @@unique([ownerId, normalizedName])
+  @@index([ownerId, displayName])
 }
 
 model InteractionParticipant {

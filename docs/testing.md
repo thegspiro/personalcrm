@@ -87,6 +87,10 @@ failures that look like anything except the real cause.
 
 ## End-to-end tests — `tests/e2e/`
 
+Location coverage includes owner-specific normalization, distinct participant
+aggregation, privacy filtering and legacy backfill in integration tests, plus
+a Playwright multi-participant visit on a single location detail page.
+
 Playwright against an **already-running** instance, so the same suite points at
 `next start` locally or at the built container.
 

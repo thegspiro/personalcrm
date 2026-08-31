@@ -130,7 +130,8 @@ export async function buildTimeline(
     ? entries.filter(
         (entry) =>
           entry.title.toLowerCase().includes(search) ||
-          entry.detail?.toLowerCase().includes(search),
+          entry.detail?.toLowerCase().includes(search) ||
+          entry.location?.toLowerCase().includes(search),
       )
     : entries;
 
@@ -175,10 +176,21 @@ async function fetchInteractions(
       ...interactionPrivacyWhere(scope),
       ...contactFilter(options.contactId),
       ...(options.typeIds?.length ? { typeId: { in: options.typeIds } } : {}),
+      ...(options.search?.trim()
+        ? {
+            OR: [
+              { title: { contains: options.search.trim() } },
+              { notes: { contains: options.search.trim() } },
+              { location: { contains: options.search.trim() } },
+              { locationRecord: { displayName: { contains: options.search.trim() } } },
+            ],
+          }
+        : {}),
     },
     include: {
       type: true,
       dateEntry: { select: { id: true } },
+      locationRecord: { select: { displayName: true } },
       participants: {
         include: { contact: { select: { id: true, firstName: true, lastName: true } } },
       },
@@ -296,7 +308,7 @@ function interactionEntry(row: InteractionRow, timezone: string, now: Date): Tim
     contacts,
     sentiment: row.sentiment,
     reachedOutBy: row.reachedOutBy,
-    location: row.location,
+    location: row.locationRecord?.displayName ?? row.location,
     href: contacts[0] ? `/people/${contacts[0].id}#timeline-entry-interaction-${row.id}` : "/timeline",
   };
 }

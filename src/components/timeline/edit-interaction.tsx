@@ -182,9 +182,11 @@ export function EditInteractionSheet({
                 <Input
                   id="edit-location"
                   name="location"
+                  list="edit-interaction-locations"
                   defaultValue={record.location ?? ""}
                   placeholder="Northside Cafe"
                 />
+                <datalist id="edit-interaction-locations">{record.locations.map((location) => <option key={location.id} value={location.displayName} />)}</datalist>
               </Field>
 
               {/*

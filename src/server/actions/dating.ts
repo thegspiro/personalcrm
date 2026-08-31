@@ -13,6 +13,7 @@ import {
 } from "@/server/services/custom-field-values";
 import { findTermBySlug } from "@/server/taxonomy/queries";
 import { requireUnlocked } from "@/server/privacy/lock";
+import { resolveLocation } from "@/server/services/locations";
 import {
   type ActionResult,
   bool,
@@ -46,6 +47,7 @@ function touch(contactId: string) {
   revalidatePath("/dating");
   revalidatePath("/dating/compare");
   revalidatePath("/timeline");
+  revalidatePath("/locations");
   revalidatePath(`/people/${contactId}`);
 }
 
@@ -243,6 +245,8 @@ export async function createDateEntry(form: FormData): Promise<ActionResult<{ id
   try {
     entry = await prisma.$transaction(async (tx) => {
     await ensureProfileTx(tx, ownerId, contactId);
+    const location = await resolveLocation(tx, ownerId, str(form, "locationId"), venue);
+    if (location === undefined) throw new UnknownLocationError();
 
     const interaction = await tx.interaction.create({
       data: {
@@ -252,6 +256,7 @@ export async function createDateEntry(form: FormData): Promise<ActionResult<{ id
         title: venue ? `Date — ${venue}` : "Date",
         notes: str(form, "notes") ?? null,
         location: venue ?? null,
+        locationId: location?.id ?? null,
         // A rating maps onto the shared sentiment scale so dates read
         // consistently alongside everything else in the timeline.
         sentiment: rating === null ? null : rating >= 4 ? 2 : rating >= 3 ? 1 : 0,
@@ -301,6 +306,7 @@ export async function createDateEntry(form: FormData): Promise<ActionResult<{ id
     return created;
     });
   } catch (error) {
+    if (error instanceof UnknownLocationError) return fail("Unknown location.");
     const failure = customFieldFailure(error);
     if (failure) return failure;
     throw error;
@@ -329,7 +335,10 @@ export async function updateDateEntry(form: FormData): Promise<ActionResult> {
   const venue = str(form, "venue");
   const rating = clampRating(num(form, "rating"));
 
+  try {
   await prisma.$transaction(async (tx) => {
+    const location = await resolveLocation(tx, ownerId, str(form, "locationId"), venue);
+    if (location === undefined) throw new UnknownLocationError();
     await tx.dateEntry.update({
       where: { id },
       data: {
@@ -352,6 +361,7 @@ export async function updateDateEntry(form: FormData): Promise<ActionResult> {
         title: venue ? `Date — ${venue}` : "Date",
         notes: str(form, "notes") ?? null,
         location: venue ?? null,
+        locationId: location?.id ?? null,
         sentiment: rating === null ? null : rating >= 4 ? 2 : rating >= 3 ? 1 : 0,
         // Safe to write here where it is not on a fact or a debt: `guard()`
         // has already established the lock is open, so a row cannot be hidden
@@ -365,10 +375,16 @@ export async function updateDateEntry(form: FormData): Promise<ActionResult> {
     await recomputeContactActivity(tx, [existing.contactId]);
     await resequenceDateEntries(tx, existing.contactId);
   });
+  } catch (error) {
+    if (error instanceof UnknownLocationError) return fail("Unknown location.");
+    throw error;
+  }
 
   touch(existing.contactId);
   return ok();
 }
+
+class UnknownLocationError extends Error {}
 
 export async function deleteDateEntry(id: string): Promise<ActionResult> {
   const blocked = await guard();

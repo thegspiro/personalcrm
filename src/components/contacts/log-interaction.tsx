@@ -25,7 +25,7 @@ import { TermChips, type TermOption } from "@/components/form/term-select";
 import { ContactPicker, type PickerContact } from "@/components/form/contact-picker";
 import { SENTIMENTS } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { createInteraction } from "@/server/actions/interactions";
+import { createInteraction, loadLocationOptions } from "@/server/actions/interactions";
 
 type ReachedOutBy = "ME" | "THEM" | "MUTUAL";
 
@@ -68,6 +68,14 @@ export function LogInteractionSheet({
   const [sentiment, setSentiment] = React.useState<number | null>(null);
   const [reachedOutBy, setReachedOutBy] = React.useState<ReachedOutBy | null>(null);
   const formRef = React.useRef<HTMLFormElement>(null);
+  const [locations, setLocations] = React.useState<Array<{ id: string; displayName: string }>>([]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    void loadLocationOptions().then((result) => {
+      if (result.ok && result.data) setLocations(result.data);
+    });
+  }, [open]);
 
   async function onSubmit(form: FormData) {
     if (sentiment !== null) form.set("sentiment", String(sentiment));
@@ -132,6 +140,11 @@ export function LogInteractionSheet({
                 rows={3}
                 placeholder="What did you talk about? Anything to remember?"
               />
+            </Field>
+
+            <Field label="Where" htmlFor="location">
+              <Input id="location" name="location" list="interaction-locations" placeholder="Northside Cafe" />
+              <datalist id="interaction-locations">{locations.map((location) => <option key={location.id} value={location.displayName} />)}</datalist>
             </Field>
 
             <div className="grid gap-1.5">

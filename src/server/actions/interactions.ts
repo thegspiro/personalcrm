@@ -16,6 +16,7 @@ import {
 import { interactionPrivacyWhere, privacyScope } from "@/server/privacy/filter";
 import { listContactOptions } from "@/server/queries/contacts";
 import { fieldsFor } from "@/server/queries/custom-fields";
+import { resolveLocation } from "@/server/services/locations";
 import { listTerms } from "@/server/taxonomy/queries";
 import type { CustomFieldType } from "@prisma/client";
 import {
@@ -41,6 +42,7 @@ function revalidateFor(contactIds: string[]) {
   revalidatePath("/");
   revalidatePath("/timeline");
   revalidatePath("/people");
+  revalidatePath("/locations");
   for (const id of contactIds) revalidatePath(`/people/${id}`);
 }
 
@@ -102,10 +104,14 @@ export async function createInteraction(
 
   const sentiment = num(form, "sentiment");
   const duration = num(form, "durationMinutes");
+  const submittedLocation = str(form, "location");
+  const submittedLocationId = str(form, "locationId");
 
   let interaction: { id: string };
   try {
     interaction = await prisma.$transaction(async (tx) => {
+    const location = await resolveLocation(tx, ownerId, submittedLocationId, submittedLocation);
+    if (location === undefined) throw new UnknownLocationError();
     const created = await tx.interaction.create({
       data: {
         ownerId,
@@ -113,7 +119,8 @@ export async function createInteraction(
         occurredAt: parsed.data.occurredAt,
         title: parsed.data.title ?? null,
         notes: parsed.data.notes ?? null,
-        location: str(form, "location") ?? null,
+        location: submittedLocation ?? location?.displayName ?? null,
+        locationId: location?.id ?? null,
         durationMinutes: duration && duration > 0 ? Math.round(duration) : null,
         sentiment: sentiment === undefined ? null : clampSentiment(sentiment),
         reachedOutBy: reachedOutByOf(str(form, "reachedOutBy")),
@@ -126,6 +133,7 @@ export async function createInteraction(
     return created;
     });
   } catch (error) {
+    if (error instanceof UnknownLocationError) return fail("Unknown location.");
     const failure = customFieldFailure(error);
     if (failure) return failure;
     throw error;
@@ -182,9 +190,13 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
   const sentiment = num(form, "sentiment");
   const duration = num(form, "durationMinutes");
   const previousContactIds = existing.participants.map((p) => p.contactId);
+  const submittedLocation = str(form, "location");
+  const submittedLocationId = str(form, "locationId");
 
   try {
     await prisma.$transaction(async (tx) => {
+      const location = await resolveLocation(tx, ownerId, submittedLocationId, submittedLocation);
+      if (location === undefined) throw new UnknownLocationError();
       await tx.interaction.update({
         where: { id },
         data: {
@@ -192,7 +204,8 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
           occurredAt: parsed.data.occurredAt,
           title: parsed.data.title ?? null,
           notes: parsed.data.notes ?? null,
-          location: str(form, "location") ?? null,
+          location: submittedLocation ?? location?.displayName ?? null,
+          locationId: location?.id ?? null,
           durationMinutes: duration && duration > 0 ? Math.round(duration) : null,
           sentiment: sentiment === undefined ? null : clampSentiment(sentiment),
           reachedOutBy: reachedOutByOf(str(form, "reachedOutBy")),
@@ -217,6 +230,7 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
       }
     });
   } catch (error) {
+    if (error instanceof UnknownLocationError) return fail("Unknown location.");
     const failure = customFieldFailure(error);
     if (failure) return failure;
     throw error;
@@ -234,6 +248,7 @@ export interface InteractionForEdit {
   title: string | null;
   notes: string | null;
   location: string | null;
+  locations: Array<{ id: string; displayName: string }>;
   durationMinutes: number | null;
   sentiment: number | null;
   reachedOutBy: string;
@@ -285,10 +300,11 @@ export async function loadInteractionForEdit(
   });
   if (!interaction) return fail("Interaction not found.");
 
-  const [contacts, types, customFields] = await Promise.all([
+  const [contacts, types, customFields, locations] = await Promise.all([
     listContactOptions(ownerId),
     listTerms(ownerId, "INTERACTION_TYPE"),
     fieldsFor(ownerId, "INTERACTION", id),
+    prisma.location.findMany({ where: { ownerId, interactions: { some: { ownerId, ...interactionPrivacyWhere(scope) } } }, select: { id: true, displayName: true }, orderBy: { displayName: "asc" } }),
   ]);
 
   // Someone archived, or private and currently hidden, can still be on an
@@ -311,6 +327,7 @@ export async function loadInteractionForEdit(
     title: interaction.title,
     notes: interaction.notes,
     location: interaction.location,
+    locations,
     durationMinutes: interaction.durationMinutes,
     sentiment: interaction.sentiment,
     reachedOutBy: interaction.reachedOutBy,
@@ -341,6 +358,14 @@ export async function loadInteractionForEdit(
       value: field.value,
     })),
   });
+}
+
+export async function loadLocationOptions(): Promise<ActionResult<Array<{ id: string; displayName: string }>>> {
+  const { ownerId } = await owner();
+  const scope = await privacyScope();
+  return ok(await prisma.location.findMany({
+    where: { ownerId, interactions: { some: { ownerId, ...interactionPrivacyWhere(scope) } } }, select: { id: true, displayName: true }, orderBy: { displayName: "asc" },
+  }));
 }
 
 export async function deleteInteraction(id: string): Promise<ActionResult> {
@@ -382,3 +407,5 @@ function clampSentiment(value: number): number {
 function reachedOutByOf(value?: string): "UNSPECIFIED" | "ME" | "THEM" | "MUTUAL" {
   return value === "ME" || value === "THEM" || value === "MUTUAL" ? value : "UNSPECIFIED";
 }
+
+class UnknownLocationError extends Error {}

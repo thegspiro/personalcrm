@@ -1,5 +1,16 @@
 # Data model
 
+## Locations and interactions
+
+`Location` is an owner-owned, normalized place. It stores the display name,
+matching key, optional address/details, and timestamps; `(ownerId,
+normalizedName)` is unique. `Interaction.locationId` optionally points to it,
+while the original `Interaction.location` text remains as the lossless record
+and compatibility field. Matching trims surrounding whitespace, collapses
+whitespace runs to one space, and lower-cases it. Migration
+`20260831120000_add_location_history` applies the same rule per owner and
+backfills the relation without changing legacy text.
+
 Every table in the database, what it holds, and the rules that are enforced in
 schema rather than in prose.
 

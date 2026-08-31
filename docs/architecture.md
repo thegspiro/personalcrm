@@ -23,8 +23,8 @@ healthcheck.
 ```
 src/
   app/
-    (app)/          signed-in routes — dashboard, people, timeline, dating,
-                    family, gifts, ideas, tasks, settings, more, unlock
+    (app)/          signed-in routes — dashboard, people, timeline, locations,
+                    dating, family, gifts, ideas, tasks, settings, more, unlock
     (auth)/         login, signup, first-run setup
     (onboarding)/   the welcome flow, once per account
     api/health/     container healthcheck (the only route handler)
@@ -70,6 +70,11 @@ component ──▶ server action ──▶ service ──▶ Prisma
   [server-actions.md](server-actions.md).
 - **`src/server/queries/`** holds the read queries pages use, each applying the
   privacy filter.
+
+Location reads are a worked example of aggregate privacy: visit and distinct
+participant counts are computed only after `interactionPrivacyWhere` has been
+applied in the database, so neither a hidden interaction nor a hidden person
+can change a locked-page aggregate.
 
 ## Request context
 
