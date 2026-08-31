@@ -18,16 +18,16 @@ test("a plan checklist can be created, edited, checked and deleted without mobil
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
     .toBe(true);
 
-  await plans.getByLabel("Checklist item 1").fill("Confirm Sunday availability");
+  await plans.getByLabel("Checklist item 1", { exact: true }).fill("Confirm Sunday availability");
   await plans.getByLabel("Mark Confirm Sunday availability complete").check();
   await plans.getByLabel("Delete checklist item 2").click();
   await plans.getByRole("button", { name: "Add item" }).click();
-  await plans.getByLabel("Checklist item 5").fill("Pack a picnic blanket");
+  await plans.getByLabel("Checklist item 5", { exact: true }).fill("Pack a picnic blanket");
   await plans.getByRole("button", { name: "Save", exact: true }).click();
 
   let row = plans.locator("[tabindex='-1']").filter({ hasText: title }).first();
   await row.getByRole("button", { name: "Edit plan" }).click();
-  await expect(plans.getByLabel("Checklist item 1")).toHaveValue("Confirm Sunday availability");
+  await expect(plans.getByLabel("Checklist item 1", { exact: true })).toHaveValue("Confirm Sunday availability");
   await expect(plans.getByLabel("Mark Confirm Sunday availability complete")).toBeChecked();
   await expect(plans.locator('input[value="Reserve or buy tickets"]')).toHaveCount(0);
   await expect(plans.locator('input[value="Pack a picnic blanket"]')).toBeVisible();
