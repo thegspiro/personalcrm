@@ -48,7 +48,12 @@ test("a visit's place lists everyone who was there", async ({ page }) => {
   const edit = attendees(page, "Who");
   await edit.getByLabel("Search people").fill(second());
   await edit.getByRole("button", { name: second() }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Save changes" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Save changes" }).click();
+  // The sheet closes only once the server action has resolved, so this is what
+  // separates "the edit was submitted" from "the edit was saved". Navigating
+  // straight off the click can load the place before the participant lands.
+  await expect(dialog).toBeHidden();
 
   await page.goto("/locations");
   await page.getByRole("link", { name: new RegExp(place()) }).click();
