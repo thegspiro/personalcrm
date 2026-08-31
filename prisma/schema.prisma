@@ -107,12 +107,12 @@ model UserPreference {
   digestEnabled      Boolean @default(true)
 
   /// Require the PIN before showing the dating module or anything private.
-  privacyLockEnabled Boolean  @default(false)
+  privacyLockEnabled Boolean @default(false)
   /// Hide the dating module from navigation and the dashboard entirely.
-  hideDating         Boolean  @default(false)
+  hideDating         Boolean @default(false)
   /// Blur private notes until tapped — a second, weaker layer for shoulder
   /// surfing after the lock has already been opened.
-  blurPrivateNotes   Boolean  @default(true)
+  blurPrivateNotes   Boolean @default(true)
 
   /// First-run onboarding: when the welcome flow was finished or skipped.
   /// Null means the wizard still has something to say, and the app shell
@@ -122,7 +122,7 @@ model UserPreference {
   /// hint for the setup checklist — an install on a second device never
   /// reaches this row, so nothing is gated on it.
   pwaInstalledAt        DateTime?
-  updatedAt          DateTime @updatedAt
+  updatedAt             DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -244,28 +244,30 @@ model Contact {
   category      TaxonomyTerm? @relation("ContactCategory", fields: [categoryId], references: [id], onDelete: SetNull)
   meetingSource TaxonomyTerm? @relation("ContactMeetingSource", fields: [meetingSourceId], references: [id], onDelete: SetNull)
 
-  methods         ContactMethod[]
-  addresses       Address[]
-  tags            ContactTag[]
-  participations  InteractionParticipant[]
-  facts           Fact[]
-  importantDates  ImportantDate[]
-  lifeEvents      LifeEvent[]
-  ideas           Idea[]
-  tasks           Task[]
-  gifts           Gift[]
-  debts           Debt[]
-  dietaryNeeds    DietaryNeed[]
-  allergyStatus   AllergyStatus               @default(UNKNOWN)
-  flags           Flag[]
-  dateEntries     DateEntry[]
-  plans           Plan[]
-  romanticProfile RomanticProfile?
-  households      HouseholdMember[]
-  dismissalsA     FamilySuggestionDismissal[] @relation("DismissalA")
-  dismissalsB     FamilySuggestionDismissal[] @relation("DismissalB")
-  relationsFrom   Relationship[]              @relation("RelationshipFrom")
-  relationsTo     Relationship[]              @relation("RelationshipTo")
+  methods                 ContactMethod[]
+  addresses               Address[]
+  tags                    ContactTag[]
+  participations          InteractionParticipant[]
+  interactionMentions     InteractionMention[]
+  facts                   Fact[]
+  importantDates          ImportantDate[]
+  lifeEvents              LifeEvent[]
+  lifeEventParticipations LifeEventParticipant[]
+  ideas                   Idea[]
+  tasks                   Task[]
+  gifts                   Gift[]
+  debts                   Debt[]
+  dietaryNeeds            DietaryNeed[]
+  allergyStatus           AllergyStatus               @default(UNKNOWN)
+  flags                   Flag[]
+  dateEntries             DateEntry[]
+  plans                   Plan[]
+  romanticProfile         RomanticProfile?
+  households              HouseholdMember[]
+  dismissalsA             FamilySuggestionDismissal[] @relation("DismissalA")
+  dismissalsB             FamilySuggestionDismissal[] @relation("DismissalB")
+  relationsFrom           Relationship[]              @relation("RelationshipFrom")
+  relationsTo             Relationship[]              @relation("RelationshipTo")
 
   @@index([ownerId, isArchived, lastName])
   @@index([ownerId, isArchived, firstName])
@@ -384,6 +386,7 @@ model Interaction {
   type  TaxonomyTerm? @relation("InteractionType", fields: [typeId], references: [id], onDelete: SetNull)
 
   participants    InteractionParticipant[]
+  mentions        InteractionMention[]
   dateEntry       DateEntry?
   sourcedFacts    Fact[]                   @relation("FactSource")
   ideasUsed       Idea[]                   @relation("IdeaUsedIn")
@@ -391,6 +394,19 @@ model Interaction {
 
   @@index([ownerId, occurredAt])
   @@index([typeId])
+}
+
+/// A person discussed during an interaction but not present. Keeping this
+/// separate prevents a mention from falsely advancing their contact cadence.
+model InteractionMention {
+  interactionId String
+  contactId     String
+
+  interaction Interaction @relation(fields: [interactionId], references: [id], onDelete: Cascade)
+  contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([interactionId, contactId])
+  @@index([contactId])
 }
 
 model InteractionParticipant {
@@ -494,13 +510,27 @@ model LifeEvent {
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
-  owner   User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  type    TaxonomyTerm? @relation("LifeEventType", fields: [typeId], references: [id], onDelete: SetNull)
+  owner        User                   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact      Contact                @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  type         TaxonomyTerm?          @relation("LifeEventType", fields: [typeId], references: [id], onDelete: SetNull)
+  participants LifeEventParticipant[]
 
   @@index([contactId, date])
   @@index([ownerId, date])
   @@index([typeId])
+}
+
+/// Everyone whose history includes a shared life event. `LifeEvent.contactId`
+/// remains the anchor for compatibility and ownership-by-parent semantics.
+model LifeEventParticipant {
+  lifeEventId String
+  contactId   String
+
+  lifeEvent LifeEvent @relation(fields: [lifeEventId], references: [id], onDelete: Cascade)
+  contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([lifeEventId, contactId])
+  @@index([contactId])
 }
 
 /// A named group of people who belong together — "The Whitfields", "Mum and

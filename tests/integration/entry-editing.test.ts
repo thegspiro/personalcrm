@@ -97,6 +97,27 @@ describe.skipIf(!hasTestDatabase)("editing an entry", () => {
   // --- facts ---------------------------------------------------------------
 
   describe("a life event range", () => {
+    it("stores one shared event in every selected person's history", async () => {
+      const data = form({
+        contactId: sarahId,
+        title: "Got married",
+        date: "2024-06-15",
+        datePrecision: "DAY",
+      });
+      data.append("contactIds", marcusId);
+
+      const result = await createLifeEvent(data);
+
+      expect(result.ok).toBe(true);
+      const event = await prisma.lifeEvent.findUniqueOrThrow({
+        where: { id: result.data!.id },
+        include: { participants: true },
+      });
+      expect(event.participants.map((row) => row.contactId).sort()).toEqual(
+        [sarahId, marcusId].sort(),
+      );
+    });
+
     it("returns an end-date error and does not write a definitively inverted range", async () => {
       const result = await createLifeEvent(
         form({
