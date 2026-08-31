@@ -256,6 +256,7 @@ model Contact {
   gifts           Gift[]
   debts           Debt[]
   dietaryNeeds    DietaryNeed[]
+  allergyStatus   AllergyStatus               @default(UNKNOWN)
   flags           Flag[]
   dateEntries     DateEntry[]
   plans           Plan[]
@@ -703,22 +704,41 @@ enum DebtDirection {
 /// decorative allergy. Genuinely sensitive dietary context belongs in a private
 /// `Fact`. One attached to a private contact is still hidden with that contact.
 model DietaryNeed {
-  id                 String      @id @default(cuid())
-  ownerId            String
-  contactId          String
-  kind               DietaryKind
-  label              String      @db.VarChar(191)
-  notes              String?     @db.Text
+  id                      String          @id @default(cuid())
+  ownerId                 String
+  contactId               String
+  kind                    DietaryKind
+  category                AllergyCategory @default(FOOD)
+  label                   String          @db.VarChar(191)
+  notes                   String?         @db.Text
+  reaction                String?         @db.Text
+  epinephrineLocation     String?         @db.VarChar(191)
+  emergencyInstructions   String?         @db.Text
+  professionallyDiagnosed Boolean?
+  lastConfirmedOn         DateTime?       @db.Date
   /// Whether they carry adrenaline. Actionable in an emergency in a way that a
   /// severity grade is not.
-  carriesEpinephrine Boolean     @default(false)
-  createdAt          DateTime    @default(now())
-  updatedAt          DateTime    @updatedAt
+  carriesEpinephrine      Boolean         @default(false)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
 
   owner   User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
-  @@index([contactId, kind])
+  @@index([contactId, category, kind])
+}
+
+enum AllergyStatus {
+  UNKNOWN
+  NO_KNOWN
+  KNOWN
+}
+
+enum AllergyCategory {
+  FOOD
+  MEDICATION
+  ENVIRONMENTAL
+  OTHER
 }
 
 enum DietaryKind {

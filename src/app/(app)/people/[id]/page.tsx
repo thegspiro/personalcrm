@@ -170,6 +170,10 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           }}
           interactionTypes={terms.INTERACTION_TYPE}
           contacts={contactOptions}
+          allergySummary={contact.dietaryNeeds
+            .filter((need) => need.kind === "ALLERGY")
+            .map((need) => need.label)
+            .join(", ") || null}
         />
       </div>
 
@@ -288,12 +292,21 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
         <DietarySection
           contactId={contact.id}
+          allergyStatus={contact.allergyStatus}
           needs={contact.dietaryNeeds.map((need) => ({
             id: need.id,
             kind: need.kind,
+            category: need.category,
             label: need.label,
             notes: need.notes,
+            reaction: need.reaction,
             carriesEpinephrine: need.carriesEpinephrine,
+            epinephrineLocation: need.epinephrineLocation,
+            emergencyInstructions: need.emergencyInstructions,
+            professionallyDiagnosed: need.professionallyDiagnosed,
+            lastConfirmedOn: need.lastConfirmedOn
+              ? plainDateKey(plainDateFromDb(need.lastConfirmedOn))
+              : null,
           }))}
         />
 

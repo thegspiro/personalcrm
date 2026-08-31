@@ -123,18 +123,18 @@ test("a dietary preference can become the allergy it turned out to be", async ({
   await ensureSignedIn(page);
   await page.goto(personUrl);
 
-  const diet = section(page, "Food and drink to avoid");
+  const diet = section(page, "Food and dietary needs");
   await diet.getByRole("button", { name: "Add a dietary need" }).click();
-  await diet.getByLabel("What should they avoid?").fill("Shellfish");
+  await diet.getByLabel("What do they prefer to avoid?").fill("Shellfish");
   await diet.getByRole("button", { name: "Preference" }).click();
-  await diet.getByRole("button", { name: "Add", exact: true }).click();
+  await diet.getByRole("button", { name: "Add dietary need", exact: true }).click();
   await expect(diet.getByText("Shellfish")).toBeVisible();
 
   await diet.getByRole("button", { name: "Edit dietary need" }).first().click();
   await diet.getByRole("button", { name: "Allergy" }).click();
   await diet.getByRole("button", { name: "Save", exact: true }).click();
 
-  await expect(row(page, "Food and drink to avoid", "Shellfish")).toContainText("Allergy");
+  await expect(row(page, "Allergies", "Shellfish")).toContainText("Food allergy");
 });
 
 test("a follow-up can also be fixed from the list page it shares with everyone", async ({
