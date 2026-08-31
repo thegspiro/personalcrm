@@ -4,8 +4,10 @@
  * Deliberately shaped like `src/server/ai/providers.ts`, and for the same
  * reasons: plain `fetch` rather than a vendor SDK, a small table of endpoints
  * rather than one hard-coded service, and a self-hostable option that is the
- * point rather than an afterthought. The whole `src/server/geo/` directory can
- * be deleted and everything else keeps working — places stay editable by hand.
+ * point rather than an afterthought. Switched off — the shipped state — nothing
+ * here runs at all, and places stay editable by hand; the action that performs a
+ * lookup reaches this behind a dynamic `import()` in a `try`, so a missing or
+ * unreachable endpoint finds nothing rather than breaking the page.
  *
  * No `server-only` marker, so the pure response-shaping is unit-testable
  * without a request context or a network.

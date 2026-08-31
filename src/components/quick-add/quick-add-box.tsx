@@ -276,6 +276,7 @@ function QuickAddPreviewForm({
           id="qa-location"
           name="location"
           defaultValue={preview.place?.name ?? ""}
+          maxLength={191}
           placeholder="Northside Cafe"
         />
       </Field>

@@ -205,6 +205,12 @@ export async function confirmQuickAdd(form: FormData): Promise<ActionResult<{ id
   if (owned.length !== existingIds.length) return fail("Some of those people weren't found.");
 
   const locationText = str(form, "location");
+  // `Interaction.location` and `Location.name` are both varchar(191), so an
+  // over-long paste would reach the database and throw out of the action
+  // instead of coming back as something the form can show.
+  if (locationText && locationText.length > 191) {
+    return fail("That place name is too long.");
+  }
   const typeId = str(form, "typeId");
   if (typeId) {
     const type = await prisma.taxonomyTerm.findFirst({

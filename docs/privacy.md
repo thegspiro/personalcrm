@@ -224,8 +224,8 @@ because smaller local models do all three.
 ## Optional address lookup
 
 The second — and only other — thing in the app that sends anything anywhere.
-`src/server/geo/` is off by default and, like `src/server/ai/`, deletable: with
-it gone or switched off, a place's address is simply something you type.
+`src/server/geo/` is off by default: switched off, nothing in it runs and a
+place's address is simply something you type.
 
 Four rules, the same shape as the assisted reading's:
 

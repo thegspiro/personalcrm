@@ -93,8 +93,12 @@ export async function listLocationOptions(ownerId: string) {
     select: { id: true, name: true },
     // By name, not by recency: a "most recently visited" order derived from
     // unfiltered visits is a signal that shifts when the lock opens.
+    //
+    // Uncapped on purpose. A cap here is not a page, it is a silent hole in the
+    // parser's vocabulary: past it, a known venue simply stops being recognised
+    // and can have part of its name offered as a person instead. Two columns
+    // for the places one person has actually been is a small read.
     orderBy: { name: "asc" },
-    take: 500,
   });
 }
 

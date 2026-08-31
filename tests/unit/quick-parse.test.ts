@@ -600,3 +600,40 @@ describe("places and the sentence about them", () => {
     expect(result.place?.matchedText).toBe("northside   cafe");
   });
 });
+
+describe("where the venue stops, and what it is not", () => {
+  it("ends the venue at a participant it has never seen", () => {
+    // Bob is not a contact, so no mask marks where he starts. Without a second
+    // delimiter the venue swallowed him — proposing "Northside Cafe with Bob"
+    // as a place and losing Bob entirely.
+    const result = parse("Coffee at Northside Cafe with Bob");
+
+    expect(result.place?.matchedText).toBe("Northside Cafe");
+    expect(result.unknownNames).toEqual(["Bob"]);
+  });
+
+  it("keeps 'and' inside a venue name, since it is usually part of one", () => {
+    // "Bar and Grill" is a place, not a guest list. "and" is deliberately not a
+    // delimiter, and the cost is only a proposal you can edit.
+    const result = parse("Dinner at The Bar and Grill");
+    expect(result.place?.matchedText).toBe("The Bar and Grill");
+  });
+
+  it("does not let a place named after a type steal that type", () => {
+    // Somebody who records a venue called "Coffee" should still be able to log
+    // "Coffee with Sarah" and get the interaction type.
+    const named = [{ id: "l-coffee", name: "Coffee" }];
+    const result = parse("Coffee with Sarah", CONTACTS, named);
+
+    expect(result.type?.id).toBe("t-coffee");
+    expect(result.place).toBeNull();
+  });
+
+  it("matches that same place when the line actually says where", () => {
+    const named = [{ id: "l-coffee", name: "Coffee" }];
+    const result = parse("Meal with Sarah at Coffee", CONTACTS, named);
+
+    expect(result.place?.location?.id).toBe("l-coffee");
+    expect(result.type?.id).toBe("t-meal");
+  });
+});

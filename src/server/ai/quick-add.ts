@@ -122,7 +122,16 @@ function merge(
   // invented simply fails to match and stands as a proposal, which the confirm
   // step shows before anything is written.
   const place = parsed.place?.trim()
-    ? (matchKnownLocation(parsed.place.trim(), context.locations).place ?? {
+    ? (matchKnownLocation(
+        parsed.place.trim(),
+        context.locations,
+        new Set(
+          context.types.flatMap((type) => [
+            type.label.trim().toLowerCase(),
+            type.slug.replace(/-/g, " ").toLowerCase(),
+          ]),
+        ),
+      ).place ?? {
         location: null,
         matchedText: parsed.place.trim(),
         via: "preposition" as const,

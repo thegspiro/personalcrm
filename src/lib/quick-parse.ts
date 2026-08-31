@@ -141,7 +141,16 @@ export function quickParse(
   );
   // Places before the type reader, or a venue called "The Coffee House" has
   // "coffee" torn out of its middle and stops matching.
-  const known = matchKnownLocation(withoutPeople, context.locations);
+  const known = matchKnownLocation(
+    withoutPeople,
+    context.locations,
+    new Set(
+      context.types.flatMap((type) => [
+        type.label.trim().toLowerCase(),
+        type.slug.replace(/-/g, " ").toLowerCase(),
+      ]),
+    ),
+  );
   const { type, withoutType } = extractType(known.withoutPlace, context.types);
   const { date, dateText, withoutDate } = extractDate(
     withoutType,
@@ -336,6 +345,13 @@ function restoreNames(text: string, names: MaskedName[]): string {
 export function matchKnownLocation(
   text: string,
   locations: ParseLocation[],
+  /**
+   * Names that mean something else as well — the account's own interaction
+   * types. A place called "Coffee" or "Dinner" is a real thing to record, but
+   * matching it with no cue stole the type out of "Coffee with Sarah". Those
+   * need "at" before them to count as a venue.
+   */
+  alsoTypeNames: Set<string> = new Set(),
 ): { place: MatchedLocation | null; withoutPlace: string } {
   // Longest first, so "The Coffee House" wins over a place called "Coffee".
   const candidates = [...locations]
@@ -362,6 +378,11 @@ export function matchKnownLocation(
 
     const at = found.index;
     const matchedText = found[0];
+    const preceding = searchable.slice(0, at);
+    const hasVenueCue = /(?:\bat|@)\s*$/i.test(preceding);
+    // Without a cue this name is more likely the type than the place.
+    if (!hasVenueCue && alsoTypeNames.has(matchedText.trim().toLowerCase())) continue;
+
     // Swallow a preposition immediately before it, or the title keeps a
     // dangling "at" once the venue is gone. The boundary belongs to "at"
     // alone: "@" is not a word character, so `\b@` cannot match after a space
@@ -405,8 +426,15 @@ function prepositionalPlace(
   //
   // A mask at the very start still rejects, because that is the other shape:
   // "at Sarah's place" is somebody's home, not a venue.
-  const maskAt = tail.search(ANY_MASK_PATTERN);
-  const cut = maskAt === -1 ? tail.length : maskAt;
+  // "with" ends a venue wherever it appears: what follows is who was there.
+  // A mask covers a participant the app already knows; this covers one it does
+  // not, which otherwise made "Coffee at Northside Cafe with Bob" propose a
+  // place called "Northside Cafe with Bob" and lose Bob altogether. "and" is
+  // deliberately not a delimiter — "Bar and Grill" is a venue, not a guest.
+  const stops = [tail.search(ANY_MASK_PATTERN), tail.search(/\swith\s/i)].filter(
+    (index) => index !== -1,
+  );
+  const cut = stops.length ? Math.min(...stops) : tail.length;
   // Trailing joining words are what led into the name we just stopped at.
   const phrase = tail
     .slice(0, cut)
