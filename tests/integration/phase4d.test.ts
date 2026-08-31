@@ -97,6 +97,22 @@ describe.skipIf(!hasTestDatabase)("debts, dietary needs and reaching out", () =>
     expect(locked).toBe(1);
   });
 
+  it("stores food, medication and environmental allergies as distinct categories", async () => {
+    await prisma.dietaryNeed.createMany({ data: [
+      { ownerId, contactId: publicContactId, kind: "ALLERGY", allergyCategory: "FOOD", label: "Peanuts" },
+      { ownerId, contactId: publicContactId, kind: "ALLERGY", allergyCategory: "MEDICATION", label: "Penicillin" },
+      { ownerId, contactId: publicContactId, kind: "ALLERGY", allergyCategory: "ENVIRONMENTAL", label: "Pollen" },
+    ] });
+
+    const rows = await prisma.dietaryNeed.findMany({
+      where: { ownerId, ...viaContactPrivacyWhere(LOCKED) },
+      orderBy: { label: "asc" },
+    });
+    expect(rows.map(({ allergyCategory }) => allergyCategory).sort()).toEqual([
+      "ENVIRONMENTAL", "FOOD", "MEDICATION",
+    ]);
+  });
+
   it("leaves an ordinary debt out of the offline count", async () => {
     // Only the marker matters — an unmarked debt is not a reason to stop
     // caching the whole account.

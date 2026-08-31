@@ -154,7 +154,17 @@ const DETAIL_INCLUDE = {
   tasks: { orderBy: [{ completedAt: "asc" }, { dueDate: "asc" }] },
   gifts: { include: { occasion: true }, orderBy: { createdAt: "desc" } },
   debts: { orderBy: [{ settledOn: "asc" }, { incurredOn: "desc" }] },
-  dietaryNeeds: { orderBy: { createdAt: "asc" } },
+  dietaryNeeds: {
+    select: {
+      id: true,
+      kind: true,
+      allergyCategory: true,
+      label: true,
+      notes: true,
+      carriesEpinephrine: true,
+    },
+    orderBy: { createdAt: "asc" },
+  },
   relationsFrom: {
     include: {
       type: true,

@@ -357,7 +357,9 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
 
   await prisma.dietaryNeed.createMany({
     data: [
-      { ownerId, contactId: contactIds.get("Marcus")!, kind: "ALLERGY", label: "Shellfish", notes: "Carries a pen. Ask before anywhere with a raw bar.", carriesEpinephrine: true },
+      { ownerId, contactId: contactIds.get("Marcus")!, kind: "ALLERGY", allergyCategory: "FOOD", label: "Shellfish", notes: "Carries a pen. Ask before anywhere with a raw bar.", carriesEpinephrine: true },
+      { ownerId, contactId: contactIds.get("Sarah")!, kind: "ALLERGY", allergyCategory: "MEDICATION", label: "Penicillin", notes: "Confirm alternatives with her clinician." },
+      { ownerId, contactId: contactIds.get("Priya")!, kind: "ALLERGY", allergyCategory: "ENVIRONMENTAL", label: "Pollen" },
       { ownerId, contactId: contactIds.get("Sarah")!, kind: "INTOLERANCE", label: "Dairy", notes: "Fine with hard cheese, not with cream." },
       { ownerId, contactId: contactIds.get("Priya")!, kind: "PREFERENCE", label: "Vegetarian" },
       { ownerId, contactId: contactIds.get("Mom")!, kind: "MEDICAL", label: "Low sodium", notes: "Blood pressure — since the spring." },

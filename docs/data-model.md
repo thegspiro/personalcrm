@@ -394,9 +394,11 @@ Money — or a thing — that has moved and not come back.
 
 ### `DietaryNeed`
 
-Something a person cannot, or will not, eat. `kind`: `ALLERGY` |
-`INTOLERANCE` | `MEDICAL` | `PREFERENCE`; plus `label`, `notes` and
-`carriesEpinephrine`.
+An allergy or dietary need. `kind` is the classification: `ALLERGY` |
+`INTOLERANCE` | `MEDICAL` | `PREFERENCE`. `allergyCategory` is the finite
+`FOOD` | `MEDICATION` | `ENVIRONMENTAL` | `OTHER` UI branch for actual
+allergies. Existing rows migrate to `FOOD`; non-allergy rows are normalized to
+`FOOD`, and only `ALLERGY` rows may retain `carriesEpinephrine`.
 
 Two deliberate absences, both documented in the schema itself:
 
@@ -566,6 +568,7 @@ the `init-migrate` s6 oneshot).
 | `20260824130123_add_households` | `Household`, `HouseholdMember` |
 | `20260824130913_add_family_suggestion_dismissals` | `FamilySuggestionDismissal` |
 | `20260824182152_add_dietary_debts_and_reach_out` | `Debt`, `DietaryNeed`, `Interaction.reachedOutBy` |
+| `20260831120000_add_allergy_category` | Adds `DietaryNeed.allergyCategory`, preserving and defaulting every existing row to `FOOD` |
 | `20260825094500_add_plans` | `Plan`, `PlanStatus`, and `PLAN_CATEGORY` on `TaxonomyKind` |
 | `20260825120000_add_onboarding_state` | `UserPreference.onboardingCompletedAt` |
 | `20260830120000_expand_plan_practical_details` | Renames `Plan.city` to the wider `address` without losing values and adds the validated JSON checklist |

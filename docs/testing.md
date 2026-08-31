@@ -22,7 +22,7 @@ does not own. That is what makes these fast and worth writing.
 | `dates.test.ts`, `date-precision.test.ts` | Timezone-anchored calendar maths, partial dates |
 | `quick-parse.test.ts` | Reading a typed line into an interaction |
 | `reciprocity.test.ts` | Who has been reaching out, and when to say nothing |
-| `debts.test.ts`, `dietary.test.ts` | Balances per currency; must-avoid grouping |
+| `debts.test.ts`, `dietary.test.ts` | Balances per currency; conservative allergy-category parsing and dietary grouping |
 | `family-suggestions.test.ts` | Graph inference, and what it refuses to infer |
 | `custom-fields.test.ts` | Type coercion and validation |
 | `offline.test.ts` | Offline-cacheability rules |
@@ -119,8 +119,9 @@ through the UI.
 `edit-entries.spec.ts` does the same for the contact page's sections — add
 something, get it wrong, fix it in place — and checks the fixes that are easy
 to get wrong from the server side alone: that the edit form opens holding the
-record, that a debt turns round, and that a dietary preference can become the
-allergy it turned out to be.
+record, that a debt turns round, that food, medication and environmental
+allergies remain distinct, and that moving an allergy to a preference clears
+its epinephrine state.
 
 ### Specs that must clean up after themselves
 

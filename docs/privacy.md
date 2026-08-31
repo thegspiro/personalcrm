@@ -61,6 +61,9 @@ contact private hides everything beneath them.
 `DietaryNeed` deliberately has no `isPrivate` — an allergy behind a PIN is a
 decorative allergy. Genuinely sensitive dietary context belongs in a private
 `Fact`.
+Food, medication, environmental, and other allergy categories inherit the same
+owner and contact privacy boundary; the category creates no separate cache or
+query surface.
 
 ### Dating is gated differently from private rows
 

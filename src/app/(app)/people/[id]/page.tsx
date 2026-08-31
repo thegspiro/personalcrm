@@ -291,6 +291,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           needs={contact.dietaryNeeds.map((need) => ({
             id: need.id,
             kind: need.kind,
+            allergyCategory: need.allergyCategory,
             label: need.label,
             notes: need.notes,
             carriesEpinephrine: need.carriesEpinephrine,

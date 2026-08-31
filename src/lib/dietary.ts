@@ -13,6 +13,16 @@ export const DIETARY_KINDS = ["ALLERGY", "INTOLERANCE", "MEDICAL", "PREFERENCE"]
 
 export type DietaryKind = (typeof DIETARY_KINDS)[number];
 
+export const ALLERGY_CATEGORIES = ["FOOD", "MEDICATION", "ENVIRONMENTAL", "OTHER"] as const;
+export type AllergyCategory = (typeof ALLERGY_CATEGORIES)[number];
+
+export const ALLERGY_CATEGORY_LABELS: Record<AllergyCategory, string> = {
+  FOOD: "Food allergy",
+  MEDICATION: "Medication allergy",
+  ENVIRONMENTAL: "Environmental allergy",
+  OTHER: "Other allergy",
+};
+
 export const DIETARY_KIND_LABELS: Record<DietaryKind, string> = {
   ALLERGY: "Allergy",
   INTOLERANCE: "Intolerance",
@@ -39,4 +49,18 @@ export const DIETARY_GROUPS = [
 
 export function dietaryKindOf(value: string | undefined): DietaryKind {
   return DIETARY_KINDS.includes(value as DietaryKind) ? (value as DietaryKind) : "ALLERGY";
+}
+
+/** Malformed or legacy category input stays food-related, matching the migration default. */
+export function allergyCategoryOf(value: string | undefined): AllergyCategory {
+  return ALLERGY_CATEGORIES.includes(value as AllergyCategory)
+    ? (value as AllergyCategory)
+    : "FOOD";
+}
+
+export type DietaryDisplayGroup = "allergies" | "dietary" | "preferences";
+
+export function dietaryDisplayGroup(kind: DietaryKind): DietaryDisplayGroup {
+  if (kind === "ALLERGY") return "allergies";
+  return kind === "PREFERENCE" ? "preferences" : "dietary";
 }

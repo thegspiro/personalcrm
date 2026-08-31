@@ -12,7 +12,7 @@ import {
 } from "@/server/privacy/filter";
 import { calendarDateInTz, plainDateFromDb, plainDateToDb } from "@/lib/dates";
 import { isValidPartialDateRange } from "@/lib/date-precision";
-import { dietaryKindOf } from "@/lib/dietary";
+import { allergyCategoryOf, dietaryKindOf } from "@/lib/dietary";
 import { parseReminderDays } from "@/lib/reminders";
 import { planChecklistSchema } from "@/lib/plan-checklist";
 import {
@@ -851,14 +851,20 @@ export async function createDietaryNeed(form: FormData): Promise<ActionResult<{ 
   if (!contactId || !label) return fail("What can't they have?");
   if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
 
+  const kind = dietaryKindOf(str(form, "kind"));
+  const allergyCategory = kind === "ALLERGY"
+    ? allergyCategoryOf(str(form, "allergyCategory"))
+    : "FOOD";
+
   const created = await prisma.dietaryNeed.create({
     data: {
       ownerId,
       contactId,
-      kind: dietaryKindOf(str(form, "kind")),
+      kind,
+      allergyCategory,
       label,
       notes: str(form, "notes") ?? null,
-      carriesEpinephrine: bool(form, "carriesEpinephrine"),
+      carriesEpinephrine: kind === "ALLERGY" && bool(form, "carriesEpinephrine"),
     },
   });
 
@@ -878,13 +884,21 @@ export async function updateDietaryNeed(form: FormData): Promise<ActionResult> {
   });
   if (!existing) return fail("Not found.");
 
+  const kind = dietaryKindOf(str(form, "kind"));
+  const allergyCategory = kind === "ALLERGY"
+    ? allergyCategoryOf(str(form, "allergyCategory"))
+    : "FOOD";
+
   await prisma.dietaryNeed.update({
     where: { id },
     data: {
-      kind: dietaryKindOf(str(form, "kind")),
+      kind,
+      allergyCategory,
       label,
       notes: str(form, "notes") ?? null,
-      carriesEpinephrine: bool(form, "carriesEpinephrine"),
+      // A hidden checkbox is not a data-integrity rule. Clear this explicitly
+      // whenever an allergy is reclassified as a dietary need.
+      carriesEpinephrine: kind === "ALLERGY" && bool(form, "carriesEpinephrine"),
     },
   });
 

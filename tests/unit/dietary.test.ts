@@ -5,6 +5,8 @@ import {
   DIETARY_KIND_LABELS,
   dietaryKindOf,
   mustAvoid,
+  allergyCategoryOf,
+  dietaryDisplayGroup,
 } from "@/lib/dietary";
 
 describe("dietary kinds", () => {
@@ -44,5 +46,16 @@ describe("dietary kinds", () => {
     expect(dietaryKindOf(undefined)).toBe("ALLERGY");
     expect(dietaryKindOf("nonsense")).toBe("ALLERGY");
     expect(dietaryKindOf("PREFERENCE")).toBe("PREFERENCE");
+  });
+
+  it("parses categories conservatively without confusing classifications", () => {
+    expect(allergyCategoryOf("MEDICATION")).toBe("MEDICATION");
+    expect(allergyCategoryOf("ENVIRONMENTAL")).toBe("ENVIRONMENTAL");
+    expect(allergyCategoryOf("bad-input")).toBe("FOOD");
+    expect(allergyCategoryOf(undefined)).toBe("FOOD");
+    expect(dietaryDisplayGroup("ALLERGY")).toBe("allergies");
+    expect(dietaryDisplayGroup("INTOLERANCE")).toBe("dietary");
+    expect(dietaryDisplayGroup("MEDICAL")).toBe("dietary");
+    expect(dietaryDisplayGroup("PREFERENCE")).toBe("preferences");
   });
 });

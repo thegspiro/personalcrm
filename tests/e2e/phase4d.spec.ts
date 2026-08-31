@@ -27,26 +27,35 @@ test("create the person this spec works with", async ({ page }) => {
   await expect(page.getByRole("heading", { name: `${personName()} Case`, level: 2 })).toBeVisible();
 });
 
-test("an allergy and a preference are kept visibly apart", async ({ page }) => {
+test("allergy categories and dietary preferences stay visibly distinct", async ({ page }) => {
   await ensureSignedIn(page);
   await openPerson(page, `${personName()} Case`);
 
-  await page.getByRole("button", { name: "Add a dietary need" }).click();
-  await page.getByLabel("What should they avoid?").fill("Shellfish");
-  await page.getByRole("button", { name: "Allergy", exact: true }).click();
-  await page.getByLabel("Carries adrenaline for this").check();
-  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("button", { name: "Add an allergy or dietary need" }).click();
+  await page.getByLabel("What do they need to avoid?").fill("Shellfish");
+  await page.getByRole("button", { name: "Food allergy", exact: true }).click();
+  await page.getByLabel("Carries epinephrine for this allergy").check();
+  await page.getByRole("button", { name: "Add need", exact: true }).click();
 
   await expect(page.getByText("Shellfish")).toBeVisible();
-  await expect(page.getByText("Carries adrenaline", { exact: true })).toBeVisible();
+  await expect(page.getByText("Carries epinephrine", { exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: "Add a dietary need" }).click();
-  await page.getByLabel("What should they avoid?").fill("Mushrooms");
-  await page.getByRole("button", { name: "Preference", exact: true }).click();
-  await page.getByRole("button", { name: "Add", exact: true }).click();
+  for (const [label, choice] of [["Penicillin", "Medication allergy"], ["Pollen", "Environmental allergy"]] as const) {
+    await page.getByRole("button", { name: "Add an allergy or dietary need" }).click();
+    await page.getByLabel("What do they need to avoid?").fill(label);
+    await page.getByRole("button", { name: choice, exact: true }).click();
+    await page.getByRole("button", { name: "Add need", exact: true }).click();
+  }
+  await expect(page.getByText("Medication allergy", { exact: true })).toBeVisible();
+  await expect(page.getByText("Environmental allergy", { exact: true })).toBeVisible();
 
-  await expect(page.getByRole("heading", { name: "Must avoid" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Prefers to avoid" })).toBeVisible();
+  await page.getByRole("button", { name: "Add an allergy or dietary need" }).click();
+  await page.getByLabel("What do they need to avoid?").fill("Mushrooms");
+  await page.getByRole("button", { name: "Food preference", exact: true }).click();
+  await page.getByRole("button", { name: "Add need", exact: true }).click();
+
+  await expect(page.getByRole("heading", { name: "Allergies" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Food preferences" })).toBeVisible();
 });
 
 test("offers no way to grade an allergy as mild", async ({ page }) => {
@@ -55,7 +64,7 @@ test("offers no way to grade an allergy as mild", async ({ page }) => {
   await ensureSignedIn(page);
   await openPerson(page, `${personName()} Case`);
 
-  await page.getByRole("button", { name: "Add a dietary need" }).click();
+  await page.getByRole("button", { name: "Add an allergy or dietary need" }).click();
   await expect(page.getByRole("button", { name: /^(mild|moderate|severe)$/i })).toHaveCount(0);
   await expect(page.getByLabel(/severity/i)).toHaveCount(0);
 });

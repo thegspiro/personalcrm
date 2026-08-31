@@ -507,12 +507,19 @@ describe.skipIf(!hasTestDatabase)("editing an entry", () => {
     // The two ways of getting this wrong do not cost the same: a preference
     // that turns out to be an allergy has to be able to become one.
     await updateDietaryNeed(
-      form({ id: need.id, label: "Shellfish", kind: "ALLERGY", carriesEpinephrine: "true" }),
+      form({ id: need.id, label: "Penicillin", kind: "ALLERGY", allergyCategory: "MEDICATION", carriesEpinephrine: "true" }),
     );
 
     const stored = await prisma.dietaryNeed.findUniqueOrThrow({ where: { id: need.id } });
     expect(stored.kind).toBe("ALLERGY");
+    expect(stored.allergyCategory).toBe("MEDICATION");
     expect(stored.carriesEpinephrine).toBe(true);
+
+    await updateDietaryNeed(form({ id: need.id, label: "Vegetarian", kind: "PREFERENCE", allergyCategory: "ENVIRONMENTAL", carriesEpinephrine: "true" }));
+    const preference = await prisma.dietaryNeed.findUniqueOrThrow({ where: { id: need.id } });
+    expect(preference.kind).toBe("PREFERENCE");
+    expect(preference.allergyCategory).toBe("FOOD");
+    expect(preference.carriesEpinephrine).toBe(false);
   });
 
   // --- flags ---------------------------------------------------------------
