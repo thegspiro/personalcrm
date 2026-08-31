@@ -5,7 +5,7 @@ import Link from "next/link";
 import { cn, displayName } from "@/lib/utils";
 import { Icon } from "@/components/nav/icon";
 import { SubmitButton } from "@/components/form/submit-button";
-import { Input } from "@/components/ui/input";
+import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { TermSelect, type TermOption } from "@/components/form/term-select";
 import { ContactPicker, type PickerContact } from "@/components/form/contact-picker";
@@ -82,6 +82,14 @@ export function FamilySection({
             required
           />
           <TermSelect name="typeId" label="Is their…" terms={familyTypes} />
+          <Field label="Family context (optional)" htmlFor="family-link-notes">
+            <Textarea
+              id="family-link-notes"
+              name="notes"
+              rows={2}
+              placeholder="How they fit into the family, co-parenting context, or anything useful to remember."
+            />
+          </Field>
           <SubmitButton size="sm">Link</SubmitButton>
         </form>
       )}

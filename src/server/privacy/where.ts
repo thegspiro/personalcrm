@@ -46,6 +46,7 @@ export function interactionPrivacyWhere(scope: PrivacyScope): Prisma.Interaction
   return {
     isPrivate: false,
     participants: { none: { contact: { isPrivate: true } } },
+    mentions: { none: { contact: { isPrivate: true } } },
   };
 }
 
