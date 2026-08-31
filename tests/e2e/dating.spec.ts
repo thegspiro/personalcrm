@@ -143,7 +143,11 @@ test("save something to do, then log the date it becomes", async ({ page }) => {
   // A successful date can seed another plan, but only the selected logistics
   // cross over: the private retrospective never becomes Plan.notes.
   await dates.getByText("Past dates worth repeating").click();
-  await expect(dates.getByText("Pick an earlier show so we can talk after.")).toBeVisible();
+  // Scoped to the repeat panel: the same reflection is deliberately shown twice
+  // in this section — once on the date row as "Next time", and again here as
+  // "Remember", where you choose which logistics to carry over.
+  const repeat = dates.locator("details").filter({ hasText: "Past dates worth repeating" });
+  await expect(repeat.getByText("Pick an earlier show so we can talk after.")).toBeVisible();
   await dates.getByRole("button", { name: "Plan this again" }).click();
   await expect(plans.getByText("Movie").first()).toBeVisible();
   await expect(plans.getByText("Pick an earlier show so we can talk after.")).toHaveCount(0);
