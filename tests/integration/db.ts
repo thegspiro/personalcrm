@@ -25,6 +25,7 @@ export const prisma = new PrismaClient({
 
 /** Order matters only in that foreign key checks are off while we truncate. */
 const TABLES = [
+  "InteractionMention",
   "InteractionParticipant",
   "Plan",
   "DateEntry",
@@ -32,6 +33,7 @@ const TABLES = [
   "Location",
   "Fact",
   "ImportantDate",
+  "LifeEventParticipant",
   "LifeEvent",
   "Idea",
   "Task",

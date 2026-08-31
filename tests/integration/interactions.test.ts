@@ -149,6 +149,28 @@ describe.skipIf(!hasTestDatabase)("updateInteraction", () => {
     expect(await prisma.location.count({ where: { ownerId: state.ownerId } })).toBe(1);
   });
 
+  it("keeps mentioned people separate from attendees and their cadence", async () => {
+    const result = await createInteraction(
+      formOf({
+        contactIds: [sarahId, sarahId],
+        mentionedContactIds: [marcusId],
+        typeId: coffeeId,
+        occurredAt: WHEN.toISOString(),
+        title: "Talked about Marcus",
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    const interaction = await prisma.interaction.findUniqueOrThrow({
+      where: { id: result.data!.id },
+      include: { participants: true, mentions: true },
+    });
+    expect(interaction.participants.map((row) => row.contactId)).toEqual([sarahId]);
+    expect(interaction.mentions.map((row) => row.contactId)).toEqual([marcusId]);
+    expect((await prisma.contact.findUniqueOrThrow({ where: { id: marcusId } })).lastInteractionAt)
+      .toBeNull();
+  });
+
   it("refuses an interaction type belonging to somebody else", async () => {
     const id = await logged();
     const stranger = await createTestUser();

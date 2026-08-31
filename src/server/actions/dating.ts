@@ -239,6 +239,10 @@ export async function createDateEntry(form: FormData): Promise<ActionResult<{ id
   const cost = num(form, "cost");
   const venue = str(form, "venue");
   const rating = clampRating(num(form, "rating"));
+  const wouldDoAgain = str(form, "wouldDoAgain");
+  if (wouldDoAgain && wouldDoAgain !== "true" && wouldDoAgain !== "false") {
+    return fail("Choose yes or no for the post-date reflection.");
+  }
 
   let entry: { id: string };
   try {
@@ -277,6 +281,8 @@ export async function createDateEntry(form: FormData): Promise<ActionResult<{ id
         chemistry: clampRating(num(form, "chemistry")),
         conversationQuality: clampRating(num(form, "conversationQuality")),
         notes: str(form, "notes") ?? null,
+        wouldDoAgain: wouldDoAgain === undefined ? null : wouldDoAgain === "true",
+        nextTimeNotes: str(form, "nextTimeNotes") ?? null,
       },
     });
 
@@ -331,6 +337,10 @@ export async function updateDateEntry(form: FormData): Promise<ActionResult> {
   const cost = num(form, "cost");
   const venue = str(form, "venue");
   const rating = clampRating(num(form, "rating"));
+  const wouldDoAgain = str(form, "wouldDoAgain");
+  if (wouldDoAgain && wouldDoAgain !== "true" && wouldDoAgain !== "false") {
+    return fail("Choose yes or no for the post-date reflection.");
+  }
 
   await prisma.$transaction(async (tx) => {
     const place = await resolveLocation(tx, ownerId, venue);
@@ -346,6 +356,8 @@ export async function updateDateEntry(form: FormData): Promise<ActionResult> {
         chemistry: clampRating(num(form, "chemistry")),
         conversationQuality: clampRating(num(form, "conversationQuality")),
         notes: str(form, "notes") ?? null,
+        wouldDoAgain: wouldDoAgain === undefined ? null : wouldDoAgain === "true",
+        nextTimeNotes: str(form, "nextTimeNotes") ?? null,
       },
     });
 

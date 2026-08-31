@@ -27,6 +27,7 @@ import {
   partialDate,
   plainDate,
   str,
+  strList,
 } from "./helpers";
 
 /**
@@ -239,7 +240,12 @@ export async function createLifeEvent(form: FormData): Promise<ActionResult<{ id
   const title = str(form, "title");
   const when = partialDate(form, "date");
   if (!contactId || !title || !when) return fail("A title and a date are required.");
-  if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
+  const requestedContactIds = [...new Set([contactId, ...strList(form, "contactIds")])];
+  const ownedContacts = await prisma.contact.findMany({
+    where: { ownerId, id: { in: requestedContactIds } },
+    select: { id: true },
+  });
+  if (ownedContacts.length !== requestedContactIds.length) return fail("Contact not found.");
 
   const end = partialDate(form, "endDate");
   if (
@@ -266,10 +272,11 @@ export async function createLifeEvent(form: FormData): Promise<ActionResult<{ id
       endDate: end?.date ?? null,
       endPrecision: end?.precision ?? null,
       isMilestone: bool(form, "isMilestone"),
+      participants: { create: requestedContactIds.map((participantId) => ({ contactId: participantId })) },
     },
   });
 
-  touch(contactId);
+  requestedContactIds.forEach(touch);
   return ok({ id: created.id });
 }
 
@@ -277,9 +284,17 @@ export async function updateLifeEvent(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
   const id = str(form, "id");
   if (!id) return fail("Missing event.");
+  const scope = await privacyScope();
   const existing = await prisma.lifeEvent.findFirst({
-    where: { id, ownerId, ...viaContactPrivacyWhere(await privacyScope()) },
-    select: { contactId: true },
+    where: {
+      id,
+      ownerId,
+      ...viaContactPrivacyWhere(scope),
+      ...(!scope.unlocked
+        ? { participants: { none: { contact: { isPrivate: true } } } }
+        : {}),
+    },
+    select: { contactId: true, participants: { select: { contactId: true } } },
   });
   if (!existing) return fail("Not found.");
 
@@ -299,9 +314,15 @@ export async function updateLifeEvent(form: FormData): Promise<ActionResult> {
   const type = await termFromForm(ownerId, form, "typeId", "LIFE_EVENT_TYPE");
   if (!type.ok) return fail(UNKNOWN_TERM);
 
-  await prisma.lifeEvent.update({
-    where: { id },
-    data: {
+  const requestedContactIds = [...new Set([existing.contactId, ...strList(form, "contactIds")])];
+  const ownedContacts = await prisma.contact.findMany({
+    where: { ownerId, id: { in: requestedContactIds } },
+    select: { id: true },
+  });
+  if (ownedContacts.length !== requestedContactIds.length) return fail("Contact not found.");
+
+  await prisma.$transaction(async (tx) => {
+    await tx.lifeEvent.update({ where: { id }, data: {
       title,
       typeId: type.id,
       description: str(form, "description") ?? null,
@@ -310,22 +331,34 @@ export async function updateLifeEvent(form: FormData): Promise<ActionResult> {
       endDate: end?.date ?? null,
       endPrecision: end?.precision ?? null,
       isMilestone: bool(form, "isMilestone"),
-    },
+    } });
+    await tx.lifeEventParticipant.deleteMany({ where: { lifeEventId: id } });
+    await tx.lifeEventParticipant.createMany({
+      data: requestedContactIds.map((participantId) => ({ lifeEventId: id, contactId: participantId })),
+    });
   });
 
-  touch(existing.contactId);
+  [...new Set([...existing.participants.map((p) => p.contactId), ...requestedContactIds])].forEach(touch);
   return ok();
 }
 
 export async function deleteLifeEvent(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
+  const scope = await privacyScope();
   const existing = await prisma.lifeEvent.findFirst({
-    where: { id, ownerId, ...viaContactPrivacyWhere(await privacyScope()) },
-    select: { contactId: true },
+    where: {
+      id,
+      ownerId,
+      ...viaContactPrivacyWhere(scope),
+      ...(!scope.unlocked
+        ? { participants: { none: { contact: { isPrivate: true } } } }
+        : {}),
+    },
+    select: { contactId: true, participants: { select: { contactId: true } } },
   });
   if (!existing) return fail("Not found.");
   await prisma.lifeEvent.delete({ where: { id } });
-  touch(existing.contactId);
+  [existing.contactId, ...existing.participants.map((p) => p.contactId)].forEach(touch);
   return ok();
 }
 
@@ -941,14 +974,15 @@ export async function createRelationship(form: FormData): Promise<ActionResult> 
 
   const pairId = randomBytes(8).toString("hex");
   const inverseTypeId = type.inverseTermId ?? type.id;
+  const notes = str(form, "notes") ?? null;
 
   await prisma.$transaction(async (tx) => {
     await tx.relationship.upsert({
       where: {
         fromContactId_toContactId_typeId: { fromContactId, toContactId, typeId: type.id },
       },
-      create: { ownerId, fromContactId, toContactId, typeId: type.id, pairId },
-      update: { pairId },
+      create: { ownerId, fromContactId, toContactId, typeId: type.id, pairId, notes },
+      update: { pairId, notes },
     });
     await tx.relationship.upsert({
       where: {
@@ -964,8 +998,9 @@ export async function createRelationship(form: FormData): Promise<ActionResult> 
         toContactId: fromContactId,
         typeId: inverseTypeId,
         pairId,
+        notes,
       },
-      update: { pairId },
+      update: { pairId, notes },
     });
   });
 
