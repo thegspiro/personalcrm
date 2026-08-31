@@ -20,6 +20,11 @@ WHERE EXISTS (
   WHERE d.`contactId` = c.`id` AND d.`kind` = 'ALLERGY'
 );
 
-DROP INDEX `DietaryNeed_contactId_kind_idx` ON `DietaryNeed`;
+-- InnoDB requires an index whose leftmost column is the foreign key column, and
+-- `DietaryNeed_contactId_kind_idx` is the only one leading with `contactId`.
+-- Dropping it first leaves the DietaryNeed -> Contact constraint uncovered and
+-- MariaDB refuses with errno 1553. Create the replacement -- which also leads
+-- with `contactId`, so it satisfies the constraint -- before dropping the old one.
 CREATE INDEX `DietaryNeed_contactId_category_kind_idx`
   ON `DietaryNeed`(`contactId`, `category`, `kind`);
+DROP INDEX `DietaryNeed_contactId_kind_idx` ON `DietaryNeed`;

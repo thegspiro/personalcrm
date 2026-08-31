@@ -12,6 +12,10 @@ function personName(): string {
   return `Phase4d ${test.info().project.name} ${STAMP}`;
 }
 
+function section(page: Page, title: string) {
+  return page.locator("section").filter({ has: page.getByText(title, { exact: true }) }).first();
+}
+
 async function openPerson(page: Page, name: string) {
   await page.goto("/people");
   await page.getByRole("link", { name: new RegExp(name) }).first().click();
@@ -36,7 +40,10 @@ test("an allergy and a preference are kept visibly apart", async ({ page }) => {
   await page.getByLabel("Carries adrenaline for this allergy").check();
   await page.getByRole("button", { name: "Add allergy", exact: true }).click();
 
-  await expect(page.getByText("Shellfish")).toBeVisible();
+  // The header summary chip and the allergy row both name the allergen, so
+  // assert each precisely instead of letting one substring match resolve to both.
+  await expect(page.getByRole("link", { name: "Allergies: Shellfish" })).toBeVisible();
+  await expect(page.getByText("Shellfish", { exact: true })).toBeVisible();
   await expect(page.getByText("Carries adrenaline", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Add a dietary need" }).click();
@@ -44,8 +51,15 @@ test("an allergy and a preference are kept visibly apart", async ({ page }) => {
   await page.getByLabel("What do they prefer to avoid?").fill("Mushrooms");
   await page.getByRole("button", { name: "Add dietary need", exact: true }).click();
 
-  await expect(page.getByRole("heading", { name: "Allergies" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Food and dietary needs" })).toBeVisible();
+  // SectionCard renders its title as a span, so there is no heading role to
+  // match. Locate each section by its title and assert what the test name
+  // claims: the allergy and the preference are filed apart, not merely present.
+  const allergies = section(page, "Allergies");
+  const dietary = section(page, "Food and dietary needs");
+  await expect(allergies.getByText("Shellfish", { exact: true })).toBeVisible();
+  await expect(dietary.getByText("Mushrooms", { exact: true })).toBeVisible();
+  await expect(allergies.getByText("Mushrooms", { exact: true })).toHaveCount(0);
+  await expect(dietary.getByText("Shellfish", { exact: true })).toHaveCount(0);
 });
 
 test("offers no way to grade an allergy as mild", async ({ page }) => {

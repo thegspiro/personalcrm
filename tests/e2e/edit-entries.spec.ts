@@ -125,8 +125,10 @@ test("a dietary preference can become the allergy it turned out to be", async ({
 
   const diet = section(page, "Food and dietary needs");
   await diet.getByRole("button", { name: "Add a dietary need" }).click();
+  // The prompt is worded from the selected kind, and the form opens on
+  // INTOLERANCE ("What can't they have?"), so pick the kind before filling it.
+  await diet.getByRole("button", { name: "Preference", exact: true }).click();
   await diet.getByLabel("What do they prefer to avoid?").fill("Shellfish");
-  await diet.getByRole("button", { name: "Preference" }).click();
   await diet.getByRole("button", { name: "Add dietary need", exact: true }).click();
   await expect(diet.getByText("Shellfish")).toBeVisible();
 
