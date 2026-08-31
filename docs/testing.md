@@ -51,6 +51,11 @@ the schema do, not things a mock can:
 - `interactions.test.ts` — editing something already logged: that the type and
   the people are re-checked against the account, that a dropped participant is
   recomputed too, and that a closed lock refuses the edit as firmly as the read.
+- `locations.test.ts` — that a place is a second route to a visit and so a
+  second way to leak one: the closed lock withholds a private visit and a
+  visit with a private participant, the free text each row was written with
+  survives beside the canonical id, and two accounts naming the same café keep
+  two rows.
 - `entry-editing.test.ts` — the same for everything else that hangs off a
   person: that an `update*` writes the whole form rather than patching it, that
   the state changes it deliberately leaves alone stay put (a gift's status, a
@@ -121,6 +126,11 @@ something, get it wrong, fix it in place — and checks the fixes that are easy
 to get wrong from the server side alone: that the edit form opens holding the
 record, that a debt turns round, and that a dietary preference can become the
 allergy it turned out to be.
+
+`locations.spec.ts` walks the only way a place is actually created — logging a
+visit with a venue — then adds a second person to that visit from the timeline
+and reads the place back, so the aggregation is exercised across participants
+rather than echoing whoever logged it.
 
 ### Specs that must clean up after themselves
 
