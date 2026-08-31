@@ -8,6 +8,8 @@ import { normalizeToPrecision, type DatePrecision } from "@/lib/date-precision";
 export interface ActionResult<T = void> {
   ok: boolean;
   error?: string;
+  /** Seconds before a rate-limited action may be attempted again. */
+  retryAfterSeconds?: number;
   fieldErrors?: Record<string, string>;
   data?: T;
 }
@@ -16,8 +18,8 @@ export function ok<T>(data?: T): ActionResult<T> {
   return { ok: true, data };
 }
 
-export function fail(error: string): ActionResult<never> {
-  return { ok: false, error };
+export function fail(error: string, retryAfterSeconds?: number): ActionResult<never> {
+  return { ok: false, error, retryAfterSeconds };
 }
 
 export function fieldError(field: string, message: string): ActionResult<never> {

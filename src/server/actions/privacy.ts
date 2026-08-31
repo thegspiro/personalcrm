@@ -19,7 +19,7 @@ export async function unlockPrivacyAction(
   if (!pin) return fail("Enter your PIN.");
 
   const result = await unlock(pin);
-  if (!result.ok) return fail(result.error ?? "That PIN is wrong.");
+  if (!result.ok) return fail(result.error ?? "That PIN is wrong.", result.retryAfterSeconds);
 
   revalidateEverything();
   const next = str(form, "next");
@@ -44,7 +44,7 @@ export async function setPinAction(
   if (newPin !== confirmPin) return fail("Those PINs don't match.");
 
   const result = await setPin(newPin, str(form, "currentPin"));
-  if (!result.ok) return fail(result.error ?? "Could not set that PIN.");
+  if (!result.ok) return fail(result.error ?? "Could not set that PIN.", result.retryAfterSeconds);
 
   revalidateEverything();
   return ok();
@@ -58,7 +58,7 @@ export async function clearPinAction(
   if (!pin) return fail("Enter your PIN to remove it.");
 
   const result = await clearPin(pin);
-  if (!result.ok) return fail(result.error ?? "Could not remove the PIN.");
+  if (!result.ok) return fail(result.error ?? "Could not remove the PIN.", result.retryAfterSeconds);
 
   revalidateEverything();
   return ok();

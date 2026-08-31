@@ -197,6 +197,10 @@ runs once per account and records that it did in
 `unlockPrivacyAction`, `lockPrivacyAction`, `setPinAction`, `clearPinAction`,
 `updatePrivacyPreferences`, `setPrivate`.
 
+Unlock, PIN replacement, and PIN removal return the same retry duration from a
+shared account-level verifier. Its counter is serialized in the database, so
+requests from separate sessions cannot race around the backoff.
+
 `setPrivate` is refused while locked — otherwise a row vanishes with no way back
 to it.
 

@@ -15,6 +15,7 @@ import { TaxonomySettings } from "@/components/settings/taxonomy-settings";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { AiSettings } from "@/components/settings/ai-settings";
 import { getAiStatus } from "@/server/ai/config";
+import { getPrivacyState } from "@/server/privacy/lock";
 import { PROVIDERS } from "@/server/ai/providers";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -23,7 +24,7 @@ export const dynamic = "force-dynamic";
 export default async function SettingsPage() {
   const { user, prefs } = await getUserContext();
 
-  const [taxonomies, definitions, categories, layoutRow, valueCounts, ai] = await Promise.all([
+  const [taxonomies, definitions, categories, layoutRow, valueCounts, ai, privacyState] = await Promise.all([
     listTaxonomyAdmin(user.id),
     listAllFieldDefinitions(user.id),
     listTerms(user.id, "CONTACT_CATEGORY"),
@@ -34,6 +35,7 @@ export default async function SettingsPage() {
       _count: { _all: true },
     }),
     getAiStatus(),
+    getPrivacyState(),
   ]);
 
   // Value counts drive the delete warning: deleting a field takes everything
@@ -117,6 +119,7 @@ export default async function SettingsPage() {
             privacyLockEnabled={prefs.privacyLockEnabled}
             hideDating={prefs.hideDating}
             blurPrivateNotes={prefs.blurPrivateNotes}
+            retryAfterSeconds={privacyState.retryAfterSeconds}
           />
         }
         app={<AppSettings installedAt={prefs.pwaInstalledAt?.toISOString() ?? null} />}
