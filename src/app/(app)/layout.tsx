@@ -9,10 +9,21 @@ import { listTerms } from "@/server/taxonomy/queries";
 import { fieldsFor } from "@/server/queries/custom-fields";
 import { QuickLogFab } from "@/components/nav/quick-log-fab";
 import { OfflineBanner } from "@/components/offline/offline";
+import { PrivacyActivityController } from "@/components/privacy/privacy-activity-controller";
+import {
+  ACTIVITY_HEARTBEAT_MS,
+  getPrivacyState,
+  IDLE_TIMEOUT_MS,
+  recordProtectedReadActivity,
+} from "@/server/privacy/lock";
 
 export const dynamic = "force-dynamic";
 
-export default async function AppLayout({ children }: { children: React.ReactNode }) {
+export default async function AppLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const { user, prefs } = await getUserContext();
 
   // Setup is not finished until the wizard says so. Existing accounts were
@@ -22,31 +33,49 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   // Loaded once for the whole shell so the floating log button works from any
   // screen without each page having to supply it.
+  const privacy = await getPrivacyState();
   const [contacts, interactionTypes, interactionFields] = await Promise.all([
     listContactOptions(user.id),
     listTerms(user.id, "INTERACTION_TYPE"),
     fieldsFor(user.id, "INTERACTION", null),
   ]);
+  const activity =
+    privacy.enabled && privacy.unlocked
+      ? await recordProtectedReadActivity()
+      : null;
+  const expiresAt = activity?.ok ? activity.expiresAt : privacy.expiresAt;
 
   return (
-    <div className="min-h-dvh">
-      <AppearanceSync accent={prefs.accent} density={prefs.density} />
-      <Sidebar hideDating={prefs.hideDating} />
-      <div className="lg:pl-60">
-        <TopBar name={user.name} email={user.email} hideDating={prefs.hideDating} />
-        <main className="pb-nav mx-auto w-full max-w-5xl px-4 pt-4 lg:px-6 lg:pb-10">
-          {/* Rendered on the server, so it says how old this copy actually is
+    <PrivacyActivityController
+      enabled={privacy.enabled}
+      unlocked={privacy.unlocked}
+      expiresAt={expiresAt}
+      idleTimeoutMs={IDLE_TIMEOUT_MS}
+      heartbeatMs={ACTIVITY_HEARTBEAT_MS}
+    >
+      <div className="min-h-dvh">
+        <AppearanceSync accent={prefs.accent} density={prefs.density} />
+        <Sidebar hideDating={prefs.hideDating} />
+        <div className="lg:pl-60">
+          <TopBar
+            name={user.name}
+            email={user.email}
+            hideDating={prefs.hideDating}
+          />
+          <main className="pb-nav mx-auto w-full max-w-5xl px-4 pt-4 lg:px-6 lg:pb-10">
+            {/* Rendered on the server, so it says how old this copy actually is
               rather than when the browser noticed it was offline. */}
-          <OfflineBanner renderedAt={new Date().toISOString()} />
-          {children}
-        </main>
+            <OfflineBanner renderedAt={new Date().toISOString()} />
+            {children}
+          </main>
+        </div>
+        <QuickLogFab
+          contacts={contacts}
+          types={interactionTypes}
+          customFields={interactionFields}
+        />
+        <BottomNav hideDating={prefs.hideDating} />
       </div>
-      <QuickLogFab
-        contacts={contacts}
-        types={interactionTypes}
-        customFields={interactionFields}
-      />
-      <BottomNav hideDating={prefs.hideDating} />
-    </div>
+    </PrivacyActivityController>
   );
 }

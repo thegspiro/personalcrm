@@ -25,21 +25,32 @@ Two design decisions carry the whole thing:
 never client state. A client cannot claim to be unlocked, and the unlock dies
 with the session rather than lingering after sign-out.
 
-An unlock lasts **15 minutes of inactivity** (`IDLE_TIMEOUT_MS`), refreshed as
-you use the app.
+An unlock lasts **15 minutes of inactivity** (`IDLE_TIMEOUT_MS`). “Activity” is
+successful use of protected content: opening dating views, reading
+private-capable records, or completing a guarded write. Ordinary public page
+requests do not keep the lock open.
+
+The authenticated browser shell listens for pointer, keyboard, touch, scroll,
+and focus activity while protected content is rendered. It sends at most one
+heartbeat per minute, and the server accepts that heartbeat only if the session
+is still unlocked; a late heartbeat cannot revive an expired unlock. At the
+deadline the shell immediately replaces its rendered children, purges protected
+offline state, and navigates to the unlock screen. This browser behavior limits
+what remains on screen, but is not authorization: every later read and write is
+still gated on the server.
 
 ### Enforcement is in the query layer, not in components
 
 [`src/server/privacy/where.ts`](../src/server/privacy/where.ts) exports
 where-fragments applied to the queries themselves:
 
-| Fragment | Applied to |
-| --- | --- |
-| `contactPrivacyWhere` | Contact queries |
-| `factPrivacyWhere` | Fact queries |
-| `debtPrivacyWhere` | Debt queries |
+| Fragment                  | Applied to                                                              |
+| ------------------------- | ----------------------------------------------------------------------- |
+| `contactPrivacyWhere`     | Contact queries                                                         |
+| `factPrivacyWhere`        | Fact queries                                                            |
+| `debtPrivacyWhere`        | Debt queries                                                            |
 | `interactionPrivacyWhere` | Interactions — withheld if the row is private **or any participant is** |
-| `viaContactPrivacyWhere` | Anything reached through a contact |
+| `viaContactPrivacyWhere`  | Anything reached through a contact                                      |
 
 > A component that renders nothing is not a lock. With server components the
 > rows would already have been fetched and serialised into the payload sent to
@@ -180,10 +191,10 @@ parse refuses to do (two contacts called John block the save until you pick).
 
 ### Where the key lives
 
-| Source | Behaviour |
-| --- | --- |
-| `AI_API_KEY` (or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`) | Wins. Keeps the key out of the database and therefore out of your backups. Cannot be edited from the app |
-| Pasted in Settings | Verified against the provider before being stored, encrypted with **AES-256-GCM** under a key derived (HKDF) from the `authSecret` in `/config`, and never shown again |
+| Source                                                                      | Behaviour                                                                                                                                                              |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AI_API_KEY` (or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`) | Wins. Keeps the key out of the database and therefore out of your backups. Cannot be edited from the app                                                               |
+| Pasted in Settings                                                          | Verified against the provider before being stored, encrypted with **AES-256-GCM** under a key derived (HKDF) from the `authSecret` in `/config`, and never shown again |
 
 That protects a key sitting in a backup file. It does not protect against
 someone holding both the database and `/config`, and nothing claims it does. A

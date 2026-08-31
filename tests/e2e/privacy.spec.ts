@@ -1,4 +1,7 @@
 import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { createHash } from "node:crypto";
+import { PrismaClient } from "@prisma/client";
 import { createContact, ensureSignedIn, openPrivacySettings } from "./helpers";
 
 /**
@@ -12,8 +15,40 @@ test.describe.configure({ mode: "serial" });
 
 const STAMP = `${process.env.E2E_RUN_ID ?? "local"}-${Date.now().toString(36)}`;
 const PIN = "482913";
+const IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+const prisma = new PrismaClient();
+
+test.afterAll(async () => {
+  await prisma.$disconnect();
+});
 
 const secretName = () => `Secret ${test.info().project.name} ${STAMP}`;
+
+async function setCurrentUnlock(page: Page, unlockedAt: Date) {
+  const token = (await page.context().cookies()).find(
+    (cookie) => cookie.name === "pcrm_session",
+  )?.value;
+  if (!token)
+    throw new Error("The browser has no authenticated session cookie.");
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  await prisma.session.update({
+    where: { tokenHash },
+    data: { privacyUnlockedAt: unlockedAt },
+  });
+}
+
+async function currentUnlock(page: Page) {
+  const token = (await page.context().cookies()).find(
+    (cookie) => cookie.name === "pcrm_session",
+  )?.value;
+  if (!token)
+    throw new Error("The browser has no authenticated session cookie.");
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  return prisma.session.findUniqueOrThrow({
+    where: { tokenHash },
+    select: { privacyUnlockedAt: true },
+  });
+}
 
 test("set a PIN and switch the lock on", async ({ page }) => {
   await ensureSignedIn(page);
@@ -109,7 +144,9 @@ test("a private contact is withheld from the response while locked", async ({ pa
   await expect(page.getByText("No one matches")).toBeVisible();
 
   await page.goto(url);
-  await expect(page.getByRole("heading", { name: "Nothing here" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Nothing here" }),
+  ).toBeVisible();
 });
 
 test("a gift for a private contact is withheld from the gifts list while locked", async ({
@@ -179,21 +216,109 @@ test("the wrong PIN is rejected", async ({ page }) => {
   await expect(page.getByText(/PIN is wrong/i)).toBeVisible();
 });
 
-test("the right PIN unlocks and returns you where you were headed", async ({ page }) => {
+test("the right PIN unlocks and returns you where you were headed", async ({
+  page,
+}) => {
   await ensureSignedIn(page);
   await page.goto("/unlock?next=/dating");
   await page.getByLabel("PIN").fill(PIN);
   await page.getByRole("button", { name: "Unlock" }).click();
 
   await page.waitForURL(/\/dating$/);
-  await expect(page.getByRole("heading", { name: "Dating", level: 2 })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Dating", level: 2 }),
+  ).toBeVisible();
 });
 
-test("hiding the module removes it from navigation and blocks the route", async ({ page }) => {
+test("active protected use extends an unlock near its timeout", async ({
+  page,
+}) => {
+  await ensureSignedIn(page);
+  await page.goto("/unlock?next=/dating");
+  await page.getByLabel("PIN").fill(PIN);
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.waitForURL(/\/dating$/);
+
+  const almostExpired = new Date(Date.now() - IDLE_TIMEOUT_MS + 20_000);
+  await setCurrentUnlock(page, almostExpired);
+  await page.goto("/dating");
+  await expect(
+    page.getByRole("heading", { name: "Dating", level: 2 }),
+  ).toBeVisible();
+
+  const session = await currentUnlock(page);
+  expect(session.privacyUnlockedAt?.getTime()).toBeGreaterThan(
+    almostExpired.getTime(),
+  );
+  expect(Date.now() - (session.privacyUnlockedAt?.getTime() ?? 0)).toBeLessThan(
+    10_000,
+  );
+});
+
+test("inactivity closes the shell and removes already-rendered dating content", async ({
+  page,
+}) => {
+  await ensureSignedIn(page);
+  await page.goto("/unlock?next=/dating");
+  await page.getByLabel("PIN").fill(PIN);
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.waitForURL(/\/dating$/);
+  await expect(
+    page.getByRole("heading", { name: "Dating", level: 2 }),
+  ).toBeVisible();
+
+  await page.clock.install({ time: new Date() });
+  // Recreate the shell timer under Playwright's clock so fifteen minutes can
+  // be exercised without making the suite sleep for fifteen real minutes.
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Dating", level: 2 }),
+  ).toBeVisible();
+  await setCurrentUnlock(page, new Date(Date.now() - IDLE_TIMEOUT_MS));
+  await page.clock.fastForward(IDLE_TIMEOUT_MS + 1);
+
+  await expect(page.getByTestId("privacy-locked")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Dating", level: 2 }),
+  ).toHaveCount(0);
+  await expect(page).toHaveURL(/\/unlock/);
+});
+
+test("a dating write already on screen is refused after server expiration", async ({
+  page,
+}) => {
+  await ensureSignedIn(page);
+  await page.goto("/unlock?next=/");
+  await page.getByLabel("PIN").fill(PIN);
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.waitForURL("/");
+
+  const url = await createContact(
+    page,
+    `Expiring ${test.info().project.name} ${STAMP}`,
+  );
+  await page.goto(`${url}/edit`);
+  await page.getByText("Dating or interested").click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.waitForURL(url);
+  await page
+    .getByLabel("Private notes")
+    .fill("This write must not cross the deadline.");
+
+  await setCurrentUnlock(page, new Date(Date.now() - IDLE_TIMEOUT_MS));
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Unlock with your PIN first.")).toBeVisible();
+});
+
+test("hiding the module removes it from navigation and blocks the route", async ({
+  page,
+}) => {
   await ensureSignedIn(page);
   await openPrivacySettings(page);
   await page.getByRole("switch", { name: /Hide the dating module/ }).click();
-  await expect(page.getByRole("switch", { name: /Hide the dating module/ })).toBeChecked();
+  await expect(
+    page.getByRole("switch", { name: /Hide the dating module/ }),
+  ).toBeChecked();
 
   await page.goto("/");
   const nav = page.getByRole("navigation", { name: "Primary" }).first();
@@ -207,10 +332,14 @@ test("hiding the module removes it from navigation and blocks the route", async 
   // everything that runs after it.
   await openPrivacySettings(page);
   await page.getByRole("switch", { name: /Hide the dating module/ }).click();
-  await expect(page.getByRole("switch", { name: /Hide the dating module/ })).not.toBeChecked();
+  await expect(
+    page.getByRole("switch", { name: /Hide the dating module/ }),
+  ).not.toBeChecked();
 });
 
-test("dating writes are refused while locked, not just hidden", async ({ page }) => {
+test("dating writes are refused while locked, not just hidden", async ({
+  page,
+}) => {
   await ensureSignedIn(page);
 
   // Server actions are ordinary POST endpoints. Gating the page alone would

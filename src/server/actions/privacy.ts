@@ -7,6 +7,7 @@ import {
   clearPin,
   getPrivacyState,
   lock,
+  recordProtectedActivity,
   requireUnlocked,
   setPin,
   unlock,
@@ -32,13 +33,22 @@ export async function unlockPrivacyAction(
   const next = str(form, "next");
   // Only ever redirect within this app — a caller-supplied absolute URL would
   // turn the unlock form into an open redirect.
-  redirect(next && next.startsWith("/") && !next.startsWith("//") ? next : "/dating");
+  redirect(
+    next && next.startsWith("/") && !next.startsWith("//") ? next : "/dating",
+  );
 }
 
 export async function lockPrivacyAction(): Promise<void> {
   await lock();
   revalidateEverything();
   redirect("/");
+}
+
+/** Throttled browser heartbeat; it can extend, but never revive, an unlock. */
+export async function privacyActivityHeartbeat(): Promise<
+  { ok: true; expiresAt: number } | { ok: false }
+> {
+  return recordProtectedActivity();
 }
 
 export async function setPinAction(
@@ -71,7 +81,9 @@ export async function clearPinAction(
   return ok();
 }
 
-export async function updatePrivacyPreferences(form: FormData): Promise<ActionResult> {
+export async function updatePrivacyPreferences(
+  form: FormData,
+): Promise<ActionResult> {
   const { ownerId } = await owner();
 
   // The general preferences form deliberately cannot change the lock. A
@@ -140,7 +152,10 @@ export async function setPrivate(
     });
     if (count === 0) return fail("Not found.");
   } else if (entity === "fact") {
-    const { count } = await prisma.fact.updateMany({ where: { id, ownerId }, data: { isPrivate } });
+    const { count } = await prisma.fact.updateMany({
+      where: { id, ownerId },
+      data: { isPrivate },
+    });
     if (count === 0) return fail("Not found.");
   } else {
     const { count } = await prisma.interaction.updateMany({
