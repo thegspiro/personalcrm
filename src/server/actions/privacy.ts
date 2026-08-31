@@ -3,7 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/server/db/client";
-import { clearPin, lock, requireUnlocked, setPin, unlock } from "@/server/privacy/lock";
+import {
+  clearPin,
+  lock,
+  recordProtectedActivity,
+  requireUnlocked,
+  setPin,
+  unlock,
+} from "@/server/privacy/lock";
 import { type ActionResult, bool, fail, ok, owner, str } from "./helpers";
 
 function revalidateEverything() {
@@ -25,13 +32,22 @@ export async function unlockPrivacyAction(
   const next = str(form, "next");
   // Only ever redirect within this app — a caller-supplied absolute URL would
   // turn the unlock form into an open redirect.
-  redirect(next && next.startsWith("/") && !next.startsWith("//") ? next : "/dating");
+  redirect(
+    next && next.startsWith("/") && !next.startsWith("//") ? next : "/dating",
+  );
 }
 
 export async function lockPrivacyAction(): Promise<void> {
   await lock();
   revalidateEverything();
   redirect("/");
+}
+
+/** Throttled browser heartbeat; it can extend, but never revive, an unlock. */
+export async function privacyActivityHeartbeat(): Promise<
+  { ok: true; expiresAt: number } | { ok: false }
+> {
+  return recordProtectedActivity();
 }
 
 export async function setPinAction(
@@ -64,7 +80,9 @@ export async function clearPinAction(
   return ok();
 }
 
-export async function updatePrivacyPreferences(form: FormData): Promise<ActionResult> {
+export async function updatePrivacyPreferences(
+  form: FormData,
+): Promise<ActionResult> {
   const { ownerId } = await owner();
 
   const wantsLock = bool(form, "privacyLockEnabled");
@@ -73,7 +91,8 @@ export async function updatePrivacyPreferences(form: FormData): Promise<ActionRe
       where: { id: ownerId },
       select: { privacyPinHash: true },
     });
-    if (!user.privacyPinHash) return fail("Set a PIN before switching the lock on.");
+    if (!user.privacyPinHash)
+      return fail("Set a PIN before switching the lock on.");
   }
 
   await prisma.userPreference.update({
@@ -109,7 +128,10 @@ export async function setPrivate(
     });
     if (count === 0) return fail("Not found.");
   } else if (entity === "fact") {
-    const { count } = await prisma.fact.updateMany({ where: { id, ownerId }, data: { isPrivate } });
+    const { count } = await prisma.fact.updateMany({
+      where: { id, ownerId },
+      data: { isPrivate },
+    });
     if (count === 0) return fail("Not found.");
   } else {
     const { count } = await prisma.interaction.updateMany({
