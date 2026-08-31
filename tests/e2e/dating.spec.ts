@@ -116,6 +116,7 @@ test("save something to do, then log the date it becomes", async ({ page }) => {
   await plans.getByRole("button", { name: "Movie", exact: true }).click();
   await plans.getByLabel("Venue").fill("Alamo Drafthouse");
   await plans.getByLabel("Complete address").fill("Arlington");
+  await plans.getByLabel("Preparation notes").fill("Book the back row before Friday.");
   await plans.getByRole("button", { name: "Save", exact: true }).click();
 
   await expect(plans.getByText("Late showing at the Alamo")).toBeVisible();
@@ -130,10 +131,26 @@ test("save something to do, then log the date it becomes", async ({ page }) => {
   await dates.getByRole("button", { name: "Log a date" }).click();
   await dates.getByLabel("From a saved idea").selectOption({ label: "Late showing at the Alamo" });
   await expect(dates.getByLabel("Where")).toHaveValue("Alamo Drafthouse");
+  await expect(dates.getByText("Book the back row before Friday.")).toBeVisible();
+  await dates.getByRole("button", { name: "Movie", exact: true }).click();
+  await dates.getByText("Yes", { exact: true }).click();
+  await dates.getByLabel("Remember for next time").fill("Pick an earlier show so we can talk after.");
   await dates.getByRole("button", { name: "Log it" }).click();
 
   await expect(dates.getByText(/Alamo Drafthouse/).first()).toBeVisible();
   await expect(plans.getByText("Late showing at the Alamo")).toHaveCount(0);
+
+  // A successful date can seed another plan, but only the selected logistics
+  // cross over: the private retrospective never becomes Plan.notes.
+  await dates.getByText("Past dates worth repeating").click();
+  // Scoped to the repeat panel: the same reflection is deliberately shown twice
+  // in this section — once on the date row as "Next time", and again here as
+  // "Remember", where you choose which logistics to carry over.
+  const repeat = dates.locator("details").filter({ hasText: "Past dates worth repeating" });
+  await expect(repeat.getByText("Pick an earlier show so we can talk after.")).toBeVisible();
+  await dates.getByRole("button", { name: "Plan this again" }).click();
+  await expect(plans.getByText("Movie").first()).toBeVisible();
+  await expect(plans.getByText("Pick an earlier show so we can talk after.")).toHaveCount(0);
 });
 
 test("the pipeline groups them by stage and can move them", async ({ page }) => {

@@ -75,6 +75,9 @@ navigation and the dashboard altogether.
 
 - **Every dating write re-checks the lock.** Server actions are public POST
   endpoints; they do not trust that the page was gated.
+- **Date retrospectives stay in the locked dating layer.** Repeat-date queries
+  are owner-scoped and run only after unlock; private `nextTimeNotes` are never
+  copied into the non-private `Plan.notes` field.
 - **Marking something private is refused while locked** — otherwise a row
   vanishes with no way back to it.
 - **Failed PIN attempts back off**, counted on the `User` row rather than the
