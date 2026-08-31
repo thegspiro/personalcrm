@@ -319,6 +319,8 @@ Follow the current repository fragment convention.
 
 Always inspect current instructions before doing changelog work because repository release conventions may evolve.
 
+This is enforced rather than requested. CI and `npm run verify` both fail a change that edits `CHANGELOG.md` without deleting the fragments it folded in, so a hand edit cannot reach `main` whether or not this file was read. A release fold passes because it deletes fragments; a deliberate edit to already-released history passes with `[changelog]` in the commit subject.
+
 ---
 
 # Generated, Binary, and Runtime Artifacts

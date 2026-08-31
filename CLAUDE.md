@@ -171,6 +171,12 @@ Changelog entries go in `CHANGELOG.d/`, one file per change, precisely so that
 two branches cannot collide over the top of `## [Unreleased]` — which was this
 repository's most common conflict, and on several branches its only one.
 
+Editing `CHANGELOG.md` by hand fails CI and `npm run verify`. It is checked
+rather than asked for because asking did not work: of the five pull requests
+opened in the hour after the convention shipped, all five edited
+`CHANGELOG.md` and none added a fragment — and four of them were branched from
+a `main` that already carried the instruction.
+
 ## Things that look optional but are not
 
 - **`src/server/ai/` is deletable.** Quick add is `src/lib/quick-parse.ts` —
