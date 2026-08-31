@@ -69,6 +69,9 @@ test("one interaction logged from a profile appears for every participant", asyn
   await ensureSignedIn(page);
   const first = `${personName(page)} Case`;
   const second = `Together ${test.info().project.name} ${STAMP}`;
+  // The projects share one database and /timeline is not scoped to a person,
+  // so a fixed title collides with the other project's copy of this test.
+  const title = `Coffee all together ${test.info().project.name} ${STAMP}`;
   const secondUrl = await createContact(page, second);
 
   await openPerson(page, first);
@@ -76,20 +79,28 @@ test("one interaction logged from a profile appears for every participant", asyn
   const sheet = page.getByRole("dialog");
 
   // The profile person stays selected and visible while another searchable
-  // contact is added to the same interaction.
-  await expect(sheet.getByRole("button", { name: first })).toBeVisible();
-  await sheet.getByLabel("Search people").fill(second);
-  await sheet.getByRole("button", { name: second, exact: true }).click();
+  // contact is added to the same interaction. The sheet carries a second
+  // picker for people merely mentioned, and it lists the same names, so every
+  // step here is scoped to the attendees group rather than the whole sheet.
+  const attendees = sheet.getByRole("group", { name: "Who was there?" });
+  // Inside the group the name still appears twice: on the selected chip and on
+  // the row in the list below. The chip's accessible name is exactly the
+  // person's name, while the row's is prefixed by its avatar initials -- so
+  // `exact` asserts the chip, which is what "stays selected" means, and the
+  // unanchored match picks the row that has to be clicked.
+  await expect(attendees.getByRole("button", { name: first, exact: true })).toBeVisible();
+  await attendees.getByLabel("Search people").fill(second);
+  await attendees.getByRole("button", { name: second }).click();
   await sheet.getByRole("button", { name: "Coffee", exact: true }).click();
-  await sheet.getByLabel("Title").fill("Coffee all together");
+  await sheet.getByLabel("Title").fill(title);
   await sheet.getByRole("button", { name: "Log it" }).click();
-  await expect(page.getByText("Coffee all together")).toBeVisible();
+  await expect(page.getByText(title)).toBeVisible();
 
   await page.goto(secondUrl);
-  await expect(page.getByText("Coffee all together")).toBeVisible();
+  await expect(page.getByText(title)).toBeVisible();
 
   await page.goto("/timeline");
-  await expect(page.getByText("Coffee all together")).toBeVisible();
+  await expect(page.getByText(title)).toBeVisible();
 });
 
 test("they remain on the overdue list", async ({ page }) => {

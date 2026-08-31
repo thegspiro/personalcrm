@@ -147,7 +147,9 @@ export async function buildTimeline(
 // --- sources ---------------------------------------------------------------
 
 function contactFilter(contactId?: string) {
-  return contactId ? { participants: { some: { contactId } } } : {};
+  return contactId
+    ? { OR: [{ participants: { some: { contactId } } }, { mentions: { some: { contactId } } }] }
+    : {};
 }
 
 async function fetchInteractions(
@@ -182,6 +184,9 @@ async function fetchInteractions(
       participants: {
         include: { contact: { select: { id: true, firstName: true, lastName: true } } },
       },
+      mentions: {
+        include: { contact: { select: { id: true, firstName: true, lastName: true } } },
+      },
     },
     orderBy: { occurredAt: "desc" },
     take,
@@ -201,12 +206,22 @@ async function fetchLifeEvents(
     where: {
       ownerId,
       ...viaContactPrivacyWhere(scope),
-      ...(options.contactId ? { contactId: options.contactId } : {}),
+      AND: [
+        ...(!scope.unlocked
+          ? [{ participants: { none: { contact: { isPrivate: true } } } }]
+          : []),
+        ...(options.contactId
+          ? [{ participants: { some: { contactId: options.contactId } } }]
+          : []),
+      ],
       date: { lte: historicalTo, ...(options.from ? { gte: options.from } : {}) },
     },
     include: {
       type: true,
       contact: { select: { id: true, firstName: true, lastName: true } },
+      participants: {
+        include: { contact: { select: { id: true, firstName: true, lastName: true } } },
+      },
     },
     orderBy: { date: "desc" },
     take,
@@ -302,6 +317,7 @@ function interactionEntry(row: InteractionRow, timezone: string, now: Date): Tim
 }
 
 function lifeEventEntry(row: LifeEventRow): TimelineEntry {
+  const contacts = row.participants.map((participant) => participant.contact);
   return {
     id: row.id,
     kind: "life-event",
@@ -310,7 +326,7 @@ function lifeEventEntry(row: LifeEventRow): TimelineEntry {
     title: row.title,
     detail: row.description,
     term: row.type ? { label: row.type.label, icon: row.type.icon, color: row.type.color } : null,
-    contacts: [row.contact],
+    contacts: contacts.length ? contacts : [row.contact],
     href: `/people/${row.contactId}#life-event-${row.id}`,
     editable: { kind: "life-event", typeId: row.typeId, description: row.description,
       endDate: row.endDate ? plainDateFromDb(row.endDate) : null, endPrecision: row.endPrecision,

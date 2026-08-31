@@ -150,7 +150,6 @@ export function OnboardingWizard(props: WizardProps) {
               density={props.density}
               defaultCadenceDays={props.defaultCadenceDays}
               hideDating={props.hideDating}
-              privacyLockEnabled={props.privacyLockEnabled}
               blurPrivateNotes={props.blurPrivateNotes}
             />
           ) : null}

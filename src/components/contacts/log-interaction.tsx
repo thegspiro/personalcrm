@@ -115,10 +115,16 @@ export function LogInteractionSheet({
 
             <ContactPicker
               name="contactIds"
-              label="Who"
+              label="Who was there?"
               contacts={contacts}
               defaultSelected={defaultContactIds}
               required
+            />
+
+            <ContactPicker
+              name="mentionedContactIds"
+              label="People mentioned (optional)"
+              contacts={contacts}
             />
 
             <TermChips name="typeId" label="What" terms={types} allowEmpty={false} />

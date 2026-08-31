@@ -155,6 +155,9 @@ Every one re-checks the lock. `createDateEntry` writes an `Interaction` **and**
 a `DateEntry`, recomputes activity from full history, and renumbers `sequence`
 so a date remembered late slots in where it happened. `deleteDateEntry` goes
 through the `Interaction` so the pair cannot be left half-removed.
+Create and update validate and persist the nullable `wouldDoAgain` and
+`nextTimeNotes` retrospective fields. Saved-plan preparation notes are shown as
+context and are never silently copied into that private retrospective.
 `convertToFriend` clears `isRomantic` and keeps the profile, dates, flags and
 notes. `updateFlag` can re-type a flag between green, red and dealbreaker: a
 second look often moves one, and re-typing keeps the wording and the day you
@@ -195,10 +198,15 @@ runs once per account and records that it did in
 ### Privacy — `actions/privacy.ts`
 
 `unlockPrivacyAction`, `lockPrivacyAction`, `setPinAction`, `clearPinAction`,
-`updatePrivacyPreferences`, `setPrivate`.
+`setPrivacyLockEnabled`, `updatePrivacyPreferences`, `setPrivate`.
 
 `setPrivate` is refused while locked — otherwise a row vanishes with no way back
 to it.
+
+Disabling an enabled lock is handled only by `setPrivacyLockEnabled`. The action
+requires either an unlocked current session or a verified current PIN; posting a
+`privacyLockEnabled` field to the general preference action cannot lower the
+lock boundary.
 
 ### AI settings — `actions/ai-settings.ts`
 

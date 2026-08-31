@@ -78,7 +78,16 @@ export function ContactPicker({
   }
 
   return (
-    <div ref={rootRef} className={cn("grid gap-1.5", className)}>
+    // A form can hold more than one picker -- logging an interaction has both
+    // attendees and mentions -- and the two are otherwise indistinguishable to
+    // assistive technology and to any locator, since the same people appear in
+    // each list. Naming the group ties each one to its visible label.
+    <div
+      ref={rootRef}
+      role={label ? "group" : undefined}
+      aria-label={label}
+      className={cn("grid gap-1.5", className)}
+    >
       {label ? <Label>{label}</Label> : null}
       {selected.map((id) => (
         <input key={id} type="hidden" name={name} value={id} />

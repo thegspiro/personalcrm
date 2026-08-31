@@ -147,8 +147,13 @@ const DETAIL_INCLUDE = {
   },
   importantDates: { include: { type: true }, orderBy: { date: "asc" } },
   lifeEvents: {
-    include: { type: true },
+    include: { type: true, participants: { include: { contact: true } } },
     orderBy: [{ date: "desc" }],
+  },
+  lifeEventParticipations: {
+    include: {
+      lifeEvent: { include: { type: true, participants: { include: { contact: true } } } },
+    },
   },
   ideas: { orderBy: [{ status: "asc" }, { createdAt: "desc" }] },
   tasks: { orderBy: [{ completedAt: "asc" }, { dueDate: "asc" }] },
@@ -181,6 +186,15 @@ export const getContact = cache(
     // Facts carry their own marker, so a single private note about an
     // otherwise ordinary person stays hidden.
     if (!scope.unlocked) {
+      contact.lifeEvents = contact.lifeEvents.filter(
+        (event) => event.participants.every((participant) => !participant.contact.isPrivate),
+      );
+      contact.lifeEventParticipations = contact.lifeEventParticipations.filter(
+        (participation) =>
+          participation.lifeEvent.participants.every(
+            (participant) => !participant.contact.isPrivate,
+          ),
+      );
       contact.facts = contact.facts.filter((fact) => !fact.isPrivate);
       // A relationship names the person on the other end, so a private
       // relative would otherwise be readable from an ordinary contact's page.
@@ -206,13 +220,19 @@ export async function listContactInteractions(
   return prisma.interaction.findMany({
     where: {
       ownerId,
-      participants: { some: { contactId } },
+      OR: [
+        { participants: { some: { contactId } } },
+        { mentions: { some: { contactId } } },
+      ],
       ...interactionPrivacyWhere(scope),
     },
     include: {
       type: true,
       dateEntry: { include: { activityType: true } },
       participants: {
+        include: { contact: { select: { id: true, firstName: true, lastName: true } } },
+      },
+      mentions: {
         include: { contact: { select: { id: true, firstName: true, lastName: true } } },
       },
     },

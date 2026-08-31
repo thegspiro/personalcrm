@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   householdPrivacyWhere,
+  interactionPrivacyWhere,
   viaOptionalContactPrivacyWhere,
   type PrivacyScope,
 } from "@/server/privacy/where";
@@ -19,6 +20,16 @@ describe("household privacy where-fragment", () => {
   it("does not filter households while unlocked or when the lock is off", () => {
     expect(householdPrivacyWhere(UNLOCKED)).toEqual({});
     expect(householdPrivacyWhere(OFF)).toEqual({});
+  });
+});
+
+describe("interaction privacy where-fragment", () => {
+  it("withholds interactions that expose a private attendee or mentioned person", () => {
+    expect(interactionPrivacyWhere(LOCKED)).toEqual({
+      isPrivate: false,
+      participants: { none: { contact: { isPrivate: true } } },
+      mentions: { none: { contact: { isPrivate: true } } },
+    });
   });
 });
 
