@@ -138,7 +138,7 @@ test("save something to do with an ordinary friend", async ({ page }) => {
   await plans.getByRole("button", { name: "Add something to do" }).click();
   await plans.getByLabel("What do you want to do?").fill(`Hike Old Rag ${STAMP}`);
   await plans.getByRole("button", { name: "Outdoors", exact: true }).click();
-  await plans.getByLabel("Where").fill("Old Rag Mountain");
+  await plans.getByLabel("Venue").fill("Old Rag Mountain");
   await plans.getByRole("button", { name: "Save", exact: true }).click();
 
   await expect(plans.getByText(`Hike Old Rag ${STAMP}`)).toBeVisible();

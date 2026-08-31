@@ -349,7 +349,8 @@ export interface PlanOption {
   id: string;
   title: string;
   location: string | null;
-  city: string | null;
+  /** Plan.city became the wider Plan.address; DateEntry keeps its own city. */
+  address: string | null;
   notes: string | null;
 }
 
@@ -566,7 +567,7 @@ export function DateLogSection({
             <div className="grid gap-1 rounded-lg border border-border/70 bg-muted/30 p-3 text-xs">
               <p className="font-medium">Planning context (not copied into your reflection)</p>
               {pickedPlan.location ? <p>Venue: {pickedPlan.location}</p> : null}
-              {pickedPlan.city ? <p>Address / city: {pickedPlan.city}</p> : null}
+              {pickedPlan.address ? <p>Address: {pickedPlan.address}</p> : null}
               {pickedPlan.notes ? <p className="whitespace-pre-line">Preparation notes: {pickedPlan.notes}</p> : null}
             </div>
           ) : null}

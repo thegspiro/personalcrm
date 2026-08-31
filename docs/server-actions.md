@@ -106,6 +106,13 @@ remain valid.
 `updateRelationship` re-types both and keeps the `pairId`; `deleteRelationship`
 removes both. `settleDebt` records a date rather than deleting the row.
 
+Plan create and update parse the checklist as JSON and validate at most 25
+items, each with a bounded id and non-empty, 191-character text. Checklist
+completion is changed only by a submitted user edit. It is stored on the owned
+`Plan`, so the existing owner lookup and contact-inherited privacy query also
+scope the checklist. `plannedFor` remains a calendar date parsed by
+`plainDate`; no server-timezone conversion is involved.
+
 Important-date and life-event updates and deletes also filter through their
 contact's privacy marker. The timeline exposes these controls, so an id retained
 from an unlocked view must become unreachable when that contact is locked.

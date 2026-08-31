@@ -253,7 +253,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                 id: plan.id,
                 title: plan.title,
                 location: plan.location,
-                city: plan.city,
+                address: plan.address,
                 notes: plan.notes,
               }))}
               dates={dateEntries.map((entry) => ({
@@ -333,11 +333,12 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             title: plan.title,
             status: plan.status,
             location: plan.location,
-            city: plan.city,
+            address: plan.address,
             url: plan.url,
             estimatedCostCents: plan.estimatedCostCents,
             currency: plan.currency,
             notes: plan.notes,
+            checklist: plan.checklist,
             plannedFor: plan.plannedFor ? plainDateFromDb(plan.plannedFor) : null,
             categoryId: plan.categoryId,
             category: plan.category
