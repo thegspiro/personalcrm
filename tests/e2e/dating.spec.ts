@@ -114,8 +114,8 @@ test("save something to do, then log the date it becomes", async ({ page }) => {
   await plans.getByRole("button", { name: "Add something to do" }).click();
   await plans.getByLabel("What do you want to do?").fill("Late showing at the Alamo");
   await plans.getByRole("button", { name: "Movie", exact: true }).click();
-  await plans.getByLabel("Where").fill("Alamo Drafthouse");
-  await plans.getByLabel("City").fill("Arlington");
+  await plans.getByLabel("Venue").fill("Alamo Drafthouse");
+  await plans.getByLabel("Complete address").fill("Arlington");
   await plans.getByRole("button", { name: "Save", exact: true }).click();
 
   await expect(plans.getByText("Late showing at the Alamo")).toBeVisible();
@@ -161,7 +161,7 @@ test("the dating page keeps date ideas saved for nobody in particular", async ({
   await plans.getByRole("button", { name: "Add something to do" }).click();
   await plans.getByLabel("What do you want to do?").fill(`Kayak the Potomac ${STAMP}`);
   await plans.getByRole("button", { name: "Outdoors", exact: true }).click();
-  await plans.getByLabel("Where").fill("Key Bridge Boathouse");
+  await plans.getByLabel("Venue").fill("Key Bridge Boathouse");
   await plans.getByRole("button", { name: "Save", exact: true }).click();
 
   await expect(plans.getByText(`Kayak the Potomac ${STAMP}`)).toBeVisible();

@@ -87,11 +87,12 @@ export default async function DatingPage() {
           title: plan.title,
           status: plan.status,
           location: plan.location,
-          city: plan.city,
+          address: plan.address,
           url: plan.url,
           estimatedCostCents: plan.estimatedCostCents,
           currency: plan.currency,
           notes: plan.notes,
+          checklist: plan.checklist,
           plannedFor: plan.plannedFor ? plainDateFromDb(plan.plannedFor) : null,
           categoryId: plan.categoryId,
           category: plan.category

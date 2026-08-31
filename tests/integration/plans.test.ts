@@ -52,7 +52,10 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
         title: "Late showing at the Alamo",
         categoryId: movie.id,
         location: "Alamo Drafthouse",
-        city: "Arlington",
+        address: "1660 Crystal Dr, Arlington, VA",
+        checklist: [
+          { id: "tickets", text: "Reserve or buy tickets", completed: false },
+        ],
         url: "https://example.com/showtimes",
         estimatedCostCents: 4400,
       },
@@ -66,6 +69,10 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     expect(stored.category?.slug).toBe("movie");
     expect(stored.location).toBe("Alamo Drafthouse");
     expect(stored.estimatedCostCents).toBe(4400);
+    expect(stored.address).toBe("1660 Crystal Dr, Arlington, VA");
+    expect(stored.checklist).toEqual([
+      { id: "tickets", text: "Reserve or buy tickets", completed: false },
+    ]);
   });
 
   it("saves against a friend as readily as against a date", async () => {

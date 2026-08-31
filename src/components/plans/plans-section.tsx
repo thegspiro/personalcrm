@@ -21,6 +21,11 @@ import {
 import { formatPartialDate } from "@/lib/date-precision";
 import { formatMoney, termColorClasses } from "@/lib/format";
 import { plainDateKey, type PlainDate } from "@/lib/dates";
+import {
+  readPlanChecklist,
+  STARTER_PLAN_CHECKLIST,
+  type PlanChecklistItem,
+} from "@/lib/plan-checklist";
 import type { ActionResult } from "@/server/actions/helpers";
 import {
   createPlan,
@@ -44,11 +49,12 @@ export interface PlanItem {
   title: string;
   status: "OPEN" | "PLANNED" | "DONE" | "ARCHIVED";
   location: string | null;
-  city: string | null;
+  address: string | null;
   url: string | null;
   estimatedCostCents: number | null;
   currency: string;
   notes: string | null;
+  checklist: unknown;
   plannedFor: PlainDate | null;
   categoryId: string | null;
   category: { label: string; icon: string | null; color: string | null } | null;
@@ -100,112 +106,124 @@ function PlanFields({
   people: PlanPerson[];
   plan?: PlanItem;
 }) {
+  const [checklist, setChecklist] = React.useState<PlanChecklistItem[]>(() =>
+    plan
+      ? readPlanChecklist(plan.checklist)
+      : STARTER_PLAN_CHECKLIST.map((item) => ({ ...item })),
+  );
+
+  function updateChecklist(id: string, patch: Partial<PlanChecklistItem>) {
+    setChecklist((items) =>
+      items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    );
+  }
+
+  function addChecklistItem() {
+    if (checklist.length >= 25) return;
+    setChecklist((items) => [
+      ...items,
+      { id: crypto.randomUUID(), text: "", completed: false },
+    ]);
+  }
+
   return (
     <>
-      <Field label="What do you want to do?" htmlFor={`${formId}-title`}>
-        <Input
-          id={`${formId}-title`}
-          name="title"
-          required
-          maxLength={191}
-          defaultValue={plan?.title ?? ""}
-          placeholder="Late showing at the Alamo"
+      <fieldset className="min-w-0 space-y-2.5 rounded-lg border border-border/70 p-3">
+        <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Idea
+        </legend>
+        <Field label="What do you want to do?" htmlFor={`${formId}-title`}>
+          <Input
+            id={`${formId}-title`}
+            name="title"
+            required
+            maxLength={191}
+            defaultValue={plan?.title ?? ""}
+            placeholder="Late showing at the Alamo"
+          />
+        </Field>
+        <TermChips
+          name="categoryId"
+          label="What kind of thing?"
+          terms={categories}
+          defaultValue={plan?.categoryId}
         />
-      </Field>
+        {plan === undefined && contactId === null && people.length > 0 ? (
+          <Field label="Who with?" htmlFor={`${formId}-contact`}>
+            <select
+              id={`${formId}-contact`}
+              name="contactId"
+              defaultValue=""
+              className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+            >
+              <option value="">Anyone</option>
+              {people.map((person) => (
+                <option key={person.id} value={person.id}>{displayName(person)}</option>
+              ))}
+            </select>
+          </Field>
+        ) : null}
+      </fieldset>
 
-      <TermChips
-        name="categoryId"
-        label="What kind of thing?"
-        terms={categories}
-        defaultValue={plan?.categoryId}
-      />
-
-      {plan === undefined && contactId === null && people.length > 0 ? (
-        <Field label="Who with?" htmlFor={`${formId}-contact`}>
-          <select
-            id={`${formId}-contact`}
-            name="contactId"
-            defaultValue=""
-            className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
-          >
-            <option value="">Anyone</option>
-            {people.map((person) => (
-              <option key={person.id} value={person.id}>
-                {displayName(person)}
-              </option>
-            ))}
-          </select>
-        </Field>
-      ) : null}
-
-      <div className="grid gap-2.5 sm:grid-cols-2">
-        <Field label="Where" htmlFor={`${formId}-location`}>
-          <Input
-            id={`${formId}-location`}
-            name="location"
-            defaultValue={plan?.location ?? ""}
-            placeholder="Alamo Drafthouse"
-          />
-        </Field>
-        <Field label="City" htmlFor={`${formId}-city`}>
-          <Input
-            id={`${formId}-city`}
-            name="city"
-            defaultValue={plan?.city ?? ""}
-            placeholder="Arlington"
-          />
-        </Field>
-      </div>
-
-      <div className="grid gap-2.5 sm:grid-cols-2">
-        <Field label="Link" htmlFor={`${formId}-url`}>
-          <Input
-            id={`${formId}-url`}
-            name="url"
-            type="url"
-            defaultValue={plan?.url ?? ""}
-            placeholder="https://"
-          />
-        </Field>
-        <Field label="Rough cost" htmlFor={`${formId}-cost`}>
-          <Input
-            id={`${formId}-cost`}
-            name="estimatedCost"
-            type="number"
-            inputMode="decimal"
-            min={0}
-            step="0.01"
-            defaultValue={
-              plan?.estimatedCostCents == null
-                ? ""
-                : plan.estimatedCostCents / 100
-            }
-            placeholder="0.00"
-          />
-        </Field>
-      </div>
-
-      <DateField
-        name="plannedFor"
-        idPrefix={`${formId}-plannedFor`}
-        label="Pencilled in for"
-        allowPrecision={false}
-        presets={["today"]}
-        defaultValue={
-          plan?.plannedFor ? plainDateKey(plan.plannedFor) : undefined
-        }
-        hint="Optional — leave it empty and it just sits on the list."
-      />
-
-      <Field label="Notes" htmlFor={`${formId}-notes`}>
-        <Textarea
-          id={`${formId}-notes`}
-          name="notes"
-          rows={2}
-          defaultValue={plan?.notes ?? ""}
-          placeholder="Book ahead, the balcony sells out."
+      <fieldset className="min-w-0 space-y-2.5 rounded-lg border border-border/70 p-3">
+        <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          When and where
+        </legend>
+        <DateField
+          name="plannedFor"
+          idPrefix={`${formId}-plannedFor`}
+          label="Pencilled in for"
+          allowPrecision={false}
+          presets={["today"]}
+          defaultValue={plan?.plannedFor ? plainDateKey(plan.plannedFor) : undefined}
+          hint="Optional — leave it empty and it just sits on the list."
         />
-      </Field>
+        <div className="grid min-w-0 gap-2.5 sm:grid-cols-2">
+          <Field label="Venue" htmlFor={`${formId}-location`}>
+            <Input id={`${formId}-location`} name="location" defaultValue={plan?.location ?? ""} placeholder="Alamo Drafthouse" />
+          </Field>
+          <Field label="Complete address" htmlFor={`${formId}-address`}>
+            <Input id={`${formId}-address`} name="address" maxLength={500} defaultValue={plan?.address ?? ""} placeholder="123 Main St, Arlington, VA" />
+          </Field>
+        </div>
+        <Field label="Listing or map link" htmlFor={`${formId}-url`}>
+          <Input id={`${formId}-url`} name="url" type="url" defaultValue={plan?.url ?? ""} placeholder="https://" />
+        </Field>
+      </fieldset>
+
+      <fieldset className="min-w-0 space-y-2.5 rounded-lg border border-border/70 p-3">
+        <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Practical details
+        </legend>
+        <Field label="Estimated cost" htmlFor={`${formId}-cost`}>
+          <Input id={`${formId}-cost`} name="estimatedCost" type="number" inputMode="decimal" min={0} step="0.01" defaultValue={plan?.estimatedCostCents == null ? "" : plan.estimatedCostCents / 100} placeholder="0.00" />
+        </Field>
+        <Field label="Preparation notes" htmlFor={`${formId}-notes`} hint="Reservations, opening hours, transport, accessibility, dietary needs, weather backup, or an agreed meeting point.">
+          <Textarea id={`${formId}-notes`} name="notes" rows={3} defaultValue={plan?.notes ?? ""} placeholder="Book ahead; meet by the main entrance." />
+        </Field>
+
+        <div className="min-w-0 space-y-2" aria-label="Preparation checklist">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium">Checklist</p>
+              <p className="text-xs text-muted-foreground">Optional — edit or remove any suggestion.</p>
+            </div>
+            <button type="button" onClick={addChecklistItem} disabled={checklist.length >= 25} className="shrink-0 text-xs font-medium text-accent-11 disabled:opacity-50">
+              Add item
+            </button>
+          </div>
+          <input type="hidden" name="checklist" value={JSON.stringify(checklist.filter((item) => item.text.trim()))} />
+          {checklist.map((item, index) => (
+            <div key={item.id} className="flex min-w-0 items-center gap-2">
+              <Checkbox checked={item.completed} onCheckedChange={(checked) => updateChecklist(item.id, { completed: checked === true })} aria-label={`Mark ${item.text || `item ${index + 1}`} complete`} />
+              <Input aria-label={`Checklist item ${index + 1}`} value={item.text} maxLength={191} onChange={(event) => updateChecklist(item.id, { text: event.target.value })} className="min-w-0 flex-1" />
+              <button type="button" onClick={() => setChecklist((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={`Delete checklist item ${index + 1}`} className="shrink-0 text-xs text-muted-foreground hover:text-destructive">
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+      </fieldset>
     </>
   );
 }
@@ -318,7 +336,11 @@ export function PlansSection({
 
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                   {plan.location ? <span>{plan.location}</span> : null}
-                  {plan.city ? <span>{plan.city}</span> : null}
+                  {plan.address ? (
+                    // Free text up to 500 characters, so a long unbroken one has to be
+                    // allowed to break: layout.spec.ts asserts no route scrolls sideways.
+                    <span className="min-w-0 break-words [overflow-wrap:anywhere]">{plan.address}</span>
+                  ) : null}
                   {plan.plannedFor ? (
                     <span>
                       {formatPartialDate(plan.plannedFor, "DAY", {
