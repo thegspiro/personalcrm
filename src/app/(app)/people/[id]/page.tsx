@@ -41,6 +41,8 @@ import { displayName } from "@/lib/utils";
 import { getUpcomingDates } from "@/server/queries/dashboard";
 import { UpcomingDatesWidget } from "@/components/dashboard/widgets";
 import { isBirthdayImportantDate, projectContactBirthday } from "@/server/queries/birthdays";
+import { listContactLocations } from "@/server/queries/locations";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -82,6 +84,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     interactionFields,
     reciprocity,
     upcomingDates,
+    locations,
   ] = await Promise.all([
     listTermsByKind(user.id, [
       "INTERACTION_TYPE",
@@ -105,6 +108,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     fieldsFor(user.id, "INTERACTION", null),
     getReciprocity(user.id, id),
     getUpcomingDates(user.id, timezone, 366, 100, id),
+    listContactLocations(user.id, id),
   ]);
 
   // Family relationships get their own section, so "Connected people" is left
@@ -253,6 +257,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                 id: plan.id,
                 title: plan.title,
                 location: plan.location,
+                address: plan.address,
+                notes: plan.notes,
               }))}
               dates={dateEntries.map((entry) => ({
                 id: entry.id,
@@ -266,6 +272,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                 chemistry: entry.chemistry,
                 conversationQuality: entry.conversationQuality,
                 notes: entry.notes,
+                wouldDoAgain: entry.wouldDoAgain,
+                nextTimeNotes: entry.nextTimeNotes,
                 isPrivate: entry.interaction.isPrivate,
                 activityTypeId: entry.activityTypeId,
                 activityLabel: entry.activityType?.label ?? null,
@@ -347,6 +355,15 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             contact: plan.contact,
           }))}
         />
+
+        <SectionCard title="Places" icon="MapPin" count={locations.length}>
+          {locations.length ? <div className="grid gap-2">{locations.map((location) => (
+            <Link key={location.id} href={`/locations/${location.id}`} className="flex items-center justify-between rounded-lg border px-3 py-2 hover:bg-muted/50">
+              <span className="text-sm font-medium">{location.name}</span>
+              <span className="text-xs text-muted-foreground">{location.visits} visit{location.visits === 1 ? "" : "s"}</span>
+            </Link>
+          ))}</div> : <p className="text-xs text-muted-foreground">No shared places recorded yet.</p>}
+        </SectionCard>
 
         <DatesSection
           contactId={contact.id}

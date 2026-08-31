@@ -1,9 +1,27 @@
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestUser, daysAgo, hasTestDatabase, prisma, reset } from "./db";
 import {
   recomputeContactActivity,
   resequenceDateEntries,
 } from "@/server/services/contact-activity";
+
+const actionState = vi.hoisted(() => ({ ownerId: "", locked: false }));
+vi.mock("@/server/db/client", async () => ({ prisma: (await import("./db")).prisma }));
+vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+vi.mock("@/server/user/context", () => ({
+  getUserContext: async () => ({ user: { id: actionState.ownerId }, prefs: {}, timezone: "America/New_York" }),
+}));
+vi.mock("@/server/privacy/lock", () => ({
+  requireUnlocked: async () => actionState.locked ? { ok: false, error: "Unlock to continue." } : { ok: true },
+}));
+
+const { createDateEntry, updateDateEntry } = await import("@/server/actions/dating");
+
+function actionForm(values: Record<string, string>) {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(values)) form.set(key, value);
+  return form;
+}
 
 /**
  * The dating layer's own invariants.
@@ -19,6 +37,8 @@ describe.skipIf(!hasTestDatabase)("dating", () => {
     await reset();
     const user = await createTestUser();
     ownerId = user.id;
+    actionState.ownerId = user.id;
+    actionState.locked = false;
     const term = await prisma.taxonomyTerm.findFirstOrThrow({
       where: { ownerId, kind: "INTERACTION_TYPE", slug: "date" },
     });
@@ -89,6 +109,48 @@ describe.skipIf(!hasTestDatabase)("dating", () => {
       where: { ownerId, participants: { some: { contactId: contact.id } } },
     });
     expect(timelineCount).toBe(1);
+  });
+
+  it("create and update persist nullable post-date reflections", async () => {
+    const contact = await makeRomantic();
+    const created = await createDateEntry(actionForm({
+      contactId: contact.id,
+      occurredAt: new Date().toISOString(),
+      wouldDoAgain: "true",
+      nextTimeNotes: "Reserve the patio.",
+    }));
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error(created.error);
+
+    let stored = await prisma.dateEntry.findUniqueOrThrow({ where: { id: created.data!.id } });
+    expect(stored.wouldDoAgain).toBe(true);
+    expect(stored.nextTimeNotes).toBe("Reserve the patio.");
+
+    const updated = await updateDateEntry(actionForm({
+      id: stored.id,
+      wouldDoAgain: "false",
+      nextTimeNotes: "Try somewhere quieter.",
+    }));
+    expect(updated.ok).toBe(true);
+    stored = await prisma.dateEntry.findUniqueOrThrow({ where: { id: stored.id } });
+    expect(stored.wouldDoAgain).toBe(false);
+    expect(stored.nextTimeNotes).toBe("Try somewhere quieter.");
+  });
+
+  it("rejects creating a retrospective against another owner's contact", async () => {
+    const stranger = await createTestUser();
+    const contact = await prisma.contact.create({ data: { ownerId: stranger.id, firstName: "Not mine" } });
+    const result = await createDateEntry(actionForm({ contactId: contact.id, wouldDoAgain: "true" }));
+    expect(result).toMatchObject({ ok: false, error: "Contact not found." });
+    expect(await prisma.dateEntry.count()).toBe(0);
+  });
+
+  it("rejects retrospective writes while the privacy lock is closed", async () => {
+    const contact = await makeRomantic();
+    actionState.locked = true;
+    const result = await createDateEntry(actionForm({ contactId: contact.id, wouldDoAgain: "true" }));
+    expect(result).toMatchObject({ ok: false, error: "Unlock to continue." });
+    expect(await prisma.dateEntry.count()).toBe(0);
   });
 
   it("a date backdated between two others renumbers the sequence", async () => {

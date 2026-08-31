@@ -45,6 +45,7 @@ export default async function TimelinePage({
     buildTimeline(user.id, timezone, {
       kinds,
       search: first("q"),
+      location: first("location"),
       from: fromPlain ? plainDateToDb(fromPlain) : undefined,
       to: toPlain ? plainDateToDb(toPlain) : undefined,
       take: 100,

@@ -29,6 +29,7 @@ const TABLES = [
   "Plan",
   "DateEntry",
   "Interaction",
+  "Location",
   "Fact",
   "ImportantDate",
   "LifeEvent",

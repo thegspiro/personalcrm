@@ -49,6 +49,11 @@ where-fragments applied to the queries themselves:
 **Counts are filtered too.** A total that shifts when you unlock is itself a
 disclosure.
 
+The Places directory derives its visits, people, rankings and last-visited
+dates only from interactions admitted by `interactionPrivacyWhere`. A place
+known solely through hidden interactions is not listed while locked. Plans at
+a place inherit the privacy of their optional contact.
+
 The module is deliberately pure and free of request context so it can be tested
 directly against a database; [`filter.ts`](../src/server/privacy/filter.ts)
 supplies the live scope.
@@ -75,6 +80,9 @@ navigation and the dashboard altogether.
 
 - **Every dating write re-checks the lock.** Server actions are public POST
   endpoints; they do not trust that the page was gated.
+- **Date retrospectives stay in the locked dating layer.** Repeat-date queries
+  are owner-scoped and run only after unlock; private `nextTimeNotes` are never
+  copied into the non-private `Plan.notes` field.
 - **Marking something private is refused while locked** — otherwise a row
   vanishes with no way back to it.
 - **Failed PIN attempts back off**, counted on the `User` row rather than the

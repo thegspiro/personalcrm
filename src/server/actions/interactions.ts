@@ -18,6 +18,7 @@ import { listContactOptions } from "@/server/queries/contacts";
 import { fieldsFor } from "@/server/queries/custom-fields";
 import { listTerms } from "@/server/taxonomy/queries";
 import type { CustomFieldType } from "@prisma/client";
+import { resolveLocation } from "@/server/services/locations";
 import {
   type ActionResult,
   fail,
@@ -41,6 +42,7 @@ function revalidateFor(contactIds: string[]) {
   revalidatePath("/");
   revalidatePath("/timeline");
   revalidatePath("/people");
+  revalidatePath("/locations");
   for (const id of contactIds) revalidatePath(`/people/${id}`);
 }
 
@@ -106,6 +108,7 @@ export async function createInteraction(
   let interaction: { id: string };
   try {
     interaction = await prisma.$transaction(async (tx) => {
+    const place = await resolveLocation(tx, ownerId, str(form, "location"));
     const created = await tx.interaction.create({
       data: {
         ownerId,
@@ -114,6 +117,7 @@ export async function createInteraction(
         title: parsed.data.title ?? null,
         notes: parsed.data.notes ?? null,
         location: str(form, "location") ?? null,
+        locationId: place?.id ?? null,
         durationMinutes: duration && duration > 0 ? Math.round(duration) : null,
         sentiment: sentiment === undefined ? null : clampSentiment(sentiment),
         reachedOutBy: reachedOutByOf(str(form, "reachedOutBy")),
@@ -185,6 +189,7 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
 
   try {
     await prisma.$transaction(async (tx) => {
+      const place = await resolveLocation(tx, ownerId, str(form, "location"));
       await tx.interaction.update({
         where: { id },
         data: {
@@ -193,6 +198,7 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
           title: parsed.data.title ?? null,
           notes: parsed.data.notes ?? null,
           location: str(form, "location") ?? null,
+          locationId: place?.id ?? null,
           durationMinutes: duration && duration > 0 ? Math.round(duration) : null,
           sentiment: sentiment === undefined ? null : clampSentiment(sentiment),
           reachedOutBy: reachedOutByOf(str(form, "reachedOutBy")),

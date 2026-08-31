@@ -266,6 +266,16 @@ Join table, PK `(interactionId, contactId)`, cascading from both. An
 interaction is withheld while locked if it is itself private **or** any
 participant is.
 
+### `Location`
+
+An owner-scoped reusable place shared by interactions and plans. `name` is the
+display label and `(ownerId, normalizedName)` is unique; normalization only
+folds case and whitespace so similarly named real-world venues are never
+silently merged. Address, contact details, notes, coordinates, aliases and an
+archive flag hold optional practical metadata. `Interaction.location` and
+`Plan.location` retain the exact historical text while their optional
+`locationId` points at the canonical place (`SET NULL`).
+
 ### `Fact`
 
 "Things to know" about a person. `contactId` (cascade), `categoryId` →
@@ -442,7 +452,9 @@ Adds `sequence` (nth date with this person, **renumbered on write** so a date
 remembered late slots in where it happened rather than being appended),
 `activityTypeId` → `DATE_ACTIVITY_TYPE`, `venue`, `city`, `whoPaid` (`WhoPaid`),
 `costCents`, and the three 1–5 scores `rating`, `chemistry`,
-`conversationQuality`.
+`conversationQuality`. Optional retrospective fields `wouldDoAgain` and
+`nextTimeNotes` remain null until the user answers them, so older dates never
+acquire an invented opinion. These are separate from pre-date `Plan.notes`.
 
 ### `Flag`
 
@@ -568,6 +580,7 @@ the `init-migrate` s6 oneshot).
 | `20260824182152_add_dietary_debts_and_reach_out` | `Debt`, `DietaryNeed`, `Interaction.reachedOutBy` |
 | `20260825094500_add_plans` | `Plan`, `PlanStatus`, and `PLAN_CATEGORY` on `TaxonomyKind` |
 | `20260825120000_add_onboarding_state` | `UserPreference.onboardingCompletedAt` |
+| `20260830120000_add_date_entry_retrospective` | Additive nullable `DateEntry.wouldDoAgain` and `nextTimeNotes` reflections; existing rows remain unanswered |
 | `20260830120000_expand_plan_practical_details` | Renames `Plan.city` to the wider `address` without losing values and adds the validated JSON checklist |
 
 Writing a migration that changes the meaning of existing data — not just its
