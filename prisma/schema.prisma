@@ -63,6 +63,7 @@ model User {
   romanticProfiles     RomanticProfile[]
   dateEntries          DateEntry[]
   plans                Plan[]
+  locations            Location[]
   flags                Flag[]
   customFieldDefs      CustomFieldDefinition[]
   customFieldValues    CustomFieldValue[]
@@ -107,12 +108,12 @@ model UserPreference {
   digestEnabled      Boolean @default(true)
 
   /// Require the PIN before showing the dating module or anything private.
-  privacyLockEnabled Boolean  @default(false)
+  privacyLockEnabled Boolean @default(false)
   /// Hide the dating module from navigation and the dashboard entirely.
-  hideDating         Boolean  @default(false)
+  hideDating         Boolean @default(false)
   /// Blur private notes until tapped — a second, weaker layer for shoulder
   /// surfing after the lock has already been opened.
-  blurPrivateNotes   Boolean  @default(true)
+  blurPrivateNotes   Boolean @default(true)
 
   /// First-run onboarding: when the welcome flow was finished or skipped.
   /// Null means the wizard still has something to say, and the app shell
@@ -122,7 +123,7 @@ model UserPreference {
   /// hint for the setup checklist — an install on a second device never
   /// reaches this row, so nothing is gated on it.
   pwaInstalledAt        DateTime?
-  updatedAt          DateTime @updatedAt
+  updatedAt             DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -244,27 +245,30 @@ model Contact {
   category      TaxonomyTerm? @relation("ContactCategory", fields: [categoryId], references: [id], onDelete: SetNull)
   meetingSource TaxonomyTerm? @relation("ContactMeetingSource", fields: [meetingSourceId], references: [id], onDelete: SetNull)
 
-  methods         ContactMethod[]
-  addresses       Address[]
-  tags            ContactTag[]
-  participations  InteractionParticipant[]
-  facts           Fact[]
-  importantDates  ImportantDate[]
-  lifeEvents      LifeEvent[]
-  ideas           Idea[]
-  tasks           Task[]
-  gifts           Gift[]
-  debts           Debt[]
-  dietaryNeeds    DietaryNeed[]
-  flags           Flag[]
-  dateEntries     DateEntry[]
-  plans           Plan[]
-  romanticProfile RomanticProfile?
-  households      HouseholdMember[]
-  dismissalsA     FamilySuggestionDismissal[] @relation("DismissalA")
-  dismissalsB     FamilySuggestionDismissal[] @relation("DismissalB")
-  relationsFrom   Relationship[]              @relation("RelationshipFrom")
-  relationsTo     Relationship[]              @relation("RelationshipTo")
+  methods                 ContactMethod[]
+  addresses               Address[]
+  tags                    ContactTag[]
+  participations          InteractionParticipant[]
+  interactionMentions     InteractionMention[]
+  facts                   Fact[]
+  importantDates          ImportantDate[]
+  lifeEvents              LifeEvent[]
+  lifeEventParticipations LifeEventParticipant[]
+  ideas                   Idea[]
+  tasks                   Task[]
+  gifts                   Gift[]
+  debts                   Debt[]
+  dietaryNeeds            DietaryNeed[]
+  allergyStatus           AllergyStatus               @default(UNKNOWN)
+  flags                   Flag[]
+  dateEntries             DateEntry[]
+  plans                   Plan[]
+  romanticProfile         RomanticProfile?
+  households              HouseholdMember[]
+  dismissalsA             FamilySuggestionDismissal[] @relation("DismissalA")
+  dismissalsB             FamilySuggestionDismissal[] @relation("DismissalB")
+  relationsFrom           Relationship[]              @relation("RelationshipFrom")
+  relationsTo             Relationship[]              @relation("RelationshipTo")
 
   @@index([ownerId, isArchived, lastName])
   @@index([ownerId, isArchived, firstName])
@@ -374,6 +378,7 @@ model Interaction {
   /// silently attributed to whoever the default would have named.
   reachedOutBy    ReachedOutBy @default(UNSPECIFIED)
   location        String?      @db.VarChar(191)
+  locationId      String?
   /// Hidden everywhere until the privacy lock is opened.
   isPrivate       Boolean      @default(false)
   createdAt       DateTime     @default(now())
@@ -381,8 +386,10 @@ model Interaction {
 
   owner User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   type  TaxonomyTerm? @relation("InteractionType", fields: [typeId], references: [id], onDelete: SetNull)
+  place Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   participants    InteractionParticipant[]
+  mentions        InteractionMention[]
   dateEntry       DateEntry?
   sourcedFacts    Fact[]                   @relation("FactSource")
   ideasUsed       Idea[]                   @relation("IdeaUsedIn")
@@ -390,6 +397,49 @@ model Interaction {
 
   @@index([ownerId, occurredAt])
   @@index([typeId])
+  @@index([locationId])
+}
+
+/// A reusable, owner-scoped place. Interaction.location remains as the exact
+/// historical label while this record supplies identity and practical details.
+model Location {
+  id             String   @id @default(cuid())
+  ownerId        String
+  name           String   @db.VarChar(191)
+  normalizedName String   @db.VarChar(191)
+  address        String?  @db.VarChar(500)
+  city           String?  @db.VarChar(120)
+  region         String?  @db.VarChar(120)
+  country        String?  @db.VarChar(120)
+  url            String?  @db.VarChar(500)
+  phone          String?  @db.VarChar(64)
+  notes          String?  @db.Text
+  latitude       Decimal? @db.Decimal(10, 7)
+  longitude      Decimal? @db.Decimal(10, 7)
+  aliases        Json     @default("[]")
+  isArchived     Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  interactions Interaction[]
+  plans        Plan[]
+
+  @@unique([ownerId, normalizedName])
+  @@index([ownerId, isArchived, name])
+}
+
+/// A person discussed during an interaction but not present. Keeping this
+/// separate prevents a mention from falsely advancing their contact cadence.
+model InteractionMention {
+  interactionId String
+  contactId     String
+
+  interaction Interaction @relation(fields: [interactionId], references: [id], onDelete: Cascade)
+  contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([interactionId, contactId])
+  @@index([contactId])
 }
 
 model InteractionParticipant {
@@ -493,13 +543,27 @@ model LifeEvent {
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
-  owner   User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  type    TaxonomyTerm? @relation("LifeEventType", fields: [typeId], references: [id], onDelete: SetNull)
+  owner        User                   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact      Contact                @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  type         TaxonomyTerm?          @relation("LifeEventType", fields: [typeId], references: [id], onDelete: SetNull)
+  participants LifeEventParticipant[]
 
   @@index([contactId, date])
   @@index([ownerId, date])
   @@index([typeId])
+}
+
+/// Everyone whose history includes a shared life event. `LifeEvent.contactId`
+/// remains the anchor for compatibility and ownership-by-parent semantics.
+model LifeEventParticipant {
+  lifeEventId String
+  contactId   String
+
+  lifeEvent LifeEvent @relation(fields: [lifeEventId], references: [id], onDelete: Cascade)
+  contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([lifeEventId, contactId])
+  @@index([contactId])
 }
 
 /// A named group of people who belong together — "The Whitfields", "Mum and
@@ -703,22 +767,41 @@ enum DebtDirection {
 /// decorative allergy. Genuinely sensitive dietary context belongs in a private
 /// `Fact`. One attached to a private contact is still hidden with that contact.
 model DietaryNeed {
-  id                 String      @id @default(cuid())
-  ownerId            String
-  contactId          String
-  kind               DietaryKind
-  label              String      @db.VarChar(191)
-  notes              String?     @db.Text
+  id                      String          @id @default(cuid())
+  ownerId                 String
+  contactId               String
+  kind                    DietaryKind
+  category                AllergyCategory @default(FOOD)
+  label                   String          @db.VarChar(191)
+  notes                   String?         @db.Text
+  reaction                String?         @db.Text
+  epinephrineLocation     String?         @db.VarChar(191)
+  emergencyInstructions   String?         @db.Text
+  professionallyDiagnosed Boolean?
+  lastConfirmedOn         DateTime?       @db.Date
   /// Whether they carry adrenaline. Actionable in an emergency in a way that a
   /// severity grade is not.
-  carriesEpinephrine Boolean     @default(false)
-  createdAt          DateTime    @default(now())
-  updatedAt          DateTime    @updatedAt
+  carriesEpinephrine      Boolean         @default(false)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
 
   owner   User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
-  @@index([contactId, kind])
+  @@index([contactId, category, kind])
+}
+
+enum AllergyStatus {
+  UNKNOWN
+  NO_KNOWN
+  KNOWN
+}
+
+enum AllergyCategory {
+  FOOD
+  MEDICATION
+  ENVIRONMENTAL
+  OTHER
 }
 
 enum DietaryKind {
@@ -824,9 +907,9 @@ model DateEntry {
   /// nth date with this person, maintained on write.
   sequence            Int?
   activityTypeId      String?
-  venue               String? @db.VarChar(191)
-  city                String? @db.VarChar(120)
-  whoPaid             WhoPaid @default(UNSPECIFIED)
+  venue               String?  @db.VarChar(191)
+  city                String?  @db.VarChar(120)
+  whoPaid             WhoPaid  @default(UNSPECIFIED)
   costCents           Int?
   /// 1-5
   rating              Int?
@@ -834,7 +917,11 @@ model DateEntry {
   chemistry           Int?
   /// 1-5
   conversationQuality Int?
-  notes               String? @db.Text
+  notes               String?  @db.Text
+  /// Optional post-date reflection. Null means it was never answered.
+  wouldDoAgain        Boolean?
+  /// Private retrospective guidance, distinct from a Plan's preparation notes.
+  nextTimeNotes       String?  @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -881,6 +968,7 @@ model Plan {
   categoryId String?
   /// The venue, park, cinema, trailhead — or your own kitchen.
   location   String? @db.VarChar(191)
+  locationId String?
   /// Full street address or other directions suitable for finding the venue.
   address    String? @db.VarChar(500)
   /// The listing, the menu, the trailer, the ticket page.
@@ -904,6 +992,8 @@ model Plan {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  place Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
   owner             User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   contact           Contact?      @relation(fields: [contactId], references: [id], onDelete: Cascade)
   category          TaxonomyTerm? @relation("PlanCategory", fields: [categoryId], references: [id], onDelete: SetNull)
@@ -913,6 +1003,7 @@ model Plan {
   @@index([contactId, status])
   @@index([categoryId])
   @@index([usedInInteractionId])
+  @@index([locationId])
 }
 
 enum FlagKind {

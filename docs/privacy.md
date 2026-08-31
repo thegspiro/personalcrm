@@ -60,6 +60,11 @@ where-fragments applied to the queries themselves:
 **Counts are filtered too.** A total that shifts when you unlock is itself a
 disclosure.
 
+The Places directory derives its visits, people, rankings and last-visited
+dates only from interactions admitted by `interactionPrivacyWhere`. A place
+known solely through hidden interactions is not listed while locked. Plans at
+a place inherit the privacy of their optional contact.
+
 The module is deliberately pure and free of request context so it can be tested
 directly against a database; [`filter.ts`](../src/server/privacy/filter.ts)
 supplies the live scope.
@@ -69,9 +74,11 @@ supplies the live scope.
 `isPrivate` exists on `Contact`, `Fact`, `Interaction` and `Debt`. Marking a
 contact private hides everything beneath them.
 
-`DietaryNeed` deliberately has no `isPrivate` — an allergy behind a PIN is a
-decorative allergy. Genuinely sensitive dietary context belongs in a private
-`Fact`.
+`DietaryNeed` deliberately has no `isPrivate` — an allergen or emergency
+instruction behind a PIN is decorative safety information. This includes food,
+medication and environmental allergies. Genuinely sensitive diagnosis context
+belongs in a private `Fact`; all allergy data is still hidden when its contact
+is private.
 
 ### Dating is gated differently from private rows
 
@@ -86,11 +93,19 @@ navigation and the dashboard altogether.
 
 - **Every dating write re-checks the lock.** Server actions are public POST
   endpoints; they do not trust that the page was gated.
+- **Date retrospectives stay in the locked dating layer.** Repeat-date queries
+  are owner-scoped and run only after unlock; private `nextTimeNotes` are never
+  copied into the non-private `Plan.notes` field.
 - **Marking something private is refused while locked** — otherwise a row
   vanishes with no way back to it.
+- **Disabling the lock requires authorization on the server.** The current
+  session must already be unlocked or the current PIN must verify. General
+  preference form data cannot switch the lock off.
 - **Failed PIN attempts back off**, counted on the `User` row rather than the
   session, so clearing cookies does not reset a lockout. Five failures before
-  backoff starts; it tops out at 15 minutes.
+  backoff starts; it tops out at 15 minutes. Unlock, PIN replacement, and PIN
+  removal use the same counter, and each verification locks the account row so
+  simultaneous requests cannot lose attempts or cross the threshold unchecked.
 - **The PIN is a different secret from the password.** Handing someone your
   login should not hand them this.
 

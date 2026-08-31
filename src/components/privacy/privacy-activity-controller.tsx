@@ -32,7 +32,13 @@ export function PrivacyActivityController({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [deadline, setDeadline] = React.useState(expiresAt);
-  const [closed, setClosed] = React.useState(enabled && !unlocked);
+  // Only a deadline that closes while this shell is open blanks it. Starting
+  // closed because the session is merely locked would wall off every route,
+  // with no redirect -- close() is what navigates -- and Settings has to stay
+  // reachable while locked so the PIN can be entered to disable the lock at
+  // all. A locked server render is already safe: privacy is enforced in the
+  // queries, so the content was never sent.
+  const [closed, setClosed] = React.useState(false);
   const lastHeartbeat = React.useRef(expiresAt ? expiresAt - idleTimeoutMs : 0);
   const pendingActivity = React.useRef(false);
   const heartbeatTimer = React.useRef<number | null>(null);

@@ -2,6 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { cookies } from "next/headers";
 import { createHash } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import { hashPassword, verifyPassword } from "@/server/auth/password";
 import { SESSION_COOKIE } from "@/server/auth/session";
@@ -88,10 +89,7 @@ async function currentSession() {
  * Backoff after repeated wrong PINs. Tracked on the user rather than the
  * session so clearing cookies does not reset a lockout.
  */
-function backoffRemainingMs(
-  failedCount: number,
-  failedAt: Date | null,
-): number {
+export function backoffRemainingMs(failedCount: number, failedAt: Date | null): number {
   if (!failedAt || failedCount < FAILURES_BEFORE_BACKOFF) return 0;
   const over = failedCount - FAILURES_BEFORE_BACKOFF;
   const delay = Math.min(MAX_BACKOFF_MS, 2 ** over * 5_000);
@@ -145,6 +143,68 @@ export interface UnlockResult {
   retryAfterSeconds?: number;
 }
 
+type VerifySuccess = (tx: Prisma.TransactionClient) => Promise<void>;
+
+/**
+ * Verify the account PIN while holding a row lock on its user-level attempt
+ * counters. The lock makes the read/check/increment one indivisible operation:
+ * concurrent requests (including requests from other sessions and endpoints)
+ * cannot all observe the same count and lose increments or slip past backoff.
+ */
+async function verifyPin(
+  userId: string,
+  suppliedPin: string,
+  wrongPinError: string,
+  onVerified?: VerifySuccess,
+): Promise<UnlockResult> {
+  return prisma.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<
+      Array<{
+        privacyPinHash: string | null;
+        privacyPinFailedCount: number;
+        privacyPinFailedAt: Date | null;
+      }>
+    >`SELECT privacyPinHash, privacyPinFailedCount, privacyPinFailedAt
+       FROM \`User\` WHERE id = ${userId} FOR UPDATE`;
+    const user = rows[0];
+    if (!user?.privacyPinHash) return { ok: false, error: "No PIN is set." };
+
+    const waitMs = backoffRemainingMs(user.privacyPinFailedCount, user.privacyPinFailedAt);
+    if (waitMs > 0) {
+      return {
+        ok: false,
+        error: "Too many attempts. Wait a moment and try again.",
+        retryAfterSeconds: Math.ceil(waitMs / 1000),
+      };
+    }
+
+    const matches = await verifyPassword(suppliedPin.trim(), user.privacyPinHash);
+    if (!matches) {
+      const failedCount = user.privacyPinFailedCount + 1;
+      const failedAt = new Date();
+      await tx.user.update({
+        where: { id: userId },
+        data: { privacyPinFailedCount: failedCount, privacyPinFailedAt: failedAt },
+      });
+      const retryAfterSeconds = Math.ceil(backoffRemainingMs(failedCount, failedAt) / 1000);
+      return {
+        ok: false,
+        error: retryAfterSeconds > 0
+          ? "Too many attempts. Wait a moment and try again."
+          : wrongPinError,
+        retryAfterSeconds,
+      };
+    }
+
+    await tx.user.update({
+      where: { id: userId },
+      data: { privacyPinFailedCount: 0, privacyPinFailedAt: null },
+    });
+    await onVerified?.(tx);
+    return { ok: true };
+  });
+}
+
 /** Set or replace the PIN. Replacing one requires the current PIN. */
 export async function setPin(
   newPin: string,
@@ -163,21 +223,21 @@ export async function setPin(
 
   if (user.privacyPinHash) {
     if (!currentPin) return { ok: false, error: "Enter your current PIN." };
-    const matches = await verifyPassword(
-      currentPin.trim(),
-      user.privacyPinHash,
-    );
-    if (!matches) return { ok: false, error: "That current PIN is wrong." };
+    const hash = await hashPassword(digits);
+    const result = await verifyPin(user.id, currentPin, "That current PIN is wrong.", async (tx) => {
+      await tx.user.update({ where: { id: user.id }, data: { privacyPinHash: hash } });
+    });
+    if (!result.ok) return result;
+  } else {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        privacyPinHash: await hashPassword(digits),
+        privacyPinFailedCount: 0,
+        privacyPinFailedAt: null,
+      },
+    });
   }
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      privacyPinHash: await hashPassword(digits),
-      privacyPinFailedCount: 0,
-      privacyPinFailedAt: null,
-    },
-  });
 
   // Setting a PIN implies you can see your own data right now.
   await touchUnlock();
@@ -189,24 +249,13 @@ export async function clearPin(currentPin: string): Promise<UnlockResult> {
   const { user } = await getUserContext();
   if (!user.privacyPinHash) return { ok: true };
 
-  const matches = await verifyPassword(currentPin.trim(), user.privacyPinHash);
-  if (!matches) return { ok: false, error: "That PIN is wrong." };
-
-  await prisma.$transaction([
-    prisma.user.update({
-      where: { id: user.id },
-      data: {
-        privacyPinHash: null,
-        privacyPinFailedCount: 0,
-        privacyPinFailedAt: null,
-      },
-    }),
-    prisma.userPreference.update({
+  return verifyPin(user.id, currentPin, "That PIN is wrong.", async (tx) => {
+    await tx.user.update({ where: { id: user.id }, data: { privacyPinHash: null } });
+    await tx.userPreference.update({
       where: { userId: user.id },
       data: { privacyLockEnabled: false },
-    }),
-  ]);
-  return { ok: true };
+    });
+  });
 }
 
 /** Verify the PIN and open the lock for this session. */
@@ -214,34 +263,8 @@ export async function unlock(pin: string): Promise<UnlockResult> {
   const { user } = await getUserContext();
   if (!user.privacyPinHash) return { ok: false, error: "No PIN is set." };
 
-  const waitMs = backoffRemainingMs(
-    user.privacyPinFailedCount,
-    user.privacyPinFailedAt,
-  );
-  if (waitMs > 0) {
-    return {
-      ok: false,
-      error: "Too many attempts. Wait a moment and try again.",
-      retryAfterSeconds: Math.ceil(waitMs / 1000),
-    };
-  }
-
-  const matches = await verifyPassword(pin.trim(), user.privacyPinHash);
-  if (!matches) {
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        privacyPinFailedCount: { increment: 1 },
-        privacyPinFailedAt: new Date(),
-      },
-    });
-    return { ok: false, error: "That PIN is wrong." };
-  }
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { privacyPinFailedCount: 0, privacyPinFailedAt: null },
-  });
+  const result = await verifyPin(user.id, pin, "That PIN is wrong.");
+  if (!result.ok) return result;
   await touchUnlock();
   return { ok: true };
 }

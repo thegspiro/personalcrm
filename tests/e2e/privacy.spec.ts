@@ -75,9 +75,37 @@ test("set a PIN and switch the lock on", async ({ page }) => {
   await expect(requirePin).toBeChecked();
 });
 
-test("a private contact is withheld from the response while locked", async ({
+test("the lock cannot be disabled without the PIN, but its owner can disable it", async ({
   page,
 }) => {
+  await ensureSignedIn(page);
+  await openPrivacySettings(page);
+
+  const requirePin = page.getByRole("switch", { name: /Require the PIN/ });
+  await expect(requirePin).toBeChecked();
+  await requirePin.click();
+
+  // The switch alone does not lower the boundary. A fresh test session is
+  // locked, so settings asks for proof rather than optimistically switching it
+  // off in client state.
+  await expect(requirePin).toBeChecked();
+  await page.getByLabel("Current PIN", { exact: true }).fill("000000");
+  await page.getByRole("button", { name: "Disable lock" }).click();
+  await expect(page.getByText(/PIN is wrong/i)).toBeVisible();
+  await expect(requirePin).toBeChecked();
+
+  await page.getByLabel("Current PIN", { exact: true }).fill(PIN);
+  await page.getByRole("button", { name: "Disable lock" }).click();
+  await expect(requirePin).not.toBeChecked();
+
+  // Restore the suite's locked baseline for all following privacy checks.
+  await requirePin.click();
+  await expect(requirePin).toBeChecked();
+  await page.getByRole("button", { name: "Lock now" }).click();
+  await page.waitForURL("/");
+});
+
+test("a private contact is withheld from the response while locked", async ({ page }) => {
   await ensureSignedIn(page);
   const name = secretName();
   const url = await createContact(page, name);

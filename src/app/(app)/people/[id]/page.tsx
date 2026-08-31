@@ -41,6 +41,8 @@ import { displayName } from "@/lib/utils";
 import { getUpcomingDates } from "@/server/queries/dashboard";
 import { UpcomingDatesWidget } from "@/components/dashboard/widgets";
 import { isBirthdayImportantDate, projectContactBirthday } from "@/server/queries/birthdays";
+import { listContactLocations } from "@/server/queries/locations";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -82,6 +84,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     interactionFields,
     reciprocity,
     upcomingDates,
+    locations,
   ] = await Promise.all([
     listTermsByKind(user.id, [
       "INTERACTION_TYPE",
@@ -105,6 +108,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     fieldsFor(user.id, "INTERACTION", null),
     getReciprocity(user.id, id),
     getUpcomingDates(user.id, timezone, 366, 100, id),
+    listContactLocations(user.id, id),
   ]);
 
   // Family relationships get their own section, so "Connected people" is left
@@ -120,7 +124,11 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
   // Mapped once and shared: the summary above the timeline and the full section
   // below it read the same rows, so a milestone cannot render one way in one
   // place and another way in the other.
-  const lifeEvents = contact.lifeEvents.map((event) => ({
+  const sharedLifeEvents = [
+    ...contact.lifeEvents,
+    ...contact.lifeEventParticipations.map((participation) => participation.lifeEvent),
+  ].filter((event, index, rows) => rows.findIndex((candidate) => candidate.id === event.id) === index);
+  const lifeEvents = sharedLifeEvents.map((event) => ({
     id: event.id,
     title: event.title,
     description: event.description,
@@ -130,6 +138,12 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     endDate: event.endDate ? plainDateFromDb(event.endDate) : null,
     endPrecision: event.endPrecision,
     isMilestone: event.isMilestone,
+    participantIds: event.participants.map((participant) => participant.contactId),
+    participants: event.participants.map((participant) => ({
+      id: participant.contact.id,
+      firstName: participant.contact.firstName,
+      lastName: participant.contact.lastName,
+    })),
     type: event.type
       ? { label: event.type.label, icon: event.type.icon, color: event.type.color }
       : null,
@@ -170,6 +184,10 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           }}
           interactionTypes={terms.INTERACTION_TYPE}
           contacts={contactOptions}
+          allergySummary={contact.dietaryNeeds
+            .filter((need) => need.kind === "ALLERGY")
+            .map((need) => need.label)
+            .join(", ") || null}
         />
       </div>
 
@@ -253,6 +271,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                 id: plan.id,
                 title: plan.title,
                 location: plan.location,
+                address: plan.address,
+                notes: plan.notes,
               }))}
               dates={dateEntries.map((entry) => ({
                 id: entry.id,
@@ -266,6 +286,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                 chemistry: entry.chemistry,
                 conversationQuality: entry.conversationQuality,
                 notes: entry.notes,
+                wouldDoAgain: entry.wouldDoAgain,
+                nextTimeNotes: entry.nextTimeNotes,
                 isPrivate: entry.interaction.isPrivate,
                 activityTypeId: entry.activityTypeId,
                 activityLabel: entry.activityType?.label ?? null,
@@ -288,12 +310,21 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
         <DietarySection
           contactId={contact.id}
+          allergyStatus={contact.allergyStatus}
           needs={contact.dietaryNeeds.map((need) => ({
             id: need.id,
             kind: need.kind,
+            category: need.category,
             label: need.label,
             notes: need.notes,
+            reaction: need.reaction,
             carriesEpinephrine: need.carriesEpinephrine,
+            epinephrineLocation: need.epinephrineLocation,
+            emergencyInstructions: need.emergencyInstructions,
+            professionallyDiagnosed: need.professionallyDiagnosed,
+            lastConfirmedOn: need.lastConfirmedOn
+              ? plainDateKey(plainDateFromDb(need.lastConfirmedOn))
+              : null,
           }))}
         />
 
@@ -348,6 +379,15 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           }))}
         />
 
+        <SectionCard title="Places" icon="MapPin" count={locations.length}>
+          {locations.length ? <div className="grid gap-2">{locations.map((location) => (
+            <Link key={location.id} href={`/locations/${location.id}`} className="flex items-center justify-between rounded-lg border px-3 py-2 hover:bg-muted/50">
+              <span className="text-sm font-medium">{location.name}</span>
+              <span className="text-xs text-muted-foreground">{location.visits} visit{location.visits === 1 ? "" : "s"}</span>
+            </Link>
+          ))}</div> : <p className="text-xs text-muted-foreground">No shared places recorded yet.</p>}
+        </SectionCard>
+
         <DatesSection
           contactId={contact.id}
           dates={[
@@ -378,6 +418,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           contactId={contact.id}
           events={lifeEvents}
           types={terms.LIFE_EVENT_TYPE}
+          contacts={contactOptions}
         />
 
         <TasksSection

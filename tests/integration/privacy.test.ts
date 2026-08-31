@@ -109,6 +109,16 @@ describe.skipIf(!hasTestDatabase)("privacy filters", () => {
   });
 
   it("withholds an interaction whose participant is private, even when the interaction is not", async () => {
+    const mixed = await prisma.interaction.create({
+      data: {
+        ownerId,
+        occurredAt: daysAgo(1),
+        title: "Mixed company",
+        participants: {
+          create: [{ contactId: publicContactId }, { contactId: privateContactId }],
+        },
+      },
+    });
     const locked = await interactions(LOCKED);
     const ids = new Set(locked.map((i) => i.id));
 
@@ -116,12 +126,13 @@ describe.skipIf(!hasTestDatabase)("privacy filters", () => {
       where: { participants: { some: { contactId: privateContactId } } },
       select: { id: true },
     });
-    expect(viaSecret).toHaveLength(1);
+    expect(viaSecret).toHaveLength(2);
     // Logging "dinner" against a private person must not leak through the
     // timeline just because the interaction itself was not marked.
-    expect(ids.has(viaSecret[0].id)).toBe(false);
+    expect(viaSecret.every((interaction) => !ids.has(interaction.id))).toBe(true);
+    expect(ids.has(mixed.id)).toBe(false);
 
-    expect(await interactions(UNLOCKED)).toHaveLength(3);
+    expect(await interactions(UNLOCKED)).toHaveLength(4);
   });
 
   it("withholds rows reached through a private contact", async () => {

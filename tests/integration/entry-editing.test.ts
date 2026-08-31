@@ -97,6 +97,27 @@ describe.skipIf(!hasTestDatabase)("editing an entry", () => {
   // --- facts ---------------------------------------------------------------
 
   describe("a life event range", () => {
+    it("stores one shared event in every selected person's history", async () => {
+      const data = form({
+        contactId: sarahId,
+        title: "Got married",
+        date: "2024-06-15",
+        datePrecision: "DAY",
+      });
+      data.append("contactIds", marcusId);
+
+      const result = await createLifeEvent(data);
+
+      expect(result.ok).toBe(true);
+      const event = await prisma.lifeEvent.findUniqueOrThrow({
+        where: { id: result.data!.id },
+        include: { participants: true },
+      });
+      expect(event.participants.map((row) => row.contactId).sort()).toEqual(
+        [sarahId, marcusId].sort(),
+      );
+    });
+
     it("returns an end-date error and does not write a definitively inverted range", async () => {
       const result = await createLifeEvent(
         form({
@@ -513,6 +534,21 @@ describe.skipIf(!hasTestDatabase)("editing an entry", () => {
     const stored = await prisma.dietaryNeed.findUniqueOrThrow({ where: { id: need.id } });
     expect(stored.kind).toBe("ALLERGY");
     expect(stored.carriesEpinephrine).toBe(true);
+  });
+
+  it("clears allergy-only emergency data when an allergy becomes a preference", async () => {
+    const need = await prisma.dietaryNeed.create({
+      data: { ownerId, contactId: sarahId, kind: "ALLERGY", category: "FOOD", label: "Peanuts", carriesEpinephrine: true, reaction: "Hives" },
+    });
+    await updateDietaryNeed(form({ id: need.id, label: "Peanuts", kind: "PREFERENCE", category: "FOOD", carriesEpinephrine: "true", reaction: "Hives" }));
+    const stored = await prisma.dietaryNeed.findUniqueOrThrow({ where: { id: need.id } });
+    expect(stored).toMatchObject({ kind: "PREFERENCE", carriesEpinephrine: false, reaction: null });
+  });
+
+  it("rejects a non-food preference category", async () => {
+    const need = await prisma.dietaryNeed.create({ data: { ownerId, contactId: sarahId, kind: "PREFERENCE", label: "Mushrooms" } });
+    expect(await updateDietaryNeed(form({ id: need.id, label: "Mushrooms", kind: "PREFERENCE", category: "MEDICATION" }))).toMatchObject({ ok: false });
+    expect((await prisma.dietaryNeed.findUniqueOrThrow({ where: { id: need.id } })).category).toBe("FOOD");
   });
 
   // --- flags ---------------------------------------------------------------

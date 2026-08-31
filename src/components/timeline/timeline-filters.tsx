@@ -81,16 +81,28 @@ export function TimelineFilters() {
         ))}
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-3">
+      <div className="grid gap-2 sm:grid-cols-4">
         <div className="grid gap-1">
           <Label htmlFor="timeline-search">Search</Label>
           <Input
             id="timeline-search"
             defaultValue={params.get("q") ?? ""}
-            placeholder="Anything you wrote"
+            placeholder="Notes, people, or places"
             onBlur={(event) => setParam("q", event.target.value.trim())}
             onKeyDown={(event) => {
               if (event.key === "Enter") setParam("q", event.currentTarget.value.trim());
+            }}
+          />
+        </div>
+        <div className="grid gap-1">
+          <Label htmlFor="timeline-location">Location</Label>
+          <Input
+            id="timeline-location"
+            defaultValue={params.get("location") ?? ""}
+            placeholder="Exact place"
+            onBlur={(event) => setParam("location", event.target.value.trim())}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") setParam("location", event.currentTarget.value.trim());
             }}
           />
         </div>

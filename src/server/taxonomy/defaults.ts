@@ -62,6 +62,10 @@ export const TAXONOMY_SEEDS: Record<TaxonomyKind, TaxonomySeed[]> = {
     { slug: "email", label: "Email", icon: "Mail", color: "blue" },
     { slug: "ran-into", label: "Ran into", icon: "Footprints", color: "slate" },
     { slug: "gift", label: "Gift", icon: "Gift", color: "pink" },
+    { slug: "family-call", label: "Family call", icon: "PhoneCall", color: "emerald" },
+    { slug: "family-meal", label: "Family meal", icon: "UtensilsCrossed", color: "orange" },
+    { slug: "family-celebration", label: "Family celebration", icon: "PartyPopper", color: "fuchsia" },
+    { slug: "caregiving", label: "Caregiving", icon: "HeartHandshake", color: "rose" },
   ],
 
   FACT_CATEGORY: [
