@@ -13,8 +13,9 @@
   A rename onto a place you already have is refused rather than quietly merging
   the two, since two real venues can share a name.
 - **An optional address lookup, off by default.** Turn it on under Settings →
-  Places and point it at OpenStreetMap (Nominatim), Photon, or your own
-  instance. A place's Edit panel then gets a "Look up this address" button that
+  Places and point it at OpenStreetMap (Nominatim) or Photon — either of them
+  public, or an instance on your own network, in which case nothing leaves it.
+  A place's Edit panel then gets a "Look up this address" button that
   offers candidates and, when you pick one, fills in the address, city, region,
   country and coordinates. It sends the place's name and the address you typed,
   only when you press the button — never while you type, never on a page load,

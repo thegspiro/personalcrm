@@ -14,13 +14,23 @@ import {
  */
 
 describe("the provider table", () => {
-  it("offers a self-hosted option, and only that one has an editable endpoint", () => {
-    const custom = GEO_PROVIDERS.find((entry) => entry.id === "custom");
-    expect(custom?.baseUrlEditable).toBe(true);
-    // A fixed public endpoint is not something to mistype.
-    for (const entry of GEO_PROVIDERS.filter((row) => row.id !== "custom")) {
-      expect(entry.baseUrlEditable).toBe(false);
+  it("can point every dialect it speaks at a self-hosted endpoint", () => {
+    // The gap this closes: Photon was pinned to the public instance while the
+    // only editable entry spoke Nominatim, so a self-hosted Photon could not be
+    // reached at all — requests left in the wrong shape and quietly matched
+    // nothing. Any future dialect has the same trap waiting for it.
+    for (const dialect of new Set(GEO_PROVIDERS.map((entry) => entry.dialect))) {
+      const reachable = GEO_PROVIDERS.some(
+        (entry) => entry.dialect === dialect && entry.baseUrlEditable,
+      );
+      expect(reachable, `no self-hostable entry speaks ${dialect}`).toBe(true);
     }
+  });
+
+  it("keeps the OpenStreetMap Foundation's own endpoint pinned", () => {
+    // It runs on donated servers under a published policy; the address is not
+    // something to mistype, and self-hosting Nominatim goes through "custom".
+    expect(geoProviderById("nominatim")?.baseUrlEditable).toBe(false);
   });
 
   it("resolves a known provider and refuses an unknown one", () => {

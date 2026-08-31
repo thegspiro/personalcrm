@@ -37,10 +37,14 @@ export const GEO_PROVIDERS: GeoProviderDefinition[] = [
     id: "photon",
     label: "Photon",
     defaultBaseUrl: "https://photon.komoot.io",
-    baseUrlEditable: false,
+    // Editable, unlike Nominatim's: Photon is much lighter to self-host, and
+    // the endpoint is the only way to say so. Pinned to the public instance it
+    // was unreachable on your own network, because the one editable entry
+    // speaks the other dialect.
+    baseUrlEditable: true,
     dialect: "photon",
     note:
-      "Also OpenStreetMap data. The public instance is best-effort and throttles heavy use; it is open source, so you can run your own.",
+      "Also OpenStreetMap data. The public instance is best-effort and throttles heavy use; it is open source and considerably lighter to run than Nominatim, so point this at your own if you have one.",
   },
   {
     id: "custom",

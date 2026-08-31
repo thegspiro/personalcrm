@@ -250,8 +250,10 @@ discarded: it is internal to one instance and does not survive a reimport.
 ### Endpoints
 
 Nominatim (the OpenStreetMap Foundation's own, on donated servers), Photon, or
-anything speaking the Nominatim `/search` shape — including one on your own
-network, in which case nothing leaves it. Plain `fetch`, no SDK, for the same
+anything speaking the Nominatim `/search` shape. Both dialects can be pointed at
+an instance on your own network, in which case nothing leaves it — Photon by
+editing its endpoint, Nominatim through the self-hosted entry. Photon is the
+lighter of the two to run. Plain `fetch`, no SDK, for the same
 reason the AI layer uses none. Requests identify the application in their
 `User-Agent`, which Nominatim's policy asks for and which is why a stock HTTP
 library's default would be rejected.
