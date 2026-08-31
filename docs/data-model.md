@@ -278,10 +278,22 @@ withhold the interaction while the lock is closed, just like participants.
 An owner-scoped reusable place shared by interactions and plans. `name` is the
 display label and `(ownerId, normalizedName)` is unique; normalization only
 folds case and whitespace so similarly named real-world venues are never
-silently merged. Address, contact details, notes, coordinates, aliases and an
-archive flag hold optional practical metadata. `Interaction.location` and
-`Plan.location` retain the exact historical text while their optional
-`locationId` points at the canonical place (`SET NULL`).
+silently merged. `address`, `city`, `region`, `country`, `phone`, `url` and
+`notes` are the practical details, written through
+[`actions/locations.ts`](server-actions.md#places--actionslocationsts);
+`isArchived` takes a place out of the lists while its page and history stay
+reachable. `Interaction.location` and `Plan.location` retain the exact
+historical text while their optional `locationId` points at the canonical place
+(`SET NULL`) — a rename never rewrites what was typed at the time.
+
+`osmType` (`N`/`W`/`R`) and `osmId` record the OpenStreetMap object an optional
+address lookup matched, and are written only by that lookup. Deliberately
+*not* Nominatim's own `place_id`: that is internal to a single instance and does
+not survive a reimport, so it would decay into a reference to nothing. `osmId`
+is a `BIGINT` because OSM ids are past 2^32. `latitude`/`longitude` come from
+the same lookup and are stored as a pair or not at all — half a pair places
+somewhere confidently wrong. `aliases` remains unwritten; see
+[known gaps](README.md#known-gaps).
 
 ### `Fact`
 
@@ -600,6 +612,10 @@ the `init-migrate` s6 oneshot).
 | `20260830120000_add_date_entry_retrospective` | Additive nullable `DateEntry.wouldDoAgain` and `nextTimeNotes` reflections; existing rows remain unanswered |
 | `20260830120000_expand_plan_practical_details` | Renames `Plan.city` to the wider `address` without losing values and adds the validated JSON checklist |
 | `20260831120000_add_shared_family_context` | Adds interaction mentions and shared life-event participants; backfills every existing life event into its participant join |
+| `20260829120000_enable_reminder_delivery` | `NotificationChannel` delivery state and `ReminderLog`, so an important-date reminder is sent once and retried on failure |
+| `20260831120000_add_locations` | Adds `Location` and the nullable `locationId` on `Interaction` and `Plan`, backfilling from the existing free-text labels by case and whitespace only. The original `location` columns are deliberately kept, not dropped: they are the historical wording |
+| `20260831120000_distinguish_allergy_categories` | Separates allergy categories from dietary needs |
+| `20260831205130_add_location_osm_reference` | Additive nullable `Location.osmType` and `osmId`, so a place can be tied to a real OpenStreetMap object |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).

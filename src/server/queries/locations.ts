@@ -1,26 +1,55 @@
 import "server-only";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import {
   interactionPrivacyWhere,
   privacyScope,
   viaOptionalContactPrivacyWhere,
+  type PrivacyScope,
 } from "@/server/privacy/filter";
+
+/**
+ * When a place may be seen at all.
+ *
+ * A place is only visible through something that happened there, so somewhere
+ * known solely through hidden interactions is withheld entirely — listing it
+ * with no visits would itself announce that someone you cannot show was there.
+ *
+ * One definition rather than three copies: the editing action needs exactly
+ * this clause, and hand-copied predicates drift.
+ *
+ * Note the `AND`. `interactionPrivacyWhere` also keys on `participants`, so
+ * spreading it beside another filter on the same key silently replaces that
+ * filter — the bug that made every place look like one contact's in 6aeaa52.
+ */
+export function locationVisibleWhere(
+  ownerId: string,
+  scope: PrivacyScope,
+): Prisma.LocationWhereInput {
+  return {
+    ownerId,
+    AND: [
+      { OR: [
+        { interactions: { some: { ownerId, ...interactionPrivacyWhere(scope) } } },
+        { plans: { some: { ownerId, ...viaOptionalContactPrivacyWhere(scope) } } },
+      ] },
+    ],
+  };
+}
 
 export async function listLocations(ownerId: string, search?: string) {
   const scope = await privacyScope();
   const interactionWhere = { ownerId, ...interactionPrivacyWhere(scope) };
+  const visible = locationVisibleWhere(ownerId, scope);
   const rows = await prisma.location.findMany({
     where: {
-      ownerId,
+      ...visible,
       isArchived: false,
       AND: [
+        ...(visible.AND as Prisma.LocationWhereInput[]),
         ...(search?.trim()
           ? [{ OR: [{ name: { contains: search.trim() } }, { address: { contains: search.trim() } }] }]
           : []),
-        { OR: [
-          { interactions: { some: interactionWhere } },
-          { plans: { some: { ownerId, ...viaOptionalContactPrivacyWhere(scope) } } },
-        ] },
       ],
     },
     include: {
@@ -60,16 +89,7 @@ export async function listLocations(ownerId: string, search?: string) {
 export async function listLocationOptions(ownerId: string) {
   const scope = await privacyScope();
   return prisma.location.findMany({
-    where: {
-      ownerId,
-      isArchived: false,
-      AND: [
-        { OR: [
-          { interactions: { some: { ownerId, ...interactionPrivacyWhere(scope) } } },
-          { plans: { some: { ownerId, ...viaOptionalContactPrivacyWhere(scope) } } },
-        ] },
-      ],
-    },
+    where: { ...locationVisibleWhere(ownerId, scope), isArchived: false },
     select: { id: true, name: true },
     // By name, not by recency: a "most recently visited" order derived from
     // unfiltered visits is a signal that shifts when the lock opens.
@@ -83,6 +103,8 @@ export async function getLocation(ownerId: string, id: string) {
   const visibleInteraction = { ownerId, ...interactionPrivacyWhere(scope) };
   const visiblePlan = { ownerId, ...viaOptionalContactPrivacyWhere(scope) };
   return prisma.location.findFirst({
+    // Deliberately not filtered on `isArchived`: an archived place keeps its
+    // page and its history, it just leaves the directory.
     where: {
       id,
       ownerId,

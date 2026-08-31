@@ -150,7 +150,14 @@ awkward phrasing when you switch it on and point it at a provider. The whole
 directory can be deleted and quick add keeps working — that is the test of
 whether the split is real. Its answer is run back through the local matcher
 rather than trusted, so an assisted parse cannot do anything the local parse
-refuses to do.
+refuses to do — including the venue it reads, which is re-matched against your
+own places rather than taken on the model's word.
+
+`src/server/geo/` is the same arrangement for address lookup: optional, off by
+default, deletable, and reached only from an explicit button. With it gone, a
+place's address is something you type. Both directories are loaded behind a
+dynamic `import()` from the action that uses them, which is what makes deleting
+either of them a supported operation rather than a build error.
 
 ## Container startup
 

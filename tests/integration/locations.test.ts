@@ -8,6 +8,19 @@ vi.mock("@/server/db/client", async () => {
   return { prisma: client };
 });
 
+// The actions run through `owner()`, which reads a cookie. Standing in for the
+// request context is what lets the real action bodies — including their
+// privacy re-checks, which is the point — be exercised here.
+vi.mock("@/server/user/context", () => ({
+  getUserContext: async () => ({
+    user: { id: state.ownerId },
+    timezone: "America/New_York",
+    prefs: {},
+  }),
+}));
+
+vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+
 vi.mock("@/server/privacy/lock", () => ({
   getPrivacyState: async () => ({
     pinSet: true,
@@ -26,6 +39,9 @@ const { normalizeLocationName, resolveLocation } = await import(
   "@/server/services/locations"
 );
 const { buildTimeline } = await import("@/server/queries/timeline");
+const { applyLocationLookup, setLocationArchived, updateLocation } = await import(
+  "@/server/actions/locations"
+);
 
 const TZ = "America/New_York";
 
@@ -215,6 +231,173 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
     const filtered = await buildTimeline(state.ownerId, TZ, { locationId: cafe.id });
     expect(filtered.every((entry) => entry.kind === "interaction")).toBe(true);
     expect(filtered).toHaveLength(1);
+  });
+
+  describe("editing a place", () => {
+    function formFor(fields: Record<string, string>) {
+      const form = new FormData();
+      for (const [key, value] of Object.entries(fields)) form.set(key, value);
+      return form;
+    }
+
+    it("fills in the practical fields that nothing could reach before", async () => {
+      state.unlocked = true;
+      const ada = await prisma.contact.create({
+        data: { ownerId: state.ownerId, firstName: "Ada" },
+      });
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, [ada.id]);
+
+      const result = await updateLocation(
+        formFor({
+          id: cafe.id,
+          name: "Corner Cafe",
+          address: "123 Main St",
+          city: "Arlington",
+          region: "Virginia",
+          country: "United States",
+          phone: "+1 555 0100",
+          url: "https://example.com",
+          notes: "Ask for the corner table.",
+        }),
+      );
+
+      expect(result.ok).toBe(true);
+      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      expect(saved.city).toBe("Arlington");
+      expect(saved.country).toBe("United States");
+      expect(saved.phone).toBe("+1 555 0100");
+      expect(saved.notes).toBe("Ask for the corner table.");
+    });
+
+    it("renames without rewriting what was typed at the time", async () => {
+      state.unlocked = true;
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, [], { label: "corner cafe" });
+
+      const result = await updateLocation(formFor({ id: cafe.id, name: "The Corner Cafe" }));
+      expect(result.ok).toBe(true);
+
+      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      expect(saved.name).toBe("The Corner Cafe");
+      expect(saved.normalizedName).toBe("the corner cafe");
+      // The history keeps the words that were used at the time.
+      const [logged] = await prisma.interaction.findMany({ where: { ownerId: state.ownerId } });
+      expect(logged.location).toBe("corner cafe");
+    });
+
+    it("refuses a rename onto another place rather than merging them", async () => {
+      state.unlocked = true;
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      const bar = await place(state.ownerId, "Quiet Bar");
+      await visit(cafe.id, []);
+      await visit(bar.id, []);
+
+      const result = await updateLocation(formFor({ id: bar.id, name: "Corner Cafe" }));
+
+      // Two real venues can share a spelling, and folding one into the other
+      // would take a history with it. The user is told, not obeyed.
+      expect(result.ok).toBe(false);
+      expect(result.fieldErrors?.name).toBeTruthy();
+      expect(await prisma.location.count({ where: { ownerId: state.ownerId } })).toBe(2);
+      expect((await prisma.location.findUniqueOrThrow({ where: { id: bar.id } })).name).toBe(
+        "Quiet Bar",
+      );
+    });
+
+    it("will not edit a place the lock is hiding, and says only 'not found'", async () => {
+      const secret = await prisma.contact.create({
+        data: { ownerId: state.ownerId, firstName: "Secret", isPrivate: true },
+      });
+      const hidden = await place(state.ownerId, "Quiet Bar");
+      await visit(hidden.id, [secret.id]);
+
+      const result = await updateLocation(formFor({ id: hidden.id, name: "Renamed" }));
+
+      // Scoping by owner alone would let a locked session edit — or, by the
+      // difference between two error messages, confirm the existence of — a
+      // place only a hidden interaction knows about.
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("That place wasn't found.");
+      expect(result.fieldErrors).toBeUndefined();
+      expect((await prisma.location.findUniqueOrThrow({ where: { id: hidden.id } })).name).toBe(
+        "Quiet Bar",
+      );
+    });
+
+    it("will not edit another account's place", async () => {
+      state.unlocked = true;
+      const stranger = await createTestUser();
+      const theirs = await prisma.location.create({
+        data: {
+          ownerId: stranger.id,
+          name: "Their Cafe",
+          normalizedName: normalizeLocationName("Their Cafe"),
+        },
+      });
+
+      const result = await updateLocation(formFor({ id: theirs.id, name: "Mine Now" }));
+      expect(result.ok).toBe(false);
+      expect((await prisma.location.findUniqueOrThrow({ where: { id: theirs.id } })).name).toBe(
+        "Their Cafe",
+      );
+    });
+
+    it("archiving hides a place from the lists but keeps its page and history", async () => {
+      state.unlocked = true;
+      const ada = await prisma.contact.create({
+        data: { ownerId: state.ownerId, firstName: "Ada" },
+      });
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, [ada.id]);
+
+      expect((await setLocationArchived(formFor({ id: cafe.id, archived: "true" }))).ok).toBe(true);
+
+      expect(await listLocations(state.ownerId)).toEqual([]);
+      expect(await listLocationOptions(state.ownerId)).toEqual([]);
+      // Nothing is destroyed by a status change: the page still resolves and
+      // the visit still points at it.
+      const detail = await getLocation(state.ownerId, cafe.id);
+      expect(detail?.interactions).toHaveLength(1);
+
+      await setLocationArchived(formFor({ id: cafe.id, archived: "false" }));
+      expect(await listLocations(state.ownerId)).toHaveLength(1);
+    });
+
+    it("stores the OSM object a lookup matched, and both coordinates or neither", async () => {
+      state.unlocked = true;
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, []);
+
+      await applyLocationLookup(
+        formFor({
+          id: cafe.id,
+          osmType: "W",
+          osmId: "123456789",
+          latitude: "38.8809",
+          longitude: "-77.1728",
+          city: "Arlington",
+        }),
+      );
+
+      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      expect(saved.osmType).toBe("W");
+      expect(saved.osmId).toBe(123456789n);
+      expect(saved.city).toBe("Arlington");
+      expect(Number(saved.latitude)).toBeCloseTo(38.8809, 4);
+    });
+
+    it("ignores half a coordinate pair rather than placing it wrongly", async () => {
+      state.unlocked = true;
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, []);
+
+      await applyLocationLookup(formFor({ id: cafe.id, latitude: "38.8809" }));
+
+      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      expect(saved.latitude).toBeNull();
+      expect(saved.longitude).toBeNull();
+    });
   });
 
   it("resolves the same name to one place per owner, never across owners", async () => {

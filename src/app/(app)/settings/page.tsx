@@ -17,6 +17,9 @@ import { AiSettings } from "@/components/settings/ai-settings";
 import { getAiStatus } from "@/server/ai/config";
 import { getPrivacyState } from "@/server/privacy/lock";
 import { PROVIDERS } from "@/server/ai/providers";
+import { GeoSettings } from "@/components/settings/geo-settings";
+import { getGeoStatus } from "@/server/geo/config";
+import { GEO_PROVIDERS } from "@/server/geo/providers";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
@@ -24,7 +27,7 @@ export const dynamic = "force-dynamic";
 export default async function SettingsPage() {
   const { user, prefs } = await getUserContext();
 
-  const [taxonomies, definitions, categories, layoutRow, valueCounts, ai, privacyState] = await Promise.all([
+  const [taxonomies, definitions, categories, layoutRow, valueCounts, ai, geo, privacyState] = await Promise.all([
     listTaxonomyAdmin(user.id),
     listAllFieldDefinitions(user.id),
     listTerms(user.id, "CONTACT_CATEGORY"),
@@ -35,6 +38,7 @@ export default async function SettingsPage() {
       _count: { _all: true },
     }),
     getAiStatus(),
+    getGeoStatus(),
     getPrivacyState(),
   ]);
 
@@ -111,6 +115,15 @@ export default async function SettingsPage() {
             keySource={ai.keySource}
             keyHint={ai.keyHint}
             providers={PROVIDERS}
+          />
+        }
+        places={
+          <GeoSettings
+            enabled={geo.enabled}
+            usable={geo.usable}
+            provider={geo.provider}
+            baseUrl={geo.baseUrl}
+            providers={GEO_PROVIDERS}
           />
         }
         privacy={
