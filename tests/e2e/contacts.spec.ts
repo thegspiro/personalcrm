@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { ensureSignedIn } from "./helpers";
+import { createContact, ensureSignedIn } from "./helpers";
 
 /**
  * Creating a person and recording things about them, including things that
@@ -63,6 +63,33 @@ test("a backdated interaction does not reset the cadence", async ({ page }) => {
   // from history, this person would wrongly look freshly contacted.
   await expect(page.getByText(/Overdue by/)).toBeVisible();
   await expect(page.getByText("Spoke today")).toHaveCount(0);
+});
+
+test("one interaction logged from a profile appears for every participant", async ({ page }) => {
+  await ensureSignedIn(page);
+  const first = `${personName(page)} Case`;
+  const second = `Together ${test.info().project.name} ${STAMP}`;
+  const secondUrl = await createContact(page, second);
+
+  await openPerson(page, first);
+  await page.getByRole("button", { name: "Log interaction" }).click();
+  const sheet = page.getByRole("dialog");
+
+  // The profile person stays selected and visible while another searchable
+  // contact is added to the same interaction.
+  await expect(sheet.getByRole("button", { name: first })).toBeVisible();
+  await sheet.getByLabel("Search people").fill(second);
+  await sheet.getByRole("button", { name: second, exact: true }).click();
+  await sheet.getByRole("button", { name: "Coffee", exact: true }).click();
+  await sheet.getByLabel("Title").fill("Coffee all together");
+  await sheet.getByRole("button", { name: "Log it" }).click();
+  await expect(page.getByText("Coffee all together")).toBeVisible();
+
+  await page.goto(secondUrl);
+  await expect(page.getByText("Coffee all together")).toBeVisible();
+
+  await page.goto("/timeline");
+  await expect(page.getByText("Coffee all together")).toBeVisible();
 });
 
 test("they remain on the overdue list", async ({ page }) => {

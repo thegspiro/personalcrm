@@ -85,7 +85,7 @@ export async function createInteraction(
 ): Promise<ActionResult<{ id: string }>> {
   const { ownerId } = await owner();
 
-  const requested = strList(form, "contactIds");
+  const requested = [...new Set(strList(form, "contactIds"))];
   const contactIds = await ownedContactIds(ownerId, requested);
   if (contactIds.length !== requested.length) return fail("Some of those people weren't found.");
 
@@ -159,7 +159,7 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
   });
   if (!existing) return fail("Interaction not found.");
 
-  const requested = strList(form, "contactIds");
+  const requested = [...new Set(strList(form, "contactIds"))];
   const nextContactIds = await ownedContactIds(ownerId, requested);
   if (nextContactIds.length !== requested.length) {
     return fail("Some of those people weren't found.");
