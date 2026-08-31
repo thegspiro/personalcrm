@@ -12,7 +12,12 @@ import {
 } from "@/server/privacy/filter";
 import { calendarDateInTz, plainDateFromDb, plainDateToDb } from "@/lib/dates";
 import { isValidPartialDateRange } from "@/lib/date-precision";
-import { dietaryKindOf } from "@/lib/dietary";
+import {
+  allergyCategoryOf,
+  allergyStatusOf,
+  dietaryKindOf,
+  validAllergyCombination,
+} from "@/lib/dietary";
 import { parseReminderDays } from "@/lib/reminders";
 import { planChecklistSchema } from "@/lib/plan-checklist";
 import {
@@ -884,16 +889,40 @@ export async function createDietaryNeed(form: FormData): Promise<ActionResult<{ 
   if (!contactId || !label) return fail("What can't they have?");
   if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
 
+  const duplicate = await prisma.dietaryNeed.findFirst({
+    where: { ownerId, contactId, label },
+    select: { id: true },
+  });
+  if (duplicate) return fail("That allergy or dietary need is already recorded.");
+
+  const kind = dietaryKindOf(str(form, "kind"));
+  const category = allergyCategoryOf(str(form, "category"));
+  if (!validAllergyCombination(kind, category)) return fail("That category is only for allergies.");
+  const isAllergy = kind === "ALLERGY";
+  const diagnosed = str(form, "professionallyDiagnosed");
+
   const created = await prisma.dietaryNeed.create({
     data: {
       ownerId,
       contactId,
-      kind: dietaryKindOf(str(form, "kind")),
+      kind,
+      category,
       label,
       notes: str(form, "notes") ?? null,
-      carriesEpinephrine: bool(form, "carriesEpinephrine"),
+      reaction: isAllergy ? str(form, "reaction") ?? null : null,
+      carriesEpinephrine: isAllergy && bool(form, "carriesEpinephrine"),
+      epinephrineLocation: isAllergy ? str(form, "epinephrineLocation") ?? null : null,
+      emergencyInstructions: isAllergy ? str(form, "emergencyInstructions") ?? null : null,
+      professionallyDiagnosed: isAllergy
+        ? diagnosed === "yes" ? true : diagnosed === "no" ? false : null
+        : null,
+      lastConfirmedOn: isAllergy ? plainDate(form, "lastConfirmedOn") : null,
     },
   });
+
+  if (isAllergy) {
+    await prisma.contact.update({ where: { id: contactId }, data: { allergyStatus: "KNOWN" } });
+  }
 
   touch(contactId);
   return ok({ id: created.id });
@@ -907,19 +936,44 @@ export async function updateDietaryNeed(form: FormData): Promise<ActionResult> {
 
   const existing = await prisma.dietaryNeed.findFirst({
     where: { id, ownerId },
-    select: { contactId: true },
+    select: { contactId: true, kind: true },
   });
   if (!existing) return fail("Not found.");
+
+  const kind = dietaryKindOf(str(form, "kind"));
+  const category = allergyCategoryOf(str(form, "category"));
+  if (!validAllergyCombination(kind, category)) return fail("That category is only for allergies.");
+  const isAllergy = kind === "ALLERGY";
+  const diagnosed = str(form, "professionallyDiagnosed");
 
   await prisma.dietaryNeed.update({
     where: { id },
     data: {
-      kind: dietaryKindOf(str(form, "kind")),
+      kind,
+      category,
       label,
       notes: str(form, "notes") ?? null,
-      carriesEpinephrine: bool(form, "carriesEpinephrine"),
+      reaction: isAllergy ? str(form, "reaction") ?? null : null,
+      carriesEpinephrine: isAllergy && bool(form, "carriesEpinephrine"),
+      epinephrineLocation: isAllergy ? str(form, "epinephrineLocation") ?? null : null,
+      emergencyInstructions: isAllergy ? str(form, "emergencyInstructions") ?? null : null,
+      professionallyDiagnosed: isAllergy
+        ? diagnosed === "yes" ? true : diagnosed === "no" ? false : null
+        : null,
+      lastConfirmedOn: isAllergy ? plainDate(form, "lastConfirmedOn") : null,
     },
   });
+
+  if (isAllergy) {
+    await prisma.contact.update({ where: { id: existing.contactId }, data: { allergyStatus: "KNOWN" } });
+  } else if (existing.kind === "ALLERGY") {
+    const remaining = await prisma.dietaryNeed.count({
+      where: { ownerId, contactId: existing.contactId, kind: "ALLERGY" },
+    });
+    if (remaining === 0) {
+      await prisma.contact.update({ where: { id: existing.contactId }, data: { allergyStatus: "UNKNOWN" } });
+    }
+  }
 
   touch(existing.contactId);
   return ok();
@@ -929,11 +983,33 @@ export async function deleteDietaryNeed(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
   const existing = await prisma.dietaryNeed.findFirst({
     where: { id, ownerId },
-    select: { contactId: true },
+    select: { contactId: true, kind: true },
   });
   if (!existing) return fail("Not found.");
   await prisma.dietaryNeed.delete({ where: { id } });
+  if (existing.kind === "ALLERGY") {
+    const remaining = await prisma.dietaryNeed.count({ where: { ownerId, contactId: existing.contactId, kind: "ALLERGY" } });
+    if (remaining === 0) {
+      await prisma.contact.update({ where: { id: existing.contactId }, data: { allergyStatus: "UNKNOWN" } });
+    }
+  }
   touch(existing.contactId);
+  return ok();
+}
+
+export async function updateAllergyStatus(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const contactId = str(form, "contactId");
+  if (!contactId || !(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
+  const allergyStatus = allergyStatusOf(str(form, "allergyStatus"));
+  if (allergyStatus === "NO_KNOWN") {
+    const allergies = await prisma.dietaryNeed.count({
+      where: { ownerId, contactId, kind: "ALLERGY" },
+    });
+    if (allergies > 0) return fail("Remove recorded allergies before choosing no known allergies.");
+  }
+  await prisma.contact.update({ where: { id: contactId }, data: { allergyStatus } });
+  touch(contactId);
   return ok();
 }
 

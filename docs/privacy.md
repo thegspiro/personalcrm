@@ -58,9 +58,11 @@ supplies the live scope.
 `isPrivate` exists on `Contact`, `Fact`, `Interaction` and `Debt`. Marking a
 contact private hides everything beneath them.
 
-`DietaryNeed` deliberately has no `isPrivate` — an allergy behind a PIN is a
-decorative allergy. Genuinely sensitive dietary context belongs in a private
-`Fact`.
+`DietaryNeed` deliberately has no `isPrivate` — an allergen or emergency
+instruction behind a PIN is decorative safety information. This includes food,
+medication and environmental allergies. Genuinely sensitive diagnosis context
+belongs in a private `Fact`; all allergy data is still hidden when its contact
+is private.
 
 ### Dating is gated differently from private rows
 

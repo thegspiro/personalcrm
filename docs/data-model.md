@@ -405,9 +405,15 @@ Money — or a thing — that has moved and not come back.
 
 ### `DietaryNeed`
 
-Something a person cannot, or will not, eat. `kind`: `ALLERGY` |
-`INTOLERANCE` | `MEDICAL` | `PREFERENCE`; plus `label`, `notes` and
-`carriesEpinephrine`.
+An allergy or something a person cannot, or will not, eat. `kind`: `ALLERGY` |
+`INTOLERANCE` | `MEDICAL` | `PREFERENCE`. Allergies additionally have a
+`category`: `FOOD` | `MEDICATION` | `ENVIRONMENTAL` | `OTHER`, factual reaction
+and emergency-instruction fields, optional diagnosis state, and a last-confirmed
+date. Non-food categories are valid only for allergies. Existing rows migrate
+to `FOOD`, the only category justified by the former food-only interface.
+
+`Contact.allergyStatus` distinguishes `UNKNOWN`, `NO_KNOWN`, and `KNOWN`; an
+empty list therefore never silently means that the person has no allergies.
 
 Two deliberate absences, both documented in the schema itself:
 
@@ -416,9 +422,9 @@ Two deliberate absences, both documented in the schema itself:
   false reassurance the table exists to prevent. Severity is expressed only as
   `kind` and `carriesEpinephrine` — facts, not predictions. The UI renders two
   groups (must avoid / prefers to avoid), never four escalating tiers.
-- **No `isPrivate`.** An allergy behind a PIN is a decorative allergy. Sensitive
-  dietary context belongs in a private `Fact`; a need attached to a private
-  contact is still hidden with that contact.
+- **No `isPrivate`.** The allergen, reaction and emergency instructions remain
+  available in an emergency. Sensitive diagnosis detail belongs in a private
+  `Fact`; a need attached to a private contact is still hidden with that contact.
 
 ---
 

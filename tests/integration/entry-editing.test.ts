@@ -536,6 +536,21 @@ describe.skipIf(!hasTestDatabase)("editing an entry", () => {
     expect(stored.carriesEpinephrine).toBe(true);
   });
 
+  it("clears allergy-only emergency data when an allergy becomes a preference", async () => {
+    const need = await prisma.dietaryNeed.create({
+      data: { ownerId, contactId: sarahId, kind: "ALLERGY", category: "FOOD", label: "Peanuts", carriesEpinephrine: true, reaction: "Hives" },
+    });
+    await updateDietaryNeed(form({ id: need.id, label: "Peanuts", kind: "PREFERENCE", category: "FOOD", carriesEpinephrine: "true", reaction: "Hives" }));
+    const stored = await prisma.dietaryNeed.findUniqueOrThrow({ where: { id: need.id } });
+    expect(stored).toMatchObject({ kind: "PREFERENCE", carriesEpinephrine: false, reaction: null });
+  });
+
+  it("rejects a non-food preference category", async () => {
+    const need = await prisma.dietaryNeed.create({ data: { ownerId, contactId: sarahId, kind: "PREFERENCE", label: "Mushrooms" } });
+    expect(await updateDietaryNeed(form({ id: need.id, label: "Mushrooms", kind: "PREFERENCE", category: "MEDICATION" }))).toMatchObject({ ok: false });
+    expect((await prisma.dietaryNeed.findUniqueOrThrow({ where: { id: need.id } })).category).toBe("FOOD");
+  });
+
   // --- flags ---------------------------------------------------------------
 
   it("a flag can be reconsidered from red to green, keeping its wording", async () => {
