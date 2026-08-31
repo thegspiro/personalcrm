@@ -85,7 +85,9 @@ navigation and the dashboard altogether.
   preference form data cannot switch the lock off.
 - **Failed PIN attempts back off**, counted on the `User` row rather than the
   session, so clearing cookies does not reset a lockout. Five failures before
-  backoff starts; it tops out at 15 minutes.
+  backoff starts; it tops out at 15 minutes. Unlock, PIN replacement, and PIN
+  removal use the same counter, and each verification locks the account row so
+  simultaneous requests cannot lose attempts or cross the threshold unchecked.
 - **The PIN is a different secret from the password.** Handing someone your
   login should not hand them this.
 
