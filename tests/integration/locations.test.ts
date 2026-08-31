@@ -1,113 +1,157 @@
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { normalizeLocationName } from "@/server/services/locations";
-import { interactionPrivacyWhere, type PrivacyScope } from "@/server/privacy/where";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
 
-const LOCKED: PrivacyScope = { enabled: true, unlocked: false };
-const UNLOCKED: PrivacyScope = { enabled: true, unlocked: true };
+const state = vi.hoisted(() => ({ ownerId: "", enabled: true, unlocked: false }));
+
+vi.mock("@/server/db/client", async () => {
+  const { prisma: client } = await import("./db");
+  return { prisma: client };
+});
+
+vi.mock("@/server/privacy/lock", () => ({
+  getPrivacyState: async () => ({
+    pinSet: true,
+    enabled: state.enabled,
+    unlocked: state.unlocked,
+    expiresAt: null,
+    retryAfterSeconds: 0,
+  }),
+  recordProtectedReadActivity: async () => ({ ok: false }) as const,
+}));
+
+const { getLocation, listContactLocations, listLocations } = await import(
+  "@/server/queries/locations"
+);
+const { normalizeLocationName, resolveLocation } = await import(
+  "@/server/services/locations"
+);
 
 /**
- * A place page aggregates whoever was there, so it is a second way to reach
- * every visit — and therefore a second way to leak one. These assert the lock
- * against the location relation rather than the timeline it was written for.
+ * A place is a second route to an interaction, and so a second way to leak
+ * one. These call the location queries themselves rather than rebuilding their
+ * where-clauses: the shared predicate is already covered by `privacy.test.ts`,
+ * and what is unproven here is that these queries apply it — to the nested
+ * reads and to the aggregates the place page displays.
  */
 describe.skipIf(!hasTestDatabase)("location history", () => {
-  beforeEach(reset);
+  beforeEach(async () => {
+    await reset();
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = true;
+    state.unlocked = false;
+  });
+
   afterAll(() => prisma.$disconnect());
 
-  it("withholds private visits and visits with a private participant while locked", async () => {
-    const owner = await createTestUser();
+  async function place(ownerId: string, name: string) {
+    return prisma.location.create({
+      data: { ownerId, name, normalizedName: normalizeLocationName(name) },
+    });
+  }
+
+  async function visit(
+    locationId: string,
+    contactIds: string[],
+    options: { isPrivate?: boolean; label?: string } = {},
+  ) {
+    return prisma.interaction.create({
+      data: {
+        ownerId: state.ownerId,
+        occurredAt: new Date(),
+        locationId,
+        location: options.label ?? "Corner Cafe",
+        isPrivate: options.isPrivate ?? false,
+        participants: { create: contactIds.map((contactId) => ({ contactId })) },
+      },
+    });
+  }
+
+  it("withholds private visits and visits with a private participant, counts included", async () => {
     const [ada, grace, secret] = await Promise.all([
-      prisma.contact.create({ data: { ownerId: owner.id, firstName: "Ada" } }),
-      prisma.contact.create({ data: { ownerId: owner.id, firstName: "Grace" } }),
+      prisma.contact.create({ data: { ownerId: state.ownerId, firstName: "Ada" } }),
+      prisma.contact.create({ data: { ownerId: state.ownerId, firstName: "Grace" } }),
       prisma.contact.create({
-        data: { ownerId: owner.id, firstName: "Secret", isPrivate: true },
+        data: { ownerId: state.ownerId, firstName: "Secret", isPrivate: true },
       }),
     ]);
+    const cafe = await place(state.ownerId, "Corner Cafe");
 
-    const name = "Corner Cafe";
-    const place = await prisma.location.create({
-      data: { ownerId: owner.id, name, normalizedName: normalizeLocationName(name) },
-    });
+    await visit(cafe.id, [ada.id, grace.id], { label: " Corner   Cafe " });
+    await visit(cafe.id, [ada.id]);
+    // Withheld because it is marked private.
+    await visit(cafe.id, [ada.id], { isPrivate: true });
+    // Withheld because a private person was there, though it was never marked.
+    // Aggregating by place must not be the thing that discloses them.
+    await visit(cafe.id, [secret.id]);
 
-    const visits = [
-      // Visible: nothing private about it or the people on it.
-      { contacts: [ada.id, grace.id], isPrivate: false, label: " Corner   Cafe " },
-      { contacts: [ada.id], isPrivate: false, label: "Corner Cafe" },
-      // Withheld: marked private.
-      { contacts: [ada.id], isPrivate: true, label: "Corner Cafe" },
-      // Withheld: never marked, but a private person was there. Aggregating by
-      // place must not be the thing that discloses them.
-      { contacts: [secret.id], isPrivate: false, label: "Corner Cafe" },
-    ];
-    for (const visit of visits) {
-      await prisma.interaction.create({
-        data: {
-          ownerId: owner.id,
-          occurredAt: new Date(),
-          locationId: place.id,
-          location: visit.label,
-          isPrivate: visit.isPrivate,
-          participants: { create: visit.contacts.map((contactId) => ({ contactId })) },
-        },
-      });
-    }
+    const [listed] = await listLocations(state.ownerId);
+    expect(listed.visitCount).toBe(2);
+    // A count that shifts on unlock is itself a disclosure, so the aggregates
+    // have to be filtered too, not just the rows behind them.
+    expect(listed.peopleCount).toBe(2);
 
-    const visible = await prisma.interaction.findMany({
-      where: { ownerId: owner.id, locationId: place.id, ...interactionPrivacyWhere(LOCKED) },
-      select: { location: true, participants: { select: { contactId: true } } },
-    });
-
-    expect(visible).toHaveLength(2);
+    const detail = await getLocation(state.ownerId, cafe.id);
+    expect(detail?.interactions).toHaveLength(2);
     const seen = new Set(
-      visible.flatMap((visit) => visit.participants.map((row) => row.contactId)),
+      detail?.interactions.flatMap((row) => row.participants.map((p) => p.contact.id)),
     );
     expect(seen).toEqual(new Set([ada.id, grace.id]));
     expect(seen.has(secret.id)).toBe(false);
 
-    // The count itself is a disclosure: it must not shift on unlock alone.
-    const all = await prisma.interaction.findMany({
-      where: { ownerId: owner.id, locationId: place.id, ...interactionPrivacyWhere(UNLOCKED) },
-      select: { id: true },
+    // The private contact's own history is withheld by the same route.
+    expect(await listContactLocations(state.ownerId, secret.id)).toEqual([]);
+
+    state.unlocked = true;
+    const [unlocked] = await listLocations(state.ownerId);
+    expect(unlocked.visitCount).toBe(4);
+    expect(unlocked.peopleCount).toBe(3);
+    expect((await getLocation(state.ownerId, cafe.id))?.interactions).toHaveLength(4);
+    expect(await listContactLocations(state.ownerId, secret.id)).toHaveLength(1);
+  });
+
+  it("hides a place entirely when every visit to it is withheld", async () => {
+    const secret = await prisma.contact.create({
+      data: { ownerId: state.ownerId, firstName: "Secret", isPrivate: true },
     });
-    expect(all).toHaveLength(4);
+    const cafe = await place(state.ownerId, "Corner Cafe");
+    await visit(cafe.id, [secret.id]);
+
+    // Listing the place with a visit count of zero would announce that
+    // somewhere was visited by someone who cannot be shown.
+    expect(await listLocations(state.ownerId)).toEqual([]);
+    expect(await getLocation(state.ownerId, cafe.id)).toBeNull();
   });
 
   it("keeps the entered label rather than rewriting it to the canonical name", async () => {
-    const owner = await createTestUser();
-    const name = "Corner Cafe";
-    const place = await prisma.location.create({
-      data: { ownerId: owner.id, name, normalizedName: normalizeLocationName(name) },
-    });
-    await prisma.interaction.create({
-      data: {
-        ownerId: owner.id,
-        occurredAt: new Date(),
-        locationId: place.id,
-        location: " Corner   Cafe ",
-      },
-    });
+    state.unlocked = true;
+    const cafe = await place(state.ownerId, "Corner Cafe");
+    await visit(cafe.id, [], { label: " Corner   Cafe " });
 
-    const [visit] = await prisma.interaction.findMany({
-      where: { ownerId: owner.id, locationId: place.id },
-      select: { location: true },
-    });
-    expect(visit?.location).toBe(" Corner   Cafe ");
+    const detail = await getLocation(state.ownerId, cafe.id);
+    expect(detail?.name).toBe("Corner Cafe");
+    expect(detail?.interactions[0]?.location).toBe(" Corner   Cafe ");
   });
 
-  it("does not merge identically named places belonging to different owners", async () => {
-    const [one, two] = await Promise.all([createTestUser(), createTestUser()]);
-    const name = "Corner Cafe";
-    const normalizedName = normalizeLocationName(name);
+  it("resolves the same name to one place per owner, never across owners", async () => {
+    const stranger = await createTestUser();
 
-    const [mine, theirs] = await Promise.all([
-      prisma.location.create({ data: { ownerId: one.id, name, normalizedName } }),
-      prisma.location.create({ data: { ownerId: two.id, name, normalizedName } }),
-    ]);
+    const mine = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "  Corner   Cafe "),
+    );
+    const mineAgain = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "corner cafe"),
+    );
+    const theirs = await prisma.$transaction((tx) =>
+      resolveLocation(tx, stranger.id, "Corner Cafe"),
+    );
 
-    // The uniqueness is on (ownerId, normalizedName), so the same real-world
-    // spelling in two accounts stays two rows.
-    expect(mine.id).not.toBe(theirs.id);
-    expect(await prisma.location.count({ where: { ownerId: one.id } })).toBe(1);
+    // Case and repeated whitespace are the same place...
+    expect(mineAgain?.id).toBe(mine?.id);
+    // ...but the same spelling in another account is not, and resolution must
+    // scope by owner rather than trusting the normalized name to be unique.
+    expect(theirs?.id).not.toBe(mine?.id);
+    expect(await prisma.location.count({ where: { ownerId: state.ownerId } })).toBe(1);
+    expect(await prisma.location.count({ where: { ownerId: stranger.id } })).toBe(1);
   });
 });

@@ -274,7 +274,13 @@ export async function getReciprocity(
   contactId: string,
 ): Promise<ReciprocitySummary> {
   const scope = await privacyScope();
-  const mine = { ownerId, participants: { some: { contactId } }, ...interactionPrivacyWhere(scope) };
+  // `participants` is a key in both halves, so spreading the privacy fragment
+  // into the same literal replaced the contact filter outright and summarised
+  // every visible interaction in the account against this one person.
+  const mine = {
+    ownerId,
+    AND: [{ participants: { some: { contactId } } }, interactionPrivacyWhere(scope)],
+  };
 
   const [rows, total] = await Promise.all([
     prisma.interaction.findMany({

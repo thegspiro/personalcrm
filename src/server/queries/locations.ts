@@ -79,9 +79,23 @@ export async function getLocation(ownerId: string, id: string) {
 
 export async function listContactLocations(ownerId: string, contactId: string) {
   const scope = await privacyScope();
+  // Both halves key on `participants` -- "this person was there" and "nobody
+  // private was there" -- so spreading the privacy fragment into the same
+  // object literal silently dropped the contact filter, and every place the
+  // account had visited came back as this person's. AND keeps both.
+  const theirs = {
+    ownerId,
+    AND: [{ participants: { some: { contactId } } }, interactionPrivacyWhere(scope)],
+  };
   const rows = await prisma.location.findMany({
-    where: { ownerId, interactions: { some: { ownerId, participants: { some: { contactId } }, ...interactionPrivacyWhere(scope) } } },
-    include: { interactions: { where: { ownerId, participants: { some: { contactId } }, ...interactionPrivacyWhere(scope) }, select: { occurredAt: true }, orderBy: { occurredAt: "desc" } } },
+    where: { ownerId, interactions: { some: theirs } },
+    include: {
+      interactions: {
+        where: theirs,
+        select: { occurredAt: true },
+        orderBy: { occurredAt: "desc" },
+      },
+    },
     orderBy: { name: "asc" },
   });
   return rows.map((row) => ({ id: row.id, name: row.name, visits: row.interactions.length, lastVisitedAt: row.interactions[0]?.occurredAt ?? null }));
