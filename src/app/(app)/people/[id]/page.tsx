@@ -22,17 +22,15 @@ import {
 } from "@/components/dating/dating-sections";
 import { PlansSection } from "@/components/plans/plans-section";
 import { ContactHeader } from "@/components/contacts/contact-header";
-import {
-  DatesSection,
-  DebtsSection,
-  DietarySection,
-  FactsSection,
-  GiftsSection,
-  IdeasSection,
-  LifeEventsSection,
-  RelationshipsSection,
-  TasksSection,
-} from "@/components/contacts/contact-sections";
+import { DatesSection } from "@/components/contacts/sections/dates";
+import { DebtsSection } from "@/components/contacts/sections/debts";
+import { DietarySection } from "@/components/contacts/sections/dietary";
+import { FactsSection } from "@/components/contacts/sections/facts";
+import { GiftsSection } from "@/components/contacts/sections/gifts";
+import { IdeasSection } from "@/components/contacts/sections/ideas";
+import { LifeEventsSection } from "@/components/contacts/sections/life-events";
+import { RelationshipsSection } from "@/components/contacts/sections/relationships";
+import { TasksSection } from "@/components/contacts/sections/tasks";
 import { MilestonesSummary } from "@/components/contacts/milestones-summary";
 import { TimelineList } from "@/components/timeline/timeline-list";
 import { SectionCard } from "@/components/contacts/section-card";

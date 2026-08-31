@@ -9,7 +9,7 @@ import { Icon } from "@/components/nav/icon";
 import { Badge } from "@/components/ui/badge";
 import { SubmitButton } from "@/components/form/submit-button";
 import type { TermOption } from "@/components/form/term-select";
-import { GiftFields, type GiftItem } from "@/components/contacts/contact-sections";
+import { GiftFields, type GiftItem } from "@/components/contacts/sections/gifts";
 import { formatMoney } from "@/lib/format";
 import { updateGift } from "@/server/actions/details";
 

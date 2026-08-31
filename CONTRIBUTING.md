@@ -180,6 +180,12 @@ delete the ones that do not apply rather than ticking them unread.
 Entries go in [`CHANGELOG.d/`](CHANGELOG.d/README.md), one file per change,
 never into `CHANGELOG.md` directly. `npm run changelog:release` folds them in.
 
+This is enforced, not merely asked for: CI fails a pull request that edits
+`CHANGELOG.md` without deleting the fragments it folded in. `npm run verify`
+runs the same check, so it fails before you push rather than after. A release
+fold passes because it deletes fragments; a deliberate edit to already-released
+history passes with `[changelog]` in the commit subject.
+
 The reason is merge behaviour rather than tidiness: every change wants the top
 of `## [Unreleased]`, so two branches that both edit `CHANGELOG.md` conflict by
 construction. It was the most common conflict in this repository by a wide

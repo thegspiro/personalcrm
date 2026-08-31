@@ -1,237 +1,477 @@
-# AGENTS.md — Repository Instructions for Coding Agents
+# AGENTS.md — Personal CRM Agent Instructions
 
-This file defines repository-wide instructions for Codex and other coding agents working on Personal CRM.
+These instructions apply to all coding agents working in this repository.
 
-`CLAUDE.md` is the detailed engineering handbook for this repository. **Read it before making changes.** Its architecture, privacy invariants, data-model rules, testing requirements, known gaps, and project-specific conventions are authoritative. This file supplements that context with agent workflow, Git, pull-request, CI, conflict-resolution, and completion requirements.
+## Instruction Hierarchy
 
-If this file and `CLAUDE.md` appear to conflict, preserve the stricter safety, privacy, data-integrity, and validation requirement and report the discrepancy.
+Before making changes, read:
 
-## Core Principle: Leave the Repository Better, Green, and Explainable
+1. **`AGENTS.md`** — mandatory agent workflow and completion requirements.
+2. **`Agent.md`** — detailed engineering and delivery procedures.
+3. **`CLAUDE.md`** — architecture, privacy, data-model, testing, and project-specific engineering guidance.
+4. Relevant documentation under **`docs/`**.
+5. **`.github/workflows/ci.yml`** and relevant `package.json` scripts.
 
-Do not silently ignore an error you encounter. Compilation errors, type errors, lint failures, test failures, migration problems, privacy violations, build failures, and CI failures must be either fixed at their root cause or explicitly escalated when the fix genuinely exceeds the task's scope.
+Do not rely on instructions remembered from an earlier task. Read the current repository versions.
 
-Never make a check pass by weakening the check. Do not delete or skip tests, reduce coverage requirements, add broad lint suppressions, cast away type errors, bypass privacy checks, or disable validation merely to obtain a green result.
+If instructions conflict, preserve the stricter privacy, data-integrity, correctness, migration-safety, or validation requirement and report the discrepancy.
 
-## Start of Every Task
+---
 
-Before editing code:
+# Primary Rule
 
-1. Read `CLAUDE.md` and the documentation relevant to the task.
-2. Inspect the current branch, `git status`, and recent history affecting the code you will modify.
-3. Understand the existing implementation before replacing or refactoring it.
-4. Inspect applicable tests and `.github/workflows/ci.yml` when the task can affect CI.
-5. Keep the change focused. Do not perform unrelated cleanup unless it is required to resolve an error you actually encounter.
+**A task is not complete because the requested code was written or a pull request was created.**
 
-## Git and Branch Hygiene
+The task is complete only when the resulting branch has been synchronized appropriately with current `main`, reviewed, validated, and has no known deterministic failure being ignored.
 
-Work on a dedicated branch unless the environment provides an existing task branch.
+Do not knowingly leave a PR red when the failure can reasonably be diagnosed and repaired.
 
-Before considering work complete:
+Do not weaken validation merely to make a PR green.
 
-- Fetch the latest `origin/main` when the environment permits.
-- Determine whether the task branch has diverged from `origin/main`.
-- Synchronize the branch when appropriate before final validation.
-- Resolve ordinary text conflicts carefully, preserving the intent of both the current main branch and the proposed change.
-- Never blindly select "ours" or "theirs" for an entire conflicted file without understanding both sides.
-- After conflict resolution, rerun all validation relevant to the affected code.
-- Inspect `git status` and the complete final diff against `origin/main`.
+---
 
-Do not rewrite shared branch history unless the task explicitly requires it and doing so is safe. If a rebase requires a force push, use the safest available mechanism such as `--force-with-lease` rather than an unconditional force push.
+# Start Every Task
 
-## Existing Pull Requests — Including PRs You Did Not Create
+Before editing:
 
-A pull request does **not** need to have been created by Codex or by the current agent for you to diagnose or repair its code.
+1. Read `AGENTS.md`, `Agent.md`, and `CLAUDE.md`.
+2. Read documentation relevant to the task.
+3. Inspect:
+   - current branch;
+   - `git status`;
+   - recent history;
+   - current `origin/main`;
+   - relevant implementation;
+   - relevant tests;
+   - `package.json`;
+   - `.github/workflows/ci.yml`.
+4. Fetch current `origin/main` when the environment permits.
+5. Determine whether the task branch is already behind or diverged from `main`.
+6. Search for recent changes to the same subsystem before implementing overlapping schema, migration, API, component, test, or documentation work.
 
-When asked to fix an existing PR:
+Do not begin from assumptions about what the repository looked like when the task was originally requested.
 
-1. Inspect the PR's base and head state, changed files, checks, and relevant discussion.
-2. Treat the PR's HEAD as the code state to diagnose.
-3. Reproduce failing checks locally when possible.
-4. Fix the root cause and validate the repair.
-5. If permissions allow, update the existing PR branch.
-6. If the environment cannot modify the original branch, do not stop merely because the PR was created elsewhere. Create a repair branch or repair commit from the PR state when permitted and clearly report how it should be applied.
-7. If permissions or tooling genuinely prevent the repair, report the exact limitation rather than claiming the PR itself is unsupported.
+---
 
-Never claim that a PR is mergeable, green, or ready to merge unless that state has actually been verified.
+# Keep the Branch Current
 
-## Merge Conflicts
+Branch drift is a correctness and CI risk.
 
-For text conflicts:
+Before final validation:
 
-- Read the surrounding code and both conflicting versions.
-- Determine the behavioral intent of each side.
-- Produce a coherent combined result rather than mechanically choosing one side.
-- Check for renamed APIs, schema changes, migrations, tests, and call sites that may make one side stale.
-- Run targeted tests immediately after resolution, then the broader required validation.
+```bash
+git fetch origin
+git status
+```
 
-**A clean merge is not a verified merge.** The absence of a reported conflict says the text reconciled, not that the result is coherent, so rerun the full gate on the merged tree rather than only after your own edits. Each of the following merged without git reporting anything: two branches adding the same name to one import list, which `tsc` rejected as a redeclaration; two branches adding the same `let` to `public/sw.js`, which left a worker that no longer parsed; a test still driving a label `main` had renamed, in a file that merged perfectly; and a page given one new widget per side whose destructuring named only one of them. Conflict count is not a proxy for risk.
+Compare the task branch with current `origin/main`.
 
-When both sides add something at the same point, the coherent result is usually both of them, in a defensible order — not a choice between them.
+If `main` changed during the task, synchronize the task branch when appropriate **before final validation**.
 
-For conflicts involving migrations, dependency lockfiles, or generated metadata, understand how the file is produced before editing it. Regenerate when that is the repository's established workflow rather than hand-editing generated output blindly.
+After synchronization:
 
-## Binary and Generated Files
+1. reread `AGENTS.md`;
+2. reread relevant portions of `Agent.md`, `CLAUDE.md`, and changed configuration;
+3. resolve conflicts semantically;
+4. inspect the resulting combined diff;
+5. rerun required validation.
 
-Before every commit and before reporting completion, inspect `git status` and the full diff for unintended files.
+Never assume that two individually correct branches remain correct after they are combined.
 
-Do not commit generated or runtime artifacts unless they are intentionally version-controlled by this repository. Examples include:
+**A clean Git merge is not a verified merge.**
 
-- database files or database snapshots
-- caches
-- logs
-- coverage output
-- compiled/build output
-- temporary files
-- test artifacts
-- Playwright screenshots/videos/traces created by failed runs
-- archives
-- editor or operating-system metadata
-- secrets or environment-specific configuration
+---
 
-If a test or build creates an untracked artifact:
+# Existing Pull Requests
 
-1. determine why it was created;
-2. remove it from the proposed change;
-3. update `.gitignore` when appropriate; and
-4. adjust the test/build configuration when necessary so normal validation does not dirty the repository.
+You may diagnose and repair an existing pull request regardless of who created it.
 
-Do not attempt to synthesize or manually merge the contents of an opaque binary conflict. Determine which version is authoritative, regenerate the file from source when possible, or escalate the binary conflict for review.
+Do not refuse work merely because the PR was created by:
 
-## Personal CRM Privacy and Data Integrity
+- another Codex task;
+- another coding agent;
+- Claude;
+- a human contributor.
 
-The invariants in `CLAUDE.md` are mandatory, not suggestions. In particular:
+When asked to repair an existing PR:
 
-- Treat every server action as a public POST endpoint: validate input, enforce the privacy lock, and scope by `ownerId`.
-- Enforce privacy in database queries rather than hiding already-fetched data in components.
-- Anchor date calculations to `UserContext.timezone`, never the server's timezone.
-- Do not directly write `Contact.lastInteractionAt` or `nextTouchAt`; use the contact-activity service so derived state is recomputed from history.
-- Preserve partial-date precision rather than inventing exact dates.
-- Preserve historical information when statuses or relationship types change; deletion must remain explicit.
-- New taxonomy values should normally be `TaxonomyTerm` rows rather than code enums unless program logic truly branches on them.
-- Privacy-sensitive tables must participate in the repository's privacy-count/offline-caching safeguards described in `CLAUDE.md`.
+1. inspect the PR HEAD;
+2. inspect current `main`;
+3. inspect changed files;
+4. inspect CI/check results and logs;
+5. inspect review comments;
+6. inspect mergeability;
+7. identify the first meaningful failure;
+8. reproduce it locally when possible;
+9. fix the root cause;
+10. synchronize with current `main` when appropriate;
+11. rerun validation;
+12. update the existing PR branch when permissions permit.
 
-A change that exposes another owner's data, leaks private rows into a server-component payload, incorrectly enables offline caching of private data, or corrupts historical relationship data is not acceptable even if tests happen to pass.
+If the environment cannot modify the original branch, explain the exact limitation and identify the safest repair path. Do not claim that the PR itself is unsupported.
 
-## Database and Migration Work
+---
 
-For Prisma schema changes:
+# CI Failure Policy
 
-1. Update `prisma/schema.prisma`.
-2. Generate the migration using the repository's normal workflow.
-3. **Read the generated SQL.** Do not assume Prisma understands the semantic intent of a rename or data transformation.
-4. Backfill or transform existing data before destructive schema operations when required.
-5. Never modify a migration that has already shipped; create a new migration.
-6. Add new tables to the integration-test reset list described in `CLAUDE.md`.
-7. Update privacy counting/filtering for tables carrying private data.
-8. Test both a fresh schema and an upgrade path when the change affects persistence.
-9. Update the appropriate documentation, and add a `CHANGELOG.d/` entry when the change is user-visible.
+When CI fails, **investigate before rerunning**.
 
-Never use a generated migration as evidence that a migration is safe. Inspect its effect on existing data.
+For each failure:
 
-## Testing and CI
+1. inspect the failed job;
+2. identify the first meaningful error;
+3. reproduce the same command/environment locally when possible;
+4. determine whether the failure is:
+   - deterministic;
+   - flaky;
+   - environmental;
+   - caused by branch drift;
+   - caused by the proposed change;
+5. repair the root cause when reasonably possible;
+6. rerun the affected check;
+7. rerun the repository validation gate;
+8. push the correction;
+9. re-check CI.
 
-GitHub Actions is part of the implementation contract. A change is not complete merely because the code looks correct locally.
+Only rerun unchanged code when there is evidence that the failure was transient or environmental.
 
-The repository's pre-push baseline is a single command:
+One underlying error may make several CI jobs red. Diagnose the earliest meaningful failure before treating downstream failures as separate problems.
+
+---
+
+# Required Validation
+
+The primary pre-push validation gate is:
 
 ```bash
 npm run verify
 ```
 
-It chains typecheck, `eslint`, `npm run lint:sw`, `npm run changelog:check`, the unit and integration suites, and a production build — the same set CI runs. Run the individual commands when a failure needs isolating.
+Use individual commands to isolate failures when necessary:
 
-`npm run lint` matters because the Next.js build is configured not to catch lint failures. `npm run lint:sw` matters for a different reason: `eslint.config.mjs` ignores `public/sw.js` and the file is not TypeScript, so it is the service worker's only static check. A merge once left a duplicate `let` there; the worker stopped parsing, never installed, and offline reading failed silently until the end-to-end job caught it minutes later.
+```bash
+npm run typecheck
+npm run lint
+npm run lint:sw
+npm run changelog:check
+npm test
+npm run build
+```
 
-It parses with classic-script grammar rather than running `node --check`, which is not equivalent: `package.json` declares `"type": "module"`, so node would accept `import`, `export` and top-level `await` in that file, while both registrations of it omit `{ type: "module" }` and get a classic worker that rejects all three. A gate that accepts what the browser refuses is worse than none, because it is trusted.
-
-One `tsc` error normally surfaces as three failed jobs rather than one, because `next build` typechecks and both the end-to-end and container jobs build first. Diagnose the typecheck failure before opening three investigations.
-
-For UI changes, also run:
+For applicable UI, navigation, privacy, offline, form, or user-flow changes, also run:
 
 ```bash
 npx playwright test
 ```
 
-when the environment can provide the required running instance.
+when the environment supports the required application, database, and browser.
 
-Integration tests require `TEST_DATABASE_URL`; they may skip when it is absent. **A skipped integration suite must not be reported as passing integration tests.** Report the missing prerequisite explicitly. Never point destructive integration-test reset logic at a non-test database; the database name must satisfy the repository's `_test` safeguard.
+Do not report a task complete without stating exactly which validation actually ran.
 
-When CI fails:
+---
 
-1. inspect the failing job and identify the first meaningful error;
-2. reproduce the same command/environment locally when possible;
-3. determine whether the failure is deterministic, flaky, environmental, or caused by the proposed change;
-4. fix deterministic/root-cause failures;
-5. rerun the affected check and relevant regression tests; and
-6. only rerun a job without a code change when there is evidence the failure is transient or environmental.
+# Integration Tests Must Actually Run
 
-Do not repeatedly rerun deterministic CI failures hoping for a green attempt.
+Integration tests require `TEST_DATABASE_URL` and a safe MariaDB test database.
 
-## Testing Discipline
+If the environment can provide the database, configure it and run the integration tests.
 
-Tests should validate behavior, not implementation accidents.
+If integration tests skip because `TEST_DATABASE_URL` is unavailable, report them as:
 
-When changing behavior:
+> Integration tests skipped because TEST_DATABASE_URL was unavailable.
 
-- add or update tests that would fail without the intended fix;
-- preserve existing regression coverage;
-- include privacy/owner-scoping cases for server-side reads and writes when relevant;
-- include timezone/date-boundary cases for date calculations when relevant;
-- include migration/data-preservation coverage when practical for persistence changes;
-- test mobile behavior for UI changes because mobile-first behavior is an explicit repository requirement.
+Never describe skipped integration tests as passing.
 
-Do not delete a failing test merely because the implementation changed. Determine whether the requirement changed; if so, update the test to express the new requirement and make that decision clear in the PR.
+---
 
-## Documentation
+# Playwright Must Actually Run
 
-The documentation under `docs/` is part of the product. Keep it synchronized with behavior. Follow `CONTRIBUTING.md` and `CLAUDE.md` to determine which documentation a change affects.
+Writing or updating a Playwright test is not equivalent to running it.
 
-User-visible changes get a new file in `CHANGELOG.d/`, never an edit to `CHANGELOG.md` itself. One file per change is what keeps two branches from competing for the top of `## [Unreleased]` — historically this repository's most frequent merge conflict, and on several branches its only one. `npm run changelog:release` folds them in at release time.
+If Chromium is missing and installation is permitted, install the required Playwright browser.
 
-Do not document functionality that is not implemented. The known-gap section in `CLAUDE.md` exists specifically to prevent agents from assuming migrated models, dependencies, or configuration fields imply working features.
+If Playwright cannot run, report the exact missing prerequisite.
 
-## Scope and Hard Stops
+Never claim E2E validation passed unless Playwright actually executed successfully.
 
-Fix errors you encounter when the repair is reasonably related to the code or validation being touched. If resolving a discovered problem would require a large unrelated redesign, destructive migration, security-policy decision, or substantial expansion of scope:
+---
 
-- stop before making speculative broad changes;
-- report the problem completely;
-- explain why it exceeds the current task; and
-- identify the safest next action.
+# Conflict Resolution
 
-Do not silently continue past a known correctness, privacy, migration, or CI problem.
+Resolve conflicts by understanding both sides.
 
-## Pre-Commit Review
+Never blindly choose an entire file using `ours` or `theirs`.
 
-Before committing, verify:
+For every meaningful conflict:
 
-- [ ] The requested behavior is implemented.
-- [ ] `CLAUDE.md` invariants applicable to the change were followed.
-- [ ] Privacy and `ownerId` scoping were reviewed for every affected read/write path.
-- [ ] Date calculations use the user's timezone where applicable.
-- [ ] Prisma migrations were inspected for data loss when applicable.
-- [ ] Relevant tests were added or updated.
-- [ ] `npm run typecheck` passes.
-- [ ] `npm run lint` passes.
-- [ ] `npm test` passes, with skipped integration tests reported accurately.
-- [ ] `npm run build` passes.
-- [ ] Playwright was run for applicable UI changes when the environment supports it.
-- [ ] `git status` contains no unintended artifacts.
-- [ ] The final diff contains no unrelated changes, secrets, debug code, or accidental generated files.
-- [ ] Documentation and changelog updates were made when required.
+1. understand the intent of both branches;
+2. inspect surrounding implementation;
+3. inspect related schemas, APIs, tests, and call sites;
+4. identify stale assumptions;
+5. construct a coherent combined result;
+6. run targeted tests;
+7. rerun the full applicable validation gate.
 
-## Definition of Done
+When both branches add valid behavior, the correct result may require preserving both changes.
 
-Do not report a task as complete until:
+---
 
-- the requested behavior is implemented;
-- relevant regression tests exist and pass;
-- applicable CI-equivalent checks pass locally when reproducible;
-- the final diff has been reviewed;
-- no unintended generated/binary artifacts are included;
-- persistence and privacy implications have been reviewed where applicable;
-- the branch's relationship to current `main` has been considered;
-- known limitations or checks that could not be performed are explicitly reported; and
-- no known failure is being hidden behind a suppression, skipped test, weakened check, or unsupported claim.
+# Concurrent Work and Duplicate Changes
 
-A concise completion report should state what changed, what validation actually ran, its result, and any remaining limitation. Never say "all tests pass" when some suites were skipped or could not run.
+Before creating a migration or making a significant shared-model change, inspect current `main` and recent work for an existing implementation of the same concept.
+
+Pay particular attention to:
+
+- `prisma/schema.prisma`;
+- `prisma/migrations/`;
+- shared server actions;
+- shared services and queries;
+- shared components;
+- integration/E2E tests;
+- `CHANGELOG.d/`;
+- documentation.
+
+Do not create a second migration for a schema change already implemented on current `main`.
+
+Do not overwrite a newer implementation with an older task's assumptions.
+
+Adapt the task to the current repository state.
+
+---
+
+# Personal CRM Safety Invariants
+
+The detailed rules are in `Agent.md` and `CLAUDE.md`. The following are mandatory.
+
+## Ownership and privacy
+
+- Scope every server-side read and write by `ownerId` or a verified owned parent.
+- Treat every server action as an untrusted public POST endpoint.
+- Validate inputs server-side.
+- Enforce privacy-lock behavior server-side.
+- Filter private data in database queries, not merely in UI components.
+- Treat counts and aggregates as potential disclosures.
+- Review offline caching whenever private-capable data is introduced.
+
+Cross-owner exposure or private-data leakage is a blocking correctness failure.
+
+## Dates
+
+Use `UserContext.timezone` for user-relative date calculations.
+
+Preserve partial-date precision. Never invent unknown month/day values.
+
+## Contact activity
+
+Do not directly write:
+
+```text
+Contact.lastInteractionAt
+Contact.nextTouchAt
+```
+
+Use the established contact-activity service.
+
+## Taxonomy
+
+Prefer `TaxonomyTerm` for user-editable categories and types.
+
+Use code enums only for genuinely finite application states on which program logic branches.
+
+---
+
+# Database and Migration Safety
+
+For persistence changes:
+
+1. inspect existing schema and migration history;
+2. inspect all relevant readers and writers;
+3. update the Prisma schema;
+4. create a new migration;
+5. inspect the generated SQL manually;
+6. verify existing data is preserved;
+7. review ownership/privacy implications;
+8. update integration reset behavior for new tables;
+9. test fresh-schema and upgrade behavior when applicable;
+10. update documentation.
+
+Never modify a migration that may already have shipped.
+
+Never accept destructive migration behavior merely because Prisma generated it.
+
+Treat renames as data-preservation operations, not drop-and-create operations.
+
+---
+
+# Changelog
+
+For ordinary user-visible unreleased changes:
+
+**Do not edit `CHANGELOG.md` directly.**
+
+Create the appropriate entry under:
+
+```text
+CHANGELOG.d/
+```
+
+Follow the current repository fragment convention.
+
+Always inspect current instructions before doing changelog work because repository release conventions may evolve.
+
+This is enforced rather than requested. CI and `npm run verify` both fail a change that edits `CHANGELOG.md` without deleting the fragments it folded in, so a hand edit cannot reach `main` whether or not this file was read. A release fold passes because it deletes fragments; a deliberate edit to already-released history passes with `[changelog]` in the commit subject.
+
+---
+
+# Generated, Binary, and Runtime Artifacts
+
+Before committing and before completion, inspect:
+
+```bash
+git status
+git diff
+```
+
+Do not unintentionally commit:
+
+- databases;
+- logs;
+- caches;
+- build output;
+- coverage output;
+- Playwright screenshots/videos/traces;
+- test artifacts;
+- temporary files;
+- archives;
+- editor/OS metadata;
+- secrets;
+- local environment files.
+
+Do not manually merge opaque binary conflicts.
+
+Regenerate generated files using the repository's established process.
+
+---
+
+# Testing Discipline
+
+When behavior changes, add or update regression tests when practical.
+
+Tests should verify behavior, not implementation accidents.
+
+Do not:
+
+- delete a failing test merely to obtain green CI;
+- skip a test to hide a regression;
+- weaken assertions without a legitimate requirement change;
+- lower coverage requirements to make a task pass;
+- add broad lint/type suppressions;
+- cast away errors instead of fixing them.
+
+If an existing test is no longer correct because the requirement intentionally changed, update the test to express the new requirement.
+
+---
+
+# Scope
+
+Keep changes focused.
+
+Fix discovered errors when the repair is reasonably related to the task or validation being performed.
+
+If a discovered issue requires a major unrelated redesign, destructive migration, security-policy decision, unavailable infrastructure, or substantial scope expansion:
+
+1. stop speculative broad changes;
+2. explain the problem;
+3. provide evidence;
+4. explain the risk;
+5. explain why the safe repair exceeds scope;
+6. identify the safest next action.
+
+Do not silently proceed past a known privacy, data-integrity, migration, correctness, or CI problem.
+
+---
+
+# Mandatory Final Procedure
+
+Immediately before reporting completion:
+
+1. Fetch current `origin/main`.
+2. Determine whether `main` moved during the task.
+3. Synchronize when appropriate.
+4. Reread current repository instructions if synchronization changed them.
+5. Resolve any conflicts semantically.
+6. Inspect the complete resulting diff.
+7. Run:
+
+```bash
+npm run verify
+```
+
+8. Run applicable additional validation, including Playwright when supported.
+9. Inspect:
+
+```bash
+git status
+git diff origin/main...HEAD
+```
+
+10. Confirm no unintended artifacts, unrelated changes, secrets, debug code, or obsolete assumptions remain.
+
+Validation performed before integrating newer `main` is not sufficient final validation.
+
+---
+
+# Completion Report
+
+Every completion report must clearly state:
+
+**Changes**
+- What was implemented or repaired.
+
+**Validation**
+- Exact commands that ran and their results.
+
+**Unavailable or skipped validation**
+- Exact checks that did not run and why.
+
+**Remaining issues**
+- Known CI failures, conflicts, limitations, or follow-up work.
+
+Do not use vague claims such as:
+
+- "all tests pass" when suites skipped;
+- "should pass CI";
+- "looks good";
+- "probably fixed";
+- "ready to merge" without verifying the relevant state.
+
+Report only what was actually verified.
+
+---
+
+# Hard Stops
+
+Never knowingly:
+
+- expose another owner's data;
+- leak locked/private data;
+- bypass ownership or privacy validation;
+- invent unknown historical dates;
+- directly modify derived contact-activity fields;
+- destroy existing user data through an unsafe migration;
+- edit a shipped migration;
+- weaken validation to obtain green CI;
+- describe skipped tests as passing;
+- repeatedly rerun deterministic failures hoping for green;
+- blindly resolve conflicts using `ours` or `theirs`;
+- commit unintended generated or runtime artifacts;
+- assume a clean merge is a correct merge;
+- assume a task branch reflects current `main`;
+- assume instructions from the start of the task are still current;
+- claim CI is green without verifying it.
+
+## Final Standard
+
+The objective is not simply to generate code or open a pull request.
+
+**Leave the repository correct, private, data-safe, current with `main`, validated as completely as the environment permits, and with no known repairable CI failure hidden or ignored.**
