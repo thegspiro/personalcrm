@@ -11,7 +11,7 @@ import { Icon } from "@/components/nav/icon";
 import { relativeDay } from "@/lib/format";
 import { calendarDateInTz, type PlainDate } from "@/lib/dates";
 import { SubmitButton } from "@/components/form/submit-button";
-import { TaskFields } from "@/components/contacts/contact-sections";
+import { TaskFields } from "@/components/contacts/sections/tasks";
 import { deleteTask, setTaskDone, updateTask } from "@/server/actions/details";
 
 export interface TaskListItem {

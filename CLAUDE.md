@@ -40,7 +40,7 @@ npm run dev
 | `npm run db:deploy` | Apply pending migrations (what the container runs) |
 | `npm run db:studio` | Browse the database |
 | `npm run lint` | ESLint (`eslint .`, flat config in `eslint.config.mjs`). `next.config.ts` sets `eslint.ignoreDuringBuilds`, so a build never catches lint — the CI lint job is what does |
-| `npm run lint:sw` | `node --check public/sw.js`. ESLint **ignores** the service worker and it is not TypeScript, so this is the only static check it gets |
+| `npm run lint:sw` | Parses `public/sw.js` with **classic-script** grammar. ESLint ignores the worker and it is not TypeScript, so this is its only static check — and `node --check` is not equivalent, since `type: "module"` makes it accept `export` and top-level `await` that a classic worker rejects |
 | `npm run changelog` | What is pending in `CHANGELOG.d/`; `changelog:check` validates, `changelog:release` folds them into `CHANGELOG.md` |
 | `npm run verify` | typecheck → lint → lint:sw → changelog:check → test → build, in one command |
 
@@ -170,6 +170,12 @@ add something in the same place, the answer is usually both.
 Changelog entries go in `CHANGELOG.d/`, one file per change, precisely so that
 two branches cannot collide over the top of `## [Unreleased]` — which was this
 repository's most common conflict, and on several branches its only one.
+
+Editing `CHANGELOG.md` by hand fails CI and `npm run verify`. It is checked
+rather than asked for because asking did not work: of the five pull requests
+opened in the hour after the convention shipped, all five edited
+`CHANGELOG.md` and none added a fragment — and four of them were branched from
+a `main` that already carried the instruction.
 
 ## Things that look optional but are not
 
