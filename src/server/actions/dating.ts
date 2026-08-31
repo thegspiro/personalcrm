@@ -13,6 +13,7 @@ import {
 } from "@/server/services/custom-field-values";
 import { findTermBySlug } from "@/server/taxonomy/queries";
 import { requireUnlocked } from "@/server/privacy/lock";
+import { resolveLocation } from "@/server/services/locations";
 import {
   type ActionResult,
   bool,
@@ -247,6 +248,7 @@ export async function createDateEntry(form: FormData): Promise<ActionResult<{ id
   try {
     entry = await prisma.$transaction(async (tx) => {
     await ensureProfileTx(tx, ownerId, contactId);
+    const place = await resolveLocation(tx, ownerId, venue);
 
     const interaction = await tx.interaction.create({
       data: {
@@ -256,6 +258,7 @@ export async function createDateEntry(form: FormData): Promise<ActionResult<{ id
         title: venue ? `Date — ${venue}` : "Date",
         notes: str(form, "notes") ?? null,
         location: venue ?? null,
+        locationId: place?.id ?? null,
         // A rating maps onto the shared sentiment scale so dates read
         // consistently alongside everything else in the timeline.
         sentiment: rating === null ? null : rating >= 4 ? 2 : rating >= 3 ? 1 : 0,
@@ -340,6 +343,7 @@ export async function updateDateEntry(form: FormData): Promise<ActionResult> {
   }
 
   await prisma.$transaction(async (tx) => {
+    const place = await resolveLocation(tx, ownerId, venue);
     await tx.dateEntry.update({
       where: { id },
       data: {
@@ -364,6 +368,7 @@ export async function updateDateEntry(form: FormData): Promise<ActionResult> {
         title: venue ? `Date — ${venue}` : "Date",
         notes: str(form, "notes") ?? null,
         location: venue ?? null,
+        locationId: place?.id ?? null,
         sentiment: rating === null ? null : rating >= 4 ? 2 : rating >= 3 ? 1 : 0,
         // Safe to write here where it is not on a fact or a debt: `guard()`
         // has already established the lock is open, so a row cannot be hidden

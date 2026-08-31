@@ -135,6 +135,20 @@ describe.skipIf(!hasTestDatabase)("updateInteraction", () => {
     expect((await read(id)).title).toBe("First time at Sarah's place");
   });
 
+  it("reuses a canonical owner-scoped place while preserving the entered label", async () => {
+    const first = await logged({ location: "  Northside   Cafe " });
+    const second = await logged({ location: "northside cafe", contactIds: [marcusId] });
+
+    const rows = await prisma.interaction.findMany({
+      where: { id: { in: [first, second] } },
+      select: { location: true, locationId: true },
+      orderBy: { id: "asc" },
+    });
+    expect(new Set(rows.map((row) => row.locationId)).size).toBe(1);
+    expect(rows.map((row) => row.location)).toEqual(expect.arrayContaining(["Northside   Cafe", "northside cafe"]));
+    expect(await prisma.location.count({ where: { ownerId: state.ownerId } })).toBe(1);
+  });
+
   it("normalizes duplicate people when creating and updating", async () => {
     const id = await logged({ contactIds: [sarahId, sarahId, marcusId, marcusId] });
     expect((await read(id)).participants.map((participant) => participant.contactId).sort()).toEqual(

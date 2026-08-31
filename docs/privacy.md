@@ -49,6 +49,11 @@ where-fragments applied to the queries themselves:
 **Counts are filtered too.** A total that shifts when you unlock is itself a
 disclosure.
 
+The Places directory derives its visits, people, rankings and last-visited
+dates only from interactions admitted by `interactionPrivacyWhere`. A place
+known solely through hidden interactions is not listed while locked. Plans at
+a place inherit the privacy of their optional contact.
+
 The module is deliberately pure and free of request context so it can be tested
 directly against a database; [`filter.ts`](../src/server/privacy/filter.ts)
 supplies the live scope.

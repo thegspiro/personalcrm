@@ -273,6 +273,16 @@ present. A mention makes the interaction discoverable from that person's
 history without advancing their contact cadence. Private mentioned contacts
 withhold the interaction while the lock is closed, just like participants.
 
+### `Location`
+
+An owner-scoped reusable place shared by interactions and plans. `name` is the
+display label and `(ownerId, normalizedName)` is unique; normalization only
+folds case and whitespace so similarly named real-world venues are never
+silently merged. Address, contact details, notes, coordinates, aliases and an
+archive flag hold optional practical metadata. `Interaction.location` and
+`Plan.location` retain the exact historical text while their optional
+`locationId` points at the canonical place (`SET NULL`).
+
 ### `Fact`
 
 "Things to know" about a person. `contactId` (cascade), `categoryId` →

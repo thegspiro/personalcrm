@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { Prisma, type TaxonomyKind } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
+import { resolveLocation } from "@/server/services/locations";
 import {
   debtPrivacyWhere,
   factPrivacyWhere,
@@ -510,14 +511,14 @@ export async function createPlan(form: FormData): Promise<ActionResult<{ id: str
   const fields = await planFields(ownerId, form);
   if (!fields) return fail("Invalid category or checklist.");
 
-  const created = await prisma.plan.create({
-    data: {
-      ownerId,
-      contactId,
-      title,
-      status: planStatusOf(str(form, "status")),
-      ...fields,
-    },
+  const created = await prisma.$transaction(async (tx) => {
+    const place = await resolveLocation(tx, ownerId, fields.location ?? undefined, {
+      address: fields.address,
+      url: fields.url,
+    });
+    return tx.plan.create({
+      data: { ownerId, contactId, title, status: planStatusOf(str(form, "status")), ...fields, locationId: place?.id ?? null },
+    });
   });
 
   touchPlans(contactId);
@@ -541,7 +542,13 @@ export async function updatePlan(form: FormData): Promise<ActionResult> {
   const fields = await planFields(ownerId, form);
   if (!fields) return fail("Invalid category or checklist.");
 
-  await prisma.plan.update({ where: { id }, data: { title, ...fields } });
+  await prisma.$transaction(async (tx) => {
+    const place = await resolveLocation(tx, ownerId, fields.location ?? undefined, {
+      address: fields.address,
+      url: fields.url,
+    });
+    await tx.plan.update({ where: { id }, data: { title, ...fields, locationId: place?.id ?? null } });
+  });
 
   touchPlans(existing.contactId);
   return ok();

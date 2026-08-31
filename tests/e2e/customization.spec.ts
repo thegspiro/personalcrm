@@ -131,12 +131,19 @@ test("rearrange the home screen", async ({ page }) => {
 
   // The settings row and the widget itself carry the same name, so what you
   // switch off is unambiguously what disappears.
-  await page.getByRole("switch", { name: "Show Bring this up" }).click();
+  // The switch reflects server state and only flips once the action has
+  // resolved and the router has refreshed. Navigating straight off the click
+  // races that write, and the reload then reads the setting as it was.
+  const toggle = page.getByRole("switch", { name: "Show Bring this up" });
+  await toggle.click();
+  await expect(toggle).not.toBeChecked();
   await page.goto("/");
   await expect(page.getByText("Bring this up")).toHaveCount(0);
 
   await openSettings(page, "Home");
-  await page.getByRole("switch", { name: "Show Bring this up" }).click();
+  const toggleBack = page.getByRole("switch", { name: "Show Bring this up" });
+  await toggleBack.click();
+  await expect(toggleBack).toBeChecked();
   await page.goto("/");
   await expect(page.getByText("Bring this up").first()).toBeVisible();
 });

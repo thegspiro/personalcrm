@@ -144,6 +144,10 @@ export function LogInteractionSheet({
               />
             </Field>
 
+            <Field label="Where" htmlFor="location">
+              <Input id="location" name="location" placeholder="Northside Cafe" />
+            </Field>
+
             <div className="grid gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">Who got in touch?</span>
               <div className="flex gap-1.5">
