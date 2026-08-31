@@ -108,14 +108,12 @@ export function PreferencesStep({
   density,
   defaultCadenceDays,
   hideDating,
-  privacyLockEnabled,
   blurPrivateNotes,
 }: StepProps & {
   accent: string;
   density: string;
   defaultCadenceDays: number | null;
   hideDating: boolean;
-  privacyLockEnabled: boolean;
   blurPrivateNotes: boolean;
 }) {
   const [currentAccent, setCurrentAccent] = React.useState(accent);
@@ -139,12 +137,10 @@ export function PreferencesStep({
   };
 
   const onSubmit = async (form: FormData) => {
-    // updatePrivacyPreferences writes all three privacy flags from the form, so
-    // the two this panel doesn't ask about are passed through unchanged rather
-    // than being silently cleared.
+    // This step only changes the two discretion preferences. The lock boundary
+    // has its own authorized action in Privacy settings.
     const privacy = new FormData();
     privacy.set("hideDating", dating ? "false" : "true");
-    privacy.set("privacyLockEnabled", privacyLockEnabled ? "true" : "false");
     privacy.set("blurPrivateNotes", blurPrivateNotes ? "true" : "false");
 
     await save(async () => {

@@ -195,10 +195,15 @@ runs once per account and records that it did in
 ### Privacy — `actions/privacy.ts`
 
 `unlockPrivacyAction`, `lockPrivacyAction`, `setPinAction`, `clearPinAction`,
-`updatePrivacyPreferences`, `setPrivate`.
+`setPrivacyLockEnabled`, `updatePrivacyPreferences`, `setPrivate`.
 
 `setPrivate` is refused while locked — otherwise a row vanishes with no way back
 to it.
+
+Disabling an enabled lock is handled only by `setPrivacyLockEnabled`. The action
+requires either an unlocked current session or a verified current PIN; posting a
+`privacyLockEnabled` field to the general preference action cannot lower the
+lock boundary.
 
 ### AI settings — `actions/ai-settings.ts`
 

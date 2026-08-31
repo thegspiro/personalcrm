@@ -77,6 +77,9 @@ navigation and the dashboard altogether.
   endpoints; they do not trust that the page was gated.
 - **Marking something private is refused while locked** — otherwise a row
   vanishes with no way back to it.
+- **Disabling the lock requires authorization on the server.** The current
+  session must already be unlocked or the current PIN must verify. General
+  preference form data cannot switch the lock off.
 - **Failed PIN attempts back off**, counted on the `User` row rather than the
   session, so clearing cookies does not reset a lockout. Five failures before
   backoff starts; it tops out at 15 minutes.
