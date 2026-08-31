@@ -13,6 +13,24 @@ export const DIETARY_KINDS = ["ALLERGY", "INTOLERANCE", "MEDICAL", "PREFERENCE"]
 
 export type DietaryKind = (typeof DIETARY_KINDS)[number];
 
+export const ALLERGY_CATEGORIES = ["FOOD", "MEDICATION", "ENVIRONMENTAL", "OTHER"] as const;
+export type AllergyCategory = (typeof ALLERGY_CATEGORIES)[number];
+
+export const ALLERGY_CATEGORY_LABELS: Record<AllergyCategory, string> = {
+  FOOD: "Food allergy",
+  MEDICATION: "Medication allergy",
+  ENVIRONMENTAL: "Environmental allergy",
+  OTHER: "Other allergy",
+};
+
+export const ALLERGY_STATUSES = ["UNKNOWN", "NO_KNOWN", "KNOWN"] as const;
+export type AllergyStatus = (typeof ALLERGY_STATUSES)[number];
+export const ALLERGY_STATUS_LABELS: Record<AllergyStatus, string> = {
+  UNKNOWN: "Allergy status unknown",
+  NO_KNOWN: "No known allergies",
+  KNOWN: "Known allergies recorded",
+};
+
 export const DIETARY_KIND_LABELS: Record<DietaryKind, string> = {
   ALLERGY: "Allergy",
   INTOLERANCE: "Intolerance",
@@ -39,4 +57,19 @@ export const DIETARY_GROUPS = [
 
 export function dietaryKindOf(value: string | undefined): DietaryKind {
   return DIETARY_KINDS.includes(value as DietaryKind) ? (value as DietaryKind) : "ALLERGY";
+}
+
+export function allergyCategoryOf(value: string | undefined): AllergyCategory {
+  return ALLERGY_CATEGORIES.includes(value as AllergyCategory)
+    ? (value as AllergyCategory)
+    : "FOOD";
+}
+
+export function allergyStatusOf(value: string | undefined): AllergyStatus {
+  return ALLERGY_STATUSES.includes(value as AllergyStatus) ? (value as AllergyStatus) : "UNKNOWN";
+}
+
+/** Non-food records are allergies, never dietary preferences or intolerances. */
+export function validAllergyCombination(kind: DietaryKind, category: AllergyCategory): boolean {
+  return category === "FOOD" || kind === "ALLERGY";
 }

@@ -69,6 +69,10 @@ export function LogInteractionSheet({
   const [reachedOutBy, setReachedOutBy] = React.useState<ReachedOutBy | null>(null);
   const formRef = React.useRef<HTMLFormElement>(null);
 
+  React.useEffect(() => {
+    if (open) formRef.current?.reset();
+  }, [open]);
+
   async function onSubmit(form: FormData) {
     if (sentiment !== null) form.set("sentiment", String(sentiment));
     // Left unset the field stays UNSPECIFIED, which is the honest answer when

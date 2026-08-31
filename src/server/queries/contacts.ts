@@ -71,6 +71,14 @@ function buildWhere(
 
   const search = options.search?.trim();
   if (search) {
+    const allergyCategory = ({
+      food: "FOOD",
+      medication: "MEDICATION",
+      medicine: "MEDICATION",
+      environmental: "ENVIRONMENTAL",
+      environment: "ENVIRONMENTAL",
+      other: "OTHER",
+    } as Record<string, "FOOD" | "MEDICATION" | "ENVIRONMENTAL" | "OTHER">)[search.toLowerCase()];
     // Personal-scale data, so a LIKE across the obvious fields beats the
     // operational cost of maintaining a fulltext index.
     where.OR = [
@@ -84,6 +92,9 @@ function buildWhere(
       { methods: { some: { value: { contains: search } } } },
       // Search must not surface someone through a fact that is itself private.
       { facts: { some: { content: { contains: search }, ...factPrivacyWhere(privacy) } } },
+      { dietaryNeeds: { some: { label: { contains: search } } } },
+      { dietaryNeeds: { some: { reaction: { contains: search } } } },
+      ...(allergyCategory ? [{ dietaryNeeds: { some: { category: allergyCategory } } }] : []),
     ];
   }
 
