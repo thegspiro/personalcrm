@@ -17,7 +17,6 @@ import {
 import { SubmitButton } from "@/components/form/submit-button";
 import { useAction } from "@/components/form/use-action";
 import {
-  applyLocationLookup,
   lookupLocationAddress,
   setLocationArchived,
   updateLocation,
@@ -56,6 +55,13 @@ export function EditPlaceSheet({
   const [error, setError] = React.useState<string>();
   const [candidates, setCandidates] = React.useState<GeoCandidateView[] | null>(null);
   const [looking, setLooking] = React.useState(false);
+  // What a lookup filled in, held here rather than written on the spot so a
+  // single Save carries it alongside anything typed by hand.
+  const [applied, setApplied] = React.useState<GeoCandidateView | null>(null);
+  const [address, setAddress] = React.useState(place.address ?? "");
+  const [city, setCity] = React.useState(place.city ?? "");
+  const [region, setRegion] = React.useState(place.region ?? "");
+  const [country, setCountry] = React.useState(place.country ?? "");
 
   async function onSubmit(form: FormData) {
     form.set("id", place.id);
@@ -92,16 +98,16 @@ export function EditPlaceSheet({
     setCandidates(result.data?.candidates ?? []);
   }
 
-  async function accept(candidate: GeoCandidateView) {
-    const form = new FormData();
-    form.set("id", place.id);
-    for (const [key, value] of Object.entries(candidate)) {
-      if (key !== "label" && value != null) form.set(key, String(value));
-    }
-    if (await run(() => applyLocationLookup(form), "Address filled in")) {
-      setCandidates(null);
-      setOpen(false);
-    }
+  function accept(candidate: GeoCandidateView) {
+    // Nothing is written here. The candidate fills the form — visibly, so you
+    // can see and correct it — and Save posts the whole thing at once. Writing
+    // immediately and closing discarded every other edit in the panel.
+    setApplied(candidate);
+    if (candidate.address) setAddress(candidate.address);
+    if (candidate.city) setCity(candidate.city);
+    if (candidate.region) setRegion(candidate.region);
+    if (candidate.country) setCountry(candidate.country);
+    setCandidates(null);
   }
 
   return (
@@ -130,7 +136,8 @@ export function EditPlaceSheet({
                 <Input
                   id="place-address"
                   name="address"
-                  defaultValue={place.address ?? ""}
+                  value={address}
+                  onChange={(event) => setAddress(event.target.value)}
                   maxLength={500}
                   placeholder="123 Main St"
                 />
@@ -179,13 +186,16 @@ export function EditPlaceSheet({
 
               <div className="grid gap-3 sm:grid-cols-3">
                 <Field label="City" htmlFor="place-city">
-                  <Input id="place-city" name="city" defaultValue={place.city ?? ""} maxLength={120} />
+                  <Input id="place-city" name="city" value={city}
+                  onChange={(event) => setCity(event.target.value)} maxLength={120} />
                 </Field>
                 <Field label="Region" htmlFor="place-region">
-                  <Input id="place-region" name="region" defaultValue={place.region ?? ""} maxLength={120} />
+                  <Input id="place-region" name="region" value={region}
+                  onChange={(event) => setRegion(event.target.value)} maxLength={120} />
                 </Field>
                 <Field label="Country" htmlFor="place-country">
-                  <Input id="place-country" name="country" defaultValue={place.country ?? ""} maxLength={120} />
+                  <Input id="place-country" name="country" value={country}
+                  onChange={(event) => setCountry(event.target.value)} maxLength={120} />
                 </Field>
               </div>
 
@@ -201,6 +211,19 @@ export function EditPlaceSheet({
               <Field label="Notes" htmlFor="place-notes">
                 <Textarea id="place-notes" name="notes" rows={3} defaultValue={place.notes ?? ""} />
               </Field>
+
+              {applied ? (
+                <>
+                  <input type="hidden" name="lookupApplied" value="1" />
+                  {applied.osmType ? <input type="hidden" name="osmType" value={applied.osmType} /> : null}
+                  {applied.osmId ? <input type="hidden" name="osmId" value={applied.osmId} /> : null}
+                  {applied.latitude ? <input type="hidden" name="latitude" value={applied.latitude} /> : null}
+                  {applied.longitude ? <input type="hidden" name="longitude" value={applied.longitude} /> : null}
+                  <p className="text-xs text-muted-foreground">
+                    Matched to <strong>{applied.label}</strong>. Save to keep it.
+                  </p>
+                </>
+              ) : null}
 
               {error ? <p className="text-xs text-destructive">{error}</p> : null}
             </SheetBody>

@@ -39,9 +39,7 @@ const { normalizeLocationName, resolveLocation } = await import(
   "@/server/services/locations"
 );
 const { buildTimeline } = await import("@/server/queries/timeline");
-const { applyLocationLookup, setLocationArchived, updateLocation } = await import(
-  "@/server/actions/locations"
-);
+const { setLocationArchived, updateLocation } = await import("@/server/actions/locations");
 
 const TZ = "America/New_York";
 
@@ -420,9 +418,11 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       const cafe = await place(state.ownerId, "Corner Cafe");
       await visit(cafe.id, []);
 
-      await applyLocationLookup(
+      await updateLocation(
         formFor({
           id: cafe.id,
+          name: "Corner Cafe",
+          lookupApplied: "1",
           osmType: "W",
           osmId: "123456789",
           latitude: "38.8809",
@@ -443,11 +443,21 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       const cafe = await place(state.ownerId, "Corner Cafe");
       await visit(cafe.id, []);
 
-      await applyLocationLookup(
-        formFor({ id: cafe.id, osmType: "W", osmId: "123456789", latitude: "38.8", longitude: "-77.1" }),
+      await updateLocation(
+        formFor({
+          id: cafe.id,
+          name: "Corner Cafe",
+          lookupApplied: "1",
+          osmType: "W",
+          osmId: "123456789",
+          latitude: "38.8",
+          longitude: "-77.1",
+        }),
       );
       // A coarser second candidate — a town, say — carries no OSM object.
-      await applyLocationLookup(formFor({ id: cafe.id, city: "Arlington" }));
+      await updateLocation(
+        formFor({ id: cafe.id, name: "Corner Cafe", lookupApplied: "1", city: "Arlington" }),
+      );
 
       const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
       // Left as `undefined` these kept their old values, so the map link — which
@@ -465,8 +475,8 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
 
       // These come from an endpoint the app does not control, so an oversized
       // one has to come back as a result rather than a database error.
-      const result = await applyLocationLookup(
-        formFor({ id: cafe.id, address: "x".repeat(501) }),
+      const result = await updateLocation(
+        formFor({ id: cafe.id, name: "Corner Cafe", address: "x".repeat(501) }),
       );
 
       expect(result.ok).toBe(false);
@@ -478,10 +488,62 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       const cafe = await place(state.ownerId, "Corner Cafe");
       await visit(cafe.id, []);
 
-      const result = await applyLocationLookup(
-        formFor({ id: cafe.id, osmType: "N", osmId: "99999999999999999999" }),
+      const result = await updateLocation(
+        formFor({
+          id: cafe.id,
+          name: "Corner Cafe",
+          lookupApplied: "1",
+          osmType: "N",
+          osmId: "99999999999999999999",
+        }),
       );
       expect(result.ok).toBe(false);
+    });
+
+    it("keeps edits typed before a lookup was accepted", async () => {
+      state.unlocked = true;
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, []);
+
+      // Accepting a candidate used to write on its own and close the panel, so
+      // a phone number or note typed first was silently thrown away.
+      const result = await updateLocation(
+        formFor({
+          id: cafe.id,
+          name: "Corner Cafe",
+          phone: "+1 555 0100",
+          notes: "Ask for the corner table.",
+          lookupApplied: "1",
+          osmType: "W",
+          osmId: "123456789",
+          city: "Arlington",
+        }),
+      );
+
+      expect(result.ok).toBe(true);
+      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      expect(saved.phone).toBe("+1 555 0100");
+      expect(saved.notes).toBe("Ask for the corner table.");
+      expect(saved.osmId).toBe(123456789n);
+      expect(saved.city).toBe("Arlington");
+    });
+
+    it("leaves a stored OSM object alone on an ordinary save", async () => {
+      state.unlocked = true;
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, []);
+      await updateLocation(
+        formFor({ id: cafe.id, name: "Corner Cafe", lookupApplied: "1", osmType: "N", osmId: "7" }),
+      );
+
+      // No lookup this time, so identity is not the subject of the save and
+      // must survive it.
+      await updateLocation(formFor({ id: cafe.id, name: "Corner Cafe", phone: "+1 555 0100" }));
+
+      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      expect(saved.osmId).toBe(7n);
+      expect(saved.osmType).toBe("N");
+      expect(saved.phone).toBe("+1 555 0100");
     });
 
     it("ignores half a coordinate pair rather than placing it wrongly", async () => {
@@ -489,7 +551,9 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       const cafe = await place(state.ownerId, "Corner Cafe");
       await visit(cafe.id, []);
 
-      await applyLocationLookup(formFor({ id: cafe.id, latitude: "38.8809" }));
+      await updateLocation(
+        formFor({ id: cafe.id, name: "Corner Cafe", lookupApplied: "1", latitude: "38.8809" }),
+      );
 
       const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
       expect(saved.latitude).toBeNull();

@@ -15,6 +15,8 @@ export interface GeoSettingsProps {
   provider: GeoProviderId;
   baseUrl: string;
   providers: GeoProviderDefinition[];
+  /** The endpoint is per-installation, so only an administrator may change it. */
+  canEdit: boolean;
 }
 
 /**
@@ -24,7 +26,14 @@ export interface GeoSettingsProps {
  * the copy says what leaves the machine before it says anything else. A place's
  * address is perfectly editable by hand without any of this.
  */
-export function GeoSettings({ enabled, usable, provider, baseUrl, providers }: GeoSettingsProps) {
+export function GeoSettings({
+  enabled,
+  usable,
+  provider,
+  baseUrl,
+  providers,
+  canEdit,
+}: GeoSettingsProps) {
   const run = useAction();
   const save = useAddAction();
   const [selected, setSelected] = React.useState<GeoProviderId>(provider);
@@ -45,7 +54,7 @@ export function GeoSettings({ enabled, usable, provider, baseUrl, providers }: G
         <Switch
           checked={enabled}
           aria-label="Use address lookup"
-          disabled={!usable}
+          disabled={!usable || !canEdit}
           onCheckedChange={(checked) =>
             void run(() => updateGeoEnabled(checked), checked ? "Turned on" : "Turned off")
           }
@@ -65,6 +74,14 @@ export function GeoSettings({ enabled, usable, provider, baseUrl, providers }: G
           </ul>
         </div>
 
+        {!canEdit ? (
+          <p className="text-xs text-muted-foreground">
+            This endpoint is shared by everyone using this installation, so only an administrator
+            can change it.
+          </p>
+        ) : null}
+
+        <fieldset disabled={!canEdit} className="contents">
         <form action={save(saveGeoConnection, () => {}, "Connection saved")} className="grid gap-2.5">
           <Field label="Provider" htmlFor="geo-provider">
             <select
@@ -114,6 +131,7 @@ export function GeoSettings({ enabled, usable, provider, baseUrl, providers }: G
             <SubmitButton size="sm">Save connection</SubmitButton>
           </div>
         </form>
+        </fieldset>
       </div>
     </section>
   );

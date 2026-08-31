@@ -574,3 +574,29 @@ describe("places named before the person", () => {
     expect(result.unknownNames).toEqual([]);
   });
 });
+
+describe("places and the sentence about them", () => {
+  it("does not read a venue out of the commentary", () => {
+    // Where it happened is said before the comma. Scanning the whole line also
+    // ate the note, cutting it down to "talked about".
+    const result = parse("Coffee with Sarah, talked about Northside Cafe", CONTACTS, LOCATIONS);
+
+    expect(result.place).toBeNull();
+    expect(result.notes).toBe("talked about Northside Cafe");
+  });
+
+  it("still reads a venue stated before the commentary", () => {
+    const result = parse("Coffee at Northside Cafe, she got the promotion", CONTACTS, LOCATIONS);
+    expect(result.place?.location?.id).toBe("l-north");
+    expect(result.notes).toBe("she got the promotion");
+  });
+
+  it("reports the words that were typed, not the tidy name", () => {
+    // `Interaction.location` keeps the wording used at the time; the canonical
+    // name lives on the place. Handing back the tidy one would have rewritten
+    // the label on the way through the confirm step.
+    const result = parse("Coffee at   northside   cafe", CONTACTS, LOCATIONS);
+    expect(result.place?.location?.id).toBe("l-north");
+    expect(result.place?.matchedText).toBe("northside   cafe");
+  });
+});

@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { type ActionResult, fail, ok, owner, str } from "./helpers";
+import { type ActionResult, fail, isAdmin, ok, owner, str } from "./helpers";
 import { setGeoConnection, setGeoEnabled } from "@/server/geo/config";
 import { geoProviderById } from "@/server/geo/providers";
 
@@ -11,6 +11,13 @@ import { geoProviderById } from "@/server/geo/providers";
  * Like the assisted reading, this is a feature the app works fine without: with
  * it off, a place's address is simply something you type. So nothing here is
  * fatal, and the default is off.
+ *
+ * Both writes are administrator-only, because the endpoint is stored per
+ * *installation* rather than per account. On an install with more than one
+ * person, any member could otherwise point it at a server they control and
+ * collect the place names and addresses every other account looks up — a
+ * cross-owner disclosure that owner scoping cannot catch, because there is no
+ * owner on the row to scope by.
  */
 
 function touch() {
@@ -20,6 +27,7 @@ function touch() {
 
 export async function updateGeoEnabled(enabled: boolean): Promise<ActionResult> {
   await owner();
+  if (!(await isAdmin())) return fail("Only an administrator can change this.");
   await setGeoEnabled(enabled);
   touch();
   return ok();
@@ -27,6 +35,7 @@ export async function updateGeoEnabled(enabled: boolean): Promise<ActionResult> 
 
 export async function saveGeoConnection(form: FormData): Promise<ActionResult> {
   await owner();
+  if (!(await isAdmin())) return fail("Only an administrator can change this.");
 
   const providerId = str(form, "provider") ?? "";
   const definition = geoProviderById(providerId);

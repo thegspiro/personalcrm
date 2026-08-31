@@ -124,6 +124,7 @@ export default async function SettingsPage() {
             provider={geo.provider}
             baseUrl={geo.baseUrl}
             providers={GEO_PROVIDERS}
+            canEdit={user.role === "ADMIN"}
           />
         }
         privacy={

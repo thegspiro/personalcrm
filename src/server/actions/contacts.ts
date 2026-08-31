@@ -28,6 +28,13 @@ import {
 const nameSchema = z.object({
   firstName: z.string().trim().min(1, "A first name is required.").max(120),
   lastName: z.string().trim().max(120).optional(),
+  // Bounded to the column width, so an over-long value comes back as a field
+  // error rather than a database rejection thrown out of the action. The form
+  // mirrors these with `maxLength`, which stops it happening in the first place
+  // without being the thing relied on — a server action is a public POST.
+  city: z.string().trim().max(120).optional(),
+  region: z.string().trim().max(120).optional(),
+  country: z.string().trim().max(120).optional(),
 });
 
 function revalidateContact(id?: string) {
@@ -52,6 +59,9 @@ export async function createContact(form: FormData): Promise<ActionResult<{ id: 
   const parsed = nameSchema.safeParse({
     firstName: str(form, "firstName"),
     lastName: str(form, "lastName"),
+    city: str(form, "city"),
+    region: str(form, "region"),
+    country: str(form, "country"),
   });
   if (!parsed.success) return invalid(parsed.error);
 
@@ -74,9 +84,9 @@ export async function createContact(form: FormData): Promise<ActionResult<{ id: 
         categoryId: str(form, "categoryId") ?? null,
         occupation: str(form, "occupation") ?? null,
         employer: str(form, "employer") ?? null,
-        city: str(form, "city") ?? null,
-        region: str(form, "region") ?? null,
-        country: str(form, "country") ?? null,
+        city: parsed.data.city ?? null,
+        region: parsed.data.region ?? null,
+        country: parsed.data.country ?? null,
         summary: str(form, "summary") ?? null,
         howWeMet: str(form, "howWeMet") ?? null,
         whereWeMet: str(form, "whereWeMet") ?? null,
@@ -117,6 +127,9 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
   const parsed = nameSchema.safeParse({
     firstName: str(form, "firstName"),
     lastName: str(form, "lastName"),
+    city: str(form, "city"),
+    region: str(form, "region"),
+    country: str(form, "country"),
   });
   if (!parsed.success) return invalid(parsed.error);
 
@@ -136,9 +149,9 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
         categoryId: str(form, "categoryId") ?? null,
         occupation: str(form, "occupation") ?? null,
         employer: str(form, "employer") ?? null,
-        city: str(form, "city") ?? null,
-        region: str(form, "region") ?? null,
-        country: str(form, "country") ?? null,
+        city: parsed.data.city ?? null,
+        region: parsed.data.region ?? null,
+        country: parsed.data.country ?? null,
         summary: str(form, "summary") ?? null,
         howWeMet: str(form, "howWeMet") ?? null,
         whereWeMet: str(form, "whereWeMet") ?? null,

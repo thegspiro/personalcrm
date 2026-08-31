@@ -42,6 +42,11 @@ export function TimelineFilters() {
     const next = new URLSearchParams(params.toString());
     if (value) next.set(key, value);
     else next.delete(key);
+    // Typing a place replaces any canonical-place filter rather than joining
+    // it. The two are ANDed in the query, so a leftover `locationId` from a
+    // hand-written URL would silently return nothing while the visible box
+    // showed something quite reasonable.
+    if (key === "location") next.delete("locationId");
     update(next);
   }
 

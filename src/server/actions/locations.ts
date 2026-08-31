@@ -38,10 +38,6 @@ const schema = z.object({
  * values come from an endpoint the app does not control.
  */
 const lookupSchema = z.object({
-  address: z.string().trim().max(500).optional(),
-  city: z.string().trim().max(120).optional(),
-  region: z.string().trim().max(120).optional(),
-  country: z.string().trim().max(120).optional(),
   latitude: z.coerce.number().min(-90).max(90).optional(),
   longitude: z.coerce.number().min(-180).max(180).optional(),
   osmType: z.enum(["N", "W", "R"]).optional(),
@@ -131,6 +127,21 @@ export async function updateLocation(form: FormData): Promise<ActionResult> {
     }
   }
 
+  // A lookup the user accepted rides along with the save rather than writing on
+  // its own. Accepting used to submit only the candidate and close the panel,
+  // which silently threw away any name, phone or note typed beforehand.
+  let identity: LocationIdentity = {};
+  if (str(form, "lookupApplied")) {
+    const lookup = lookupSchema.safeParse({
+      latitude: str(form, "latitude"),
+      longitude: str(form, "longitude"),
+      osmType: str(form, "osmType"),
+      osmId: str(form, "osmId"),
+    });
+    if (!lookup.success) return fail("That result didn't look like a place.");
+    identity = identityFrom(lookup.data);
+  }
+
   await prisma.location.update({
     where: { id },
     data: {
@@ -143,6 +154,7 @@ export async function updateLocation(form: FormData): Promise<ActionResult> {
       phone: parsed.data.phone ?? null,
       url: parsed.data.url ?? null,
       notes: parsed.data.notes ?? null,
+      ...identity,
     },
   });
 
@@ -150,66 +162,35 @@ export async function updateLocation(form: FormData): Promise<ActionResult> {
   return ok();
 }
 
+interface LocationIdentity {
+  latitude?: string | number | null;
+  longitude?: string | number | null;
+  osmType?: string | null;
+  osmId?: bigint | null;
+}
+
 /**
- * Attach the OpenStreetMap object a lookup matched, plus what it knew.
+ * Which real-world object this place is, as one unit.
  *
- * Split from `updateLocation` because it is the only writer of the reference
- * fields, and because it takes what the user picked from a list of candidates
- * rather than free text.
+ * Replaced wholesale and nulled where the accepted candidate is silent. Left
+ * partially in place, a coarser second choice could keep the previous OSM
+ * object and coordinates while the address described the new one — and
+ * `mapLinkFor` prefers identity, so the map opened what you had just replaced.
  */
-export async function applyLocationLookup(form: FormData): Promise<ActionResult> {
-  const { ownerId } = await owner();
-
-  const id = str(form, "id");
-  if (!id) return fail("Which place?");
-  if (!(await visibleLocation(ownerId, id))) return fail("That place wasn't found.");
-
-  // These values arrive through a client-posted form and originate with an
-  // external provider, so they are bounded here like any other input rather
-  // than trusted to fit. An oversized result would otherwise make the database
-  // reject the update and this action throw instead of returning a result.
-  const parsed = lookupSchema.safeParse({
-    address: str(form, "address"),
-    city: str(form, "city"),
-    region: str(form, "region"),
-    country: str(form, "country"),
-    latitude: str(form, "latitude"),
-    longitude: str(form, "longitude"),
-    osmType: str(form, "osmType"),
-    osmId: str(form, "osmId"),
-  });
-  if (!parsed.success) return fail("That result didn't look like a place.");
-
-  const { latitude, longitude, osmType, osmId } = parsed.data;
+function identityFrom(data: {
+  latitude?: number;
+  longitude?: number;
+  osmType?: "N" | "W" | "R";
+  osmId?: string;
+}): LocationIdentity {
   // Half a pair puts a place in the wrong hemisphere rather than nowhere.
-  const bothCoordinates = latitude !== undefined && longitude !== undefined;
-
-  await prisma.location.update({
-    where: { id },
-    data: {
-      // Descriptive text is filled in when the candidate has it and left alone
-      // when it does not, so accepting a coarse result cannot wipe an address
-      // typed by hand.
-      address: parsed.data.address ?? undefined,
-      city: parsed.data.city ?? undefined,
-      region: parsed.data.region ?? undefined,
-      country: parsed.data.country ?? undefined,
-
-      // Identity is different: it is replaced as a whole, nulling whatever the
-      // accepted candidate does not supply. Left as `undefined` these kept the
-      // previous values, so picking a second candidate could leave the old OSM
-      // object and coordinates in place while the address described the new
-      // one — and `mapLinkFor` prefers identity, so the map opened the place
-      // you had just replaced.
-      latitude: bothCoordinates ? latitude : null,
-      longitude: bothCoordinates ? longitude : null,
-      osmType: osmType ?? null,
-      osmId: osmId === undefined ? null : BigInt(osmId),
-    },
-  });
-
-  touch(id);
-  return ok();
+  const bothCoordinates = data.latitude !== undefined && data.longitude !== undefined;
+  return {
+    latitude: bothCoordinates ? data.latitude : null,
+    longitude: bothCoordinates ? data.longitude : null,
+    osmType: data.osmType ?? null,
+    osmId: data.osmId === undefined ? null : BigInt(data.osmId),
+  };
 }
 
 /**

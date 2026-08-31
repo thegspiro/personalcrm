@@ -155,13 +155,13 @@ export function ContactForm({
           */}
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="City" htmlFor="city">
-              <Input id="city" name="city" defaultValue={contact?.city ?? ""} />
+              <Input id="city" name="city" defaultValue={contact?.city ?? ""} maxLength={120} />
             </Field>
             <Field label="Region" htmlFor="region">
-              <Input id="region" name="region" defaultValue={contact?.region ?? ""} />
+              <Input id="region" name="region" defaultValue={contact?.region ?? ""} maxLength={120} />
             </Field>
             <Field label="Country" htmlFor="country">
-              <Input id="country" name="country" defaultValue={contact?.country ?? ""} />
+              <Input id="country" name="country" defaultValue={contact?.country ?? ""} maxLength={120} />
             </Field>
           </div>
 

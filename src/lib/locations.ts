@@ -35,6 +35,9 @@ export function mapLinkFor(place: {
   latitude?: unknown;
   longitude?: unknown;
   address?: string | null;
+  city?: string | null;
+  region?: string | null;
+  country?: string | null;
   name: string;
 }): string {
   // An OSM object is the strongest reference we can hold: it survives a
@@ -49,7 +52,14 @@ export function mapLinkFor(place: {
     return `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=17/${lat}/${lon}`;
   }
 
-  const query = place.address?.trim() || place.name;
+  // Every part we hold, not just the street. "123 Main St" alone is ambiguous
+  // the world over, and the edit form actively encourages a street plus a
+  // separate city — so searching the street by itself could land a continent
+  // away from the place it names.
+  const locality = [place.city, place.region, place.country]
+    .map((part) => part?.trim())
+    .filter(Boolean);
+  const query = [place.address?.trim() || place.name, ...locality].join(", ");
   return `https://www.openstreetmap.org/search?query=${encodeURIComponent(query)}`;
 }
 

@@ -342,6 +342,14 @@ export function matchKnownLocation(
     .filter((location) => location.name.trim())
     .sort((a, b) => b.name.length - a.name.length);
 
+  // Only the part before the commentary is where an interaction happened.
+  // Everything after the first comma or dash is notes — "Coffee with Sarah,
+  // talked about Northside Cafe" happened wherever it happened, and reading a
+  // venue out of the sentence about it also cut the note down to "talked
+  // about". The same boundary `splitTitleAndNotes` uses.
+  const commentary = text.search(/,|\s[–—-]\s/);
+  const searchable = commentary === -1 ? text : text.slice(0, commentary);
+
   for (const location of candidates) {
     const words = location.name.trim().split(/\s+/).map(escapeRegExp);
     if (!words.length) continue;
@@ -349,7 +357,7 @@ export function matchKnownLocation(
     // have doubled spaces where the stored name does not, and that is exactly
     // the difference `normalizeLocationName` folds away.
     const pattern = new RegExp(`(?<![A-Za-z0-9])${words.join("\\s+")}(?![A-Za-z0-9])`, "i");
-    const found = pattern.exec(text);
+    const found = pattern.exec(searchable);
     if (!found) continue;
 
     const at = found.index;

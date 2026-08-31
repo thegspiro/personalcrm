@@ -132,7 +132,12 @@ export async function interpretQuickAdd(text: string): Promise<ActionResult<Quic
     place: result.place
       ? {
           id: result.place.location?.id ?? null,
-          name: result.place.location?.name ?? result.place.matchedText,
+          // The words typed, not the canonical name. `Interaction.location`
+          // keeps the wording used at the time and `locationId` carries the
+          // identity — substituting the tidy name here would have quietly
+          // rewritten the label the rest of this branch works to preserve.
+          // It still resolves to the same place, since the lookup normalizes.
+          name: result.place.matchedText,
           via: result.place.via,
         }
       : null,
