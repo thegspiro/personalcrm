@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useActionState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 import { AlertCircle, Lock, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import type { ActionResult } from "@/server/actions/helpers";
 import {
   clearPinAction,
   lockPrivacyAction,
+  setPrivacyLockEnabled,
   setPinAction,
   updatePrivacyPreferences,
 } from "@/server/actions/privacy";
@@ -40,6 +42,8 @@ export function PrivacySettings({
   const [changingPin, setChangingPin] = React.useState(false);
   const [locking, setLocking] = React.useState(false);
   const [retrySeconds, setRetrySeconds] = React.useState(retryAfterSeconds);
+  const [disablingLock, setDisablingLock] = React.useState(false);
+  const [disableError, setDisableError] = React.useState<string>();
 
   async function savePin(previous: ActionResult, form: FormData): Promise<ActionResult> {
     const result = await setPinAction(previous, form);
@@ -68,9 +72,8 @@ export function PrivacySettings({
     return () => window.clearTimeout(timer);
   }, [retrySeconds]);
 
-  async function savePreferences(next: { lock?: boolean; hide?: boolean; blur?: boolean }) {
+  async function savePreferences(next: { hide?: boolean; blur?: boolean }) {
     const form = new FormData();
-    form.set("privacyLockEnabled", String(next.lock ?? lockEnabled));
     form.set("hideDating", String(next.hide ?? hidden));
     form.set("blurPrivateNotes", String(next.blur ?? blur));
 
@@ -81,6 +84,31 @@ export function PrivacySettings({
       setLockEnabled(privacyLockEnabled);
       return;
     }
+    router.refresh();
+  }
+
+  async function enableLock() {
+    const form = new FormData();
+    form.set("enabled", "true");
+    const result = await setPrivacyLockEnabled(form);
+    if (!result.ok) {
+      toast.error(result.error ?? "Could not enable the lock.");
+      return;
+    }
+    setLockEnabled(true);
+    router.refresh();
+  }
+
+  async function disableLock(form: FormData) {
+    form.set("enabled", "false");
+    const result = await setPrivacyLockEnabled(form);
+    if (!result.ok) {
+      setDisableError(result.error ?? "Could not disable the lock.");
+      return;
+    }
+    setDisableError(undefined);
+    setDisablingLock(false);
+    setLockEnabled(false);
     router.refresh();
   }
 
@@ -173,10 +201,39 @@ export function PrivacySettings({
             checked={lockEnabled}
             disabled={!pinSet}
             onChange={(value) => {
-              setLockEnabled(value);
-              void savePreferences({ lock: value });
+              if (value) void enableLock();
+              else setDisablingLock(true);
             }}
           />
+
+          {pinSet && lockEnabled && disablingLock ? (
+            <form action={disableLock} className="grid gap-2.5 rounded-lg border border-border p-3">
+              <Field
+                label="Current PIN"
+                htmlFor="disableLockPin"
+                hint="Confirm your PIN, or unlock this session first."
+              >
+                <Input
+                  id="disableLockPin"
+                  name="currentPin"
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  required
+                />
+              </Field>
+              {disableError ? <p className="text-xs text-destructive">{disableError}</p> : null}
+              <div className="flex flex-wrap gap-2">
+                <SubmitButton size="sm" variant="destructive">Disable lock</SubmitButton>
+                <Button type="button" size="sm" variant="outline" onClick={() => setDisablingLock(false)}>
+                  Cancel
+                </Button>
+                <Button asChild type="button" size="sm" variant="ghost">
+                  <Link href="/unlock?next=/settings">Unlock first</Link>
+                </Button>
+              </div>
+            </form>
+          ) : null}
 
           {pinSet && lockEnabled ? (
             <form

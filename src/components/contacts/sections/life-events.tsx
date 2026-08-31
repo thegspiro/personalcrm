@@ -11,10 +11,14 @@ import { formatPartialRange, isValidPartialDateRange, type DatePrecision } from 
 import { parsePlainDate } from "@/lib/dates";
 import { LifeEventFields, type LifeEventValue } from "../detail-field-groups";
 import { createLifeEvent, deleteLifeEvent, updateLifeEvent } from "@/server/actions/details";
+import { ContactPicker, type PickerContact } from "@/components/form/contact-picker";
+import Link from "next/link";
 
 export interface LifeEventItem extends LifeEventValue {
   id: string;
   type: { label: string; icon: string | null; color: string | null } | null;
+  participantIds: string[];
+  participants: PickerContact[];
 }
 
 /**
@@ -37,6 +41,7 @@ function LifeEventForm({
   types,
   event,
   contactId,
+  contacts,
   children,
 }: {
   action: (form: FormData) => void | Promise<void>;
@@ -44,6 +49,7 @@ function LifeEventForm({
   types: TermOption[];
   event?: LifeEventItem;
   contactId?: string;
+  contacts: PickerContact[];
   children: React.ReactNode;
 }) {
   const [endDateError, setEndDateError] = React.useState<string>();
@@ -70,6 +76,12 @@ function LifeEventForm({
       {contactId ? <input type="hidden" name="contactId" value={contactId} /> : null}
       {event ? <input type="hidden" name="id" value={event.id} /> : null}
       <LifeEventFields formId={formId} types={types} event={event} endDateError={endDateError} />
+      <ContactPicker
+        name="contactIds"
+        label="Who shares this moment?"
+        contacts={contacts}
+        defaultSelected={event?.participantIds.filter((id) => id !== contactId) ?? []}
+      />
       {children}
     </form>
   );
@@ -79,10 +91,12 @@ export function LifeEventsSection({
   contactId,
   events,
   types,
+  contacts,
 }: {
   contactId: string;
   events: LifeEventItem[];
   types: TermOption[];
+  contacts: PickerContact[];
 }) {
   const run = useAction();
   const add = useAddAction();
@@ -100,6 +114,7 @@ export function LifeEventsSection({
           formId="event-new"
           types={types}
           contactId={contactId}
+          contacts={contacts}
         >
           <SubmitButton size="sm">Add</SubmitButton>
         </LifeEventForm>
@@ -125,6 +140,8 @@ export function LifeEventsSection({
                 formId={`event-${event.id}`}
                 types={types}
                 event={event}
+                contactId={contactId}
+                contacts={contacts}
               >
                 <SubmitButton size="sm">Save</SubmitButton>
               </LifeEventForm>
@@ -142,6 +159,18 @@ export function LifeEventsSection({
             </p>
             {event.description ? (
               <p className="mt-0.5 text-xs text-muted-foreground">{event.description}</p>
+            ) : null}
+            {event.participants.length > 1 ? (
+              <p className="mt-1 flex flex-wrap gap-1 text-xs text-muted-foreground">
+                Shared with {event.participants.map((person, index) => (
+                  <React.Fragment key={person.id}>
+                    {index ? <span>·</span> : null}
+                    <Link href={`/people/${person.id}`} className="hover:underline">
+                      {[person.firstName, person.lastName].filter(Boolean).join(" ")}
+                    </Link>
+                  </React.Fragment>
+                ))}
+              </p>
             ) : null}
           </SectionRow>
         ))

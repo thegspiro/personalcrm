@@ -47,6 +47,17 @@ describe.skipIf(!hasTestDatabase)("privacy PIN attempt backoff", () => {
       where: { id: user.id },
       data: { privacyPinHash: await hashPassword(PIN) },
     });
+    // createTestUser does not provision preferences, and the getUserContext
+    // mock above reads them with findUniqueOrThrow, so the row has to exist
+    // before any action runs. The lock is on because that is what these
+    // tests exercise.
+    await prisma.userPreference.create({
+      data: {
+        userId: user.id,
+        timezone: "America/New_York",
+        privacyLockEnabled: true,
+      },
+    });
   });
 
   afterAll(async () => {

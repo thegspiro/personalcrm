@@ -85,7 +85,7 @@ export async function createInteraction(
 ): Promise<ActionResult<{ id: string }>> {
   const { ownerId } = await owner();
 
-  const requested = strList(form, "contactIds");
+  const requested = [...new Set(strList(form, "contactIds"))];
   const contactIds = await ownedContactIds(ownerId, requested);
   if (contactIds.length !== requested.length) return fail("Some of those people weren't found.");
 
@@ -102,6 +102,12 @@ export async function createInteraction(
 
   const sentiment = num(form, "sentiment");
   const duration = num(form, "durationMinutes");
+  const requestedMentions = [...new Set(strList(form, "mentionedContactIds"))]
+    .filter((id) => !contactIds.includes(id));
+  const mentionedContactIds = await ownedContactIds(ownerId, requestedMentions);
+  if (mentionedContactIds.length !== requestedMentions.length) {
+    return fail("Some mentioned people weren't found.");
+  }
 
   let interaction: { id: string };
   try {
@@ -118,6 +124,7 @@ export async function createInteraction(
         sentiment: sentiment === undefined ? null : clampSentiment(sentiment),
         reachedOutBy: reachedOutByOf(str(form, "reachedOutBy")),
         participants: { create: contactIds.map((contactId) => ({ contactId })) },
+        mentions: { create: mentionedContactIds.map((contactId) => ({ contactId })) },
       },
     });
 
@@ -159,7 +166,7 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
   });
   if (!existing) return fail("Interaction not found.");
 
-  const requested = strList(form, "contactIds");
+  const requested = [...new Set(strList(form, "contactIds"))];
   const nextContactIds = await ownedContactIds(ownerId, requested);
   if (nextContactIds.length !== requested.length) {
     return fail("Some of those people weren't found.");
@@ -181,6 +188,12 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
 
   const sentiment = num(form, "sentiment");
   const duration = num(form, "durationMinutes");
+  const requestedMentions = [...new Set(strList(form, "mentionedContactIds"))]
+    .filter((contactId) => !nextContactIds.includes(contactId));
+  const mentionedContactIds = await ownedContactIds(ownerId, requestedMentions);
+  if (mentionedContactIds.length !== requestedMentions.length) {
+    return fail("Some mentioned people weren't found.");
+  }
   const previousContactIds = existing.participants.map((p) => p.contactId);
 
   try {
@@ -203,6 +216,12 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
       await tx.interactionParticipant.createMany({
         data: parsed.data.contactIds.map((contactId) => ({ interactionId: id, contactId })),
       });
+      await tx.interactionMention.deleteMany({ where: { interactionId: id } });
+      if (mentionedContactIds.length) {
+        await tx.interactionMention.createMany({
+          data: mentionedContactIds.map((contactId) => ({ interactionId: id, contactId })),
+        });
+      }
 
       await saveCustomFieldValuesOrThrow(tx, ownerId, "INTERACTION", id, form);
 
@@ -238,6 +257,7 @@ export interface InteractionForEdit {
   sentiment: number | null;
   reachedOutBy: string;
   contactIds: string[];
+  mentionedContactIds: string[];
   contacts: Array<{ id: string; firstName: string; lastName: string | null; nickname: string | null }>;
   types: Array<{ id: string; label: string; icon: string | null; color: string | null }>;
   customFields: Array<{
@@ -281,6 +301,7 @@ export async function loadInteractionForEdit(
       sentiment: true,
       reachedOutBy: true,
       participants: { select: { contactId: true } },
+      mentions: { select: { contactId: true } },
     },
   });
   if (!interaction) return fail("Interaction not found.");
@@ -296,7 +317,10 @@ export async function loadInteractionForEdit(
   // saving would quietly drop them from the record.
   const known = new Set(contacts.map((contact) => contact.id));
   const participantIds = interaction.participants.map((p) => p.contactId);
-  const missing = participantIds.filter((contactId) => !known.has(contactId));
+  const mentionedContactIds = interaction.mentions.map((mention) => mention.contactId);
+  const missing = [...participantIds, ...mentionedContactIds].filter(
+    (contactId) => !known.has(contactId),
+  );
   const extra = missing.length
     ? await prisma.contact.findMany({
         where: { id: { in: missing }, ownerId },
@@ -315,6 +339,7 @@ export async function loadInteractionForEdit(
     sentiment: interaction.sentiment,
     reachedOutBy: interaction.reachedOutBy,
     contactIds: participantIds,
+    mentionedContactIds,
     contacts: [
       ...contacts.map((contact) => ({
         id: contact.id,
