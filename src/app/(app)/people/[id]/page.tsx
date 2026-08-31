@@ -120,7 +120,11 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
   // Mapped once and shared: the summary above the timeline and the full section
   // below it read the same rows, so a milestone cannot render one way in one
   // place and another way in the other.
-  const lifeEvents = contact.lifeEvents.map((event) => ({
+  const sharedLifeEvents = [
+    ...contact.lifeEvents,
+    ...contact.lifeEventParticipations.map((participation) => participation.lifeEvent),
+  ].filter((event, index, rows) => rows.findIndex((candidate) => candidate.id === event.id) === index);
+  const lifeEvents = sharedLifeEvents.map((event) => ({
     id: event.id,
     title: event.title,
     description: event.description,
@@ -130,6 +134,12 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     endDate: event.endDate ? plainDateFromDb(event.endDate) : null,
     endPrecision: event.endPrecision,
     isMilestone: event.isMilestone,
+    participantIds: event.participants.map((participant) => participant.contactId),
+    participants: event.participants.map((participant) => ({
+      id: participant.contact.id,
+      firstName: participant.contact.firstName,
+      lastName: participant.contact.lastName,
+    })),
     type: event.type
       ? { label: event.type.label, icon: event.type.icon, color: event.type.color }
       : null,
@@ -378,6 +388,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           contactId={contact.id}
           events={lifeEvents}
           types={terms.LIFE_EVENT_TYPE}
+          contacts={contactOptions}
         />
 
         <TasksSection

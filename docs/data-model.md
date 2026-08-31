@@ -266,6 +266,13 @@ Join table, PK `(interactionId, contactId)`, cascading from both. An
 interaction is withheld while locked if it is itself private **or** any
 participant is.
 
+### `InteractionMention`
+
+Join table, PK `(interactionId, contactId)`, for someone discussed but not
+present. A mention makes the interaction discoverable from that person's
+history without advancing their contact cadence. Private mentioned contacts
+withhold the interaction while the lock is closed, just like participants.
+
 ### `Fact`
 
 "Things to know" about a person. `contactId` (cascade), `categoryId` →
@@ -307,7 +314,11 @@ Deliberately not an `Interaction` (which assumes you were there) and not an
 2019" and "the trip where we became friends" are context, not anniversaries.
 
 Adds `endDate` / `endPrecision` for events that span a period, and
-`isMilestone` to pin one to the top of the profile.
+`isMilestone` to pin one to the top of the profile. `LifeEventParticipant` is
+the join that lets one marriage, move, birth, reunion, or bereavement appear in
+every selected person's history. `contactId` remains the compatibility anchor;
+the migration backfills it into the participant join without changing dates or
+duplicating events.
 
 ### `Household`
 
@@ -569,6 +580,7 @@ the `init-migrate` s6 oneshot).
 | `20260825094500_add_plans` | `Plan`, `PlanStatus`, and `PLAN_CATEGORY` on `TaxonomyKind` |
 | `20260825120000_add_onboarding_state` | `UserPreference.onboardingCompletedAt` |
 | `20260830120000_expand_plan_practical_details` | Renames `Plan.city` to the wider `address` without losing values and adds the validated JSON checklist |
+| `20260831120000_add_shared_family_context` | Adds interaction mentions and shared life-event participants; backfills every existing life event into its participant join |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).
