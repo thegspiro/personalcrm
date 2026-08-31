@@ -149,6 +149,13 @@ export function EditInteractionSheet({
                 required
               />
 
+              <ContactPicker
+                name="mentionedContactIds"
+                label="People mentioned (optional)"
+                contacts={record.contacts}
+                defaultSelected={record.mentionedContactIds}
+              />
+
               <TermChips
                 name="typeId"
                 label="What"

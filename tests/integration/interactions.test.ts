@@ -135,6 +135,95 @@ describe.skipIf(!hasTestDatabase)("updateInteraction", () => {
     expect((await read(id)).title).toBe("First time at Sarah's place");
   });
 
+  it("normalizes duplicate people when creating and updating", async () => {
+    const id = await logged({ contactIds: [sarahId, sarahId, marcusId, marcusId] });
+    expect((await read(id)).participants.map((participant) => participant.contactId).sort()).toEqual(
+      [marcusId, sarahId].sort(),
+    );
+
+    const result = await updateInteraction(
+      formOf({
+        id,
+        contactIds: [sarahId, sarahId],
+        occurredAt: MOVED.toISOString(),
+        title: "Just Sarah",
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect((await read(id)).participants.map((participant) => participant.contactId)).toEqual([
+      sarahId,
+    ]);
+  });
+
+  it("refuses a cross-owner person even when a valid person is submitted twice", async () => {
+    const stranger = await createTestUser();
+    const theirs = await prisma.contact.create({
+      data: { ownerId: stranger.id, firstName: "Nobody" },
+    });
+
+    const result = await createInteraction(
+      formOf({
+        contactIds: [sarahId, sarahId, theirs.id],
+        occurredAt: WHEN.toISOString(),
+        title: "Must not exist",
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(await prisma.interaction.count({ where: { ownerId: state.ownerId } })).toBe(0);
+  });
+
+  it("recomputes activity for every participant on create and update", async () => {
+    const id = await logged({ contactIds: [sarahId, marcusId] });
+    const initiallyUpdated = await Promise.all(
+      [sarahId, marcusId].map((id) => prisma.contact.findUniqueOrThrow({ where: { id } })),
+    );
+    expect(initiallyUpdated.map((contact) => contact.lastInteractionAt?.getTime())).toEqual([
+      WHEN.getTime(),
+      WHEN.getTime(),
+    ]);
+
+    const result = await updateInteraction(
+      formOf({
+        id,
+        contactIds: [sarahId, marcusId],
+        occurredAt: MOVED.toISOString(),
+        title: "Moved together",
+      }),
+    );
+    expect(result.ok).toBe(true);
+    const moved = await Promise.all(
+      [sarahId, marcusId].map((id) => prisma.contact.findUniqueOrThrow({ where: { id } })),
+    );
+    expect(moved.map((contact) => contact.lastInteractionAt?.getTime())).toEqual([
+      MOVED.getTime(),
+      MOVED.getTime(),
+    ]);
+  });
+
+  it("keeps mentioned people separate from attendees and their cadence", async () => {
+    const result = await createInteraction(
+      formOf({
+        contactIds: [sarahId, sarahId],
+        mentionedContactIds: [marcusId],
+        typeId: coffeeId,
+        occurredAt: WHEN.toISOString(),
+        title: "Talked about Marcus",
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    const interaction = await prisma.interaction.findUniqueOrThrow({
+      where: { id: result.data!.id },
+      include: { participants: true, mentions: true },
+    });
+    expect(interaction.participants.map((row) => row.contactId)).toEqual([sarahId]);
+    expect(interaction.mentions.map((row) => row.contactId)).toEqual([marcusId]);
+    expect((await prisma.contact.findUniqueOrThrow({ where: { id: marcusId } })).lastInteractionAt)
+      .toBeNull();
+  });
+
   it("refuses an interaction type belonging to somebody else", async () => {
     const id = await logged();
     const stranger = await createTestUser();

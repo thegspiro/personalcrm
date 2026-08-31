@@ -3,7 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/server/db/client";
-import { clearPin, lock, requireUnlocked, setPin, unlock } from "@/server/privacy/lock";
+import {
+  clearPin,
+  getPrivacyState,
+  lock,
+  requireUnlocked,
+  setPin,
+  unlock,
+} from "@/server/privacy/lock";
 import { type ActionResult, bool, fail, ok, owner, str } from "./helpers";
 
 function revalidateEverything() {
@@ -19,7 +26,7 @@ export async function unlockPrivacyAction(
   if (!pin) return fail("Enter your PIN.");
 
   const result = await unlock(pin);
-  if (!result.ok) return fail(result.error ?? "That PIN is wrong.");
+  if (!result.ok) return fail(result.error ?? "That PIN is wrong.", result.retryAfterSeconds);
 
   revalidateEverything();
   const next = str(form, "next");
@@ -44,7 +51,7 @@ export async function setPinAction(
   if (newPin !== confirmPin) return fail("Those PINs don't match.");
 
   const result = await setPin(newPin, str(form, "currentPin"));
-  if (!result.ok) return fail(result.error ?? "Could not set that PIN.");
+  if (!result.ok) return fail(result.error ?? "Could not set that PIN.", result.retryAfterSeconds);
 
   revalidateEverything();
   return ok();
@@ -58,7 +65,7 @@ export async function clearPinAction(
   if (!pin) return fail("Enter your PIN to remove it.");
 
   const result = await clearPin(pin);
-  if (!result.ok) return fail(result.error ?? "Could not remove the PIN.");
+  if (!result.ok) return fail(result.error ?? "Could not remove the PIN.", result.retryAfterSeconds);
 
   revalidateEverything();
   return ok();
@@ -67,22 +74,46 @@ export async function clearPinAction(
 export async function updatePrivacyPreferences(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
 
-  const wantsLock = bool(form, "privacyLockEnabled");
-  if (wantsLock) {
+  // The general preferences form deliberately cannot change the lock. A
+  // caller can post arbitrary FormData to a server action, so accepting the
+  // field here would let a locked session lower the security boundary.
+  await prisma.userPreference.update({
+    where: { userId: ownerId },
+    data: {
+      hideDating: bool(form, "hideDating"),
+      blurPrivateNotes: bool(form, "blurPrivateNotes"),
+    },
+  });
+
+  revalidateEverything();
+  return ok();
+}
+
+/** Change the lock boundary, requiring server-side authorization to lower it. */
+export async function setPrivacyLockEnabled(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const enabled = bool(form, "enabled");
+
+  if (enabled) {
     const user = await prisma.user.findUniqueOrThrow({
       where: { id: ownerId },
       select: { privacyPinHash: true },
     });
     if (!user.privacyPinHash) return fail("Set a PIN before switching the lock on.");
+  } else {
+    const privacy = await getPrivacyState();
+    if (privacy.enabled && !privacy.unlocked) {
+      const currentPin = str(form, "currentPin");
+      if (!currentPin) return fail("Unlock with your PIN first.");
+
+      const verified = await unlock(currentPin);
+      if (!verified.ok) return fail(verified.error ?? "That PIN is wrong.");
+    }
   }
 
   await prisma.userPreference.update({
     where: { userId: ownerId },
-    data: {
-      privacyLockEnabled: wantsLock,
-      hideDating: bool(form, "hideDating"),
-      blurPrivateNotes: bool(form, "blurPrivateNotes"),
-    },
+    data: { privacyLockEnabled: enabled },
   });
 
   revalidateEverything();

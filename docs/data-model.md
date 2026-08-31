@@ -277,6 +277,13 @@ Join table, PK `(interactionId, contactId)`, cascading from both. An
 interaction is withheld while locked if it is itself private **or** any
 participant is.
 
+### `InteractionMention`
+
+Join table, PK `(interactionId, contactId)`, for someone discussed but not
+present. A mention makes the interaction discoverable from that person's
+history without advancing their contact cadence. Private mentioned contacts
+withhold the interaction while the lock is closed, just like participants.
+
 ### `Fact`
 
 "Things to know" about a person. `contactId` (cascade), `categoryId` →
@@ -318,7 +325,11 @@ Deliberately not an `Interaction` (which assumes you were there) and not an
 2019" and "the trip where we became friends" are context, not anniversaries.
 
 Adds `endDate` / `endPrecision` for events that span a period, and
-`isMilestone` to pin one to the top of the profile.
+`isMilestone` to pin one to the top of the profile. `LifeEventParticipant` is
+the join that lets one marriage, move, birth, reunion, or bereavement appear in
+every selected person's history. `contactId` remains the compatibility anchor;
+the migration backfills it into the participant join without changing dates or
+duplicating events.
 
 ### `Household`
 
@@ -405,9 +416,15 @@ Money — or a thing — that has moved and not come back.
 
 ### `DietaryNeed`
 
-Something a person cannot, or will not, eat. `kind`: `ALLERGY` |
-`INTOLERANCE` | `MEDICAL` | `PREFERENCE`; plus `label`, `notes` and
-`carriesEpinephrine`.
+An allergy or something a person cannot, or will not, eat. `kind`: `ALLERGY` |
+`INTOLERANCE` | `MEDICAL` | `PREFERENCE`. Allergies additionally have a
+`category`: `FOOD` | `MEDICATION` | `ENVIRONMENTAL` | `OTHER`, factual reaction
+and emergency-instruction fields, optional diagnosis state, and a last-confirmed
+date. Non-food categories are valid only for allergies. Existing rows migrate
+to `FOOD`, the only category justified by the former food-only interface.
+
+`Contact.allergyStatus` distinguishes `UNKNOWN`, `NO_KNOWN`, and `KNOWN`; an
+empty list therefore never silently means that the person has no allergies.
 
 Two deliberate absences, both documented in the schema itself:
 
@@ -416,9 +433,9 @@ Two deliberate absences, both documented in the schema itself:
   false reassurance the table exists to prevent. Severity is expressed only as
   `kind` and `carriesEpinephrine` — facts, not predictions. The UI renders two
   groups (must avoid / prefers to avoid), never four escalating tiers.
-- **No `isPrivate`.** An allergy behind a PIN is a decorative allergy. Sensitive
-  dietary context belongs in a private `Fact`; a need attached to a private
-  contact is still hidden with that contact.
+- **No `isPrivate`.** The allergen, reaction and emergency instructions remain
+  available in an emergency. Sensitive diagnosis detail belongs in a private
+  `Fact`; a need attached to a private contact is still hidden with that contact.
 
 ---
 
@@ -453,7 +470,9 @@ Adds `sequence` (nth date with this person, **renumbered on write** so a date
 remembered late slots in where it happened rather than being appended),
 `activityTypeId` → `DATE_ACTIVITY_TYPE`, `venue`, `city`, `whoPaid` (`WhoPaid`),
 `costCents`, and the three 1–5 scores `rating`, `chemistry`,
-`conversationQuality`.
+`conversationQuality`. Optional retrospective fields `wouldDoAgain` and
+`nextTimeNotes` remain null until the user answers them, so older dates never
+acquire an invented opinion. These are separate from pre-date `Plan.notes`.
 
 ### `Flag`
 
@@ -579,7 +598,9 @@ the `init-migrate` s6 oneshot).
 | `20260824182152_add_dietary_debts_and_reach_out` | `Debt`, `DietaryNeed`, `Interaction.reachedOutBy` |
 | `20260825094500_add_plans` | `Plan`, `PlanStatus`, and `PLAN_CATEGORY` on `TaxonomyKind` |
 | `20260825120000_add_onboarding_state` | `UserPreference.onboardingCompletedAt` |
+| `20260830120000_add_date_entry_retrospective` | Additive nullable `DateEntry.wouldDoAgain` and `nextTimeNotes` reflections; existing rows remain unanswered |
 | `20260830120000_expand_plan_practical_details` | Renames `Plan.city` to the wider `address` without losing values and adds the validated JSON checklist |
+| `20260831120000_add_shared_family_context` | Adds interaction mentions and shared life-event participants; backfills every existing life event into its participant join |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).

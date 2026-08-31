@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useActionState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 import { AlertCircle, Lock, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import type { ActionResult } from "@/server/actions/helpers";
 import {
   clearPinAction,
   lockPrivacyAction,
+  setPrivacyLockEnabled,
   setPinAction,
   updatePrivacyPreferences,
 } from "@/server/actions/privacy";
@@ -25,11 +27,13 @@ export function PrivacySettings({
   privacyLockEnabled,
   hideDating,
   blurPrivateNotes,
+  retryAfterSeconds,
 }: {
   pinSet: boolean;
   privacyLockEnabled: boolean;
   hideDating: boolean;
   blurPrivateNotes: boolean;
+  retryAfterSeconds: number;
 }) {
   const router = useRouter();
   const [lockEnabled, setLockEnabled] = React.useState(privacyLockEnabled);
@@ -37,9 +41,13 @@ export function PrivacySettings({
   const [blur, setBlur] = React.useState(blurPrivateNotes);
   const [changingPin, setChangingPin] = React.useState(false);
   const [locking, setLocking] = React.useState(false);
+  const [retrySeconds, setRetrySeconds] = React.useState(retryAfterSeconds);
+  const [disablingLock, setDisablingLock] = React.useState(false);
+  const [disableError, setDisableError] = React.useState<string>();
 
   async function savePin(previous: ActionResult, form: FormData): Promise<ActionResult> {
     const result = await setPinAction(previous, form);
+    setRetrySeconds(result.retryAfterSeconds ?? 0);
     if (result.ok) {
       setChangingPin(false);
       toast.success("PIN saved");
@@ -49,11 +57,23 @@ export function PrivacySettings({
   }
 
   const [pinState, pinAction] = useActionState<ActionResult, FormData>(savePin, { ok: true });
-  const [clearState, clearAction] = useActionState<ActionResult, FormData>(clearPinAction, { ok: true });
 
-  async function savePreferences(next: { lock?: boolean; hide?: boolean; blur?: boolean }) {
+  async function removePin(previous: ActionResult, form: FormData): Promise<ActionResult> {
+    const result = await clearPinAction(previous, form);
+    setRetrySeconds(result.retryAfterSeconds ?? 0);
+    return result;
+  }
+
+  const [clearState, clearAction] = useActionState<ActionResult, FormData>(removePin, { ok: true });
+
+  React.useEffect(() => {
+    if (retrySeconds <= 0) return;
+    const timer = window.setTimeout(() => setRetrySeconds((seconds) => Math.max(0, seconds - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [retrySeconds]);
+
+  async function savePreferences(next: { hide?: boolean; blur?: boolean }) {
     const form = new FormData();
-    form.set("privacyLockEnabled", String(next.lock ?? lockEnabled));
     form.set("hideDating", String(next.hide ?? hidden));
     form.set("blurPrivateNotes", String(next.blur ?? blur));
 
@@ -64,6 +84,31 @@ export function PrivacySettings({
       setLockEnabled(privacyLockEnabled);
       return;
     }
+    router.refresh();
+  }
+
+  async function enableLock() {
+    const form = new FormData();
+    form.set("enabled", "true");
+    const result = await setPrivacyLockEnabled(form);
+    if (!result.ok) {
+      toast.error(result.error ?? "Could not enable the lock.");
+      return;
+    }
+    setLockEnabled(true);
+    router.refresh();
+  }
+
+  async function disableLock(form: FormData) {
+    form.set("enabled", "false");
+    const result = await setPrivacyLockEnabled(form);
+    if (!result.ok) {
+      setDisableError(result.error ?? "Could not disable the lock.");
+      return;
+    }
+    setDisableError(undefined);
+    setDisablingLock(false);
+    setLockEnabled(false);
     router.refresh();
   }
 
@@ -104,6 +149,11 @@ export function PrivacySettings({
               {clearState.error}
             </p>
           ) : null}
+          {retrySeconds > 0 ? (
+            <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
+              Too many PIN attempts. Try again in {retrySeconds}s.
+            </p>
+          ) : null}
 
           {pinSet && !changingPin ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -111,7 +161,7 @@ export function PrivacySettings({
                 <ShieldCheck className="size-3.5" />
                 PIN set
               </span>
-              <Button size="sm" variant="outline" onClick={() => setChangingPin(true)}>
+              <Button size="sm" variant="outline" disabled={retrySeconds > 0} onClick={() => setChangingPin(true)}>
                 Change PIN
               </Button>
             </div>
@@ -119,7 +169,7 @@ export function PrivacySettings({
             <form action={pinAction} className="grid gap-2.5">
               {pinSet ? (
                 <Field label="Current PIN" htmlFor="currentPin">
-                  <Input id="currentPin" name="currentPin" type="password" inputMode="numeric" autoComplete="off" required />
+                  <Input id="currentPin" name="currentPin" type="password" inputMode="numeric" autoComplete="off" required disabled={retrySeconds > 0} />
                 </Field>
               ) : null}
               <div className="grid gap-2.5 sm:grid-cols-2">
@@ -131,7 +181,7 @@ export function PrivacySettings({
                 </Field>
               </div>
               <div className="flex gap-2">
-                <SubmitButton size="sm">{pinSet ? "Change PIN" : "Set PIN"}</SubmitButton>
+                <SubmitButton size="sm" disabled={pinSet && retrySeconds > 0}>{pinSet ? "Change PIN" : "Set PIN"}</SubmitButton>
                 {pinSet ? (
                   <Button type="button" size="sm" variant="outline" onClick={() => setChangingPin(false)}>
                     Cancel
@@ -151,10 +201,39 @@ export function PrivacySettings({
             checked={lockEnabled}
             disabled={!pinSet}
             onChange={(value) => {
-              setLockEnabled(value);
-              void savePreferences({ lock: value });
+              if (value) void enableLock();
+              else setDisablingLock(true);
             }}
           />
+
+          {pinSet && lockEnabled && disablingLock ? (
+            <form action={disableLock} className="grid gap-2.5 rounded-lg border border-border p-3">
+              <Field
+                label="Current PIN"
+                htmlFor="disableLockPin"
+                hint="Confirm your PIN, or unlock this session first."
+              >
+                <Input
+                  id="disableLockPin"
+                  name="currentPin"
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  required
+                />
+              </Field>
+              {disableError ? <p className="text-xs text-destructive">{disableError}</p> : null}
+              <div className="flex flex-wrap gap-2">
+                <SubmitButton size="sm" variant="destructive">Disable lock</SubmitButton>
+                <Button type="button" size="sm" variant="outline" onClick={() => setDisablingLock(false)}>
+                  Cancel
+                </Button>
+                <Button asChild type="button" size="sm" variant="ghost">
+                  <Link href="/unlock?next=/settings">Unlock first</Link>
+                </Button>
+              </div>
+            </form>
+          ) : null}
 
           {pinSet && lockEnabled ? (
             <form
@@ -178,9 +257,9 @@ export function PrivacySettings({
           {pinSet ? (
             <form action={clearAction} className="grid gap-2.5 border-t border-border pt-3">
               <Field label="Remove the PIN" htmlFor="removePin" hint="Switches the lock off too.">
-                <Input id="removePin" name="currentPin" type="password" inputMode="numeric" autoComplete="off" placeholder="Current PIN" />
+                <Input id="removePin" name="currentPin" type="password" inputMode="numeric" autoComplete="off" placeholder="Current PIN" disabled={retrySeconds > 0} />
               </Field>
-              <SubmitButton size="sm" variant="outline">Remove PIN</SubmitButton>
+              <SubmitButton size="sm" variant="outline" disabled={retrySeconds > 0}>Remove PIN</SubmitButton>
             </form>
           ) : null}
         </CardContent>

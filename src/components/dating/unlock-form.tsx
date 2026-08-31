@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,10 +15,21 @@ export function UnlockForm({
   next: string;
   retryAfterSeconds: number;
 }) {
-  const [state, action, pending] = useActionState<ActionResult, FormData>(
-    unlockPrivacyAction,
-    { ok: true },
-  );
+  const [retrySeconds, setRetrySeconds] = useState(retryAfterSeconds);
+
+  async function submit(previous: ActionResult, form: FormData): Promise<ActionResult> {
+    const result = await unlockPrivacyAction(previous, form);
+    setRetrySeconds(result.retryAfterSeconds ?? 0);
+    return result;
+  }
+
+  const [state, action, pending] = useActionState<ActionResult, FormData>(submit, { ok: true });
+
+  useEffect(() => {
+    if (retrySeconds <= 0) return;
+    const timer = window.setTimeout(() => setRetrySeconds((seconds) => Math.max(0, seconds - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [retrySeconds]);
 
   return (
     <form action={action} className="grid gap-4">
@@ -31,9 +42,9 @@ export function UnlockForm({
         </p>
       ) : null}
 
-      {retryAfterSeconds > 0 ? (
+      {retrySeconds > 0 ? (
         <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
-          Too many attempts. Try again in {retryAfterSeconds}s.
+          Too many attempts. Try again in {retrySeconds}s.
         </p>
       ) : null}
 
@@ -46,11 +57,12 @@ export function UnlockForm({
           autoComplete="off"
           autoFocus
           required
+          disabled={retrySeconds > 0}
           placeholder="••••"
         />
       </Field>
 
-      <Button type="submit" loading={pending} className="h-11 w-full">
+      <Button type="submit" loading={pending} disabled={retrySeconds > 0} className="h-11 w-full">
         Unlock
       </Button>
     </form>

@@ -77,6 +77,10 @@ export function LogInteractionSheet({
     });
   }, [open]);
 
+  React.useEffect(() => {
+    if (open) formRef.current?.reset();
+  }, [open]);
+
   async function onSubmit(form: FormData) {
     if (sentiment !== null) form.set("sentiment", String(sentiment));
     // Left unset the field stays UNSPECIFIED, which is the honest answer when
@@ -117,13 +121,19 @@ export function LogInteractionSheet({
               </p>
             ) : null}
 
-            {defaultContactIds.length > 0 ? (
-              defaultContactIds.map((id) => (
-                <input key={id} type="hidden" name="contactIds" value={id} />
-              ))
-            ) : (
-              <ContactPicker name="contactIds" label="Who" contacts={contacts} required />
-            )}
+            <ContactPicker
+              name="contactIds"
+              label="Who was there?"
+              contacts={contacts}
+              defaultSelected={defaultContactIds}
+              required
+            />
+
+            <ContactPicker
+              name="mentionedContactIds"
+              label="People mentioned (optional)"
+              contacts={contacts}
+            />
 
             <TermChips name="typeId" label="What" terms={types} allowEmpty={false} />
 

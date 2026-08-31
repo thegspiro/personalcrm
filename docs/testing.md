@@ -22,7 +22,7 @@ does not own. That is what makes these fast and worth writing.
 | `dates.test.ts`, `date-precision.test.ts` | Timezone-anchored calendar maths, partial dates |
 | `quick-parse.test.ts` | Reading a typed line into an interaction |
 | `reciprocity.test.ts` | Who has been reaching out, and when to say nothing |
-| `debts.test.ts`, `dietary.test.ts` | Balances per currency; must-avoid grouping |
+| `debts.test.ts`, `dietary.test.ts` | Balances per currency; allergy categories and safe dietary grouping |
 | `family-suggestions.test.ts` | Graph inference, and what it refuses to infer |
 | `custom-fields.test.ts` | Type coercion and validation |
 | `offline.test.ts` | Offline-cacheability rules |
