@@ -60,7 +60,7 @@ describe("validateChannelConfig — email", () => {
 });
 
 describe("validateChannelConfig — url channels", () => {
-  for (const kind of ["NTFY", "GOTIFY", "DISCORD", "WEBHOOK"] as const) {
+  for (const kind of ["NTFY", "GOTIFY", "WEBHOOK"] as const) {
     it(`accepts an http(s) URL for ${kind}`, () => {
       const result = validateChannelConfig(kind, { url: "https://ntfy.example.com/topic" });
       expect(result.ok).toBe(true);
@@ -73,6 +73,30 @@ describe("validateChannelConfig — url channels", () => {
       }
     });
   }
+
+  it("treats a Discord webhook URL as the credential it is", () => {
+    // The token is in the path, so it goes through the encrypted path and must
+    // never appear in the readable config that reaches the browser.
+    expect(secretFieldsFor("DISCORD").map((field) => field.name)).toEqual(["url"]);
+
+    const result = validateChannelConfig("DISCORD", {
+      url: "https://discord.com/api/webhooks/123/abcdef",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.config.url).toBeUndefined();
+    expect(JSON.stringify(result.config)).not.toContain("abcdef");
+  });
+
+  it("still refuses a Discord URL that is not http(s)", () => {
+    for (const url of ["file:///etc/passwd", "javascript:alert(1)", "not a url"]) {
+      expect(validateChannelConfig("DISCORD", { url }).ok).toBe(false);
+    }
+  });
+
+  it("lets a blank secret URL through, because blank means keep the stored one", () => {
+    // Only the action can see what is already saved, so presence is its check.
+    expect(validateChannelConfig("DISCORD", {}).ok).toBe(true);
+  });
 });
 
 describe("the field table", () => {
@@ -90,6 +114,7 @@ describe("the field table", () => {
   it("marks exactly the credentials as secret", () => {
     expect(secretFieldsFor("EMAIL").map((f) => f.name)).toEqual(["pass"]);
     expect(secretFieldsFor("WEBHOOK").map((f) => f.name)).toEqual(["token"]);
+    expect(secretFieldsFor("DISCORD").map((f) => f.name)).toEqual(["url"]);
   });
 
   it("refuses a kind that is not one", () => {

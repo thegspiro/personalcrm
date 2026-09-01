@@ -46,7 +46,14 @@ export async function deliverToChannel(
   const url = typeof config.url === "string" ? config.url : null;
   if (!url) throw new Error(`${channel.kind} channel requires a URL.`);
   const headers: Record<string, string> = { "content-type": "application/json" };
-  if (typeof config.token === "string") headers.authorization = `Bearer ${config.token}`;
+  const token = typeof config.token === "string" && config.token !== "" ? config.token : null;
+  if (token) {
+    // Gotify authenticates an application with its own header, not a bearer
+    // token. Sharing ntfy's scheme meant a correctly configured Gotify server
+    // rejected every request, so the channel was offered and never delivered.
+    if (channel.kind === "GOTIFY") headers["x-gotify-key"] = token;
+    else headers.authorization = `Bearer ${token}`;
+  }
   const payload = channel.kind === "DISCORD" ? { content: `${subject}\n${body}` } : { title: subject, message: body };
   const response = await fetch(url, {
     method: "POST",

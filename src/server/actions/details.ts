@@ -52,9 +52,22 @@ function touch(contactId?: string | null) {
   if (contactId) revalidatePath(`/people/${contactId}`);
 }
 
+/**
+ * Whether this contact is both yours and currently reachable.
+ *
+ * Ownership alone is not the check. Every `update*` and `delete*` here looks
+ * its row up through `contactPrivacyWhere`, so a closed lock refuses them — but
+ * the create paths asked only "is this mine", which let an id remembered from
+ * an unlocked session go on attaching facts, dates, numbers and addresses to a
+ * private contact while the lock was shut. A row you cannot read is not a row
+ * you may write to, and this is the one place every create passes through.
+ */
 async function ownsContact(ownerId: string, contactId: string): Promise<boolean> {
   return Boolean(
-    await prisma.contact.findFirst({ where: { id: contactId, ownerId }, select: { id: true } }),
+    await prisma.contact.findFirst({
+      where: { id: contactId, ownerId, ...contactPrivacyWhere(await privacyScope()) },
+      select: { id: true },
+    }),
   );
 }
 

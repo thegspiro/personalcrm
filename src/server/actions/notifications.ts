@@ -51,6 +51,17 @@ function submitted(kind: ChannelKind, form: FormData): Record<string, string | u
  * Checked after the merge because a blank password on an edit means "keep the
  * stored one", so the submitted form alone cannot answer this.
  */
+/**
+ * A channel whose URL is its credential must end up with one stored.
+ *
+ * Validation cannot decide this: a blank field on an edit means "keep the
+ * saved one", and only the merged config knows whether there is one.
+ */
+function secretUrlPresent(kind: ChannelKind, config: Record<string, unknown>): boolean {
+  if (!CHANNEL_FIELDS[kind].some((field) => field.name === "url" && field.secret)) return true;
+  return typeof config.urlEnc === "string" && config.urlEnc !== "";
+}
+
 function credentialsComplete(config: Record<string, unknown>): boolean {
   const user = typeof config.user === "string" && config.user !== "";
   const pass = typeof config.passEnc === "string" && config.passEnc !== "";
@@ -77,6 +88,7 @@ export async function createChannel(form: FormData): Promise<ActionResult<{ id: 
   if (kind === "EMAIL" && !credentialsComplete(config)) {
     return fieldErrors({ pass: "Give a username and a password, or neither." });
   }
+  if (!secretUrlPresent(kind, config)) return fieldErrors({ url: "A URL is required." });
 
   const created = await prisma.notificationChannel.create({
     data: { ownerId, kind, name, config },
@@ -106,6 +118,7 @@ export async function updateChannel(form: FormData): Promise<ActionResult> {
   if (kind === "EMAIL" && !credentialsComplete(config)) {
     return fieldErrors({ pass: "Give a username and a password, or neither." });
   }
+  if (!secretUrlPresent(kind, config)) return fieldErrors({ url: "A URL is required." });
 
   await prisma.notificationChannel.update({ where: { id }, data: { name, config } });
 

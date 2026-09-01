@@ -58,6 +58,23 @@ const URL_FIELDS: ChannelField[] = [
   },
 ];
 
+/**
+ * Discord's webhook URL *is* the credential — the token sits in its path — so
+ * it is stored encrypted and never sent back, unlike an ntfy topic URL which is
+ * only an address. That means the settings card cannot echo it, which is the
+ * point: rendering it would put the token on screen and in the page payload.
+ */
+const DISCORD_FIELDS: ChannelField[] = [
+  {
+    name: "url",
+    label: "Webhook URL",
+    type: "password",
+    secret: true,
+    hint: "Contains its own token, so it is encrypted and not shown again.",
+    placeholder: "https://discord.com/api/webhooks/…",
+  },
+];
+
 export const CHANNEL_FIELDS: Record<ChannelKind, ChannelField[]> = {
   EMAIL: [
     { name: "host", label: "SMTP host", type: "text", required: true, placeholder: "smtp.example.com" },
@@ -70,7 +87,7 @@ export const CHANNEL_FIELDS: Record<ChannelKind, ChannelField[]> = {
   ],
   NTFY: URL_FIELDS,
   GOTIFY: URL_FIELDS,
-  DISCORD: URL_FIELDS,
+  DISCORD: DISCORD_FIELDS,
   WEBHOOK: URL_FIELDS,
 };
 
@@ -156,20 +173,26 @@ export function validateChannelConfig(
     return { ok: Object.keys(errors).length === 0, errors, config };
   }
 
+  // Where the URL is itself the credential it goes through the secret path, so
+  // it is only validated here — never copied into the readable config.
+  const secretUrl = CHANNEL_FIELDS[kind].some((field) => field.name === "url" && field.secret);
   const url = input.url?.trim();
-  if (!url) {
-    errors.url = "A URL is required.";
-  } else {
+
+  if (url) {
     try {
       const parsed = new URL(url);
       if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
         errors.url = "The address should start with http:// or https://.";
-      } else {
+      } else if (!secretUrl) {
         config.url = url;
       }
     } catch {
       errors.url = "That isn't a valid address.";
     }
+  } else if (!secretUrl) {
+    // A blank secret URL means "keep the stored one"; the action checks that
+    // one exists, because only it can see what is already saved.
+    errors.url = "A URL is required.";
   }
 
   return { ok: Object.keys(errors).length === 0, errors, config };

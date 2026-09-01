@@ -172,6 +172,7 @@ function ChannelCard({ channel }: { channel: RedactedChannel }) {
             {CHANNEL_LABELS[channel.kind]}
             {typeof channel.config.url === "string" ? ` · ${channel.config.url}` : ""}
             {typeof channel.config.to === "string" ? ` · ${channel.config.to}` : ""}
+            {channel.secretsSet.url ? " · webhook saved" : ""}
           </p>
         </div>
         <Switch

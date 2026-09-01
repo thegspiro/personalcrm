@@ -250,6 +250,82 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     expect(immediate.retryAfterSeconds).toBeGreaterThan(0);
   });
 
+  it("keeps a Discord webhook URL out of the browser, token and all", async () => {
+    const created = await createChannel(
+      form({
+        kind: "DISCORD",
+        name: "Chat",
+        url: "https://discord.com/api/webhooks/123/super-secret-token",
+      }),
+    );
+    expect(created.ok).toBe(true);
+
+    const row = await prisma.notificationChannel.findFirstOrThrow();
+    const config = row.config as Record<string, unknown>;
+    // The token is in the path, so the whole URL is the credential.
+    expect(config.url).toBeUndefined();
+    expect(JSON.stringify(config)).not.toContain("super-secret-token");
+    expect(typeof config.urlEnc).toBe("string");
+
+    const [redacted] = await listChannelsForSettings(ownerId);
+    expect(JSON.stringify(redacted)).not.toContain("super-secret-token");
+    expect(redacted.secretsSet.url).toBe(true);
+
+    // The sender still gets a usable URL back.
+    expect(resolveChannelSecrets({ kind: "DISCORD", config })).toMatchObject({
+      ok: true,
+      config: { url: "https://discord.com/api/webhooks/123/super-secret-token" },
+    });
+  });
+
+  it("requires a webhook URL on create and keeps it on a blank edit", async () => {
+    const missing = await createChannel(form({ kind: "DISCORD", name: "Chat" }));
+    expect(missing.ok).toBe(false);
+    expect(missing.fieldErrors).toMatchObject({ url: expect.any(String) });
+
+    const created = await createChannel(
+      form({ kind: "DISCORD", name: "Chat", url: "https://discord.com/api/webhooks/1/keep-me" }),
+    );
+    const id = (created as { data: { id: string } }).data.id;
+
+    expect((await updateChannel(form({ id, name: "Renamed" }))).ok).toBe(true);
+    const after = (await prisma.notificationChannel.findFirstOrThrow({ where: { id } }))
+      .config as Record<string, unknown>;
+    expect(resolveChannelSecrets({ kind: "DISCORD", config: after })).toMatchObject({
+      ok: true,
+      config: { url: "https://discord.com/api/webhooks/1/keep-me" },
+    });
+  });
+
+  it("authenticates Gotify with its own header, not a bearer token", async () => {
+    const channel = await prisma.notificationChannel.create({
+      data: {
+        ownerId,
+        kind: "GOTIFY",
+        name: "Gotify",
+        config: { url: "https://gotify.example/message", token: "app-token" },
+      },
+    });
+
+    const calls: Array<Record<string, string>> = [];
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      calls.push(Object.fromEntries(headers.entries()));
+      return new Response("{}", { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await deliverToChannel(channel, "subject", "body");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    // Gotify rejects a bearer token, so sharing ntfy's scheme meant the channel
+    // was offered and never delivered.
+    expect(calls[0]["x-gotify-key"]).toBe("app-token");
+    expect(calls[0].authorization).toBeUndefined();
+  });
+
   it("scopes every action by owner", async () => {
     const theirs = await prisma.notificationChannel.create({
       data: {

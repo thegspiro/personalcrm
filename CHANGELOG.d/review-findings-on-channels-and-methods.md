@@ -3,6 +3,21 @@
 *Schema: none*
 
 #### Fixed
+- **A private contact could still be written to while the lock was closed.**
+  Creating a fact, date, gift, number or address checked only that the contact
+  was yours, where every edit and delete also checked that you could see it —
+  so an id kept from an unlocked session went on attaching records to someone
+  the lock was hiding. Fixed in the one helper every create path uses.
+- **A Gotify channel never delivered.** Its token was sent as
+  `Authorization: Bearer`, where Gotify expects `X-Gotify-Key`, so a correctly
+  configured server rejected every reminder from a channel the app offered.
+- **A Discord webhook URL is now treated as the credential it is.** The token
+  sits in the URL's path, so storing it as an ordinary address left it in the
+  clear, sent it back to the browser, and printed it on the settings card. It
+  is encrypted like any other secret and never shown again.
+- **Correcting a custom field on a logged date now saves it.** The edit form
+  rendered those fields and the update never persisted them, so every
+  correction was reported as saved and thrown away.
 - **An email channel saved with only a username, or only a password, now says
   so.** Nodemailer is handed a credential only when both halves are present, so
   a channel with one of them looked configured and then sent unauthenticated —

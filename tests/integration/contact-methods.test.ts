@@ -268,6 +268,35 @@ describe.skipIf(!hasTestDatabase)("contact methods and addresses", () => {
     expect((await updateContactMethod(form({ id: methodId, value: "changed" }))).ok).toBe(true);
   });
 
+  it("refuses to attach anything to a private contact while the lock is closed", async () => {
+    // Creating asked only "is this contact mine", where every update and delete
+    // asked "and may I see it". So an id kept from an unlocked session went on
+    // attaching numbers and addresses to someone the lock was hiding.
+    state.enabled = true;
+    state.unlocked = false;
+
+    const method = await createContactMethod(
+      form({ contactId: privateId, typeId: mobileTypeId, value: "555-0111" }),
+    );
+    expect(method).toMatchObject({ ok: false, error: "Contact not found." });
+
+    const address = await createAddress(form({ contactId: privateId, city: "Somewhere" }));
+    expect(address).toMatchObject({ ok: false, error: "Contact not found." });
+
+    expect(await prisma.contactMethod.count({ where: { contactId: privateId } })).toBe(0);
+    expect(await prisma.address.count({ where: { contactId: privateId } })).toBe(0);
+
+    // A visible contact is unaffected, and unlocking restores the private one.
+    expect(
+      (await createContactMethod(form({ contactId: danaId, typeId: mobileTypeId, value: "555-0134" }))).ok,
+    ).toBe(true);
+
+    state.unlocked = true;
+    expect(
+      (await createContactMethod(form({ contactId: privateId, typeId: mobileTypeId, value: "555-0111" }))).ok,
+    ).toBe(true);
+  });
+
   it("does not surface a private contact through a search for their number", async () => {
     await createContactMethod(
       form({ contactId: privateId, typeId: mobileTypeId, value: "555-0111" }),
