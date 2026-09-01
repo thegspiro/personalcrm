@@ -10,7 +10,6 @@ import {
   saveCustomFieldValuesOrThrow,
 } from "@/server/services/custom-field-values";
 import { snoozeUntil as snoozeDate } from "@/lib/cadence";
-import { slugify } from "@/lib/utils";
 import { contactPrivacyWhere, privacyScope } from "@/server/privacy/filter";
 import {
   type ActionResult,
@@ -22,7 +21,6 @@ import {
   owner,
   partialDate,
   str,
-  strList,
 } from "./helpers";
 
 const nameSchema = z.object({
@@ -91,7 +89,6 @@ export async function createContact(form: FormData): Promise<ActionResult<{ id: 
       },
     });
 
-    await applyTags(tx, ownerId, created.id, strList(form, "tags"));
     await saveCustomFieldValuesOrThrow(tx, ownerId, "CONTACT", created.id, form);
     // A new contact has no interactions, but this seeds nextTouchAt from their
     // creation date so a cadence starts counting immediately.
@@ -152,11 +149,6 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
         isRomantic: bool(form, "isRomantic"),
       },
     });
-
-    if (form.has("tags")) {
-      await tx.contactTag.deleteMany({ where: { contactId: id } });
-      await applyTags(tx, ownerId, id, strList(form, "tags"));
-    }
 
     await saveCustomFieldValuesOrThrow(tx, ownerId, "CONTACT", id, form);
     // The cadence may have changed, so nextTouchAt has to be re-derived.
@@ -271,23 +263,3 @@ export async function setContactArchived(id: string, archived: boolean): Promise
   return patchContact(id, { isArchived: archived });
 }
 
-type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
-
-/** Attach tags by name, creating any that don't exist yet. */
-async function applyTags(tx: Tx, ownerId: string, contactId: string, names: string[]) {
-  const unique = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
-  for (const name of unique) {
-    const slug = slugify(name);
-    if (!slug) continue;
-    const tag = await tx.tag.upsert({
-      where: { ownerId_slug: { ownerId, slug } },
-      create: { ownerId, name, slug },
-      update: {},
-    });
-    await tx.contactTag.upsert({
-      where: { contactId_tagId: { contactId, tagId: tag.id } },
-      create: { contactId, tagId: tag.id },
-      update: {},
-    });
-  }
-}

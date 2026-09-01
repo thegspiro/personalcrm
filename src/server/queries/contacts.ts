@@ -20,7 +20,6 @@ export type ContactSort = "name" | "recent" | "overdue" | "added";
 export interface ContactListOptions {
   search?: string;
   categoryId?: string;
-  tagSlug?: string;
   /** "all" includes archived; the default hides them. */
   scope?: "active" | "archived" | "all";
   romanticOnly?: boolean;
@@ -47,7 +46,6 @@ const LIST_SELECT = {
   nextTouchAt: true,
   createdAt: true,
   category: { select: { id: true, label: true, icon: true, color: true } },
-  tags: { select: { tag: { select: { id: true, name: true, slug: true, color: true } } } },
 } satisfies Prisma.ContactSelect;
 
 export type ContactListItem = Prisma.ContactGetPayload<{ select: typeof LIST_SELECT }>;
@@ -66,7 +64,6 @@ function buildWhere(
   if (options.categoryId) where.categoryId = options.categoryId;
   if (options.romanticOnly) where.isRomantic = true;
   if (options.favoritesOnly) where.isFavorite = true;
-  if (options.tagSlug) where.tags = { some: { tag: { slug: options.tagSlug } } };
   if (options.overdueOnly) where.nextTouchAt = { lte: new Date() };
 
   const search = options.search?.trim();
@@ -153,7 +150,6 @@ const DETAIL_INCLUDE = {
   // Ordered explicitly: without it the rows come back in whatever order the
   // database happens to return, so they reshuffle between renders.
   addresses: { orderBy: [{ label: "asc" }, { id: "asc" }] },
-  tags: { include: { tag: true } },
   facts: {
     include: { category: true },
     orderBy: [{ importance: "desc" }, { createdAt: "desc" }],
@@ -251,14 +247,6 @@ export async function listContactInteractions(
     },
     orderBy: { occurredAt: "desc" },
     take,
-  });
-}
-
-export async function listTags(ownerId: string) {
-  return prisma.tag.findMany({
-    where: { ownerId },
-    select: { id: true, name: true, slug: true, color: true, _count: { select: { contacts: true } } },
-    orderBy: { name: "asc" },
   });
 }
 

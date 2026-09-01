@@ -25,7 +25,6 @@ export default async function WelcomePage() {
     <OnboardingWizard
       name={user.name}
       timezone={prefs.timezone}
-      weekStartsOn={prefs.weekStartsOn}
       accent={prefs.accent}
       density={prefs.density}
       defaultCadenceDays={prefs.defaultCadenceDays}

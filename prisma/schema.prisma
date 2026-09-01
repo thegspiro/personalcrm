@@ -102,6 +102,8 @@ model UserPreference {
   accent             String  @default("violet") @db.VarChar(24)
   density            String  @default("comfortable") @db.VarChar(16)
   timezone           String  @default("America/New_York") @db.VarChar(64)
+  /// Reserved. Nothing reads this — there is no calendar grid in the app, so
+  /// the control that set it was offering a choice that changed nothing.
   weekStartsOn       Int     @default(0)
   defaultCadenceDays Int?
   digestHour         Int     @default(8)

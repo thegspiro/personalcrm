@@ -45,8 +45,7 @@ export function AboutYouStep({
   pending,
   name,
   timezone,
-  weekStartsOn,
-}: StepProps & { name: string; timezone: string; weekStartsOn: number }) {
+}: StepProps & { name: string; timezone: string }) {
   // The account was created with the browser's zone, but a wrong one shifts
   // every date in the app, so it gets shown rather than assumed.
   const [zone, setZone] = React.useState(timezone);
@@ -78,18 +77,6 @@ export function AboutYouStep({
           value={zone}
           onChange={(event) => setZone(event.target.value)}
         />
-      </Field>
-
-      <Field label="Weeks start on" htmlFor="weekStartsOn">
-        <select
-          id="weekStartsOn"
-          name="weekStartsOn"
-          defaultValue={String(weekStartsOn)}
-          className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
-        >
-          <option value="0">Sunday</option>
-          <option value="1">Monday</option>
-        </select>
       </Field>
 
       <Button type="submit" loading={pending} className="h-11 w-full">
