@@ -9,13 +9,20 @@
   space it — so the same cafe does not accumulate near-duplicate entries. The
   Where field is filled in before you confirm, and stays editable.
 
+#### Changed
+- **Somebody new is suggested, never added on your say-so alone.** The
+  "new" chips in quick add now start unticked: adding a person to your address
+  book is something you ask for rather than something you undo. A misread line
+  costs you a glance instead of a cleanup, and saving is held back — with a
+  reason — until there is somebody to log it against.
+
 #### Fixed
 - **Quick add no longer offers to create people out of words that are not
   people.** Strangers are now worked out after the type, date and place have
   been read, so "Coffee with Sarah at Northside Cafe" stops offering to add
   contacts called "Northside" and "Cafe", and "coffee with Sarah Tuesday" stops
-  offering one called "Tuesday". Those boxes arrive ticked, so confirming such a
-  line quietly created the contacts.
+  offering one called "Tuesday". Those boxes used to arrive ticked, so
+  confirming such a line quietly created the contacts.
 - **Filtering the timeline by a place now finds every visit to it.** A visit
   whose typed label differed from the place's name only in spacing was matched
   by the database and then dropped again before display. Place pages gained a

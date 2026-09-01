@@ -119,12 +119,28 @@ function QuickAddPreviewForm({
 }) {
   // One choice per ambiguous name, starting empty so nothing is picked for you.
   const [choices, setChoices] = React.useState<Record<number, string>>({});
-  const [newNames, setNewNames] = React.useState<string[]>(preview.newNames);
+  const newNames = preview.newNames;
+  /**
+   * Which strangers you have actually asked for, starting empty.
+   *
+   * These used to arrive ticked, which meant every misread turned into rows in
+   * the address book: a venue the parser failed to spot came back as two
+   * people, and confirming an otherwise-correct line created them. A parse
+   * mistake should cost you a glance, not a cleanup — so adding someone is now
+   * something you say yes to.
+   */
+  const [addingNew, setAddingNew] = React.useState<string[]>([]);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   const unresolved = preview.ambiguous.filter((_, index) => !choices[index]);
-  const blocked = unresolved.length > 0;
+  // Nobody is attached yet. The action refuses this too; catching it here says
+  // why, rather than letting the save come back with a bare error.
+  const nobodyChosen =
+    preview.contacts.length === 0 &&
+    Object.keys(choices).length === 0 &&
+    addingNew.length === 0;
+  const blocked = unresolved.length > 0 || nobodyChosen;
 
   async function save(form: FormData) {
     setSaving(true);
@@ -222,7 +238,24 @@ function QuickAddPreviewForm({
               key={name}
               className="inline-flex min-h-8 max-w-full cursor-pointer items-center gap-1.5 rounded-full border border-dashed border-border px-2.5 py-1 text-xs"
             >
-              <input type="checkbox" name="newNames" value={name} defaultChecked className="size-3.5" />
+              <input
+                type="checkbox"
+                name="newNames"
+                value={name}
+                // Named explicitly: the visible label reads "Nadia new", which
+                // is not what a screen reader should announce for a control
+                // whose whole job is deciding whether to add her.
+                aria-label={`Add ${name} as someone new`}
+                checked={addingNew.includes(name)}
+                onChange={(event) =>
+                  setAddingNew((current) =>
+                    event.target.checked
+                      ? [...current, name]
+                      : current.filter((entry) => entry !== name),
+                  )
+                }
+                className="size-3.5"
+              />
               <span className="truncate">{name}</span>
               <span className="shrink-0 text-muted-foreground">new</span>
             </label>
@@ -237,10 +270,10 @@ function QuickAddPreviewForm({
             </p>
           ) : null}
         </div>
-        {newNames.length > 0 ? (
+        {addingNew.length > 0 ? (
           <button
             type="button"
-            onClick={() => setNewNames([])}
+            onClick={() => setAddingNew([])}
             className="justify-self-start text-[11px] text-muted-foreground underline-offset-2 hover:underline"
           >
             Don&apos;t add anyone new
@@ -306,10 +339,16 @@ function QuickAddPreviewForm({
       )}
 
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
-      {blocked ? (
+      {unresolved.length > 0 ? (
         <p className="text-xs text-muted-foreground">
           Pick which person {unresolved.length === 1 ? "that name means" : "those names mean"}{" "}
           before saving.
+        </p>
+      ) : nobodyChosen ? (
+        <p className="text-xs text-muted-foreground">
+          {newNames.length > 0
+            ? "Tick anyone above you want added, or cancel and rewrite the line."
+            : "Nobody in that line is someone you have recorded yet."}
         </p>
       ) : null}
 

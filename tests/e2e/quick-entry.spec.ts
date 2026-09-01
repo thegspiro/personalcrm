@@ -107,20 +107,56 @@ test("a name two people share is never guessed", async ({ page }) => {
   await expect(page.getByText(/lunch/i)).toHaveCount(0);
 });
 
-test("an unrecognised name is offered as someone new, and can be declined", async ({ page }) => {
+test("an unrecognised name is suggested but never added on its own", async ({ page }) => {
   await ensureSignedIn(page);
-  const stranger = `Zephyrine${suffix().replace(/[^a-z0-9]/gi, "")}`;
+  // Letters only. A candidate name is cleaned of anything that is not a letter
+  // before it is offered, so a suffix carrying digits would not come back
+  // spelled the way it went in.
+  const stranger = `Zephyrine${suffix().replace(/[^a-z]/gi, "")}`;
 
   await quickAdd(page, `coffee with ${SOLO()} and ${stranger} yesterday`);
   const form = previewForm(page);
   await expect(form.getByText("new", { exact: true })).toBeVisible();
 
-  // Declining leaves them out rather than blocking the log.
-  await form.getByRole("button", { name: /Don't add anyone new/ }).click();
+  // Offered, not assumed. A misread line — a venue the parser did not spot,
+  // say — must not put rows in the address book just because it was confirmed.
+  await expect(form.getByRole("checkbox", { name: `Add ${stranger} as someone new` })).not.toBeChecked();
+
   await form.getByRole("button", { name: "Log it" }).click();
+  // The panel closes only once the write has come back, so waiting on it keeps
+  // the check below from reading the list before the save has landed.
+  await expect(form).toBeHidden();
 
   await page.goto(`/people?q=${encodeURIComponent(stranger)}`);
   await expect(page.getByRole("link", { name: new RegExp(stranger) })).toHaveCount(0);
+});
+
+test("an unrecognised name is added once you ask for them", async ({ page }) => {
+  await ensureSignedIn(page);
+  const stranger = `Quillon${suffix().replace(/[^a-z]/gi, "")}`;
+
+  await quickAdd(page, `coffee with ${SOLO()} and ${stranger} yesterday`);
+  const form = previewForm(page);
+  await form.getByRole("checkbox", { name: `Add ${stranger} as someone new` }).check();
+  await form.getByRole("button", { name: "Log it" }).click();
+  await expect(form).toBeHidden();
+
+  await page.goto(`/people?q=${encodeURIComponent(stranger)}`);
+  await expect(page.getByRole("link", { name: new RegExp(stranger) })).toHaveCount(1);
+});
+
+test("saving is held back until somebody is chosen", async ({ page }) => {
+  await ensureSignedIn(page);
+  const stranger = `Ondrej${suffix().replace(/[^a-z]/gi, "")}`;
+
+  // Nobody in this line is recorded, and nothing is ticked, so there is no one
+  // to log it against — said here rather than as a bare error after saving.
+  await quickAdd(page, `coffee with ${stranger} yesterday`);
+  const form = previewForm(page);
+  await expect(form.getByRole("button", { name: "Log it" })).toBeDisabled();
+
+  await form.getByRole("checkbox", { name: `Add ${stranger} as someone new` }).check();
+  await expect(form.getByRole("button", { name: "Log it" })).toBeEnabled();
 });
 
 test("the command palette finds a person and navigates", async ({ page }) => {
