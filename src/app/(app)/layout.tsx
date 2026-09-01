@@ -10,6 +10,7 @@ import { fieldsFor } from "@/server/queries/custom-fields";
 import { QuickLogFab } from "@/components/nav/quick-log-fab";
 import { OfflineBanner } from "@/components/offline/offline";
 import { PrivacyActivityController } from "@/components/privacy/privacy-activity-controller";
+import { LockNowButton } from "@/components/privacy/lock-now";
 import {
   ACTIVITY_HEARTBEAT_MS,
   getPrivacyState,
@@ -61,6 +62,9 @@ export default async function AppLayout({
             name={user.name}
             email={user.email}
             hideDating={prefs.hideDating}
+            privacyControl={
+              privacy.enabled && privacy.unlocked ? <LockNowButton /> : null
+            }
           />
           <main className="pb-nav mx-auto w-full max-w-5xl px-4 pt-4 lg:px-6 lg:pb-10">
             {/* Rendered on the server, so it says how old this copy actually is

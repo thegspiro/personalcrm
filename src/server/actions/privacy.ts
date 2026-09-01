@@ -38,6 +38,21 @@ export async function unlockPrivacyAction(
   );
 }
 
+/**
+ * Close the lock and report it, without redirecting.
+ *
+ * The redirecting version cannot be awaited before other client-side work,
+ * because the redirect ends the turn. A deliberate lock has to reach the
+ * server *first* -- before cache purging, which waits on the service worker
+ * and can outlive the page -- or a lock the viewer explicitly asked for is
+ * simply lost.
+ */
+export async function lockPrivacyNow(): Promise<ActionResult> {
+  await lock();
+  revalidateEverything();
+  return ok();
+}
+
 export async function lockPrivacyAction(): Promise<void> {
   await lock();
   revalidateEverything();

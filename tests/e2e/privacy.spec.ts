@@ -373,6 +373,64 @@ test("dating writes are refused while locked, not just hidden", async ({
   expect(html).not.toContain("Private notes");
 });
 
+test("the header offers a way to close the lock without waiting out the timeout", async ({
+  page,
+}) => {
+  await ensureSignedIn(page);
+
+  // Arrives here with the lock closed, which is the state the control must not
+  // appear in: nothing is open, so there is nothing to close.
+  await page.goto("/");
+  const lockNow = page.getByRole("button", { name: "Lock private content now" });
+  await expect(lockNow).toHaveCount(0);
+
+  await page.goto("/unlock?next=/");
+  await page.getByLabel("PIN").fill(PIN);
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.waitForURL("/");
+
+  // Now it is the one visible sign that private content is open at all.
+  await expect(lockNow).toBeVisible();
+
+  // A lock that cannot reach the server must not put the page back. A lost
+  // response and a lost request are indistinguishable from the browser, so
+  // restoring would risk showing private content for a session the server has
+  // already locked. The shell stays closed and offers a reload instead.
+  await page.context().setOffline(true);
+  await lockNow.click();
+  // Announced, not merely rendered: blanking the shell takes focus with it, so
+  // an unannounced swap leaves a screen-reader user with no idea the lock they
+  // asked for did not happen.
+  // Scoped: Next's route announcer is also role="alert".
+  const failure = page.getByTestId("privacy-locked").getByRole("alert");
+  await expect(failure).toContainText(/Could not confirm the lock closed/i);
+  await expect(failure).toBeFocused();
+  await expect(lockNow).toHaveCount(0);
+
+  // The reload re-reads the truth from the server. Nothing committed here, so
+  // it comes back unlocked -- and that is the server saying so, not the
+  // browser assuming it.
+  await page.context().setOffline(false);
+  await page.getByRole("button", { name: "Reload" }).click();
+  await expect(lockNow).toBeVisible();
+  await lockNow.click();
+
+  // Locking from "/" is the case a soft navigation cannot serve: the
+  // controller lives in the app layout and survives client routing, so
+  // `router.replace` to the route already showing would leave the viewer on
+  // the blank panel for good. Assert a usable page comes back, before any
+  // navigation of the test's own that would paper over it.
+  await expect(page.getByText("Privacy lock closed.")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Account menu" })).toBeVisible();
+
+  // The lock really closed, rather than the button only changing appearance.
+  await expect(lockNow).toHaveCount(0);
+  await page.goto("/dating");
+  await expect(page).toHaveURL(/\/unlock/);
+
+  // Leaves the suite locked, which is how it was found.
+});
+
 test("cleaning up: unhide, unmark, and remove the PIN", async ({ page }) => {
   await ensureSignedIn(page);
   await openPrivacySettings(page);
