@@ -411,26 +411,45 @@ export function matchKnownLocation(
 function prepositionalPlace(
   text: string,
 ): { place: MatchedLocation | null; withoutPlace: string } {
-  const match = /(^|\s)(?:at|@)\s+(.+)$/i.exec(text);
-  if (!match) return { place: null, withoutPlace: text };
+  // Every "at" in the line is tried, not just the first.
+  //
+  // Chrono removes a time phrase but leaves its preposition behind, so
+  // "Coffee at noon with Sarah at Northside Cafe" still begins with a stray
+  // "at". Committing to the earliest cue rejected the line on that one and
+  // never looked at the real venue further along — which put "Northside" and
+  // "Cafe" back in front of the user as people to create.
+  const cues = text.matchAll(/(^|\s)(?:at\s+|@\s*)/gi);
+  for (const cue of cues) {
+    const found = venueAfterCue(text, cue.index + cue[1].length, cue.index + cue[0].length);
+    if (found) return found;
+  }
+  return { place: null, withoutPlace: text };
+}
 
-  const start = match.index + match[1].length;
+/**
+ * The venue a single "at" introduces, or null when that cue leads nowhere.
+ *
+ * `cueStart` is where the preposition begins and `phraseStart` where the words
+ * after it do; both are consumed together when this succeeds.
+ */
+function venueAfterCue(
+  text: string,
+  cueStart: number,
+  phraseStart: number,
+): { place: MatchedLocation; withoutPlace: string } | null {
   // Commentary after a comma or dash is notes, not part of the venue.
-  const tail = match[2].split(/\s*(?:,|\s[–—-]\s)/)[0];
+  const tail = text.slice(phraseStart).split(/\s*(?:,|\s[–—-]\s)/)[0];
 
-  // A mask ENDS the venue rather than disqualifying it. Rejecting any phrase
-  // containing one looked equivalent and was not: in "Coffee at Northside Cafe
-  // with Sarah" the participant is already masked *inside* the phrase, so the
-  // whole venue was thrown away and "Northside" and "Cafe" came back as people
-  // to create — pre-ticked, which is the exact harm this pass exists to stop.
+  // A mask or a "with" ENDS the venue rather than disqualifying it. Rejecting
+  // any phrase containing one looked equivalent and was not: in "Coffee at
+  // Northside Cafe with Sarah" the participant sits *inside* the phrase, so the
+  // whole venue was thrown away and its words came back as people to create —
+  // pre-ticked, which is the exact harm this pass exists to stop. "with" covers
+  // a participant the app has never seen, who leaves no mask; "and" does not,
+  // because "Bar and Grill" is a venue rather than a guest.
   //
   // A mask at the very start still rejects, because that is the other shape:
   // "at Sarah's place" is somebody's home, not a venue.
-  // "with" ends a venue wherever it appears: what follows is who was there.
-  // A mask covers a participant the app already knows; this covers one it does
-  // not, which otherwise made "Coffee at Northside Cafe with Bob" propose a
-  // place called "Northside Cafe with Bob" and lose Bob altogether. "and" is
-  // deliberately not a delimiter — "Bar and Grill" is a venue, not a guest.
   const stops = [tail.search(ANY_MASK_PATTERN), tail.search(/\swith\s/i)].filter(
     (index) => index !== -1,
   );
@@ -440,36 +459,36 @@ function prepositionalPlace(
     .slice(0, cut)
     .replace(/\s+(?:with|and|for|to)\s*$/i, "")
     .trim();
-  if (!phrase) return { place: null, withoutPlace: text };
+  if (!phrase) return null;
 
   const words = phrase.split(/\s+/);
-  if (words.length > 6) return { place: null, withoutPlace: text };
+  if (words.length > 6) return null;
 
   // "at Bob's", "at Bob's afterwards" — a possessive names somebody's home, so
   // Bob is a person to offer, not a venue to create. The masked case ("at
   // Sarah's place") is already gone; this is the same rule for a name we do not
   // have yet. A real venue spelled possessively — "Joe's Diner" — is a false
   // negative you type once, and pass 1 matches it ever after.
-  if (/['’](?:s\b|(?![a-z0-9]))/i.test(words[0])) {
-    return { place: null, withoutPlace: text };
-  }
+  if (/['\u2019](?:s\b|(?![a-z0-9]))/i.test(words[0])) return null;
 
   const namesSomewhere = words.some((word) => {
-    const bare = word.replace(/[^A-Za-z'’-]/g, "");
+    const bare = word.replace(/[^A-Za-z'\u2019-]/g, "");
     return (
       bare.length >= 2 && bare[0] === bare[0].toUpperCase() && !STOPWORDS.has(bare.toLowerCase())
     );
   });
-  if (!namesSomewhere) return { place: null, withoutPlace: text };
+  if (!namesSomewhere) return null;
 
   // Consume the preposition and everything up to where the venue stopped,
   // leaving the participant mask and any notes after a comma in place.
-  const phraseStart = match.index + match[0].length - match[2].length;
-  const withoutPlace = (text.slice(0, start) + PLACE_MASK + text.slice(phraseStart + cut))
+  const withoutPlace = (text.slice(0, cueStart) + PLACE_MASK + text.slice(phraseStart + cut))
     .replace(/\s{2,}/g, " ")
     .trim();
 
-  return { place: { location: null, matchedText: phrase, via: "preposition" }, withoutPlace };
+  return {
+    place: { location: null, matchedText: phrase, via: "preposition" },
+    withoutPlace,
+  };
 }
 
 function extractPeople(

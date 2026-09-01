@@ -637,3 +637,25 @@ describe("where the venue stops, and what it is not", () => {
     expect(result.type?.id).toBe("t-meal");
   });
 });
+
+describe("more than one 'at' in a line", () => {
+  it("looks past a preposition the date reader left behind", () => {
+    // Chrono takes "noon" and leaves its "at". Committing to that first cue
+    // rejected the line and never reached the real venue — putting "Northside"
+    // and "Cafe" back in front of you as people to create.
+    const result = parse("Coffee at noon with Sarah at Northside Cafe");
+
+    expect(result.place?.matchedText).toBe("Northside Cafe");
+    expect(result.unknownNames).toEqual([]);
+    expect(result.contacts.map((m) => m.contact.id)).toEqual(["sarah"]);
+  });
+
+  it("takes the first cue that names somewhere, not merely the first cue", () => {
+    const result = parse("Dinner at 7pm at The Alamo");
+    expect(result.place?.matchedText).toBe("The Alamo");
+  });
+
+  it("still finds nothing when no cue names a venue", () => {
+    expect(parse("Coffee at noon at home").place).toBeNull();
+  });
+});

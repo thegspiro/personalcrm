@@ -53,6 +53,7 @@ export function EditPlaceSheet({
   const run = useAction();
   const [open, setOpen] = React.useState(false);
   const [error, setError] = React.useState<string>();
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
   const [candidates, setCandidates] = React.useState<GeoCandidateView[] | null>(null);
   const [looking, setLooking] = React.useState(false);
   // What a lookup filled in, held here rather than written on the spot so a
@@ -67,10 +68,16 @@ export function EditPlaceSheet({
     form.set("id", place.id);
     const result = await updateLocation(form);
     if (!result.ok) {
+      // Without the field errors the only message is "Please check the
+      // highlighted fields" with nothing highlighted — so a rename refused
+      // because the lock is closed, or because the name is taken, looked like
+      // a save that simply did not work.
       setError(result.error ?? "Could not save that.");
+      setFieldErrors(result.fieldErrors ?? {});
       return;
     }
     setError(undefined);
+    setFieldErrors({});
     setOpen(false);
     await run(async () => ({ ok: true }), "Place saved");
   }
@@ -128,7 +135,7 @@ export function EditPlaceSheet({
 
           <form action={onSubmit} id={`edit-place-${place.id}`}>
             <SheetBody className="grid gap-3">
-              <Field label="Name" htmlFor="place-name">
+              <Field label="Name" htmlFor="place-name" error={fieldErrors.name}>
                 <Input id="place-name" name="name" defaultValue={place.name} required maxLength={191} />
               </Field>
 

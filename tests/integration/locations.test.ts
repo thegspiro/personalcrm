@@ -208,6 +208,36 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
     expect(await buildTimeline(state.ownerId, TZ, { locationId: cafe.id })).toHaveLength(2);
   });
 
+  it("scopes by place id when a freed-up name has been reused", async () => {
+    state.unlocked = true;
+    const first = await place(state.ownerId, "Corner Cafe");
+    await visit(first.id, [], { label: "Corner Cafe" });
+
+    // Rename it, then give a different place the name it just gave up. The
+    // first place's historical labels still read "Corner Cafe", because that
+    // is what was typed at the time and this branch preserves it.
+    await updateLocation(
+      (() => {
+        const form = new FormData();
+        form.set("id", first.id);
+        form.set("name", "Old Corner Cafe");
+        return form;
+      })(),
+    );
+    const second = await place(state.ownerId, "Corner Cafe");
+    await visit(second.id, [], { label: "Corner Cafe" });
+
+    // Filtering by name alone cannot tell them apart, which is why the place
+    // page links with the id as well.
+    expect(await buildTimeline(state.ownerId, TZ, { location: "Corner Cafe" })).toHaveLength(2);
+    const scoped = await buildTimeline(state.ownerId, TZ, {
+      locationId: second.id,
+      location: "Corner Cafe",
+    });
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0].placeId).toBe(second.id);
+  });
+
   it("keeps the place filter from admitting entries that have no place", async () => {
     state.unlocked = true;
     const ada = await prisma.contact.create({
