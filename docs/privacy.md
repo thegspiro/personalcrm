@@ -168,6 +168,18 @@ phone number is not separately hideable from the person it belongs to. They
 inherit the contact's state, so a private contact's number is withheld exactly
 when the contact is, and never reaches the cache while the lock is closed.
 
+### Counts, not only rows
+
+Settings is reachable while the lock is closed, and it is full of totals: how
+many records use a type, how many values a custom field holds. Those are
+filtered by the same scope as the rows they count. An unfiltered total answers
+"how many private people are filed under this" from a page the lock does not
+gate, which is the whole reason the invariant covers counts.
+
+Dating taxonomies and dating custom fields report nothing at all while locked,
+rather than a number filtered row by row — the module is hidden whole, so a
+count of it would be the only part still visible.
+
 ### Locking or signing out wipes it
 
 A saved copy of a page seen while unlocked would make the lock decorative.
@@ -306,9 +318,18 @@ to a refused one would otherwise walk straight through the boundary, since the
 destination never passes back through it. A notification endpoint has no reason
 to redirect; configure the address it points at.
 
-Literal addresses only. A hostname that resolves inwards is not caught, and
-cannot be without a DNS lookup inside the validator whose answer can change
-before the request is made. The literal form is what a probe uses.
+**Literal addresses only, and that is a deliberate limit rather than an
+oversight.** A hostname that resolves to a private address is not caught. Doing
+so properly means resolving the name and then pinning the connection to the
+address that was checked — otherwise the answer can change between the check
+and the connection — in both the HTTP client and the mail transport. That is
+not implemented; see [known gaps](README.md#known-gaps).
+
+So the boundary raises the cost of probing rather than making it impossible. It
+is worth having on those terms, and it is not worth mistaking for more. If the
+people with accounts on your installation are not people you trust with an
+outbound request from the server, `DISABLE_SIGNUP` is the control that actually
+answers that, and it is the recommended posture anyway.
 
 ### Private contacts and the send
 

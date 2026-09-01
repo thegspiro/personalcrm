@@ -35,10 +35,20 @@ export function CustomFieldInputs({
   fields,
   className,
   errors,
+  formId,
 }: {
   fields: RenderableField[];
   className?: string;
   errors?: Record<string, string>;
+  /**
+   * Distinguishes one rendering of a definition from another on the same page.
+   *
+   * Two forms carrying the same custom field — an add form and an edit form
+   * open together, or two edit forms — would otherwise give their inputs the
+   * same DOM id, and a label then points at whichever came first. Clicking it
+   * moves focus into somebody else's unsaved row.
+   */
+  formId?: string;
 }) {
   if (fields.length === 0) return null;
 
@@ -53,6 +63,7 @@ export function CustomFieldInputs({
         <CustomFieldInput
           key={field.definition.id}
           field={field}
+          formId={formId}
           error={errors?.[fieldInputName(field.definition.id)]}
         />
       ))}
@@ -60,10 +71,18 @@ export function CustomFieldInputs({
   );
 }
 
-function CustomFieldInput({ field, error }: { field: RenderableField; error?: string }) {
+function CustomFieldInput({
+  field,
+  error,
+  formId,
+}: {
+  field: RenderableField;
+  error?: string;
+  formId?: string;
+}) {
   const { definition, value } = field;
   const name = fieldInputName(definition.id);
-  const id = `cf-${definition.id}`;
+  const id = formId ? `cf-${formId}-${definition.id}` : `cf-${definition.id}`;
   const options = fieldOptions(definition);
 
   switch (definition.fieldType) {
@@ -204,7 +223,13 @@ function asText(value: unknown): string {
  * — so custom fields are one tap away rather than in the way, and they never
  * block submit.
  */
-export function CollapsibleCustomFields({ fields }: { fields: RenderableField[] }) {
+export function CollapsibleCustomFields({
+  fields,
+  formId,
+}: {
+  fields: RenderableField[];
+  formId?: string;
+}) {
   const [open, setOpen] = React.useState(false);
   if (fields.length === 0) return null;
 
@@ -223,7 +248,11 @@ export function CollapsibleCustomFields({ fields }: { fields: RenderableField[] 
         after typing must not throw the input away, and a hidden input still
         submits.
       */}
-      <CustomFieldInputs fields={fields} className={open ? undefined : "hidden"} />
+      <CustomFieldInputs
+        fields={fields}
+        formId={formId}
+        className={open ? undefined : "hidden"}
+      />
     </div>
   );
 }

@@ -202,6 +202,34 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     expect(await prisma.notificationChannel.count()).toBe(0);
   });
 
+  it("stores a secret exactly as typed, whitespace and all", async () => {
+    // A password may legitimately begin or end with a space. Trimmed, the
+    // channel saves happily and then authenticates with different bytes than
+    // were pasted — failing every send with nothing on screen to explain it.
+    const created = await createChannel(
+      form({ ...AUTHED, pass: "  spaced secret  " }),
+    );
+    expect(created.ok).toBe(true);
+
+    const row = await prisma.notificationChannel.findFirstOrThrow();
+    expect(resolveChannelSecrets(row as never)).toMatchObject({
+      ok: true,
+      config: { pass: "  spaced secret  " },
+    });
+  });
+
+  it("still treats an all-whitespace secret as blank, which means keep", async () => {
+    const created = await createChannel(form({ ...AUTHED, pass: "original-password" }));
+    const id = (created as { data: { id: string } }).data.id;
+
+    await updateChannel(form({ id, ...AUTHED, pass: "   " }));
+    const after = await prisma.notificationChannel.findFirstOrThrow({ where: { id } });
+    expect(resolveChannelSecrets(after as never)).toMatchObject({
+      ok: true,
+      config: { pass: "original-password" },
+    });
+  });
+
   it("refuses half an SMTP credential, in either direction", async () => {
     // deliverToChannel hands nodemailer `auth` only when both are strings, so
     // a channel saved with one of them sends unauthenticated and every

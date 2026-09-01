@@ -3,6 +3,19 @@
 *Schema: none*
 
 #### Fixed
+- **Settings no longer counts what the lock is hiding.** Type usage counts and
+  the "filled in N times" totals on the Fields tab were unfiltered, so from a
+  page the lock leaves reachable they answered how many private people are
+  filed under a given type — without ever showing a row. Dating taxonomies
+  report nothing at all while locked rather than a filtered number, since the
+  module is hidden whole.
+- **A channel password or token keeps the bytes you typed.** Leading or
+  trailing whitespace was trimmed before encryption, so the channel saved and
+  then authenticated with something else. An all-whitespace field still counts
+  as blank, which means "keep the stored one".
+- **Two date forms open at once no longer share input ids.** A custom field
+  rendered in both the add form and an edit form gave its inputs the same DOM
+  id, so clicking a label could put the cursor in another date's unsaved field.
 - **The private-address boundary covers SMTP hosts and refuses redirects.** It
   read the URL field, which an email channel does not have — so a host and a
   port went straight past it. And an allowed address that answered with a

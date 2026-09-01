@@ -4,7 +4,10 @@ import { prisma } from "@/server/db/client";
 import { normalizeDashboardLayout } from "@/lib/dashboard";
 import { listTerms } from "@/server/taxonomy/queries";
 import { listTaxonomyAdmin } from "@/server/queries/taxonomy-admin";
-import { listAllFieldDefinitions } from "@/server/queries/custom-fields";
+import {
+  listAllFieldDefinitions,
+  valueCountsByDefinition,
+} from "@/server/queries/custom-fields";
 import { TAXONOMY_KIND_LABELS } from "@/server/taxonomy/defaults";
 import { PrivacySettings } from "@/components/dating/privacy-settings";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
@@ -18,6 +21,7 @@ import { NotificationSettings } from "@/components/settings/notification-setting
 import { listChannelsForSettings } from "@/server/queries/notifications";
 import { getAiStatus } from "@/server/ai/config";
 import { getPrivacyState } from "@/server/privacy/lock";
+import { privacyScope } from "@/server/privacy/filter";
 import { PROVIDERS } from "@/server/ai/providers";
 import { GeoSettings } from "@/components/settings/geo-settings";
 import { getGeoStatus } from "@/server/geo/config";
@@ -46,11 +50,7 @@ export default async function SettingsPage() {
     listAllFieldDefinitions(user.id),
     listTerms(user.id, "CONTACT_CATEGORY"),
     prisma.dashboardLayout.findUnique({ where: { userId: user.id } }),
-    prisma.customFieldValue.groupBy({
-      by: ["definitionId"],
-      where: { ownerId: user.id },
-      _count: { _all: true },
-    }),
+    valueCountsByDefinition(user.id, await privacyScope()),
     getAiStatus(),
     getGeoStatus(),
     getPrivacyState(),
@@ -58,10 +58,9 @@ export default async function SettingsPage() {
   ]);
 
   // Value counts drive the delete warning: deleting a field takes everything
-  // recorded in it with it, so the confirmation has to say how much.
-  const counts = new Map(
-    valueCounts.map((row) => [row.definitionId, row._count._all]),
-  );
+  // recorded in it with it, so the confirmation has to say how much. Filtered
+  // by the lock, because this page is reachable while it is closed.
+  const counts = valueCounts;
   const withCount = (rows: typeof definitions.CONTACT) =>
     rows.map((row) => ({ ...row, valueCount: counts.get(row.id) ?? 0 }));
   const withCounts = {

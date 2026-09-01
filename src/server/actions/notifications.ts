@@ -41,8 +41,19 @@ function fieldErrors(errors: Record<string, string>): ActionResult<never> {
 function submitted(kind: ChannelKind, form: FormData): Record<string, string | undefined> {
   const values: Record<string, string | undefined> = {};
   for (const field of CHANNEL_FIELDS[kind]) {
+    if (field.secret) {
+      // Read raw. A password or token may legitimately begin or end with a
+      // space, and `str` trims — so the channel would save happily and then
+      // authenticate with different bytes than the user pasted, failing every
+      // send with nothing on screen to explain it. Blank still means "keep the
+      // stored one", which is why the emptiness test is separate from the value.
+      const raw = form.get(field.name);
+      const value = typeof raw === "string" ? raw : undefined;
+      values[field.name] = value && value.trim() !== "" ? value : undefined;
+      values[`${field.name}__clear`] = str(form, `${field.name}__clear`);
+      continue;
+    }
     values[field.name] = str(form, field.name);
-    if (field.secret) values[`${field.name}__clear`] = str(form, `${field.name}__clear`);
   }
   return values;
 }

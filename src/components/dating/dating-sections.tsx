@@ -184,7 +184,7 @@ export function RomanticSection({
             Exclusive
           </label>
 
-          <CollapsibleCustomFields fields={customFields} />
+          <CollapsibleCustomFields fields={customFields} formId="romantic" />
 
           <div className="flex gap-2">
             <SubmitButton size="sm" className="flex-1">Save</SubmitButton>
@@ -492,7 +492,7 @@ function DateEntryFields({
         />
         Hide this behind the privacy lock
       </label>
-      <CollapsibleCustomFields fields={customFields} />
+      <CollapsibleCustomFields fields={customFields} formId={formId} />
     </>
   );
 }

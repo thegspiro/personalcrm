@@ -39,7 +39,9 @@ export function mergeChannelSecrets(
 
   for (const field of secretFieldsFor(kind)) {
     const key = encryptedKeyFor(field.name);
-    const value = submitted[field.name]?.trim();
+    // Not trimmed: the exact bytes are the credential. The caller has already
+    // decided that an all-whitespace field counts as blank.
+    const value = submitted[field.name];
 
     if (submitted[`${field.name}__clear`] === "true") continue;
 
