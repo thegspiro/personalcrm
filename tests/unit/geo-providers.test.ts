@@ -144,3 +144,38 @@ describe("respecting a shared endpoint", () => {
     expect(isRateLimited("not a url")).toBe(false);
   });
 });
+
+describe("what Nominatim calls an address", () => {
+  it("stores the street, keeping display_name as the label", () => {
+    // `display_name` carries the venue, city, region and country. Stored as the
+    // address it repeated the locality underneath it on the page, and again in
+    // the fallback map query.
+    const [candidate] = readNominatim([
+      {
+        osm_type: "way",
+        osm_id: 1,
+        display_name: "Northside Cafe, 1500 Wilson Blvd, Arlington, Virginia, USA",
+        address: {
+          house_number: "1500",
+          road: "Wilson Blvd",
+          city: "Arlington",
+          state: "Virginia",
+          country: "United States",
+        },
+      },
+    ]);
+
+    expect(candidate.address).toBe("1500 Wilson Blvd");
+    expect(candidate.label).toContain("Northside Cafe");
+    expect(candidate.city).toBe("Arlington");
+  });
+
+  it("leaves the address empty when the result has no street", () => {
+    // A whole town has no road. Filling the address with its display name would
+    // put "Ambleside, Cumbria, England" in a field meant for a street.
+    const [candidate] = readNominatim([
+      { osm_type: "node", osm_id: 2, display_name: "Ambleside, Cumbria", address: { village: "Ambleside" } },
+    ]);
+    expect(candidate.address).toBeNull();
+  });
+});

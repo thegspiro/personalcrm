@@ -167,6 +167,11 @@ export async function buildTimeline(
           entry.title.toLowerCase().includes(search) ||
           entry.detail?.toLowerCase().includes(search) ||
           entry.location?.toLowerCase().includes(search) ||
+          // The query searches the canonical place name too, so this has to as
+          // well: a place renamed since the visit keeps its old label on the
+          // interaction, and searching the new name matched in SQL and was then
+          // dropped here. The same mismatch the location filter had.
+          entry.placeName?.toLowerCase().includes(search) ||
           entry.contacts.some((contact) =>
             `${contact.firstName} ${contact.lastName ?? ""}`.toLowerCase().includes(search),
           ),

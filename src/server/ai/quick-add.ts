@@ -4,6 +4,7 @@ import { assistanceAvailable, currentProviderConfig } from "./config";
 import { completeJson, verifyProvider, type ProviderConfig } from "./providers";
 import { matchKnownLocation, quickParse, type QuickParseResult } from "@/lib/quick-parse";
 import { parsePlainDate } from "@/lib/dates";
+import { normalizeLocationName } from "@/lib/locations";
 
 /**
  * An optional better reading of a quick-add line.
@@ -127,10 +128,11 @@ function merge(
         context.locations,
         new Set(
           context.types.flatMap((type) => [
-            type.label.trim().toLowerCase(),
-            type.slug.replace(/-/g, " ").toLowerCase(),
+            normalizeLocationName(type.label),
+            normalizeLocationName(type.slug.replace(/-/g, " ")),
           ]),
         ),
+        context.now,
       ).place ?? {
         location: null,
         matchedText: parsed.place.trim(),

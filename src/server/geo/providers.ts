@@ -215,7 +215,10 @@ export function readNominatim(body: unknown): GeoCandidate[] {
     return [
       {
         label,
-        address: label,
+        // The street, not the whole display name. `display_name` carries the
+        // venue, city, region and country, so storing it as the address
+        // repeated the locality underneath it and again in the map query.
+        address: [text(address.house_number), text(address.road)].filter(Boolean).join(" ") || null,
         // A place can be a city, a town or a village depending on its size, and
         // the caller only wants one "city".
         city:

@@ -14,6 +14,7 @@
  */
 import * as chrono from "chrono-node";
 import { calendarDateInTz, plainDateKey, type PlainDate } from "./dates";
+import { normalizeLocationName } from "./locations";
 
 export interface ParseContact {
   id: string;
@@ -146,10 +147,11 @@ export function quickParse(
     context.locations,
     new Set(
       context.types.flatMap((type) => [
-        type.label.trim().toLowerCase(),
-        type.slug.replace(/-/g, " ").toLowerCase(),
+        normalizeLocationName(type.label),
+        normalizeLocationName(type.slug.replace(/-/g, " ")),
       ]),
     ),
+    context.now,
   );
   const { type, withoutType } = extractType(known.withoutPlace, context.types);
   const { date, dateText, withoutDate } = extractDate(
@@ -220,6 +222,20 @@ function extractDate(
   return { date: calendarDateInTz(parsed, timeZone), dateText: best.text, withoutDate };
 }
 
+/**
+ * True when these words would also be read as a date.
+ *
+ * Only whole-phrase readings count: "The Alamo" is not a date because chrono
+ * finds nothing, while "April" and "Tuesday" are.
+ */
+function alsoReadsAsADate(text: string, now: Date): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return chrono
+    .parse(trimmed, now, { forwardDate: false })
+    .some((result) => result.text.trim().length >= trimmed.length);
+}
+
 // --- interaction types -----------------------------------------------------
 
 function extractType(
@@ -234,9 +250,13 @@ function extractType(
   for (const type of candidates) {
     for (const needle of [type.label.toLowerCase(), type.slug.replace(/-/g, " ")]) {
       if (!needle) continue;
-      const at = indexOfWord(lower, needle);
-      if (at === -1) continue;
-      const withoutType = (text.slice(0, at) + " " + text.slice(at + needle.length))
+      const found = findWord(lower, needle);
+      if (!found) continue;
+      const withoutType = (
+        text.slice(0, found.index) +
+        " " +
+        text.slice(found.index + found.length)
+      )
         .replace(/\s{2,}/g, " ")
         .trim();
       return { type, withoutType };
@@ -247,17 +267,30 @@ function extractType(
 }
 
 /**
- * Index of `needle` in `haystack` on word boundaries at or after `from`, or -1.
+ * Where `needle` sits in `haystack` on word boundaries at or after `from`.
  *
  * The offset is what lets the people scanner move forward over a name it has
  * already dealt with. Slicing is safe because every offset it passes sits on a
  * boundary the scanner just created.
+ *
+ * The length comes back rather than being assumed to be the needle's, because
+ * the needle's own spaces match `\s+` — a typed "Video  Call" or "Sarah  Miller"
+ * is the same words as the stored "Video call" and "Sarah Miller", and reading
+ * it as neither the type nor the contact was a silent miss. Taking
+ * `needle.length` from the wrong offset would then cut a character short and
+ * leave a stray letter in the title.
  */
-function indexOfWord(haystack: string, needle: string, from = 0): number {
-  const pattern = new RegExp(`(^|[^a-z0-9])${escapeRegExp(needle)}($|[^a-z0-9])`, "i");
+function findWord(
+  haystack: string,
+  needle: string,
+  from = 0,
+): { index: number; length: number } | null {
+  const words = needle.trim().split(/\s+/).filter(Boolean).map(escapeRegExp);
+  if (!words.length) return null;
+  const pattern = new RegExp(`(^|[^a-z0-9])(${words.join("\\s+")})($|[^a-z0-9])`, "i");
   const match = pattern.exec(haystack.slice(from));
-  if (!match) return -1;
-  return from + match.index + (match[1] ? match[1].length : 0);
+  if (!match) return null;
+  return { index: from + match.index + match[1].length, length: match[2].length };
 }
 
 function escapeRegExp(value: string): string {
@@ -352,6 +385,8 @@ export function matchKnownLocation(
    * need "at" before them to count as a venue.
    */
   alsoTypeNames: Set<string> = new Set(),
+  /** Needed only to ask chrono whether a name also reads as a date. */
+  now: Date = new Date(),
 ): { place: MatchedLocation | null; withoutPlace: string } {
   // Longest first, so "The Coffee House" wins over a place called "Coffee".
   const candidates = [...locations]
@@ -381,7 +416,16 @@ export function matchKnownLocation(
     const preceding = searchable.slice(0, at);
     const hasVenueCue = /(?:\bat|@)\s*$/i.test(preceding);
     // Without a cue this name is more likely the type than the place.
-    if (!hasVenueCue && alsoTypeNames.has(matchedText.trim().toLowerCase())) continue;
+    //
+    // Normalized on both sides: the pattern above deliberately spans `\s+`, so
+    // comparing the raw match let "Video  Call" slip past a "Video call" type.
+    if (!hasVenueCue && alsoTypeNames.has(normalizeLocationName(matchedText))) continue;
+
+    // Same argument for a place called "April" or "Tuesday". People are matched
+    // before dates precisely so a name never loses to a month; a *place* named
+    // after one must not win that fight either, or "Coffee with Sarah in April"
+    // records a venue and no date at all.
+    if (!hasVenueCue && alsoReadsAsADate(matchedText, now)) continue;
 
     // Swallow a preposition immediately before it, or the title keeps a
     // dangling "at" once the venue is gone. The boundary belongs to "at"
@@ -545,8 +589,9 @@ function extractPeople(
     // itself for ever.
     let cursor = 0;
     for (;;) {
-      const at = indexOfWord(remainder.toLowerCase(), entry.needle.toLowerCase(), cursor);
-      if (at === -1) break;
+      const found = findWord(remainder.toLowerCase(), entry.needle.toLowerCase(), cursor);
+      if (!found) break;
+      const at = found.index;
 
       // Anyone already pinned down by a longer, more specific name is out of
       // the running — in "John Whitfield and John", the bare one is the other
@@ -554,7 +599,10 @@ function extractPeople(
       const remaining = entry.contacts.filter((contact) => !taken.has(contact.id));
       if (remaining.length === 0) break;
 
-      const end = at + entry.needle.length;
+      // The match's own length, never the needle's: they differ the moment the
+      // typed name carries a doubled space, and taking the needle's would mask
+      // one character short and leave a stray letter standing as the title.
+      const end = at + found.length;
       const matchedText = remainder.slice(at, end);
 
       if (names.length >= NAME_MASK_LIMIT) break;

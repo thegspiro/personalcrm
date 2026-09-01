@@ -659,3 +659,68 @@ describe("more than one 'at' in a line", () => {
     expect(parse("Coffee at noon at home").place).toBeNull();
   });
 });
+
+describe("place names that mean something else", () => {
+  it("lets a date phrase win over a place named after one", () => {
+    // People are matched before dates so a name never loses to a month. A
+    // *place* named after one must not win that fight either, or the date
+    // vanishes and a venue nobody mentioned takes its place.
+    const april = [{ id: "l-april", name: "April" }];
+    const result = parse("Coffee with Sarah in April", CONTACTS, april);
+
+    expect(result.place).toBeNull();
+    expect(result.date?.month).toBe(4);
+  });
+
+  it("does the same for a weekday", () => {
+    const tuesday = [{ id: "l-tuesday", name: "Tuesday" }];
+    const result = parse("Coffee with Sarah Tuesday", CONTACTS, tuesday);
+
+    expect(result.place).toBeNull();
+    expect(result.date).toEqual({ year: 2026, month: 3, day: 10 });
+  });
+
+  it("still matches that place when the line says where", () => {
+    const april = [{ id: "l-april", name: "April" }];
+    const result = parse("Coffee with Sarah at April", CONTACTS, april);
+    expect(result.place?.location?.id).toBe("l-april");
+  });
+
+  it("is not fooled by extra spacing in a type collision", () => {
+    // The matcher spans `\\s+` on purpose, so comparing the raw match let a
+    // doubled space slip past the guard and steal the type.
+    const videoCall = [{ id: "l-video", name: "Video call" }];
+    const result = parse("Video  Call with Sarah", CONTACTS, videoCall);
+
+    expect(result.type?.id).toBe("t-video");
+    expect(result.place).toBeNull();
+  });
+});
+
+describe("a doubled space between words", () => {
+  // Every other reader folds runs of whitespace away; the type and people
+  // scanners matched their needles with a literal space, so a stray keystroke
+  // made a known type and a known contact both read as nothing at all — the
+  // contact then coming back as a stranger to create.
+
+  it("still reads a two-word type", () => {
+    expect(parse("Video  call with Sarah", CONTACTS).type?.id).toBe("t-video");
+  });
+
+  it("still recognises someone by their full name", () => {
+    const result = parse("Coffee with Sarah  Whitfield", CONTACTS);
+
+    expect(result.contacts.map((entry) => entry.contact.id)).toEqual(["sarah"]);
+    expect(result.unknownNames).toEqual([]);
+  });
+
+  it("takes the whole name out of the title, not one character short", () => {
+    // The scanner masks `needle.length` characters from the match offset. Once
+    // the match could span more than the needle, that cut one character short
+    // and the last letter of the surname stood alone as the entire title.
+    const result = parse("Coffee with Sarah  Whitfield", CONTACTS);
+
+    expect(result.title).toBe(parse("Coffee with Sarah Whitfield", CONTACTS).title);
+    expect(result.notes).toBeNull();
+  });
+});

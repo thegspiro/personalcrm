@@ -27,7 +27,23 @@ const schema = z.object({
   region: z.string().trim().max(120).optional(),
   country: z.string().trim().max(120).optional(),
   phone: z.string().trim().max(64).optional(),
-  url: z.string().trim().url("That isn't a valid link.").max(500).optional(),
+  // Rendered straight into an `href`, so the protocol is checked here rather
+  // than left to whatever the renderer happens to neutralise. `url()` alone
+  // accepts `javascript:` and `data:`; the endpoint settings already hold this
+  // same line.
+  url: z
+    .string()
+    .trim()
+    .max(500)
+    .refine((value) => {
+      try {
+        const parsed = new URL(value);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+      } catch {
+        return false;
+      }
+    }, "Links should start with http:// or https://.")
+    .optional(),
   notes: z.string().trim().optional(),
 });
 
