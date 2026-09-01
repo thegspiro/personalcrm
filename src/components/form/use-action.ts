@@ -12,7 +12,15 @@ export function useAction() {
     async (run: () => Promise<ActionResult<unknown>>, successMessage?: string) => {
       const result = await run();
       if (!result.ok) {
-        toast.error(result.error ?? "Something went wrong.");
+        // Field errors carry the only useful detail — which input is wrong, and
+        // why — while `error` beside them is the generic "check the highlighted
+        // fields". Toasting that alone highlights nothing and says nothing, so
+        // the detail is what gets shown wherever a form is not rendering it per
+        // field itself.
+        const detail = Object.values(result.fieldErrors ?? {});
+        toast.error(
+          detail.length > 0 ? detail.join(" ") : (result.error ?? "Something went wrong."),
+        );
         return false;
       }
       if (successMessage) toast.success(successMessage);

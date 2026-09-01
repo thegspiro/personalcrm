@@ -32,6 +32,7 @@ vi.mock("@/server/user/context", () => ({
 const {
   createChannel,
   deleteChannel,
+  sendTestNotification,
   setChannelEnabled,
   updateChannel,
 } = await import("@/server/actions/notifications");
@@ -55,6 +56,9 @@ const EMAIL = {
   to: "me@example.com",
 };
 
+/** A complete credential. Nodemailer needs both halves or it sends neither. */
+const AUTHED = { ...EMAIL, user: "postmaster" };
+
 describe.skipIf(!hasTestDatabase)("notification channels", () => {
   let ownerId: string;
   let strangerId: string;
@@ -72,7 +76,7 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
   });
 
   it("stores a password encrypted, and never in the clear", async () => {
-    const created = await createChannel(form({ ...EMAIL, pass: "hunter2-but-longer" }));
+    const created = await createChannel(form({ ...AUTHED, pass: "hunter2-but-longer" }));
     expect(created.ok).toBe(true);
 
     const row = await prisma.notificationChannel.findFirstOrThrow();
@@ -87,7 +91,7 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
   });
 
   it("never sends a credential back to the browser", async () => {
-    await createChannel(form({ ...EMAIL, pass: "hunter2-but-longer" }));
+    await createChannel(form({ ...AUTHED, pass: "hunter2-but-longer" }));
     const [channel] = await listChannelsForSettings(ownerId);
 
     expect(JSON.stringify(channel)).not.toContain("hunter2");
@@ -99,12 +103,12 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
   });
 
   it("keeps the stored password when the field is left blank", async () => {
-    const created = await createChannel(form({ ...EMAIL, pass: "original-password" }));
+    const created = await createChannel(form({ ...AUTHED, pass: "original-password" }));
     const id = (created as { data: { id: string } }).data.id;
     const before = (await prisma.notificationChannel.findFirstOrThrow({ where: { id } }))
       .config as Record<string, unknown>;
 
-    await updateChannel(form({ id, ...EMAIL, name: "Renamed" }));
+    await updateChannel(form({ id, ...AUTHED, name: "Renamed" }));
 
     const after = (await prisma.notificationChannel.findFirstOrThrow({ where: { id } }))
       .config as Record<string, unknown>;
@@ -115,10 +119,10 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
   });
 
   it("replaces the password when a new one is typed, and clears it on request", async () => {
-    const created = await createChannel(form({ ...EMAIL, pass: "original-password" }));
+    const created = await createChannel(form({ ...AUTHED, pass: "original-password" }));
     const id = (created as { data: { id: string } }).data.id;
 
-    await updateChannel(form({ id, ...EMAIL, pass: "a-different-password" }));
+    await updateChannel(form({ id, ...AUTHED, pass: "a-different-password" }));
     let config = (await prisma.notificationChannel.findFirstOrThrow({ where: { id } }))
       .config as Record<string, unknown>;
     expect(resolveChannelSecrets({ kind: "EMAIL", config })).toMatchObject({
@@ -133,7 +137,7 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
   });
 
   it("refuses to send when a stored secret cannot be decrypted", async () => {
-    const created = await createChannel(form({ ...EMAIL, pass: "original-password" }));
+    const created = await createChannel(form({ ...AUTHED, pass: "original-password" }));
     const id = (created as { data: { id: string } }).data.id;
 
     // What a rotated AUTH_SECRET looks like from here.
@@ -195,6 +199,55 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     const badUrl = await createChannel(form({ kind: "NTFY", name: "Bad", url: "file:///etc/passwd" }));
     expect(badUrl.ok).toBe(false);
     expect(await prisma.notificationChannel.count()).toBe(0);
+  });
+
+  it("refuses half an SMTP credential, in either direction", async () => {
+    // deliverToChannel hands nodemailer `auth` only when both are strings, so
+    // a channel saved with one of them sends unauthenticated and every
+    // reminder is rejected by the relay, silently.
+    const userOnly = await createChannel(form({ ...EMAIL, user: "postmaster" }));
+    expect(userOnly.ok).toBe(false);
+    expect(userOnly.fieldErrors).toMatchObject({ pass: expect.any(String) });
+
+    const passOnly = await createChannel(form({ ...EMAIL, pass: "hunter2-but-longer" }));
+    expect(passOnly.ok).toBe(false);
+    expect(await prisma.notificationChannel.count()).toBe(0);
+
+    // Both, or neither, are configurations.
+    expect((await createChannel(form({ ...EMAIL, user: "postmaster", pass: "hunter2-but-longer" }))).ok).toBe(true);
+    expect((await createChannel(form({ ...EMAIL, name: "No auth" }))).ok).toBe(true);
+  });
+
+  it("keeps an edit that leaves the password blank from breaking the pair", async () => {
+    const created = await createChannel(
+      form({ ...EMAIL, user: "postmaster", pass: "hunter2-but-longer" }),
+    );
+    const id = (created as { data: { id: string } }).data.id;
+
+    // Blank means "keep the stored one", so the pair is still complete.
+    expect((await updateChannel(form({ id, ...EMAIL, user: "postmaster" }))).ok).toBe(true);
+
+    // Clearing the password while the username stays is not.
+    const broken = await updateChannel(
+      form({ id, ...EMAIL, user: "postmaster", pass__clear: "true" }),
+    );
+    expect(broken.ok).toBe(false);
+    expect(
+      resolveChannelSecrets(await prisma.notificationChannel.findFirstOrThrow({ where: { id } }) as never),
+    ).toMatchObject({ ok: true, config: { pass: "hunter2-but-longer" } });
+  });
+
+  it("rate-limits the test button per account, not per channel", async () => {
+    // Keyed by channel, the guard is reset by making another one.
+    const first = await createChannel(form({ kind: "NTFY", name: "One", url: "https://127.0.0.1:1/a" }));
+    const second = await createChannel(form({ kind: "NTFY", name: "Two", url: "https://127.0.0.1:1/b" }));
+    const firstId = (first as { data: { id: string } }).data.id;
+    const secondId = (second as { data: { id: string } }).data.id;
+
+    await sendTestNotification(firstId);
+    const immediate = await sendTestNotification(secondId);
+    expect(immediate.ok).toBe(false);
+    expect(immediate.retryAfterSeconds).toBeGreaterThan(0);
   });
 
   it("scopes every action by owner", async () => {

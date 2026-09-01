@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   decryptSecret,
   encryptSecret,
@@ -13,10 +13,6 @@ import {
  * baked into every ciphertext already written, so a tidy-up that renames one
  * silently orphans every stored secret under it.
  */
-beforeAll(() => {
-  process.env.AUTH_SECRET ??= "a-test-secret-long-enough-to-derive-from";
-});
-
 describe("encryptSecret / decryptSecret", () => {
   it("round-trips under each purpose", () => {
     for (const purpose of ["personalcrm-api-key", "personalcrm-channel-secret"] as const) {

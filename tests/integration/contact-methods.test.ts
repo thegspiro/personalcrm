@@ -292,6 +292,74 @@ describe.skipIf(!hasTestDatabase)("contact methods and addresses", () => {
     expect(byEmail.items.map((row) => row.firstName)).toEqual(["Dana"]);
   });
 
+  it("returns a field error for an over-long value rather than throwing", async () => {
+    // Unbounded, these reach MariaDB and come back as an exception out of the
+    // action instead of something the form can render.
+    const long = await createContactMethod(
+      form({ contactId: danaId, typeId: mobileTypeId, value: "x".repeat(256) }),
+    );
+    expect(long.ok).toBe(false);
+    expect(long.fieldErrors).toMatchObject({ value: expect.any(String) });
+
+    const longLabel = await createContactMethod(
+      form({ contactId: danaId, typeId: mobileTypeId, value: "555-0134", label: "y".repeat(97) }),
+    );
+    expect(longLabel.ok).toBe(false);
+    expect(await prisma.contactMethod.count()).toBe(0);
+
+    // At the limit is fine.
+    expect(
+      (await createContactMethod(form({ contactId: danaId, typeId: mobileTypeId, value: "x".repeat(255) }))).ok,
+    ).toBe(true);
+  });
+
+  it("bounds every address column it writes", async () => {
+    for (const [field, length] of [
+      ["label", 96],
+      ["line1", 191],
+      ["city", 120],
+      ["postalCode", 32],
+      ["country", 120],
+    ] as const) {
+      const result = await createAddress(
+        form({ contactId: danaId, line1: "14 Ashfield Road", [field]: "z".repeat(length + 1) }),
+      );
+      expect(result.ok, `${field} should be bounded`).toBe(false);
+    }
+    expect(await prisma.address.count()).toBe(0);
+  });
+
+  it("puts a promoted method first, so the arrows match what is shown", async () => {
+    const ids: string[] = [];
+    for (const value of ["a", "b", "c"]) {
+      const created = await createContactMethod(
+        form({ contactId: danaId, typeId: mobileTypeId, value }),
+      );
+      ids.push((created as { data: { id: string } }).data.id);
+    }
+
+    // The list renders primary-first; without moving the row, "c" would show
+    // at the top while its sortOrder stayed last, and its down arrow would
+    // find no greater sortOrder and appear to do nothing.
+    await setPrimaryContactMethod(ids[2]);
+
+    const rows = await prisma.contactMethod.findMany({
+      where: { contactId: danaId },
+      orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }],
+    });
+    expect(rows.map((row) => row.value)).toEqual(["c", "a", "b"]);
+    // Rendering order and sortOrder order are now the same list.
+    expect(rows.map((row) => row.sortOrder)).toEqual([0, 1, 2]);
+
+    // And the arrow that was dead now moves it.
+    await moveContactMethod(ids[2], "down");
+    const after = await prisma.contactMethod.findMany({
+      where: { contactId: danaId },
+      orderBy: { sortOrder: "asc" },
+    });
+    expect(after.map((row) => row.value)).toEqual(["a", "c", "b"]);
+  });
+
   it("refuses an address with nothing in it, so no row is only a delete button", async () => {
     const result = await createAddress(form({ contactId: danaId, label: "Home", notes: "buzzer" }));
     expect(result.ok).toBe(false);

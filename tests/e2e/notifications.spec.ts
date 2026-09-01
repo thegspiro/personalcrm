@@ -97,6 +97,9 @@ test("a channel is refused rather than saved in a shape the sender rejects", asy
   await addForm.getByRole("button", { name: "Add channel" }).click();
 
   await expect(page.getByText(/check the highlighted fields/i)).toBeVisible();
+  // The field itself has to say what is wrong. A generic toast over a form
+  // with nothing highlighted does not tell you which of seven inputs to fix.
+  await expect(addForm.getByText(/whole number between 1 and 65535/i)).toBeVisible();
   // And nothing was stored. Saving it would produce a channel that throws
   // inside the sender an hour later, in a cron job nobody is watching.
   await expect(page.locator("section").filter({ hasText: "smtp.example.com" })).toHaveCount(0);

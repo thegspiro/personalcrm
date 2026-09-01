@@ -5,7 +5,11 @@ import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { SectionCard, SectionEmpty, SectionRow } from "../section-card";
 import { useAction, useAddAction } from "@/components/form/use-action";
-import { createAddress, deleteAddress, updateAddress } from "@/server/actions/details";
+import {
+  createAddress,
+  deleteAddress,
+  updateAddress,
+} from "@/server/actions/details";
 
 export interface AddressItem {
   id: string;
@@ -28,13 +32,20 @@ export interface AddressItem {
  */
 const LABEL_SUGGESTIONS = ["Home", "Work", "Parents", "Holiday"];
 
-function AddressFields({ formId, address }: { formId: string; address?: AddressItem }) {
+function AddressFields({
+  formId,
+  address,
+}: {
+  formId: string;
+  address?: AddressItem;
+}) {
   return (
     <>
       <Field label="Label (optional)" htmlFor={`${formId}-label`}>
         <Input
           id={`${formId}-label`}
           name="label"
+          maxLength={96}
           list={`${formId}-label-options`}
           defaultValue={address?.label ?? ""}
           placeholder="Home"
@@ -49,29 +60,51 @@ function AddressFields({ formId, address }: { formId: string; address?: AddressI
         <Input
           id={`${formId}-line1`}
           name="line1"
+          maxLength={191}
           defaultValue={address?.line1 ?? ""}
           placeholder="14 Ashfield Road"
         />
       </Field>
       <Field label="Line 2 (optional)" htmlFor={`${formId}-line2`}>
-        <Input id={`${formId}-line2`} name="line2" defaultValue={address?.line2 ?? ""} />
+        <Input
+          id={`${formId}-line2`}
+          name="line2"
+          maxLength={191}
+          defaultValue={address?.line2 ?? ""}
+        />
       </Field>
       <div className="grid gap-2.5 sm:grid-cols-2">
         <Field label="City" htmlFor={`${formId}-city`}>
-          <Input id={`${formId}-city`} name="city" defaultValue={address?.city ?? ""} />
+          <Input
+            id={`${formId}-city`}
+            name="city"
+            maxLength={120}
+            defaultValue={address?.city ?? ""}
+          />
         </Field>
         <Field label="Region" htmlFor={`${formId}-region`}>
-          <Input id={`${formId}-region`} name="region" defaultValue={address?.region ?? ""} />
+          <Input
+            id={`${formId}-region`}
+            name="region"
+            maxLength={120}
+            defaultValue={address?.region ?? ""}
+          />
         </Field>
         <Field label="Postal code" htmlFor={`${formId}-postalCode`}>
           <Input
             id={`${formId}-postalCode`}
             name="postalCode"
+            maxLength={32}
             defaultValue={address?.postalCode ?? ""}
           />
         </Field>
         <Field label="Country" htmlFor={`${formId}-country`}>
-          <Input id={`${formId}-country`} name="country" defaultValue={address?.country ?? ""} />
+          <Input
+            id={`${formId}-country`}
+            name="country"
+            maxLength={120}
+            defaultValue={address?.country ?? ""}
+          />
         </Field>
       </div>
       <Field label="Notes (optional)" htmlFor={`${formId}-notes`}>
@@ -89,7 +122,9 @@ function AddressFields({ formId, address }: { formId: string; address?: AddressI
 
 /** The parts that have something in them, in the order an envelope wants them. */
 function addressLines(address: AddressItem): string[] {
-  const region = [address.city, address.region, address.postalCode].filter(Boolean).join(", ");
+  const region = [address.city, address.region, address.postalCode]
+    .filter(Boolean)
+    .join(", ");
   return [address.line1, address.line2, region, address.country].filter(
     (line): line is string => Boolean(line),
   );
@@ -105,14 +140,19 @@ function AddressRow({ address }: { address: AddressItem }) {
       deleteLabel={`Remove ${address.label ?? "address"}`}
       editLabel={`Edit ${address.label ?? "address"}`}
       editForm={(close) => (
-        <form action={add(updateAddress, close, "Saved")} className="grid gap-2.5">
+        <form
+          action={add(updateAddress, close, "Saved")}
+          className="grid gap-2.5"
+        >
           <input type="hidden" name="id" value={address.id} />
           <AddressFields formId={`address-${address.id}`} address={address} />
           <SubmitButton size="sm">Save</SubmitButton>
         </form>
       )}
     >
-      {address.label ? <span className="text-sm font-medium">{address.label}</span> : null}
+      {address.label ? (
+        <span className="text-sm font-medium">{address.label}</span>
+      ) : null}
       <p className="text-xs text-muted-foreground">
         {addressLines(address).map((line) => (
           <span key={line} className="block truncate">
@@ -121,7 +161,9 @@ function AddressRow({ address }: { address: AddressItem }) {
         ))}
       </p>
       {address.notes ? (
-        <p className="mt-1 whitespace-pre-line text-xs text-muted-foreground">{address.notes}</p>
+        <p className="mt-1 whitespace-pre-line text-xs text-muted-foreground">
+          {address.notes}
+        </p>
       ) : null}
     </SectionRow>
   );
@@ -144,7 +186,10 @@ export function AddressesSection({
       addLabel="Add an address"
       defaultOpen={addresses.length > 0}
       form={(close) => (
-        <form action={add(createAddress, close, "Added")} className="grid gap-2.5">
+        <form
+          action={add(createAddress, close, "Added")}
+          className="grid gap-2.5"
+        >
           <input type="hidden" name="contactId" value={contactId} />
           <AddressFields formId="address-new" />
           <SubmitButton size="sm">Add</SubmitButton>
@@ -154,7 +199,9 @@ export function AddressesSection({
       {addresses.length === 0 ? (
         <SectionEmpty>No address recorded.</SectionEmpty>
       ) : (
-        addresses.map((address) => <AddressRow key={address.id} address={address} />)
+        addresses.map((address) => (
+          <AddressRow key={address.id} address={address} />
+        ))
       )}
     </SectionCard>
   );

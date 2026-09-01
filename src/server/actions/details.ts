@@ -1,6 +1,7 @@
 "use server";
 
 import { randomBytes } from "node:crypto";
+import { z } from "zod";
 import { Prisma, type TaxonomyKind } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
@@ -25,6 +26,7 @@ import { planChecklistSchema } from "@/lib/plan-checklist";
 import {
   type ActionResult,
   bool,
+  invalid,
   fail,
   fieldError,
   num,
@@ -1182,6 +1184,28 @@ export async function deleteRelationship(id: string): Promise<ActionResult> {
 // --- contact methods -------------------------------------------------------
 
 /**
+ * Bounded to the column widths, so an over-long paste comes back as a field
+ * error rather than a database rejection thrown out of the action. The forms
+ * mirror these with `maxLength`, which stops it happening in the first place
+ * without being the thing relied on — a server action is a public POST.
+ */
+const methodSchema = z.object({
+  value: z.string().trim().min(1, "A value is required.").max(255),
+  label: z.string().trim().max(96).optional(),
+});
+
+const addressSchema = z.object({
+  label: z.string().trim().max(96).optional(),
+  line1: z.string().trim().max(191).optional(),
+  line2: z.string().trim().max(191).optional(),
+  city: z.string().trim().max(120).optional(),
+  region: z.string().trim().max(120).optional(),
+  postalCode: z.string().trim().max(32).optional(),
+  country: z.string().trim().max(120).optional(),
+  notes: z.string().trim().max(5000).optional(),
+});
+
+/**
  * Phone numbers, email addresses and handles.
  *
  * `ContactMethod` and `Address` carry no `ownerId` and no `isPrivate` — they
@@ -1203,12 +1227,17 @@ async function methodParent(
 export async function createContactMethod(form: FormData): Promise<ActionResult<{ id: string }>> {
   const { ownerId } = await owner();
   const contactId = str(form, "contactId");
+  if (!contactId) return fail("Contact not found.");
+  if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
+
   // Stored exactly as typed, only trimmed. Reformatting "07700 900461" into
   // "+44 7700 900461" would guess a country nobody gave — the same lie about
   // certainty that DatePrecision exists to prevent.
-  const value = str(form, "value");
-  if (!contactId || !value) return fail("A value is required.");
-  if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
+  const parsed = methodSchema.safeParse({
+    value: str(form, "value"),
+    label: str(form, "label"),
+  });
+  if (!parsed.success) return invalid(parsed.error);
 
   const type = await termFromForm(ownerId, form, "typeId", "CONTACT_METHOD_TYPE");
   if (!type.ok) return fail(UNKNOWN_TERM);
@@ -1226,8 +1255,8 @@ export async function createContactMethod(form: FormData): Promise<ActionResult<
     data: {
       contactId,
       typeId: type.id,
-      value,
-      label: str(form, "label") ?? null,
+      value: parsed.data.value,
+      label: parsed.data.label ?? null,
       // The only method there is, is the one to try first. Leaving it unmarked
       // means the header shows nothing until a button nobody knows about is
       // pressed, which reads as the number not having saved.
@@ -1247,15 +1276,18 @@ export async function updateContactMethod(form: FormData): Promise<ActionResult>
   const existing = await methodParent(ownerId, id);
   if (!existing) return fail("Not found.");
 
-  const value = str(form, "value");
-  if (!value) return fail("A value is required.");
+  const parsed = methodSchema.safeParse({
+    value: str(form, "value"),
+    label: str(form, "label"),
+  });
+  if (!parsed.success) return invalid(parsed.error);
 
   const type = await termFromForm(ownerId, form, "typeId", "CONTACT_METHOD_TYPE");
   if (!type.ok) return fail(UNKNOWN_TERM);
 
   await prisma.contactMethod.update({
     where: { id },
-    data: { typeId: type.id, value, label: str(form, "label") ?? null },
+    data: { typeId: type.id, value: parsed.data.value, label: parsed.data.label ?? null },
   });
 
   touch(existing.contactId);
@@ -1285,13 +1317,28 @@ export async function setPrimaryContactMethod(id: string): Promise<ActionResult>
   const existing = await methodParent(ownerId, id);
   if (!existing) return fail("Not found.");
 
-  await prisma.$transaction([
-    prisma.contactMethod.updateMany({
+  await prisma.$transaction(async (tx) => {
+    await tx.contactMethod.updateMany({
       where: { contactId: existing.contactId, isPrimary: true },
       data: { isPrimary: false },
-    }),
-    prisma.contactMethod.update({ where: { id }, data: { isPrimary: true } }),
-  ]);
+    });
+    await tx.contactMethod.update({ where: { id }, data: { isPrimary: true } });
+
+    // Promotion moves the row to the front, rather than only flagging it.
+    // The list renders primary-first and the arrows step through `sortOrder`,
+    // so leaving the two to disagree makes a promoted last method render at
+    // the top with a down arrow that finds no greater `sortOrder` and appears
+    // to do nothing. One order, and the arrows mean what they show.
+    const rest = await tx.contactMethod.findMany({
+      where: { contactId: existing.contactId, id: { not: id } },
+      orderBy: { sortOrder: "asc" },
+      select: { id: true },
+    });
+    await tx.contactMethod.update({ where: { id }, data: { sortOrder: 0 } });
+    for (const [index, row] of rest.entries()) {
+      await tx.contactMethod.update({ where: { id: row.id }, data: { sortOrder: index + 1 } });
+    }
+  });
 
   touch(existing.contactId);
   return ok();
@@ -1336,12 +1383,32 @@ const ADDRESS_PARTS = ["line1", "line2", "city", "region", "postalCode", "countr
  * An address with nothing in it renders as a row that is only a delete button,
  * so at least one line has to say where.
  */
-function addressFields(form: FormData): Record<string, string | null> | null {
-  const fields = Object.fromEntries(
-    ADDRESS_PARTS.map((part) => [part, str(form, part) ?? null]),
-  ) as Record<(typeof ADDRESS_PARTS)[number], string | null>;
-  if (!ADDRESS_PARTS.some((part) => fields[part])) return null;
-  return { ...fields, label: str(form, "label") ?? null, notes: str(form, "notes") ?? null };
+type AddressFields =
+  | { ok: true; data: Record<string, string | null> }
+  | { ok: false; result: ActionResult<never> };
+
+function addressFields(form: FormData): AddressFields {
+  const parsed = addressSchema.safeParse({
+    label: str(form, "label"),
+    line1: str(form, "line1"),
+    line2: str(form, "line2"),
+    city: str(form, "city"),
+    region: str(form, "region"),
+    postalCode: str(form, "postalCode"),
+    country: str(form, "country"),
+    notes: str(form, "notes"),
+  });
+  if (!parsed.success) return { ok: false, result: invalid(parsed.error) };
+
+  if (!ADDRESS_PARTS.some((part) => parsed.data[part])) {
+    return { ok: false, result: fieldError("line1", "Fill in at least one line of the address.") };
+  }
+
+  const data: Record<string, string | null> = {};
+  for (const key of [...ADDRESS_PARTS, "label", "notes"] as const) {
+    data[key] = parsed.data[key] ?? null;
+  }
+  return { ok: true, data };
 }
 
 async function addressParent(
@@ -1361,9 +1428,9 @@ export async function createAddress(form: FormData): Promise<ActionResult<{ id: 
   if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
 
   const fields = addressFields(form);
-  if (!fields) return fail("Fill in at least one line of the address.");
+  if (!fields.ok) return fields.result;
 
-  const created = await prisma.address.create({ data: { contactId, ...fields } });
+  const created = await prisma.address.create({ data: { contactId, ...fields.data } });
   touch(contactId);
   return ok({ id: created.id });
 }
@@ -1376,9 +1443,9 @@ export async function updateAddress(form: FormData): Promise<ActionResult> {
   if (!existing) return fail("Not found.");
 
   const fields = addressFields(form);
-  if (!fields) return fail("Fill in at least one line of the address.");
+  if (!fields.ok) return fields.result;
 
-  await prisma.address.update({ where: { id }, data: fields });
+  await prisma.address.update({ where: { id }, data: fields.data });
   touch(existing.contactId);
   return ok();
 }

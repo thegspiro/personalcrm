@@ -7,7 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { toast } from "sonner";
+import { useRouter } from "next/navigation";
+import { useAction } from "@/components/form/use-action";
 import {
   CHANNEL_BLURBS,
   CHANNEL_FIELDS,
@@ -17,6 +19,7 @@ import {
   type ChannelKind,
 } from "@/lib/notification-channels";
 import type { RedactedChannel } from "@/server/notifications/config";
+import type { ActionResult } from "@/server/actions/helpers";
 import {
   createChannel,
   deleteChannel,
@@ -33,9 +36,45 @@ import {
  * reminder policy set on an important date was stored and silently never
  * acted on. This is the missing destination.
  */
+/**
+ * Runs a channel form and keeps the field errors it returns.
+ *
+ * `useAddAction` reports only the top-level message, which for this form is
+ * always "Please check the highlighted fields" — with nothing highlighted,
+ * because nothing was holding on to the per-field detail. Port ranges, URL
+ * schemes and address shapes are all rejected per field, so that detail is the
+ * whole answer to "what do I fix".
+ */
+function useChannelForm() {
+  const router = useRouter();
+  const [errors, setErrors] = React.useState<Record<string, string>>({});
+
+  const submit = React.useCallback(
+    (
+      action: (form: FormData) => Promise<ActionResult<unknown>>,
+      done: () => void,
+      message: string,
+    ) =>
+      async (form: FormData) => {
+        const result = await action(form);
+        if (!result.ok) {
+          setErrors(result.fieldErrors ?? {});
+          toast.error(result.error ?? "Something went wrong.");
+          return;
+        }
+        setErrors({});
+        toast.success(message);
+        router.refresh();
+        done();
+      },
+    [router],
+  );
+
+  return { errors, submit };
+}
+
 export function NotificationSettings({ channels }: { channels: RedactedChannel[] }) {
-  const run = useAction();
-  const add = useAddAction();
+  const { errors, submit } = useChannelForm();
   const [adding, setAdding] = React.useState<ChannelKind | null>(null);
 
   return (
@@ -89,7 +128,7 @@ export function NotificationSettings({ channels }: { channels: RedactedChannel[]
 
         {adding ? (
           <form
-            action={add(createChannel, () => setAdding(null), "Channel added")}
+            action={submit(createChannel, () => setAdding(null), "Channel added")}
             className="mt-3 grid gap-2.5"
           >
             <p className="text-xs text-muted-foreground">{CHANNEL_BLURBS[adding]}</p>
@@ -102,7 +141,7 @@ export function NotificationSettings({ channels }: { channels: RedactedChannel[]
                 placeholder="Phone"
               />
             </Field>
-            <ChannelFields formId="channel-new" kind={adding} />
+            <ChannelFields formId="channel-new" kind={adding} errors={errors} />
             <div className="flex gap-2">
               <SubmitButton size="sm">Add channel</SubmitButton>
               <Button type="button" variant="outline" size="sm" onClick={() => setAdding(null)}>
@@ -118,7 +157,7 @@ export function NotificationSettings({ channels }: { channels: RedactedChannel[]
 
 function ChannelCard({ channel }: { channel: RedactedChannel }) {
   const run = useAction();
-  const save = useAddAction();
+  const { errors, submit } = useChannelForm();
   const [editing, setEditing] = React.useState(false);
 
   return (
@@ -160,14 +199,19 @@ function ChannelCard({ channel }: { channel: RedactedChannel }) {
 
       {editing ? (
         <form
-          action={save(updateChannel, () => setEditing(false), "Saved")}
+          action={submit(updateChannel, () => setEditing(false), "Saved")}
           className="mt-3 grid gap-2.5"
         >
           <input type="hidden" name="id" value={channel.id} />
           <Field label="Name" htmlFor={`channel-${channel.id}-name`}>
             <Input id={`channel-${channel.id}-name`} name="name" defaultValue={channel.name} />
           </Field>
-          <ChannelFields formId={`channel-${channel.id}`} kind={channel.kind} channel={channel} />
+          <ChannelFields
+            formId={`channel-${channel.id}`}
+            kind={channel.kind}
+            channel={channel}
+            errors={errors}
+          />
           <div className="flex gap-2">
             <SubmitButton size="sm">Save</SubmitButton>
             <Button type="button" variant="outline" size="sm" onClick={() => setEditing(false)}>
@@ -211,10 +255,12 @@ function ChannelFields({
   formId,
   kind,
   channel,
+  errors,
 }: {
   formId: string;
   kind: ChannelKind;
   channel?: RedactedChannel;
+  errors: Record<string, string>;
 }) {
   return (
     <>
@@ -225,6 +271,7 @@ function ChannelFields({
           field={field}
           value={channel?.config[field.name]}
           isSet={channel?.secretsSet[field.name] ?? false}
+          error={errors[field.name]}
         />
       ))}
     </>
@@ -236,11 +283,13 @@ function ChannelFieldInput({
   field,
   value,
   isSet,
+  error,
 }: {
   formId: string;
   field: ChannelField;
   value: string | number | boolean | undefined;
   isSet: boolean;
+  error?: string;
 }) {
   const id = `${formId}-${field.name}`;
 
@@ -267,6 +316,7 @@ function ChannelFieldInput({
         // The value is never sent back, so there is nothing for the browser to
         // resubmit — blank has to mean "leave it alone" rather than "clear it".
         hint={isSet ? "Saved. Leave blank to keep it, or type a new one." : field.hint}
+        error={error}
       >
         <Input id={id} name={field.name} type="password" autoComplete="new-password" />
         {isSet ? (
@@ -285,7 +335,7 @@ function ChannelFieldInput({
   }
 
   return (
-    <Field label={field.label} htmlFor={id} hint={field.hint}>
+    <Field label={field.label} htmlFor={id} hint={field.hint} error={error}>
       <Input
         id={id}
         name={field.name}

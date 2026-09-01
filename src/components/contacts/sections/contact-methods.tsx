@@ -61,6 +61,7 @@ function MethodFields({
           id={`${formId}-value`}
           name="value"
           required
+          maxLength={255}
           defaultValue={method?.value ?? ""}
           placeholder="+1 555 010 4477"
         />
@@ -73,6 +74,7 @@ function MethodFields({
         <Input
           id={`${formId}-label`}
           name="label"
+          maxLength={96}
           defaultValue={method?.label ?? ""}
           placeholder="Work"
         />

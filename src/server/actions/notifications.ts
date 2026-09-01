@@ -42,6 +42,21 @@ function submitted(kind: ChannelKind, form: FormData): Record<string, string | u
   return values;
 }
 
+/**
+ * A username without a password, or the reverse, is not a configuration.
+ *
+ * `deliverToChannel` hands nodemailer `auth` only when both are strings, so a
+ * channel saved with one of them appears configured and then sends
+ * unauthenticated — which most relays reject, on every reminder, silently.
+ * Checked after the merge because a blank password on an edit means "keep the
+ * stored one", so the submitted form alone cannot answer this.
+ */
+function credentialsComplete(config: Record<string, unknown>): boolean {
+  const user = typeof config.user === "string" && config.user !== "";
+  const pass = typeof config.passEnc === "string" && config.passEnc !== "";
+  return user === pass;
+}
+
 function kindFrom(form: FormData): ChannelKind | null {
   const raw = str(form, "kind");
   return isChannelKind(raw) ? raw : null;
@@ -58,13 +73,13 @@ export async function createChannel(form: FormData): Promise<ActionResult<{ id: 
   const validated = validateChannelConfig(kind, input);
   if (!validated.ok) return fieldErrors(validated.errors);
 
+  const config = mergeChannelSecrets(kind, validated.config, input, {});
+  if (kind === "EMAIL" && !credentialsComplete(config)) {
+    return fieldErrors({ pass: "Give a username and a password, or neither." });
+  }
+
   const created = await prisma.notificationChannel.create({
-    data: {
-      ownerId,
-      kind,
-      name,
-      config: mergeChannelSecrets(kind, validated.config, input, {}),
-    },
+    data: { ownerId, kind, name, config },
   });
 
   touch();
@@ -87,13 +102,12 @@ export async function updateChannel(form: FormData): Promise<ActionResult> {
   const validated = validateChannelConfig(kind, input);
   if (!validated.ok) return fieldErrors(validated.errors);
 
-  await prisma.notificationChannel.update({
-    where: { id },
-    data: {
-      name,
-      config: mergeChannelSecrets(kind, validated.config, input, configOf(existing)),
-    },
-  });
+  const config = mergeChannelSecrets(kind, validated.config, input, configOf(existing));
+  if (kind === "EMAIL" && !credentialsComplete(config)) {
+    return fieldErrors({ pass: "Give a username and a password, or neither." });
+  }
+
+  await prisma.notificationChannel.update({ where: { id }, data: { name, config } });
 
   touch();
   return ok();
@@ -136,6 +150,14 @@ export async function deleteChannel(id: string): Promise<ActionResult> {
  * session.
  */
 const COOLDOWN_MS = 30_000;
+
+/**
+ * Keyed by account, not by channel.
+ *
+ * Keyed by channel, the guard is reset by creating another one — and nothing
+ * stops a caller pointing ten channels at the same host and testing each, which
+ * is the request rate the limit exists to bound.
+ */
 const lastTestAt = new Map<string, number>();
 
 /**
@@ -155,14 +177,14 @@ export async function sendTestNotification(id: string): Promise<ActionResult> {
   const channel = await prisma.notificationChannel.findFirst({ where: { id, ownerId } });
   if (!channel) return fail("Not found.");
 
-  const previous = lastTestAt.get(id);
+  const previous = lastTestAt.get(ownerId);
   if (previous && Date.now() - previous < COOLDOWN_MS) {
     return fail(
       "Give it a moment before testing again.",
       Math.ceil((COOLDOWN_MS - (Date.now() - previous)) / 1000),
     );
   }
-  lastTestAt.set(id, Date.now());
+  lastTestAt.set(ownerId, Date.now());
 
   try {
     // Fixed copy, no interpolation. Settings stays reachable while the privacy
