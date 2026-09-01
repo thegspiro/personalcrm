@@ -113,7 +113,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     fieldsFor(user.id, "INTERACTION", null),
     showDating ? fieldsFor(user.id, "ROMANTIC", id) : Promise.resolve([]),
     showDating ? fieldsFor(user.id, "DATE_ENTRY", null) : Promise.resolve([]),
-    getReciprocity(user.id, id),
+    getReciprocity(user.id, id, timezone),
     getUpcomingDates(user.id, timezone, 366, 100, id),
     listContactLocations(user.id, id),
   ]);

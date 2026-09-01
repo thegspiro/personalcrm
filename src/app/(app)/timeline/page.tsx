@@ -5,6 +5,8 @@ import { CacheThisPage } from "@/components/offline/offline";
 import { buildTimeline, type TimelineKind } from "@/server/queries/timeline";
 import { TimelineList } from "@/components/timeline/timeline-list";
 import { TimelineFilters } from "@/components/timeline/timeline-filters";
+import { ListCapNotice } from "@/components/ui/list-cap-notice";
+import { applyCap } from "@/lib/list-cap";
 import { calendarDateInTz, parsePlainDate, plainDateToDb } from "@/lib/dates";
 import { getUpcomingDates } from "@/server/queries/dashboard";
 import { UpcomingDatesWidget } from "@/components/dashboard/widgets";
@@ -12,6 +14,9 @@ import { listTermsByKind } from "@/server/taxonomy/queries";
 
 export const metadata: Metadata = { title: "Timeline" };
 export const dynamic = "force-dynamic";
+
+/** One more than this is fetched, so the page can tell a full list from a cut one. */
+const CAP = 100;
 
 const VALID_KINDS = new Set<TimelineKind>([
   "interaction",
@@ -41,7 +46,7 @@ export default async function TimelinePage({
   const fromPlain = first("from") ? parsePlainDate(first("from")!) : null;
   const toPlain = first("to") ? parsePlainDate(first("to")!) : null;
 
-  const [entries, upcomingDates, terms] = await Promise.all([
+  const [entryRows, upcomingDates, terms] = await Promise.all([
     buildTimeline(user.id, timezone, {
       kinds,
       search: first("q"),
@@ -49,12 +54,13 @@ export default async function TimelinePage({
       locationId: first("locationId"),
       from: fromPlain ? plainDateToDb(fromPlain) : undefined,
       to: toPlain ? plainDateToDb(toPlain) : undefined,
-      take: 100,
+      take: CAP + 1,
     }),
     getUpcomingDates(user.id, timezone, 366, 100),
     listTermsByKind(user.id, ["DATE_TYPE", "LIFE_EVENT_TYPE"]),
   ]);
 
+  const { items: entries, truncated } = applyCap(entryRows, CAP);
   const today = calendarDateInTz(new Date(), timezone);
 
   return (
@@ -79,6 +85,14 @@ export default async function TimelinePage({
         emptyTitle="Nothing to show"
         emptyDescription="Log an interaction, or widen the filters."
       />
+
+      {truncated ? (
+        <ListCapNotice
+          shown={entries.length}
+          noun="entries"
+          hint="Narrow the dates or the kinds to reach further back."
+        />
+      ) : null}
 
       <UpcomingDatesWidget dates={upcomingDates} />
     </div>

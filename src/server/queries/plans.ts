@@ -24,7 +24,13 @@ import { privacyScope } from "@/server/privacy/filter";
  */
 export async function listPlans(
   ownerId: string,
-  options: { contactId?: string; romanticOnly?: boolean; includeDone?: boolean } = {},
+  options: {
+    contactId?: string;
+    romanticOnly?: boolean;
+    includeDone?: boolean;
+    /** Row cap. Callers that want to detect truncation ask for one more. */
+    take?: number;
+  } = {},
 ) {
   const scope = await privacyScope();
 
@@ -56,6 +62,6 @@ export async function listPlans(
       contact: { select: { id: true, firstName: true, lastName: true } },
     },
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-    take: 200,
+    take: options.take ?? 200,
   });
 }

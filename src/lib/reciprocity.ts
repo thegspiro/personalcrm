@@ -4,6 +4,9 @@
  * The one number this app produces that a person might read as a verdict on a
  * friendship, so the rules below are all about refusing to overstate it.
  */
+import { calendarDateInTz } from "./dates";
+import { formatPartialDate } from "./date-precision";
+
 export type ReachedOutBy = "UNSPECIFIED" | "ME" | "THEM" | "MUTUAL";
 
 /** Below this, no summary at all. */
@@ -32,10 +35,16 @@ export interface ReciprocitySummary {
  * `rows` should already be the most recent attributed interactions; `total` is
  * every logged interaction for the contact, attributed or not, so the coverage
  * line can be honest about the denominator.
+ *
+ * `timeZone` is not optional. The "since March" in the summary is a calendar
+ * month, and which month an evening interaction fell in depends entirely on
+ * whose calendar is being read — this used to resolve against the server's,
+ * which is the one clock in the system that belongs to nobody.
  */
 export function summarizeReciprocity(
   rows: readonly ReciprocityRow[],
   total: number,
+  timeZone: string,
 ): ReciprocitySummary {
   const considered = rows.slice(0, RECIPROCITY_WINDOW);
 
@@ -64,7 +73,7 @@ export function summarizeReciprocity(
 
   const span = considered[considered.length - 1]?.occurredAt;
   const since = span
-    ? ` — since ${span.toLocaleDateString("en-US", { month: "long", year: "numeric" })}`
+    ? ` — since ${formatPartialDate(calendarDateInTz(span, timeZone), "MONTH")}`
     : "";
 
   let text: string;
