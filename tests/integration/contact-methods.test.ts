@@ -380,13 +380,23 @@ describe.skipIf(!hasTestDatabase)("contact methods and addresses", () => {
     // Rendering order and sortOrder order are now the same list.
     expect(rows.map((row) => row.sortOrder)).toEqual([0, 1, 2]);
 
-    // And the arrow that was dead now moves it.
-    await moveContactMethod(ids[2], "down");
+    // The primary row does not move: the list pins it first, so swapping its
+    // sortOrder would leave it exactly where it was and read as a dead arrow.
+    // The form does not offer the arrows on it, and the action agrees.
+    expect((await moveContactMethod(ids[2], "down")).ok).toBe(true);
     const after = await prisma.contactMethod.findMany({
       where: { contactId: danaId },
-      orderBy: { sortOrder: "asc" },
+      orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }],
     });
-    expect(after.map((row) => row.value)).toEqual(["a", "c", "b"]);
+    expect(after.map((row) => row.value)).toEqual(["c", "a", "b"]);
+
+    // The others still reorder among themselves, below the pinned one.
+    expect((await moveContactMethod(ids[1], "up")).ok).toBe(true);
+    const swapped = await prisma.contactMethod.findMany({
+      where: { contactId: danaId },
+      orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }],
+    });
+    expect(swapped.map((row) => row.value)).toEqual(["c", "b", "a"]);
   });
 
   it("refuses an address with nothing in it, so no row is only a delete button", async () => {

@@ -285,6 +285,22 @@ point at a box on your own network, and then nothing leaves it. SMTP goes
 through a mail relay — a third party unless you run your own — and the contents
 of every reminder sit in that relay's logs.
 
+### Where a channel may point
+
+Any `http(s)` address, including one on your own network — that is how ntfy and
+Gotify are meant to be run, and it is the case where nothing leaves the
+building at all.
+
+With one boundary: on an installation with more than one account, only an
+administrator may aim a channel at a **private, loopback or link-local
+address**. The server makes the request and reports what came back, so without
+that line any member could use it to probe the host's own network. A
+single-account install never meets it — the only account is the administrator.
+
+Literal addresses only. A hostname that resolves inwards is not caught, and
+cannot be without a DNS lookup inside the validator whose answer can change
+before the request is made. The literal form is what a probe uses.
+
 ### Private contacts and the send
 
 While the privacy lock is **switched on**, people marked private are excluded

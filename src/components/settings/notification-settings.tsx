@@ -137,6 +137,7 @@ export function NotificationSettings({ channels }: { channels: RedactedChannel[]
               <Input
                 id="channel-new-name"
                 name="name"
+                maxLength={96}
                 defaultValue={CHANNEL_LABELS[adding]}
                 placeholder="Phone"
               />
@@ -205,7 +206,12 @@ function ChannelCard({ channel }: { channel: RedactedChannel }) {
         >
           <input type="hidden" name="id" value={channel.id} />
           <Field label="Name" htmlFor={`channel-${channel.id}-name`}>
-            <Input id={`channel-${channel.id}-name`} name="name" defaultValue={channel.name} />
+            <Input
+              id={`channel-${channel.id}-name`}
+              name="name"
+              maxLength={96}
+              defaultValue={channel.name}
+            />
           </Field>
           <ChannelFields
             formId={`channel-${channel.id}`}

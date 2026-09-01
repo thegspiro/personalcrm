@@ -12,7 +12,7 @@ import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
  * without it.
  */
 
-const state = vi.hoisted(() => ({ ownerId: "" }));
+const state = vi.hoisted(() => ({ ownerId: "", role: "ADMIN" as "ADMIN" | "MEMBER" }));
 
 vi.mock("@/server/db/client", async () => {
   const { prisma: client } = await import("./db");
@@ -23,7 +23,7 @@ vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 
 vi.mock("@/server/user/context", () => ({
   getUserContext: async () => ({
-    user: { id: state.ownerId },
+    user: { id: state.ownerId, role: state.role },
     prefs: {},
     timezone: "America/New_York",
   }),
@@ -69,6 +69,7 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     ownerId = owner.id;
     strangerId = stranger.id;
     state.ownerId = ownerId;
+    state.role = "ADMIN";
   });
 
   afterAll(async () => {
@@ -324,6 +325,64 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     // was offered and never delivered.
     expect(calls[0]["x-gotify-key"]).toBe("app-token");
     expect(calls[0].authorization).toBeUndefined();
+  });
+
+  it("keeps a member from aiming a channel at this network", async () => {
+    // Not a block on the address — pointing ntfy at a box on your own network
+    // is the documented use. It is a block on *whose* decision that is, since
+    // the server makes the request and hands back what came out.
+    state.role = "MEMBER";
+
+    const inward = await createChannel(
+      form({ kind: "NTFY", name: "Probe", url: "http://127.0.0.1:8080/hook" }),
+    );
+    expect(inward.ok).toBe(false);
+    expect(inward.fieldErrors).toMatchObject({ url: expect.any(String) });
+    expect(await prisma.notificationChannel.count()).toBe(0);
+
+    // A public target is still theirs to add.
+    expect(
+      (await createChannel(form({ kind: "NTFY", name: "Phone", url: "https://ntfy.sh/mine" }))).ok,
+    ).toBe(true);
+
+    // And the administrator — the person who runs the box — is unaffected.
+    state.role = "ADMIN";
+    expect(
+      (await createChannel(form({ kind: "NTFY", name: "LAN", url: "http://192.168.1.10/topic" }))).ok,
+    ).toBe(true);
+  });
+
+  it("refuses a Gotify channel with no application token", async () => {
+    const blank = await createChannel(
+      form({ kind: "GOTIFY", name: "Gotify", url: "https://gotify.example.com/message" }),
+    );
+    expect(blank.ok).toBe(false);
+    expect(blank.fieldErrors).toMatchObject({ token: expect.any(String) });
+
+    const created = await createChannel(
+      form({
+        kind: "GOTIFY",
+        name: "Gotify",
+        url: "https://gotify.example.com/message",
+        token: "app-token",
+      }),
+    );
+    expect(created.ok).toBe(true);
+
+    // Blank on an edit keeps the stored one rather than emptying it.
+    const id = (created as { data: { id: string } }).data.id;
+    expect(
+      (await updateChannel(form({ id, name: "Renamed", url: "https://gotify.example.com/message" }))).ok,
+    ).toBe(true);
+  });
+
+  it("refuses a name longer than the column holds", async () => {
+    const long = await createChannel(
+      form({ kind: "NTFY", name: "n".repeat(97), url: "https://ntfy.sh/topic" }),
+    );
+    expect(long.ok).toBe(false);
+    expect(long.fieldErrors).toMatchObject({ name: expect.any(String) });
+    expect(await prisma.notificationChannel.count()).toBe(0);
   });
 
   it("scopes every action by owner", async () => {

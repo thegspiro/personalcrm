@@ -3,6 +3,24 @@
 *Schema: none*
 
 #### Fixed
+- **Only an administrator can aim a channel at an address on this network.**
+  Pointing ntfy or Gotify at your own box stays a first-class use — but the
+  server makes the request and reports what came back, so on an install with
+  more than one account it was a way for any member to probe the host's
+  network. A single-account install is unaffected.
+- **A Gotify channel now requires its application token**, which Gotify will
+  not accept a message without. The field was described as optional, so a
+  channel could be saved, enabled, and never deliver.
+- **A channel name longer than the column is refused** rather than thrown out
+  of the action by the database.
+- **Adding the first contact method derives "primary" inside the write.** Read
+  outside it, two concurrent requests could each see an empty list and both
+  claim it, which no index would catch afterwards.
+- **The primary method no longer offers reorder arrows.** The list pins it
+  first, so swapping its position left it exactly where it was.
+- **The dating forms use the shared action hook**, so a rejected custom field
+  says what is wrong there too. They carried a private copy of it, which is why
+  the earlier fix reached every other form and not these.
 - **A private contact could still be written to while the lock was closed.**
   Creating a fact, date, gift, number or address checked only that the contact
   was yours, where every edit and delete also checked that you could see it —

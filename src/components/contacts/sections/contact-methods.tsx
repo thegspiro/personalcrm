@@ -94,7 +94,10 @@ function MethodRow({
   types: TermOption[];
   first: boolean;
   last: boolean;
-  /** False for the only method there is, where two arrows are just clutter. */
+  /**
+   * False for the only method there is, and for the primary — which the list
+   * pins first, so it has nowhere to move to.
+   */
   reorderable: boolean;
 }) {
   const run = useAction();
@@ -241,7 +244,7 @@ export function ContactMethodsSection({
             types={types}
             first={index === 0}
             last={index === methods.length - 1}
-            reorderable={methods.length > 1}
+            reorderable={methods.length > 1 && !method.isPrimary}
           />
         ))
       )}

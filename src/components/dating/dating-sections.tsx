@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
 import { Flag, HeartCrack, ShieldAlert, ThumbsUp, UserMinus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
+import { useAction } from "@/components/form/use-action";
 import {
   CollapsibleCustomFields,
   type RenderableField,
@@ -23,7 +23,6 @@ import { EndRelationshipSheet } from "./end-relationship-sheet";
 import { formatMoney } from "@/lib/format";
 import { formatPartialDate } from "@/lib/date-precision";
 import { plainDateFromDb, plainDateKey, type PlainDate } from "@/lib/dates";
-import type { ActionResult } from "@/server/actions/helpers";
 import {
   convertToFriend,
   createDateEntry,
@@ -36,22 +35,6 @@ import {
 } from "@/server/actions/dating";
 import { createPlan } from "@/server/actions/details";
 
-function useRun() {
-  const router = useRouter();
-  return React.useCallback(
-    async (run: () => Promise<ActionResult<unknown>>, message?: string) => {
-      const result = await run();
-      if (!result.ok) {
-        toast.error(result.error ?? "Something went wrong.");
-        return false;
-      }
-      if (message) toast.success(message);
-      router.refresh();
-      return true;
-    },
-    [router],
-  );
-}
 
 // --- profile ---------------------------------------------------------------
 
@@ -109,7 +92,7 @@ export function RomanticSection({
   /** Defined under Settings → Fields → Dating profiles. */
   customFields?: RenderableField[];
 }) {
-  const run = useRun();
+  const run = useAction();
   const router = useRouter();
   const [editing, setEditing] = React.useState(!profile);
   const [ending, setEnding] = React.useState(false);
@@ -534,7 +517,7 @@ export function DateLogSection({
   /** The same definitions carrying each existing date's saved values. */
   customFieldsByDate?: Record<string, RenderableField[]>;
 }) {
-  const run = useRun();
+  const run = useAction();
   // The venue is prefilled from a picked idea, so it has to be controlled.
   const [venue, setVenue] = React.useState("");
   const [pickedPlan, setPickedPlan] = React.useState<PlanOption | null>(null);
@@ -782,7 +765,7 @@ export function FlagsSection({
   flags: FlagItem[];
   blurPrivate: boolean;
 }) {
-  const run = useRun();
+  const run = useAction();
 
   function add(close: () => void) {
     return async (form: FormData) => {

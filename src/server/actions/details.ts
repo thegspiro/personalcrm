@@ -1255,27 +1255,30 @@ export async function createContactMethod(form: FormData): Promise<ActionResult<
   const type = await termFromForm(ownerId, form, "typeId", "CONTACT_METHOD_TYPE");
   if (!type.ok) return fail(UNKNOWN_TERM);
 
-  const [last, existingCount] = await Promise.all([
-    prisma.contactMethod.findFirst({
+  // Both derived values are read inside the write's own transaction. Read
+  // outside it, two requests adding the first method for one contact each see
+  // an empty list and both claim primary at sortOrder 0 — and there is no
+  // partial unique index in MariaDB to catch it afterwards.
+  const created = await prisma.$transaction(async (tx) => {
+    const existing = await tx.contactMethod.findMany({
       where: { contactId },
       orderBy: { sortOrder: "desc" },
       select: { sortOrder: true },
-    }),
-    prisma.contactMethod.count({ where: { contactId } }),
-  ]);
+    });
 
-  const created = await prisma.contactMethod.create({
-    data: {
-      contactId,
-      typeId: type.id,
-      value: parsed.data.value,
-      label: parsed.data.label ?? null,
-      // The only method there is, is the one to try first. Leaving it unmarked
-      // means the header shows nothing until a button nobody knows about is
-      // pressed, which reads as the number not having saved.
-      isPrimary: existingCount === 0,
-      sortOrder: (last?.sortOrder ?? -1) + 1,
-    },
+    return tx.contactMethod.create({
+      data: {
+        contactId,
+        typeId: type.id,
+        value: parsed.data.value,
+        label: parsed.data.label ?? null,
+        // The only method there is, is the one to try first. Leaving it
+        // unmarked means the header shows nothing until a button nobody knows
+        // about is pressed, which reads as the number not having saved.
+        isPrimary: existing.length === 0,
+        sortOrder: (existing[0]?.sortOrder ?? -1) + 1,
+      },
+    });
   });
 
   touch(contactId);
@@ -1364,13 +1367,20 @@ export async function moveContactMethod(
   const { ownerId } = await owner();
   const current = await prisma.contactMethod.findFirst({
     where: { id, contact: { ownerId, ...contactPrivacyWhere(await privacyScope()) } },
-    select: { id: true, contactId: true, sortOrder: true },
+    select: { id: true, contactId: true, sortOrder: true, isPrimary: true },
   });
   if (!current) return fail("Not found.");
+
+  // The list renders primary-first, so the primary row cannot move: swapping
+  // its sortOrder leaves it exactly where it was on screen, which reads as the
+  // arrow doing nothing. It is pinned by being primary; promoting another
+  // method is how it stops being first.
+  if (current.isPrimary) return ok();
 
   const neighbour = await prisma.contactMethod.findFirst({
     where: {
       contactId: current.contactId,
+      isPrimary: false,
       sortOrder: direction === "up" ? { lt: current.sortOrder } : { gt: current.sortOrder },
     },
     orderBy: { sortOrder: direction === "up" ? "desc" : "asc" },

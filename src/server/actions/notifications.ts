@@ -1,11 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { prisma } from "@/server/db/client";
-import { type ActionResult, fail, ok, owner, str } from "./helpers";
+import { type ActionResult, fail, isAdmin, ok, owner, str } from "./helpers";
 import {
   CHANNEL_FIELDS,
   CHANNEL_LABELS,
+  targetsPrivateHost,
   isChannelKind,
   TEST_NOTIFICATION_BODY,
   TEST_NOTIFICATION_SUBJECT,
@@ -22,6 +24,8 @@ import { deliverToChannel } from "@/server/services/notify";
  * no way to give it a destination, so the hourly job found no channel on every
  * account and sent nothing.
  */
+
+const nameSchema = z.string().trim().min(1, "Give the channel a name.").max(96);
 
 function touch() {
   revalidatePath("/settings");
@@ -52,20 +56,45 @@ function submitted(kind: ChannelKind, form: FormData): Record<string, string | u
  * stored one", so the submitted form alone cannot answer this.
  */
 /**
- * A channel whose URL is its credential must end up with one stored.
+ * Whether every secret this kind cannot work without has ended up stored.
  *
- * Validation cannot decide this: a blank field on an edit means "keep the
- * saved one", and only the merged config knows whether there is one.
+ * Validation cannot decide it: a blank field on an edit means "keep the saved
+ * one", so only the merged config knows. Gotify will not accept a message
+ * without an application token, and a Discord webhook URL is the credential.
  */
-function secretUrlPresent(kind: ChannelKind, config: Record<string, unknown>): boolean {
-  if (!CHANNEL_FIELDS[kind].some((field) => field.name === "url" && field.secret)) return true;
-  return typeof config.urlEnc === "string" && config.urlEnc !== "";
+const REQUIRED_SECRETS: Partial<Record<ChannelKind, string[]>> = {
+  GOTIFY: ["token"],
+  DISCORD: ["url"],
+};
+
+function requiredSecretsPresent(kind: ChannelKind, config: Record<string, unknown>): string | null {
+  for (const field of REQUIRED_SECRETS[kind] ?? []) {
+    const stored = config[`${field}Enc`];
+    if (typeof stored !== "string" || stored === "") return field;
+  }
+  return null;
 }
 
 function credentialsComplete(config: Record<string, unknown>): boolean {
   const user = typeof config.user === "string" && config.user !== "";
   const pass = typeof config.passEnc === "string" && config.passEnc !== "";
   return user === pass;
+}
+
+/**
+ * A channel aimed inside the network is an administrator's call.
+ *
+ * Not a block: pointing ntfy or Gotify at a box on your own network is the
+ * documented use, and the privacy page promises nothing leaves it. But the
+ * server makes the request and hands back what came out, so on an install with
+ * more than one person it is otherwise a way for any member to probe the
+ * host's own network. A single-account install is unaffected — the only
+ * account is the administrator.
+ */
+async function privateTargetAllowed(input: Record<string, string | undefined>): Promise<boolean> {
+  const url = input.url?.trim();
+  if (!url || !targetsPrivateHost(url)) return true;
+  return isAdmin();
 }
 
 function kindFrom(form: FormData): ChannelKind | null {
@@ -79,16 +108,32 @@ export async function createChannel(form: FormData): Promise<ActionResult<{ id: 
   const kind = kindFrom(form);
   if (!kind) return fail("Pick a kind of channel.");
 
-  const name = str(form, "name") ?? CHANNEL_LABELS[kind];
+  const parsedName = nameSchema.safeParse(str(form, "name") ?? CHANNEL_LABELS[kind]);
+  if (!parsedName.success) {
+    return fieldErrors({ name: parsedName.error.issues[0]?.message ?? "That name is too long." });
+  }
+  const name = parsedName.data;
+
   const input = submitted(kind, form);
   const validated = validateChannelConfig(kind, input);
   if (!validated.ok) return fieldErrors(validated.errors);
+
+  if (!(await privateTargetAllowed(input))) {
+    return fieldErrors({
+      url: "Only an administrator can point a channel at an address on this network.",
+    });
+  }
 
   const config = mergeChannelSecrets(kind, validated.config, input, {});
   if (kind === "EMAIL" && !credentialsComplete(config)) {
     return fieldErrors({ pass: "Give a username and a password, or neither." });
   }
-  if (!secretUrlPresent(kind, config)) return fieldErrors({ url: "A URL is required." });
+  const missing = requiredSecretsPresent(kind, config);
+  if (missing) {
+    return fieldErrors({
+      [missing]: missing === "url" ? "A URL is required." : "This channel needs a token.",
+    });
+  }
 
   const created = await prisma.notificationChannel.create({
     data: { ownerId, kind, name, config },
@@ -109,16 +154,32 @@ export async function updateChannel(form: FormData): Promise<ActionResult> {
   // The kind is fixed once created: changing it would leave a config shaped
   // for the old one, and the sender reads that JSON with raw type guards.
   const kind = existing.kind as ChannelKind;
-  const name = str(form, "name") ?? existing.name;
+  const parsedName = nameSchema.safeParse(str(form, "name") ?? existing.name);
+  if (!parsedName.success) {
+    return fieldErrors({ name: parsedName.error.issues[0]?.message ?? "That name is too long." });
+  }
+  const name = parsedName.data;
+
   const input = submitted(kind, form);
   const validated = validateChannelConfig(kind, input);
   if (!validated.ok) return fieldErrors(validated.errors);
+
+  if (!(await privateTargetAllowed(input))) {
+    return fieldErrors({
+      url: "Only an administrator can point a channel at an address on this network.",
+    });
+  }
 
   const config = mergeChannelSecrets(kind, validated.config, input, configOf(existing));
   if (kind === "EMAIL" && !credentialsComplete(config)) {
     return fieldErrors({ pass: "Give a username and a password, or neither." });
   }
-  if (!secretUrlPresent(kind, config)) return fieldErrors({ url: "A URL is required." });
+  const missing = requiredSecretsPresent(kind, config);
+  if (missing) {
+    return fieldErrors({
+      [missing]: missing === "url" ? "A URL is required." : "This channel needs a token.",
+    });
+  }
 
   await prisma.notificationChannel.update({ where: { id }, data: { name, config } });
 
