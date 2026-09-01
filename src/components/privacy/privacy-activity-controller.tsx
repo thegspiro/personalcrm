@@ -2,8 +2,29 @@
 
 import * as React from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { privacyActivityHeartbeat } from "@/server/actions/privacy";
+import { Button } from "@/components/ui/button";
+import {
+  lockPrivacyNow,
+  privacyActivityHeartbeat,
+} from "@/server/actions/privacy";
 import { purgeOfflineCaches } from "@/components/offline/offline";
+
+/**
+ * Lets a descendant ask for the lock to close now rather than at the deadline.
+ *
+ * The request has to come back here because closing means unmounting the
+ * shell: a control rendered inside it cannot remove the tree it lives in, and
+ * an overlay drawn over that tree only hides it from people who are looking --
+ * the content stays in the accessibility tree and keyboard-reachable.
+ */
+const ManualLockContext = React.createContext<{
+  lockNow: () => void;
+  locking: boolean;
+} | null>(null);
+
+export function useManualPrivacyLock() {
+  return React.useContext(ManualLockContext);
+}
 
 type Props = {
   enabled: boolean;
@@ -59,6 +80,62 @@ export function PrivacyActivityController({
       router.refresh();
     });
   }, [pathname, router, searchParams]);
+
+  const [locking, setLocking] = React.useState(false);
+  const [lockFailed, setLockFailed] = React.useState(false);
+  const failureRef = React.useRef<HTMLDivElement>(null);
+
+  // Blanking the shell takes focus with it, and an arbitrary DOM swap is not
+  // announced. Without this a screen-reader user is told nothing: the lock
+  // they asked for silently did not happen, and the way back is unfindable.
+  React.useEffect(() => {
+    if (lockFailed) failureRef.current?.focus();
+  }, [lockFailed]);
+
+  /**
+   * The deliberate version of `close`: the timeout covers walking away, this
+   * covers handing someone your phone. Blanking first is the point -- the
+   * private content is out of the DOM before any awaiting starts, so it is
+   * gone for a screen reader and for the tab key too, not merely covered.
+   */
+  const lockNow = React.useCallback(() => {
+    if (locking) return;
+    setLocking(true);
+    setClosed(true);
+
+    void (async () => {
+      // Both start now rather than in sequence. Posting the purge immediately
+      // hands it to the service worker, whose `waitUntil` finishes on its own
+      // even if this document goes away mid-flight; awaiting the lock first
+      // would leave a cached private page behind when it does.
+      const purged = purgeOfflineCaches();
+      const locked = lockPrivacyNow().catch(() => null);
+
+      const result = await locked;
+      await purged;
+
+      if (!result?.ok) {
+        // Deliberately does not restore the shell. A lost response and a lost
+        // request look identical from here, and if the write did commit,
+        // remounting would put the already-rendered private tree back on
+        // screen for a session the server now considers locked. A reload is
+        // the way back, because it re-reads the truth from the server.
+        setLockFailed(true);
+        setLocking(false);
+        return;
+      }
+
+      // A full document navigation, not `router.replace`. This component lives
+      // in the app layout and survives client routing, so a soft navigation --
+      // to the current route especially -- keeps `closed` true and strands the
+      // viewer on the blank panel. Reloading also guarantees the next render
+      // comes from the now-locked server rather than anything held in memory.
+      // The rule below advises `router.push`, which is the soft navigation
+      // this is deliberately avoiding.
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.assign("/");
+    })();
+  }, [locking]);
 
   React.useEffect(() => {
     if (!enabled || !unlocked || !deadline || closed) return;
@@ -135,10 +212,31 @@ export function PrivacyActivityController({
         className="grid min-h-dvh place-items-center bg-background"
         data-testid="privacy-locked"
       >
-        <p className="text-sm text-muted-foreground">Privacy lock closed.</p>
+        {lockFailed ? (
+          <div
+            ref={failureRef}
+            role="alert"
+            tabIndex={-1}
+            className="grid justify-items-center gap-3 px-6 text-center outline-none"
+          >
+            <p className="text-sm text-muted-foreground">
+              Could not confirm the lock closed. Reload to see where things
+              stand.
+            </p>
+            <Button size="sm" onClick={() => window.location.reload()}>
+              Reload
+            </Button>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">Privacy lock closed.</p>
+        )}
       </main>
     );
   }
 
-  return <>{children}</>;
+  return (
+    <ManualLockContext.Provider value={{ lockNow, locking }}>
+      {children}
+    </ManualLockContext.Provider>
+  );
 }

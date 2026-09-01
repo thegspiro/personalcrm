@@ -1,9 +1,10 @@
 import type { Prisma } from "@prisma/client";
+import { normalizeLocationName } from "@/lib/locations";
 
-/** Conservative identity: whitespace and case are safe; fuzzy matching is not. */
-export function normalizeLocationName(value: string): string {
-  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
-}
+// The normalizer lives in `src/lib/` so the pure quick-add parser and the
+// timeline post-filter can share it. Re-exported here because this module is
+// where every write path already looks for it.
+export { normalizeLocationName };
 
 export async function resolveLocation(
   tx: Prisma.TransactionClient,

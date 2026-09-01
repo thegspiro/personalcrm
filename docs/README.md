@@ -58,8 +58,8 @@ packaged as one container with the database built in.
 | Ideas | `/ideas` | Conversation starters, and plans — things to do with someone |
 | Tasks | `/tasks` | Follow-ups |
 | Gifts | `/gifts` | Both directions |
-| Places | `/locations` | Venues, who you have been there with, and what is planned |
-| Settings | `/settings` | Look, Fields, Types, Home, Reminders, Quick add, Privacy, App |
+| Places | `/locations` | Venues shared by interactions and plans; who you saw there, what is planned, and an optional address lookup |
+| Settings | `/settings` | Look, Fields, Types, Home, Reminders, Quick add, Places, Privacy, App |
 | Welcome | `/welcome` | First-run onboarding, once per account |
 | Unlock | `/unlock` | The privacy PIN |
 | Offline | `/offline` | What the service worker serves for an uncached page |
@@ -76,8 +76,8 @@ Documented so nobody assumes a feature works:
 | **Account management** | Your name is set once in the welcome wizard and never again. There is no change-password, no email edit, no password reset and no session list |
 | **Tags** | `Tag` and `ContactTag` exist in the schema with no UI behind them |
 | **Finding a number by a different format** | Contact search matches the stored string, so someone filed as `+1 (555) 010-4477` is not found by typing `5550104477`. Deliberate: normalising would mean guessing a country nobody supplied |
-| **Editing a place** | Places are created implicitly from what you type as a venue. Only the name, address and link are ever set — the phone, notes and coordinates in the schema have no editor |
 | **Offline writes** | Deliberately absent. Non-GET requests go straight to the network and fail honestly rather than pretending something was saved |
+| **Place aliases** | `Location.aliases` exists and nothing writes it. Doing it properly needs its own table with a uniqueness constraint — JSON gives no useful index, and scanning every place on each write would sit on the hot path of four actions |
 
 The project is under active development and nothing has been tagged as a
 release yet.

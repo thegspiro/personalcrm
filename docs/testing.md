@@ -4,8 +4,8 @@ Three suites, three different jobs.
 
 | Suite | Runner | Needs | Count | Command |
 | --- | --- | --- | --- | --- |
-| Unit | Vitest | Nothing | 27 files | `npm test` |
-| Integration | Vitest | A throwaway MariaDB | 17 files | `npm test` (skipped without `TEST_DATABASE_URL`) |
+| Unit | Vitest | Nothing | 29 files | `npm test` |
+| Integration | Vitest | A throwaway MariaDB | 18 files | `npm test` (skipped without `TEST_DATABASE_URL`) |
 | End-to-end | Playwright | A running instance | 23 specs | `npx playwright test` |
 
 File counts are what is in the tree; the case counts move with every change, so
@@ -41,6 +41,8 @@ does not own. That is what makes these fast and worth writing.
 | `security-headers.test.ts` | The response headers the app sets, and the one it leaves to the proxy |
 | `service-worker.test.ts` | That `public/sw.js` parses as a classic script |
 | `migrations.test.ts` | That every migration on disk is accounted for |
+| `geo-providers.test.ts` | Reading an address-lookup reply across provider dialects |
+| `ai-quick-add.test.ts` | That an assisted parse cannot do what the local one refuses to |
 
 The date-sensitive suites run against a **fixed clock**, and the timezone-aware
 ones assert in a zone that is not UTC — a DST bug in `snoozeUntil` that
@@ -87,6 +89,8 @@ the schema do, not things a mock can:
 - `privacy-actions.test.ts`, `privacy-pin.test.ts` — disabling the lock, and
   the shared backoff that separate sessions cannot race around.
 - `reciprocity.test.ts` — the reaching-out ratio against real interaction rows.
+- `geo-settings.test.ts` — that the address-lookup endpoint, which is stored
+  per installation rather than per owner, is only writable by an `ADMIN`.
 
 `interactions.test.ts` and `entry-editing.test.ts` call the server actions
 themselves rather than reproducing their steps. That needs `server-only` neutralised — `vitest.config.ts` aliases it

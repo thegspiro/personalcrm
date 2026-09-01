@@ -186,6 +186,35 @@ first noticed it rather than starting over.
 A name two contacts share is never guessed: both candidates are surfaced and
 saving is blocked until you pick.
 
+The venue is read the same way. `interpretQuickAdd` matches the line against the
+account's own places — filtered by the predicate the Places directory uses, since
+where you have been is itself a disclosure — and otherwise proposes one from an
+"at ..." cue. `confirmQuickAdd` resolves it from the **confirmed text**, never
+from a posted id: `resolveLocation` get-or-creates on `(ownerId,
+normalizedName)`, which is owner-scoped by construction, so neither a forged form
+nor an assisted reading can point an interaction at somebody else's row.
+
+### Places — `actions/locations.ts`
+
+| Action | Notes |
+| --- | --- |
+| `updateLocation` | The practical fields: address, city, region, country, phone, link, notes. Also renames, recomputing `normalizedName` |
+| `applyLocationLookup` | Writes what an address lookup found, including the OSM reference. The only writer of `osmType`/`osmId`/`latitude`/`longitude` |
+| `lookupLocationAddress` | Asks the configured endpoint for candidates. **Writes nothing** — the user picks, then `applyLocationLookup` writes |
+| `setLocationArchived` | Sets the flag. Nothing is deleted and no label is rewritten |
+
+Each of these looks the place up through `locationVisibleWhere` rather than by
+`{ id, ownerId }`. Scoping by owner alone would let a locked session edit a place
+known only through a hidden interaction — and the difference between "not found"
+and a field error is itself enough to confirm one exists, so both answers are the
+same sentence.
+
+A rename onto a name already in use is **refused**, never merged: two real venues
+can be spelled alike, and folding one into the other would take a history with it.
+
+Every place a lookup can be reached from is behind an explicit button. See
+[privacy.md](privacy.md) for what is sent.
+
 ### Customization
 
 | File | Actions |
@@ -224,6 +253,13 @@ Disabling an enabled lock is handled only by `setPrivacyLockEnabled`. The action
 requires either an unlocked current session or a verified current PIN; posting a
 `privacyLockEnabled` field to the general preference action cannot lower the
 lock boundary.
+
+### Address lookup settings — `actions/geo-settings.ts`
+
+| Action | Notes |
+| --- | --- |
+| `updateGeoEnabled` | The toggle. Off until switched on |
+| `saveGeoConnection` | Provider and, for a self-hosted one, the endpoint. A fixed public endpoint is not editable from the app |
 
 ### AI settings — `actions/ai-settings.ts`
 

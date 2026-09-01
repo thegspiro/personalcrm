@@ -45,6 +45,21 @@ export async function owner(): Promise<{ ownerId: string; timezone: string }> {
   return { ownerId: user.id, timezone };
 }
 
+/**
+ * Whether this account administers the installation.
+ *
+ * Almost everything here is owner-scoped, so who you are is answered by
+ * `ownerId` and this is not needed. It is for the few settings that belong to
+ * the *instance* rather than to a person — where one member's change reaches
+ * every other account, and owner scoping has nothing to bite on.
+ *
+ * The first-run account is `ADMIN`; anyone who signs up afterwards is `MEMBER`.
+ */
+export async function isAdmin(): Promise<boolean> {
+  const { user } = await getUserContext();
+  return user.role === "ADMIN";
+}
+
 // --- form parsing ----------------------------------------------------------
 
 export function str(form: FormData, key: string): string | undefined {

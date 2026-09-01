@@ -52,6 +52,8 @@ export function ContactHeader({
     occupation: string | null;
     employer: string | null;
     city: string | null;
+    region: string | null;
+    country: string | null;
     summary: string | null;
     isFavorite: boolean;
     isArchived: boolean;
@@ -93,7 +95,9 @@ export function ContactHeader({
     contact.occupation && contact.employer
       ? `${contact.occupation} at ${contact.employer}`
       : contact.occupation || contact.employer,
-    contact.city,
+    // City, region and country read as one place, so they join with commas
+    // inside the single subtitle segment rather than each becoming their own.
+    [contact.city, contact.region, contact.country].filter(Boolean).join(", "),
   ]
     .filter(Boolean)
     .join(" · ");

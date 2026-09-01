@@ -50,6 +50,26 @@ export interface AmbiguousName {
   candidates: ParseContact[];
 }
 
+export interface ParseLocation {
+  id: string;
+  name: string;
+}
+
+/**
+ * Where the line said it happened.
+ *
+ * `location` is null when the words named somewhere not yet recorded — the
+ * proposal is still worth surfacing, because it is confirmed before anything
+ * is written and `resolveLocation` get-or-creates from the name either way.
+ */
+export interface MatchedLocation {
+  location: ParseLocation | null;
+  /** The words in the input that named it, exactly as written. */
+  matchedText: string;
+  /** How it was found, so the confirm step can be honest about it. */
+  via: "known" | "preposition";
+}
+
 export interface QuickParseResult {
   /** People matched to exactly one contact. */
   contacts: MatchedContact[];
@@ -62,6 +82,8 @@ export interface QuickParseResult {
   date: PlainDate | null;
   /** The date phrase that produced it, for showing your work. */
   dateText: string | null;
+  /** Where it happened. One place, because an interaction has one. */
+  place: MatchedLocation | null;
   /** A short title — what is left once the plumbing words are taken out. */
   title: string;
   /** Anything after a comma or dash, kept verbatim. */
@@ -86,7 +108,13 @@ const STOPWORDS = new Set([
  */
 export function quickParse(
   input: string,
-  context: { contacts: ParseContact[]; types: ParseType[]; now: Date; timeZone: string },
+  context: {
+    contacts: ParseContact[];
+    types: ParseType[];
+    locations: ParseLocation[];
+    now: Date;
+    timeZone: string;
+  },
 ): QuickParseResult {
   const text = input.trim();
   if (!text) {
@@ -97,6 +125,7 @@ export function quickParse(
       type: null,
       date: null,
       dateText: null,
+      place: null,
       title: "",
       notes: null,
     };
@@ -106,21 +135,57 @@ export function quickParse(
   // May, June — and letting the date parser run first would swallow the person
   // and file the interaction against nobody. A name you have recorded always
   // wins over a date reading of the same word.
-  const { contacts, ambiguous, unknownNames, remainder: withoutPeople, names } = extractPeople(
+  const { contacts, ambiguous, knownNeedles, remainder: withoutPeople, names } = extractPeople(
     text,
     context.contacts,
   );
-  const { type, withoutType } = extractType(withoutPeople, context.types);
+  // Places before the type reader, or a venue called "The Coffee House" has
+  // "coffee" torn out of its middle and stops matching.
+  const known = matchKnownLocation(
+    withoutPeople,
+    context.locations,
+    new Set(
+      context.types.flatMap((type) => [
+        type.label.trim().toLowerCase(),
+        type.slug.replace(/-/g, " ").toLowerCase(),
+      ]),
+    ),
+  );
+  const { type, withoutType } = extractType(known.withoutPlace, context.types);
   const { date, dateText, withoutDate } = extractDate(
     withoutType,
     context.now,
     context.timeZone,
   );
+  // A venue we have never seen is proposed only after chrono has had its turn,
+  // so "at Northside Cafe yesterday" does not take the date into the name. It
+  // also has to run while names are still masked: "at Sarah's place" is a
+  // person's home, not a place to record.
+  const proposed = known.place ? known : prepositionalPlace(withoutDate);
+  const withoutAnyPlace = known.place ? withoutDate : proposed.withoutPlace;
+
+  // Strangers are decided last, once every reader has taken its words out.
+  const unknownNames = unknownNamesIn(withoutAnyPlace, knownNeedles);
+
   // Names come back only once the date and type readers have had their turn on
   // text that cannot mislead them — see `NAME_MASK`.
-  const { title, notes } = splitTitleAndNotes(restoreNames(withoutDate, names), type, contacts);
+  const { title, notes } = splitTitleAndNotes(
+    restoreNames(withoutAnyPlace, names),
+    type,
+    contacts,
+  );
 
-  return { contacts, ambiguous, unknownNames, type, date, dateText, title, notes };
+  return {
+    contacts,
+    ambiguous,
+    unknownNames,
+    type,
+    date,
+    dateText,
+    place: proposed.place,
+    title,
+    notes,
+  };
 }
 
 // --- dates -----------------------------------------------------------------
@@ -230,6 +295,19 @@ function maskFor(index: number): string {
 }
 
 /**
+ * The stand-in left where a place was recognised.
+ *
+ * A separate marker and index range from `NAME_MASK` so the two can never be
+ * confused: a place is dropped rather than restored, since it leaves the title
+ * for its own field, while a possessive name has to come back.
+ */
+const PLACE_MASK = "\ue002";
+const PLACE_MASK_PATTERN = /\ue002/g;
+
+/** Anything either masker left behind. Nothing else may look like a word. */
+const ANY_MASK_PATTERN = /[\ue000-\ue3ff]/;
+
+/**
  * True when what follows a name is a possessive ending — "Sarah's place", or
  * "Chris' place" for a name that already ends in s.
  */
@@ -246,8 +324,171 @@ function restoreNames(text: string, names: MaskedName[]): string {
       // Sarah and John" must not weld "with" onto "and".
       return name?.possessive ? name.text : " ";
     })
+    // A place never comes back: it has its own field now, and leaving it in
+    // would put the venue in the title as well.
+    .replace(PLACE_MASK_PATTERN, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
+}
+
+// --- places ----------------------------------------------------------------
+
+/**
+ * A place the account already has, matched the way people are.
+ *
+ * Runs on the people-masked text, which is what gives a person precedence over
+ * a place named after one: with a contact "Sarah" recorded, "Sarah's Diner" can
+ * no longer match, because "Sarah" is already a mask by the time we look.
+ *
+ * Only the first hit is taken — an interaction happens in one place.
+ */
+export function matchKnownLocation(
+  text: string,
+  locations: ParseLocation[],
+  /**
+   * Names that mean something else as well — the account's own interaction
+   * types. A place called "Coffee" or "Dinner" is a real thing to record, but
+   * matching it with no cue stole the type out of "Coffee with Sarah". Those
+   * need "at" before them to count as a venue.
+   */
+  alsoTypeNames: Set<string> = new Set(),
+): { place: MatchedLocation | null; withoutPlace: string } {
+  // Longest first, so "The Coffee House" wins over a place called "Coffee".
+  const candidates = [...locations]
+    .filter((location) => location.name.trim())
+    .sort((a, b) => b.name.length - a.name.length);
+
+  // Only the part before the commentary is where an interaction happened.
+  // Everything after the first comma or dash is notes — "Coffee with Sarah,
+  // talked about Northside Cafe" happened wherever it happened, and reading a
+  // venue out of the sentence about it also cut the note down to "talked
+  // about". The same boundary `splitTitleAndNotes` uses.
+  const commentary = text.search(/,|\s[–—-]\s/);
+  const searchable = commentary === -1 ? text : text.slice(0, commentary);
+
+  for (const location of candidates) {
+    const words = location.name.trim().split(/\s+/).map(escapeRegExp);
+    if (!words.length) continue;
+    // Words joined by `\s+` rather than a literal space: the typed line may
+    // have doubled spaces where the stored name does not, and that is exactly
+    // the difference `normalizeLocationName` folds away.
+    const pattern = new RegExp(`(?<![A-Za-z0-9])${words.join("\\s+")}(?![A-Za-z0-9])`, "i");
+    const found = pattern.exec(searchable);
+    if (!found) continue;
+
+    const at = found.index;
+    const matchedText = found[0];
+    const preceding = searchable.slice(0, at);
+    const hasVenueCue = /(?:\bat|@)\s*$/i.test(preceding);
+    // Without a cue this name is more likely the type than the place.
+    if (!hasVenueCue && alsoTypeNames.has(matchedText.trim().toLowerCase())) continue;
+
+    // Swallow a preposition immediately before it, or the title keeps a
+    // dangling "at" once the venue is gone. The boundary belongs to "at"
+    // alone: "@" is not a word character, so `\b@` cannot match after a space
+    // and the sign survived into the title as a one-character name.
+    const before = text.slice(0, at).replace(/(?:\bat|@)\s*$/i, "");
+
+    const withoutPlace = (before + PLACE_MASK + text.slice(at + matchedText.length))
+      .replace(/\s{2,}/g, " ")
+      .trim();
+
+    return { place: { location, matchedText, via: "known" }, withoutPlace };
+  }
+
+  return { place: null, withoutPlace: text };
+}
+
+/**
+ * A place we have never seen, proposed from an "at ..." cue.
+ *
+ * Deliberately not "in" — "in 2019", "in the morning" — and not "to", which is
+ * nearly always "talked to". The guard that does the real work is requiring a
+ * capitalised word that is not a stopword: it is what separates "at Northside
+ * Cafe" from "at home" and "at the office". A false negative costs you typing
+ * the venue yourself; a false positive creates a junk place.
+ */
+function prepositionalPlace(
+  text: string,
+): { place: MatchedLocation | null; withoutPlace: string } {
+  // Every "at" in the line is tried, not just the first.
+  //
+  // Chrono removes a time phrase but leaves its preposition behind, so
+  // "Coffee at noon with Sarah at Northside Cafe" still begins with a stray
+  // "at". Committing to the earliest cue rejected the line on that one and
+  // never looked at the real venue further along — which put "Northside" and
+  // "Cafe" back in front of the user as people to create.
+  const cues = text.matchAll(/(^|\s)(?:at\s+|@\s*)/gi);
+  for (const cue of cues) {
+    const found = venueAfterCue(text, cue.index + cue[1].length, cue.index + cue[0].length);
+    if (found) return found;
+  }
+  return { place: null, withoutPlace: text };
+}
+
+/**
+ * The venue a single "at" introduces, or null when that cue leads nowhere.
+ *
+ * `cueStart` is where the preposition begins and `phraseStart` where the words
+ * after it do; both are consumed together when this succeeds.
+ */
+function venueAfterCue(
+  text: string,
+  cueStart: number,
+  phraseStart: number,
+): { place: MatchedLocation; withoutPlace: string } | null {
+  // Commentary after a comma or dash is notes, not part of the venue.
+  const tail = text.slice(phraseStart).split(/\s*(?:,|\s[–—-]\s)/)[0];
+
+  // A mask or a "with" ENDS the venue rather than disqualifying it. Rejecting
+  // any phrase containing one looked equivalent and was not: in "Coffee at
+  // Northside Cafe with Sarah" the participant sits *inside* the phrase, so the
+  // whole venue was thrown away and its words came back as people to create —
+  // pre-ticked, which is the exact harm this pass exists to stop. "with" covers
+  // a participant the app has never seen, who leaves no mask; "and" does not,
+  // because "Bar and Grill" is a venue rather than a guest.
+  //
+  // A mask at the very start still rejects, because that is the other shape:
+  // "at Sarah's place" is somebody's home, not a venue.
+  const stops = [tail.search(ANY_MASK_PATTERN), tail.search(/\swith\s/i)].filter(
+    (index) => index !== -1,
+  );
+  const cut = stops.length ? Math.min(...stops) : tail.length;
+  // Trailing joining words are what led into the name we just stopped at.
+  const phrase = tail
+    .slice(0, cut)
+    .replace(/\s+(?:with|and|for|to)\s*$/i, "")
+    .trim();
+  if (!phrase) return null;
+
+  const words = phrase.split(/\s+/);
+  if (words.length > 6) return null;
+
+  // "at Bob's", "at Bob's afterwards" — a possessive names somebody's home, so
+  // Bob is a person to offer, not a venue to create. The masked case ("at
+  // Sarah's place") is already gone; this is the same rule for a name we do not
+  // have yet. A real venue spelled possessively — "Joe's Diner" — is a false
+  // negative you type once, and pass 1 matches it ever after.
+  if (/['\u2019](?:s\b|(?![a-z0-9]))/i.test(words[0])) return null;
+
+  const namesSomewhere = words.some((word) => {
+    const bare = word.replace(/[^A-Za-z'\u2019-]/g, "");
+    return (
+      bare.length >= 2 && bare[0] === bare[0].toUpperCase() && !STOPWORDS.has(bare.toLowerCase())
+    );
+  });
+  if (!namesSomewhere) return null;
+
+  // Consume the preposition and everything up to where the venue stopped,
+  // leaving the participant mask and any notes after a comma in place.
+  const withoutPlace = (text.slice(0, cueStart) + PLACE_MASK + text.slice(phraseStart + cut))
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  return {
+    place: { location: null, matchedText: phrase, via: "preposition" },
+    withoutPlace,
+  };
 }
 
 function extractPeople(
@@ -256,7 +497,8 @@ function extractPeople(
 ): {
   contacts: MatchedContact[];
   ambiguous: AmbiguousName[];
-  unknownNames: string[];
+  /** Every spelling that matched somebody, so a leftover one is not a stranger. */
+  knownNeedles: Set<string>;
   remainder: string;
   names: MaskedName[];
 } {
@@ -336,8 +578,27 @@ function extractPeople(
     }
   }
 
-  // Whatever is left that looks like a name — capitalised, not a stopword, not
-  // at the very start where it is probably just a sentence opener.
+  return {
+    contacts: matched,
+    ambiguous,
+    knownNeedles: new Set(byNeedle.keys()),
+    remainder,
+    names,
+  };
+}
+
+/**
+ * Whatever is left that looks like a name — capitalised, not a stopword, not at
+ * the very start where it is probably just a sentence opener.
+ *
+ * Runs LAST, on text the type, date and place readers have already taken their
+ * words out of. It used to run inside `extractPeople`, which meant every word
+ * those readers were about to claim was still standing: "coffee with Sarah
+ * Tuesday" offered to create a contact called "Tuesday", "dinner in Boston"
+ * offered "Boston", and "coffee with Sarah at Northside Cafe" offered both
+ * "Northside" and "Cafe" — pre-ticked, so confirming the line created them.
+ */
+function unknownNamesIn(remainder: string, knownNeedles: Set<string>): string[] {
   const unknownNames: string[] = [];
   const words = remainder.split(/\s+/);
   for (const [index, word] of words.entries()) {
@@ -357,11 +618,10 @@ function extractPeople(
     // A name the app already knows is never a stranger, even when it is left
     // over — a second "John" in "John and John" must not offer to create a
     // third one.
-    if (byNeedle.has(bare.toLowerCase())) continue;
+    if (knownNeedles.has(bare.toLowerCase())) continue;
     if (!unknownNames.includes(bare)) unknownNames.push(bare);
   }
-
-  return { contacts: matched, ambiguous, unknownNames, remainder, names };
+  return unknownNames;
 }
 
 // --- title and notes -------------------------------------------------------
@@ -378,7 +638,9 @@ function splitTitleAndNotes(
 
   const cleaned = head
     .replace(/^\s*(?:with|and|at|to|for|from|on|in)\b/i, "")
-    .replace(/\b(?:with|and)\s*$/i, "")
+    // Any dangling preposition, not just "with"/"and": once the venue moves to
+    // its own field, "Coffee with Sarah at" would otherwise keep the "at".
+    .replace(/\b(?:with|and|at|to|for|from|on|in)\s*$/i, "")
     .replace(/\s{2,}/g, " ")
     .replace(/^[\s,;:–—-]+|[\s,;:–—-]+$/g, "")
     .trim();

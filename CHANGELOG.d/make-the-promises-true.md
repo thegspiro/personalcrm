@@ -18,6 +18,7 @@
   at zero however many fields you defined.
 - **How long an interaction lasted is shown on the timeline.** The field was
   collected when logging, saved, and displayed nowhere.
-- **"The place", "Region" and "Country" have inputs.** All three were read from
-  the contact form by the save actions and had no fields to read, so they were
-  written as empty on every save.
+- **"The place" has an input.** `whereWeMet` was read from the contact form by
+  both save actions and had no field to read, so it was written as empty every
+  time. (Region and country had the same bug and are covered by their own
+  entry.)

@@ -459,6 +459,9 @@ function touchPlans(contactId?: string | null) {
   revalidatePath("/");
   revalidatePath("/ideas");
   revalidatePath("/dating");
+  // A plan resolves a venue, so saving one can create a place. Without this the
+  // Places directory kept serving a cached list that the new place was missing.
+  revalidatePath("/locations");
   if (contactId) revalidatePath(`/people/${contactId}`);
 }
 

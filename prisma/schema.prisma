@@ -418,6 +418,14 @@ model Location {
   notes          String?  @db.Text
   latitude       Decimal? @db.Decimal(10, 7)
   longitude      Decimal? @db.Decimal(10, 7)
+  /// The OpenStreetMap object an address lookup matched, when one did.
+  /// `osmType` + `osmId` rather than Nominatim's own `place_id`: that is
+  /// internal to one instance and does not survive a reimport, while an OSM
+  /// node/way/relation reference is server-independent and durable. It is what
+  /// keeps a place tied to a real venue, and it makes the map link a permalink
+  /// instead of a search guess.
+  osmType        String?  @db.VarChar(1)
+  osmId          BigInt?
   aliases        Json     @default("[]")
   isArchived     Boolean  @default(false)
   createdAt      DateTime @default(now())

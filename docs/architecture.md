@@ -153,7 +153,21 @@ awkward phrasing when you switch it on and point it at a provider. The whole
 directory can be deleted and quick add keeps working — that is the test of
 whether the split is real. Its answer is run back through the local matcher
 rather than trusted, so an assisted parse cannot do anything the local parse
-refuses to do.
+refuses to do — including the venue it reads, which is re-matched against your
+own places rather than taken on the model's word.
+
+`src/server/geo/` is the same arrangement for address lookup: optional, off by
+default, and reached only from an explicit button. Switched off — which is how
+it ships — nothing in it runs, and a place's address is simply something you
+type.
+
+Both layers are reached from their *runtime* path behind a dynamic `import()`
+wrapped in a `try`, so an endpoint that is missing, misconfigured or unreachable
+degrades to the local reading rather than surfacing an error. That is the
+guarantee worth relying on. Deleting either directory outright is a larger job
+than it looks: the settings page and settings action import the provider table
+and the status reader statically, so removing the folder is a build change as
+well as a runtime one.
 
 ## Container startup
 

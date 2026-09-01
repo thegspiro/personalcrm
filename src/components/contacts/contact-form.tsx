@@ -148,15 +148,20 @@ export function ContactForm({
             </Field>
           </div>
 
-          <div className="grid gap-3.5 sm:grid-cols-3">
+          {/*
+            Region and country are written by the action on every save, so
+            leaving them off the form did not merely leave them empty -- editing
+            a contact wrote null over whatever was there.
+          */}
+          <div className="grid gap-3 sm:grid-cols-3">
             <Field label="City" htmlFor="city">
-              <Input id="city" name="city" defaultValue={contact?.city ?? ""} />
+              <Input id="city" name="city" defaultValue={contact?.city ?? ""} maxLength={120} />
             </Field>
             <Field label="Region" htmlFor="region">
-              <Input id="region" name="region" defaultValue={contact?.region ?? ""} />
+              <Input id="region" name="region" defaultValue={contact?.region ?? ""} maxLength={120} />
             </Field>
             <Field label="Country" htmlFor="country">
-              <Input id="country" name="country" defaultValue={contact?.country ?? ""} />
+              <Input id="country" name="country" defaultValue={contact?.country ?? ""} maxLength={120} />
             </Field>
           </div>
 
@@ -212,6 +217,7 @@ export function ContactForm({
             <Input
               id="whereWeMet"
               name="whereWeMet"
+              maxLength={191}
               defaultValue={contact?.whereWeMet ?? ""}
               placeholder="Ronnie's, in the back room"
             />

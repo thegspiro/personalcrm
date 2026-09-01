@@ -7,6 +7,7 @@ import {
   type PrivacyScope,
 } from "@/server/privacy/filter";
 import { calendarDateInTz, plainDateFromDb, type PlainDate } from "@/lib/dates";
+import { normalizeLocationName } from "@/lib/locations";
 import { comparePartialDates, overlapsRange, type DatePrecision } from "@/lib/date-precision";
 import {
   fetchContactBirthdays,
@@ -54,6 +55,17 @@ export interface TimelineEntry {
   location?: string | null;
   /** Interactions only. Collected when logging; shown beside the time. */
   durationMinutes?: number | null;
+  /**
+   * The canonical place, when the interaction was linked to one.
+   *
+   * Carried so the location filter can compare on the *place* as well as the
+   * verbatim label. The two differ by design — `resolveLocation` collapses
+   * whitespace for `Location.name` while `Interaction.location` keeps exactly
+   * what was typed — and comparing only the label silently dropped rows the
+   * query had already admitted.
+   */
+  placeId?: string | null;
+  placeName?: string | null;
   href: string;
   editable?:
     | { kind: "important-date"; recurrence: "NONE" | "ANNUAL" | "MONTHLY"; typeId: string | null; notes: string | null; reminderDaysBefore: number[] | null }
@@ -70,6 +82,8 @@ export interface TimelineOptions {
   to?: Date;
   search?: string;
   location?: string;
+  /** Filter by canonical place. Preferred over `location`: no string compare. */
+  locationId?: string;
   take?: number;
 }
 
@@ -128,9 +142,26 @@ export async function buildTimeline(
     ...gifts.map(giftEntry),
   ];
 
-  const located = options.location?.trim()
-    ? entries.filter((entry) => entry.kind === "interaction" && entry.location?.toLowerCase() === options.location!.trim().toLowerCase())
-    : entries;
+  // Match what the query matched. It admits a row on the verbatim label *or*
+  // the linked place, so re-testing only the label here dropped rows it had
+  // already returned: "  Corner   Cafe " is kept as typed on the interaction
+  // while its place is "Corner Cafe", and the two never compared equal.
+  const wantedPlace = options.location?.trim()
+    ? normalizeLocationName(options.location)
+    : null;
+  const located = options.locationId
+    ? entries.filter(
+        (entry) => entry.kind === "interaction" && entry.placeId === options.locationId,
+      )
+    : wantedPlace
+      ? entries.filter(
+          (entry) =>
+            entry.kind === "interaction" &&
+            (normalizeLocationName(entry.location ?? "") === wantedPlace ||
+              (entry.placeName != null &&
+                normalizeLocationName(entry.placeName) === wantedPlace)),
+        )
+      : entries;
   const search = options.search?.trim().toLowerCase();
   const filtered = search
     ? located.filter(
@@ -201,15 +232,22 @@ async function fetchInteractions(
             ],
           }
         : {}),
+      ...(options.locationId ? { locationId: options.locationId } : {}),
       ...(options.location?.trim()
+        // Wrapped in `AND` rather than written as a bare `OR`: the search
+        // filter above already sets `OR` at this level, and a second one in the
+        // same object literal would silently replace it.
         ? { AND: [{ OR: [
             { location: { equals: options.location.trim() } },
-            { place: { normalizedName: options.location.trim().toLowerCase() } },
+            // The same normalizer the place records were written with, rather
+            // than a plain `.toLowerCase()` that disagrees with it on locale.
+            { place: { normalizedName: normalizeLocationName(options.location) } },
           ] }] }
         : {}),
     },
     include: {
       type: true,
+      place: { select: { id: true, name: true } },
       dateEntry: { select: { id: true } },
       participants: {
         include: { contact: { select: { id: true, firstName: true, lastName: true } } },
@@ -343,6 +381,8 @@ function interactionEntry(row: InteractionRow, timezone: string, now: Date): Tim
     reachedOutBy: row.reachedOutBy,
     location: row.location,
     durationMinutes: row.durationMinutes,
+    placeId: row.place?.id ?? null,
+    placeName: row.place?.name ?? null,
     href: contacts[0] ? `/people/${contacts[0].id}#timeline-entry-interaction-${row.id}` : "/timeline",
   };
 }
