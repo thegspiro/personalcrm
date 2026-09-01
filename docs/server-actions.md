@@ -286,6 +286,12 @@ explicit checkbox does the clearing. See
 why one that will not decrypt stops delivery instead of degrading to an
 unauthenticated send.
 
+Unlike the AI and address-lookup settings, nothing here is administrator-only.
+That is not an oversight: `NotificationChannel` carries an `ownerId`, so each
+account's channels are its own and `owner()` scoping is the whole guard. The
+other two store an `AppSetting`, which belongs to the *installation* and has no
+owner to scope by — which is why they need a role check and this does not.
+
 `sendTestNotification` is separate from saving on purpose. Verifying before
 storing is right for the AI key — one global value, where a bad key means
 silent nothingness — and wrong for a row: a Gotify box down for ten minutes

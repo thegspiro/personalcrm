@@ -5,7 +5,7 @@ Three suites, three different jobs.
 | Suite | Runner | Needs | Count | Command |
 | --- | --- | --- | --- | --- |
 | Unit | Vitest | Nothing | 29 files | `npm test` |
-| Integration | Vitest | A throwaway MariaDB | 18 files | `npm test` (skipped without `TEST_DATABASE_URL`) |
+| Integration | Vitest | A throwaway MariaDB | 19 files | `npm test` (skipped without `TEST_DATABASE_URL`) |
 | End-to-end | Playwright | A running instance | 23 specs | `npx playwright test` |
 
 File counts are what is in the tree; the case counts move with every change, so
@@ -89,8 +89,9 @@ the schema do, not things a mock can:
 - `privacy-actions.test.ts`, `privacy-pin.test.ts` — disabling the lock, and
   the shared backoff that separate sessions cannot race around.
 - `reciprocity.test.ts` — the reaching-out ratio against real interaction rows.
-- `geo-settings.test.ts` — that the address-lookup endpoint, which is stored
-  per installation rather than per owner, is only writable by an `ADMIN`.
+- `geo-settings.test.ts`, `ai-settings.test.ts` — that the two settings stored
+  per installation rather than per owner are only writable by an `ADMIN`, and
+  that a refusal leaves the stored value alone.
 
 `interactions.test.ts` and `entry-editing.test.ts` call the server actions
 themselves rather than reproducing their steps. That needs `server-only` neutralised — `vitest.config.ts` aliases it

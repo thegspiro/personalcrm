@@ -41,7 +41,7 @@ src/
     privacy/        the lock: state, where-fragments, offline eligibility
     auth/           password hashing, sessions, first-run provisioning
     taxonomy/       seed definitions and per-account provisioning
-    ai/             optional assisted parsing (deletable — see below)
+    ai/             optional assisted parsing (off by default — see below)
     db/             Prisma client, app settings
     user/           per-request user + preferences context
     startup.ts      idempotent boot tasks
@@ -135,7 +135,7 @@ that render nothing. With server components, a hidden section has still been
 fetched and serialised into the payload. Full reasoning, including what the lock
 does *not* protect against, is in [privacy.md](privacy.md).
 
-## The optional AI layer is deletable
+## Quick add works without the optional layers
 
 Quick add is [`lib/quick-parse.ts`](../src/lib/quick-parse.ts): chrono-node for
 dates resolved in the account timezone, matching against your own contacts and
@@ -149,9 +149,9 @@ participant *and* is part of the sentence; removing it outright left titles like
 "First time at 's place", which nothing downstream could repair.
 
 `src/server/ai/` is a separate, optional layer that produces a better reading of
-awkward phrasing when you switch it on and point it at a provider. The whole
-directory can be deleted and quick add keeps working — that is the test of
-whether the split is real. Its answer is run back through the local matcher
+awkward phrasing when you switch it on and point it at a provider. Switched off
+— which is how it ships — nothing in it runs, and quick add is exactly the local
+parser above. Its answer is run back through the local matcher
 rather than trusted, so an assisted parse cannot do anything the local parse
 refuses to do — including the venue it reads, which is re-matched against your
 own places rather than taken on the model's word.

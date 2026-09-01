@@ -179,11 +179,17 @@ a `main` that already carried the instruction.
 
 ## Things that look optional but are not
 
-- **`src/server/ai/` is deletable.** Quick add is `src/lib/quick-parse.ts` —
-  local, no key, no network, always on. The AI layer only improves a reading of
-  awkward phrasing, its answer is re-run through the local matcher rather than
-  trusted, and a line naming a private contact never leaves the machine
-  whatever the toggle says.
+- **Quick add does not need `src/server/ai/`.** The feature is
+  `src/lib/quick-parse.ts` — local, no key, no network, always on. The AI layer
+  only improves a reading of awkward phrasing; it is off by default, nothing in
+  it runs while it is off, its runtime path sits behind a dynamic `import()` in
+  a `try` so an unreachable endpoint degrades to the local reading, its answer
+  is re-run through the local matcher rather than trusted, and a line naming a
+  private contact never leaves the machine whatever the toggle says. The same
+  holds for `src/server/geo/`. What is *not* true of either — and used to be
+  claimed here — is that the directory can simply be deleted: the settings page
+  and its action import the provider table statically, so removing one is a
+  build change.
 - **Mobile-first is tested, not assumed.** `tests/e2e/layout.spec.ts` asserts no
   route scrolls horizontally. `truncate` only shrinks when *every* flex and grid
   ancestor carries `min-w-0` (both default to `min-width: auto`); overflow on a

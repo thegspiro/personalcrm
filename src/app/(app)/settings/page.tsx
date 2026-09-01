@@ -138,6 +138,7 @@ export default async function SettingsPage() {
             keySource={ai.keySource}
             keyHint={ai.keyHint}
             providers={PROVIDERS}
+            canEdit={user.role === "ADMIN"}
           />
         }
         places={
