@@ -391,6 +391,16 @@ test("the header offers a way to close the lock without waiting out the timeout"
 
   // Now it is the one visible sign that private content is open at all.
   await expect(lockNow).toBeVisible();
+
+  // A lock that cannot reach the server must hand the control back rather than
+  // strand the viewer under the overlay -- and offline is where that is most
+  // likely, and where the cached page has already been purged.
+  await page.context().setOffline(true);
+  await lockNow.click();
+  await expect(page.getByText(/Could not lock/i)).toBeVisible();
+  await expect(lockNow).toBeEnabled();
+  await page.context().setOffline(false);
+
   await lockNow.click();
   await page.waitForURL("/");
 
