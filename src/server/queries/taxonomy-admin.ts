@@ -7,6 +7,7 @@ import {
   contactPrivacyWhere,
   factPrivacyWhere,
   interactionPrivacyWhere,
+  lifeEventPrivacyWhere,
   privacyScope,
   viaContactPrivacyWhere,
   viaOptionalContactPrivacyWhere,
@@ -118,7 +119,10 @@ export async function listTaxonomyAdmin(ownerId: string): Promise<TaxonomyGroup[
     }),
     prisma.lifeEvent.groupBy({
       by: ["typeId"],
-      where: { ownerId, ...viaContactPrivacyWhere(scope) },
+      // Not `viaContactPrivacyWhere`: an event anchored to a public contact can
+      // still name a private participant, and the timeline hides it on that
+      // basis. Counting it here reported the hidden event's type and quantity.
+      where: { ownerId, ...lifeEventPrivacyWhere(scope) },
       _count: { _all: true },
     }),
     prisma.plan.groupBy({

@@ -7,6 +7,7 @@ import { type ActionResult, fail, ok, owner, str } from "./helpers";
 import { TAXONOMY_KIND_ORDER } from "@/server/taxonomy/defaults";
 import { linkRelationshipInverses } from "@/server/taxonomy/provision";
 import { slugifyFieldKey } from "@/lib/custom-fields";
+import { privacyScope } from "@/server/privacy/filter";
 
 /**
  * Editing your own taxonomies.
@@ -141,6 +142,14 @@ export async function setTermActive(id: string, isActive: boolean): Promise<Acti
  * Refused while anything still uses it: the foreign keys would either null the
  * reference or cascade the row away, and silently rewriting history is not
  * something a rename screen should be able to do. Deactivate instead.
+ *
+ * The guard counts every row, private ones included — filtering it would let a
+ * locked session delete a term that private rows still point at, which is the
+ * history-rewrite this refusal exists to prevent. But the figure is quoted back
+ * to whoever pressed the button, from a settings page the lock does not gate,
+ * so a locked session is refused without one: the tally on the same screen is
+ * already filtered, and a number that grew on unlock would say how many rows
+ * the lock is holding.
  */
 export async function deleteTerm(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
@@ -152,9 +161,12 @@ export async function deleteTerm(id: string): Promise<ActionResult> {
 
   const inUse = await termUsageCount(id, existing.kind);
   if (inUse > 0) {
-    return fail(
-      `${inUse} ${inUse === 1 ? "record uses" : "records use"} this. Turn it off instead — that hides it without touching them.`,
-    );
+    const scope = await privacyScope();
+    const subject =
+      scope.enabled && !scope.unlocked
+        ? "Something still uses"
+        : `${inUse} ${inUse === 1 ? "record uses" : "records use"}`;
+    return fail(`${subject} this. Turn it off instead — that hides it without touching them.`);
   }
 
   await prisma.taxonomyTerm.delete({ where: { id } });

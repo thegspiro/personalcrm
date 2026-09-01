@@ -50,6 +50,23 @@ export function interactionPrivacyWhere(scope: PrivacyScope): Prisma.Interaction
   };
 }
 
+/**
+ * Applied to LifeEvent queries.
+ *
+ * A life event has one anchor contact and any number of participants, so
+ * filtering on the anchor alone admits "Mum's wedding" when the person she
+ * married is the private one. The timeline withheld that event and the settings
+ * tally counted it, which answers how many hidden events exist from a page the
+ * lock does not gate.
+ */
+export function lifeEventPrivacyWhere(scope: PrivacyScope): Prisma.LifeEventWhereInput {
+  if (scope.unlocked) return {};
+  return {
+    contact: { isPrivate: false },
+    participants: { none: { contact: { isPrivate: true } } },
+  };
+}
+
 /** Applied to anything reached through a contact relation. */
 export function viaContactPrivacyWhere(
   scope: PrivacyScope,

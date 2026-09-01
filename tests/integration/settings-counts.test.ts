@@ -9,7 +9,7 @@ import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
  * people are filed under this" without ever rendering a row — which is why the
  * invariant covers counts and not only records.
  */
-const state = vi.hoisted(() => ({ enabled: true, unlocked: false }));
+const state = vi.hoisted(() => ({ enabled: true, unlocked: false, userId: "" }));
 
 vi.mock("@/server/db/client", async () => ({ prisma: (await import("./db")).prisma }));
 
@@ -23,8 +23,19 @@ vi.mock("@/server/privacy/lock", () => ({
   recordProtectedReadActivity: async () => ({ ok: true, expiresAt: null }),
 }));
 
+vi.mock("@/server/user/context", () => ({
+  getUserContext: async () => ({
+    user: { id: state.userId, role: "ADMIN" },
+    timezone: "America/New_York",
+    prefs: {},
+  }),
+}));
+
+vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+
 const { listTaxonomyAdmin } = await import("@/server/queries/taxonomy-admin");
 const { valueCountsByDefinition } = await import("@/server/queries/custom-fields");
+const { deleteTerm } = await import("@/server/actions/taxonomy");
 
 describe.skipIf(!hasTestDatabase)("settings counts under the lock", () => {
   let ownerId: string;
@@ -35,6 +46,7 @@ describe.skipIf(!hasTestDatabase)("settings counts under the lock", () => {
     await reset();
     const user = await createTestUser();
     ownerId = user.id;
+    state.userId = user.id;
     state.enabled = true;
     state.unlocked = false;
 
@@ -103,6 +115,65 @@ describe.skipIf(!hasTestDatabase)("settings counts under the lock", () => {
 
     state.unlocked = true;
     expect(await usageFor(stage.id)).toBe(1);
+  });
+
+  it("does not count a life event whose participants include a private person", async () => {
+    const type = await prisma.taxonomyTerm.findFirstOrThrow({
+      where: { ownerId, kind: "LIFE_EVENT_TYPE" },
+    });
+    // Both are filed against the public contact, so an anchor-only filter
+    // admits them equally. The second names the private one as a participant,
+    // which is what the timeline hides it on.
+    await prisma.lifeEvent.create({
+      data: {
+        ownerId,
+        contactId: publicId,
+        typeId: type.id,
+        title: "Moved house",
+        date: new Date("2020-06-01"),
+        participants: { create: [{ contactId: publicId }] },
+      },
+    });
+    await prisma.lifeEvent.create({
+      data: {
+        ownerId,
+        contactId: publicId,
+        typeId: type.id,
+        title: "Married",
+        date: new Date("2021-06-01"),
+        participants: { create: [{ contactId: publicId }, { contactId: privateId }] },
+      },
+    });
+
+    expect(await usageFor(type.id)).toBe(1);
+
+    state.unlocked = true;
+    expect(await usageFor(type.id)).toBe(2);
+  });
+
+  it("refuses to delete a term without saying how many hidden rows use it", async () => {
+    const category = await prisma.taxonomyTerm.findFirstOrThrow({
+      where: { ownerId, kind: "FACT_CATEGORY" },
+    });
+    // Filed against the private contact only, so the settings tally already
+    // reports zero for this term while the lock is closed.
+    await prisma.fact.create({
+      data: { ownerId, contactId: privateId, categoryId: category.id, content: "hidden" },
+    });
+    expect(await usageFor(category.id)).toBe(0);
+
+    // The guard itself stays unfiltered — deleting would cascade the private
+    // row away — but the refusal must not quote the number the lock is holding.
+    const locked = await deleteTerm(category.id);
+    expect(locked.ok).toBe(false);
+    expect(locked.error).toMatch(/^Something still uses this\./);
+    expect(locked.error).not.toMatch(/\d/);
+    expect(await prisma.taxonomyTerm.count({ where: { id: category.id } })).toBe(1);
+
+    state.unlocked = true;
+    const unlocked = await deleteTerm(category.id);
+    expect(unlocked.ok).toBe(false);
+    expect(unlocked.error).toMatch(/^1 record uses this\./);
   });
 
   it("counts custom-field values the same way", async () => {

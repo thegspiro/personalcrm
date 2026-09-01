@@ -200,6 +200,9 @@ export const getContact = cache(
     // Facts carry their own marker, so a single private note about an
     // otherwise ordinary person stays hidden.
     if (!scope.unlocked) {
+      // The same rule as `lifeEventPrivacyWhere`, applied in memory because
+      // DETAIL_INCLUDE has already fetched the row: an event stays hidden when
+      // any participant is private, not only when the anchor contact is.
       contact.lifeEvents = contact.lifeEvents.filter(
         (event) => event.participants.every((participant) => !participant.contact.isPrivate),
       );

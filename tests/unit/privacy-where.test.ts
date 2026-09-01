@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   householdPrivacyWhere,
   interactionPrivacyWhere,
+  lifeEventPrivacyWhere,
   viaOptionalContactPrivacyWhere,
   type PrivacyScope,
 } from "@/server/privacy/where";
@@ -20,6 +21,22 @@ describe("household privacy where-fragment", () => {
   it("does not filter households while unlocked or when the lock is off", () => {
     expect(householdPrivacyWhere(UNLOCKED)).toEqual({});
     expect(householdPrivacyWhere(OFF)).toEqual({});
+  });
+});
+
+describe("life event privacy where-fragment", () => {
+  it("withholds an event whose anchor or any participant is private", () => {
+    // The anchor alone is not enough. "Mum's wedding" is filed against Mum, who
+    // is public; the person she married is the one behind the lock.
+    expect(lifeEventPrivacyWhere(LOCKED)).toEqual({
+      contact: { isPrivate: false },
+      participants: { none: { contact: { isPrivate: true } } },
+    });
+  });
+
+  it("does not filter life events while unlocked or when the lock is off", () => {
+    expect(lifeEventPrivacyWhere(UNLOCKED)).toEqual({});
+    expect(lifeEventPrivacyWhere(OFF)).toEqual({});
   });
 });
 

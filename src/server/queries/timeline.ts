@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/server/db/client";
 import {
   interactionPrivacyWhere,
+  lifeEventPrivacyWhere,
   privacyScope,
   viaContactPrivacyWhere,
   type PrivacyScope,
@@ -273,15 +274,12 @@ async function fetchLifeEvents(
   return prisma.lifeEvent.findMany({
     where: {
       ownerId,
-      ...viaContactPrivacyWhere(scope),
-      AND: [
-        ...(!scope.unlocked
-          ? [{ participants: { none: { contact: { isPrivate: true } } } }]
-          : []),
-        ...(options.contactId
-          ? [{ participants: { some: { contactId: options.contactId } } }]
-          : []),
-      ],
+      ...lifeEventPrivacyWhere(scope),
+      // The privacy predicate lives in the fragment; this AND carries only the
+      // caller's own filter, which needs `some` where the fragment needs `none`.
+      ...(options.contactId
+        ? { AND: [{ participants: { some: { contactId: options.contactId } } }] }
+        : {}),
       date: { lte: historicalTo, ...(options.from ? { gte: options.from } : {}) },
     },
     include: {

@@ -5,7 +5,7 @@ Three suites, three different jobs.
 | Suite | Runner | Needs | Count | Command |
 | --- | --- | --- | --- | --- |
 | Unit | Vitest | Nothing | 29 files | `npm test` |
-| Integration | Vitest | A throwaway MariaDB | 19 files | `npm test` (skipped without `TEST_DATABASE_URL`) |
+| Integration | Vitest | A throwaway MariaDB | 20 files | `npm test` (skipped without `TEST_DATABASE_URL`) |
 | End-to-end | Playwright | A running instance | 23 specs | `npx playwright test` |
 
 File counts are what is in the tree; the case counts move with every change, so
@@ -92,6 +92,12 @@ the schema do, not things a mock can:
 - `geo-settings.test.ts`, `ai-settings.test.ts` — that the two settings stored
   per installation rather than per owner are only writable by an `ADMIN`, and
   that a refusal leaves the stored value alone.
+- `settings-counts.test.ts` — the aggregates on a page the lock does not gate:
+  that every usage total and custom-field count is filtered by the same scope
+  as the rows behind it, that a life event naming a private participant is
+  excluded even though its anchor contact is public, that dating taxonomies
+  report nothing at all rather than a filtered number, and that refusing to
+  delete a term in use does not quote a count while locked.
 
 `interactions.test.ts` and `entry-editing.test.ts` call the server actions
 themselves rather than reproducing their steps. That needs `server-only` neutralised — `vitest.config.ts` aliases it

@@ -10,6 +10,7 @@ import {
   contactPrivacyWhere,
   debtPrivacyWhere,
   factPrivacyWhere,
+  lifeEventPrivacyWhere,
   privacyScope,
   viaContactPrivacyWhere,
 } from "@/server/privacy/filter";
@@ -310,10 +311,7 @@ export async function updateLifeEvent(form: FormData): Promise<ActionResult> {
     where: {
       id,
       ownerId,
-      ...viaContactPrivacyWhere(scope),
-      ...(!scope.unlocked
-        ? { participants: { none: { contact: { isPrivate: true } } } }
-        : {}),
+      ...lifeEventPrivacyWhere(scope),
     },
     select: { contactId: true, participants: { select: { contactId: true } } },
   });
@@ -370,10 +368,7 @@ export async function deleteLifeEvent(id: string): Promise<ActionResult> {
     where: {
       id,
       ownerId,
-      ...viaContactPrivacyWhere(scope),
-      ...(!scope.unlocked
-        ? { participants: { none: { contact: { isPrivate: true } } } }
-        : {}),
+      ...lifeEventPrivacyWhere(scope),
     },
     select: { contactId: true, participants: { select: { contactId: true } } },
   });

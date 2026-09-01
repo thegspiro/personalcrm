@@ -50,6 +50,7 @@ where-fragments applied to the queries themselves:
 | `factPrivacyWhere`               | Fact queries                                                                                    |
 | `debtPrivacyWhere`               | Debt queries                                                                                    |
 | `interactionPrivacyWhere`        | Interactions — withheld if the row is private, **or any participant is, or anyone mentioned is** |
+| `lifeEventPrivacyWhere`          | Life events — withheld if the anchor contact is private, **or any participant is**              |
 | `viaContactPrivacyWhere`         | Anything reached through a contact                                                              |
 | `viaOptionalContactPrivacyWhere` | Anything whose contact is optional — a task or idea can stand on its own                        |
 | `householdPrivacyWhere`          | Household lists — a household with a private member can name them in its own title or notes     |
@@ -179,6 +180,20 @@ gate, which is the whole reason the invariant covers counts.
 Dating taxonomies and dating custom fields report nothing at all while locked,
 rather than a number filtered row by row — the module is hidden whole, so a
 count of it would be the only part still visible.
+
+A total is filtered by the *same* predicate as the rows, not merely a similar
+one. A life event has an anchor contact and any number of participants, and the
+timeline withholds it when either is private; filtering the settings tally on
+the anchor alone counted events the timeline was hiding, and reported their
+type. Both now go through `lifeEventPrivacyWhere`, which is what the fragment
+exists for — the rule had been hand-copied at four call sites and forgotten at
+the fifth.
+
+One count is deliberately **not** filtered: the guard that refuses to delete a
+taxonomy term still in use. Filtering it would let a locked session delete a
+term that private rows point at, cascading them away — the history-rewrite the
+refusal exists to prevent. Only the *figure* is withheld: a locked session is
+told something still uses the term, without the number.
 
 ### Locking or signing out wipes it
 
