@@ -59,7 +59,6 @@ const TABLES = [
   "TaxonomyTerm",
   "UserPreference",
   "Session",
-  "LoginAttempt",
   "User",
   "AppSetting",
 ];

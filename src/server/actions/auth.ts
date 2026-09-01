@@ -7,7 +7,7 @@ import { prisma } from "@/server/db/client";
 import { createAccount, needsFirstRunSetup, signupsAllowed } from "@/server/auth/provision";
 import { checkPasswordStrength, verifyPassword } from "@/server/auth/password";
 import { createSession, destroySession } from "@/server/auth/session";
-import { clearLoginAttempts, registerLoginAttempt } from "@/server/auth/login-throttle";
+import { clearLoginAttempts, reserveLoginAttempt } from "@/server/auth/login-throttle";
 
 export interface FormState {
   error?: string;
@@ -55,12 +55,12 @@ export async function loginAction(_prev: FormState, formData: FormData): Promise
   const email = parsed.data.email.toLowerCase();
   const meta = await requestMeta();
 
-  // Counted before the password is looked at, so a burst of guesses cannot all
-  // pass the gate on the same stale count — and so that attempts against an
-  // address with no account are throttled too. If only real accounts were
-  // counted, the throttle would answer a question the error message refuses
-  // to: whether that address is one of ours.
-  const throttle = await registerLoginAttempt(email, meta.ip);
+  // Claimed before the password is looked at, and synchronously, so a burst
+  // of guesses cannot all read the same pre-threshold count and each take a
+  // turn. Attempts against an address with no account are counted on the same
+  // terms, because a throttle that fired only for real accounts would answer
+  // the question the error message below carefully refuses to.
+  const throttle = reserveLoginAttempt(email, meta.ip);
   if (throttle.blocked) {
     return {
       error: throttle.message ?? "Too many sign-in attempts. Try again shortly.",
@@ -77,12 +77,12 @@ export async function loginAction(_prev: FormState, formData: FormData): Promise
     return { error: "That email and password don't match." };
   }
   if (!user.isActive) {
-    // The attempt stays counted: a disabled account is still an account, and
-    // letting it be probed at full speed defeats the point.
+    // The claim stands: a disabled account is still an account, and letting it
+    // be probed at full speed defeats the point.
     return { error: "This account has been disabled." };
   }
 
-  await clearLoginAttempts(email, meta.ip);
+  clearLoginAttempts(email, meta.ip);
   await createSession(user.id, meta);
   redirect("/");
 }

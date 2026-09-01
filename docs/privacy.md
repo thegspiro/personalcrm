@@ -405,33 +405,59 @@ the last attempt. A successful sign-in clears the record; a run of failures is
 forgotten after twenty-four hours, so five typos last week do not throttle the
 first attempt today.
 
-**What it is keyed on, and why.** One counter per *address-and-client pair*
-(`LoginAttempt`), not a counter on the account. A counter on the account would
-hand anyone who knows your email address a way to lock you out of it, which
-trades one denial of service for another. The pair also means the throttle
-covers addresses that have no account behind it — necessary, because a throttle
-that only fired for real accounts would answer the question the login error
-carefully refuses to: whether that address is one of ours. Both the refusal and
-the rejection are the same for an address that has never existed.
+**What it is keyed on, and why.** One counter per *address-and-client pair*,
+not a counter on the account. A counter on the account would hand anyone who
+knows your email address a way to lock you out of it, which trades one denial
+of service for another. The pair also means the throttle covers addresses that
+have no account behind them — necessary, because a throttle that only fired for
+real accounts would answer the question the login error carefully refuses to:
+whether that address is one of ours. Both the refusal and the rejection read
+the same for an address that has never existed.
+
+**It lives in the process, not in a table.** This started as a database table
+and five rounds of review took it apart, every time over the same tension.
+Counting an attempt *before* the password is checked is the only way to stop a
+burst — but on disk that means a write per attempt, which makes the store
+something whoever is knocking can grow. Bounding that store then means dropping
+records, and dropping records is the throttle switching itself off. Both halves
+of the key come from the caller, so there was no honest way to have it both
+ways.
+
+The counters hang off `globalThis`, which here is a correctness requirement
+rather than the convenience it is for the database client: a production build
+emits that module into more than one chunk, so a plain module-level map would
+be one map per chunk — the login action counting against one, the scheduled
+prune tidying another, and the same action posted to a route served by a
+different chunk finding an allowance nobody had spent.
+
+In memory both halves come free. Reserving is one synchronous mutation, so
+nothing interleaves between reading a count and writing it back and a burst
+cannot slip through the gap — an asynchronous gate, however fast, yields before
+the password check, and then every request in the burst reads the same
+pre-threshold count and each takes a turn. The map holds a fixed number of
+entries and never more — and each key is truncated, since a ceiling on how many
+keys are held is not a ceiling on how large they are and nothing upstream
+bounds the address. An entry still refusing somebody is never evicted to make
+room, so filling the
+limiter cannot reset a throttle that is already holding; if every entry is
+live, a new pair is refused rather than admitted, because admitting would make
+filling it the way to switch it off.
+
+**What that costs.** Counters do not survive a restart — though anyone who can
+restart the container already has the database. And each replica keeps its own,
+so a deployment running several allows that many times the attempts before
+backoff bites; the intended shape is one container, and volumetric defence
+belongs at the proxy in front of it either way.
 
 **What it does not do.** The client half of the key is whatever the request
 presents as `X-Forwarded-For` (falling back to `X-Real-IP`, then to no address
-at all, which is counted as one group). Nothing verifies it. An attacker who
-can vary that header can therefore have as many buckets as they like, and the
-per-client dimension is worth exactly as much as the proxy in front of the app
-— which, in the intended deployment, is one the operator controls and which
-overwrites the header. What the throttle does buy unconditionally is that a
-single client cannot grind through a password list, and that every attempt now
-costs a counted, serialised write before any password is checked. It is not a
-substitute for a strong password or for keeping the instance off the open
-internet.
-
-**Where it happens.** `registerLoginAttempt` runs *before* the password is
-verified, so a burst of concurrent guesses cannot all read the same count and
-pass the gate together. The bcrypt call is deliberately outside that
-transaction: verifying a password takes a quarter of a second at this cost
-factor, and holding a locked row across it would turn every sign-in into a
-queue.
+at all, which is counted as one group). Nothing verifies it. Someone who can
+vary that header can have as many buckets as they like, and the per-client
+dimension is worth exactly as much as the proxy in front of the app — which, in
+the intended deployment, is one the operator controls and which overwrites the
+header. What the throttle buys unconditionally is that a single client cannot
+grind through a password list. It is not a substitute for a strong password or
+for keeping the instance off the open internet.
 
 ## What the app never does
 

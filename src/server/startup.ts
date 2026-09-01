@@ -2,7 +2,7 @@ import "server-only";
 import { prisma } from "@/server/db/client";
 import { provisionTaxonomies } from "@/server/taxonomy/provision";
 import { purgeExpiredSessions } from "@/server/auth/session";
-import { purgeStaleLoginAttempts } from "@/server/auth/login-throttle";
+
 import { startReminderScheduler } from "@/server/reminder-scheduler";
 
 let started = false;
@@ -38,12 +38,4 @@ export async function runStartupTasks(): Promise<void> {
     console.error("[startup] session cleanup failed:", error);
   }
 
-  try {
-    // Rows past the retention window never block anyone; this only stops the
-    // table growing without bound on an instance that is scanned regularly.
-    const removed = await purgeStaleLoginAttempts();
-    if (removed > 0) console.log(`[startup] cleared ${removed} stale sign-in attempt(s)`);
-  } catch (error) {
-    console.error("[startup] sign-in attempt cleanup failed:", error);
-  }
 }

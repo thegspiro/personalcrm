@@ -96,34 +96,6 @@ model Session {
   @@index([expiresAt])
 }
 
-/// Sign-in throttling, keyed by the address that was tried and where it was
-/// tried from.
-///
-/// Deliberately not a counter on `User`, for two reasons. Anyone who knows an
-/// address could otherwise lock its owner out at will simply by guessing
-/// wrongly. And attempts against an address with no account would go
-/// uncounted, which turns the throttle itself into an oracle for which
-/// addresses exist — the one thing the login response is careful not to be.
-model LoginAttempt {
-  id String @id @default(cuid())
-
-  /// Lowercased, exactly as the throttle looks it up. Not a foreign key: an
-  /// address with no account behind it has to be counted too.
-  email String @db.VarChar(191)
-  /// The client address as the app sees it, or "" when the request carried
-  /// none. Only as trustworthy as the proxy in front of it — see
-  /// docs/privacy.md.
-  ip    String @db.VarChar(64)
-
-  failedCount Int      @default(0)
-  /// The most recent attempt. Backoff is measured from here, and rows older
-  /// than the retention window are cleared at boot.
-  failedAt    DateTime
-
-  @@unique([email, ip])
-  @@index([failedAt])
-}
-
 model UserPreference {
   userId             String  @id
   theme              String  @default("system") @db.VarChar(16)
