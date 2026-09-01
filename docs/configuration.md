@@ -71,7 +71,7 @@ config:
 | `DashboardLayout` | Which home-screen widgets are on, in what order, with what row counts |
 | `TaxonomyTerm` | Every type list in the app — labels, colours, icons, order |
 | `CustomFieldDefinition` | User-defined fields on contacts, dating profiles, interactions and dates |
-| `AppSetting` | Instance-wide: first-run state, AI provider/base URL/model/key |
+| `AppSetting` | Instance-wide: first-run state, AI provider/base URL/model/key, address-lookup provider/base URL |
 
 The account timezone is the one to get right: every cadence, every "overdue",
 every date parse in quick add is anchored to it rather than to the server clock.

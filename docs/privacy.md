@@ -65,6 +65,13 @@ dates only from interactions admitted by `interactionPrivacyWhere`. A place
 known solely through hidden interactions is not listed while locked. Plans at
 a place inherit the privacy of their optional contact.
 
+One predicate, `locationVisibleWhere`, expresses that and is shared by the
+directory, the place page, quick add's venue matching and every edit action — so
+a hidden place is neither offered back to you nor editable while locked, and
+"that place wasn't found" is the only answer either way, since a distinguishable
+error would itself confirm one exists. Typing its name still resolves to the
+existing row rather than creating a duplicate.
+
 The module is deliberately pure and free of request context so it can be tested
 directly against a database; [`filter.ts`](../src/server/privacy/filter.ts)
 supplies the live scope.
@@ -213,6 +220,43 @@ A self-hosted endpoint is a first-class choice: its address is editable, no key
 is required, and nothing leaves your network if the endpoint doesn't. Replies
 are read forgivingly (fenced, prefaced with prose, or wrapped in an array),
 because smaller local models do all three.
+
+## Optional address lookup
+
+The second — and only other — thing in the app that sends anything anywhere.
+`src/server/geo/` is off by default: switched off, nothing in it runs and a
+place's address is simply something you type.
+
+Four rules, the same shape as the assisted reading's:
+
+1. **Nothing is sent until you switch it on.** Off is the shipped state.
+2. **Nothing is sent except when you press the button.** Never while you type,
+   never on a page load, never in the background. An address does not leave the
+   machine as a side effect of browsing. This also happens to be what
+   Nominatim's usage policy requires — it forbids search-as-you-type outright —
+   but it is the rule we would want regardless.
+3. **Only the place's name and the address you typed.** Never the notes, never
+   who was seen there, never anything about an interaction. A place is the only
+   subject; the people are not part of the query.
+4. **Nothing is written from the answer.** Candidates are shown, you pick one,
+   and the write goes through `applyLocationLookup` like any other action. Every
+   failure — not configured, timed out, an unreadable reply — returns no
+   candidates rather than an error, and the field stays typeable.
+
+What it stores is an OpenStreetMap object reference (`osmType` + `osmId`) plus
+the address parts and coordinates. Nominatim's own `place_id` is deliberately
+discarded: it is internal to one instance and does not survive a reimport.
+
+### Endpoints
+
+Nominatim (the OpenStreetMap Foundation's own, on donated servers), Photon, or
+anything speaking the Nominatim `/search` shape. Both dialects can be pointed at
+an instance on your own network, in which case nothing leaves it — Photon by
+editing its endpoint, Nominatim through the self-hosted entry. Photon is the
+lighter of the two to run. Plain `fetch`, no SDK, for the same
+reason the AI layer uses none. Requests identify the application in their
+`User-Agent`, which Nominatim's policy asks for and which is why a stock HTTP
+library's default would be rejected.
 
 ## What the app never does
 

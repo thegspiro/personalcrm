@@ -58,7 +58,8 @@ packaged as one container with the database built in.
 | Ideas | `/ideas` | Conversation starters, and plans — things to do with someone |
 | Tasks | `/tasks` | Follow-ups |
 | Gifts | `/gifts` | Both directions |
-| Settings | `/settings` | Look, Fields, Types, Home, Privacy |
+| Places | `/locations` | Venues shared by interactions and plans; who you saw there, and an optional address lookup |
+| Settings | `/settings` | Look, Fields, Types, Home, Quick add, Places, Privacy |
 | Welcome | `/welcome` | First-run onboarding, once per account |
 | Unlock | `/unlock` | The privacy PIN |
 
@@ -72,6 +73,8 @@ Documented so nobody assumes a feature works:
 | **Nightly backups** | `/config/backups` is created at boot and nothing writes to it — see [backup.md](backup.md) |
 | **Avatar upload** | `Contact.avatarPath` is read and rendered throughout, but no upload path writes it and nothing writes to `/config/uploads` |
 | **Offline writes** | Deliberately absent. Non-GET requests go straight to the network and fail honestly rather than pretending something was saved |
+| **Place aliases** | `Location.aliases` exists and nothing writes it. Doing it properly needs its own table with a uniqueness constraint — JSON gives no useful index, and scanning every place on each write would sit on the hot path of four actions |
+| **Per-person addresses** | The `Address` table is modelled and queried but has no writer and no screen. `Contact.city`/`region`/`country` cover the common case; a repeated-address editor is a feature rather than a gap to patch |
 
 The project is under active development and nothing has been tagged as a
 release yet.

@@ -41,6 +41,8 @@ export default async function EditContactPage({ params }: { params: Promise<{ id
           occupation: contact.occupation,
           employer: contact.employer,
           city: contact.city,
+          region: contact.region,
+          country: contact.country,
           summary: contact.summary,
           howWeMet: contact.howWeMet,
           whereWeMet: contact.whereWeMet,

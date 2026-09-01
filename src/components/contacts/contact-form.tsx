@@ -30,6 +30,8 @@ export interface ContactFormValues {
   occupation: string | null;
   employer: string | null;
   city: string | null;
+  region: string | null;
+  country: string | null;
   summary: string | null;
   howWeMet: string | null;
   whereWeMet: string | null;
@@ -146,9 +148,22 @@ export function ContactForm({
             </Field>
           </div>
 
-          <Field label="City" htmlFor="city">
-            <Input id="city" name="city" defaultValue={contact?.city ?? ""} />
-          </Field>
+          {/*
+            Region and country are written by the action on every save, so
+            leaving them off the form did not merely leave them empty -- editing
+            a contact wrote null over whatever was there.
+          */}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field label="City" htmlFor="city">
+              <Input id="city" name="city" defaultValue={contact?.city ?? ""} maxLength={120} />
+            </Field>
+            <Field label="Region" htmlFor="region">
+              <Input id="region" name="region" defaultValue={contact?.region ?? ""} maxLength={120} />
+            </Field>
+            <Field label="Country" htmlFor="country">
+              <Input id="country" name="country" defaultValue={contact?.country ?? ""} maxLength={120} />
+            </Field>
+          </div>
 
           <DateField
             name="birthDate"
