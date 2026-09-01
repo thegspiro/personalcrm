@@ -373,6 +373,35 @@ test("dating writes are refused while locked, not just hidden", async ({
   expect(html).not.toContain("Private notes");
 });
 
+test("the header offers a way to close the lock without waiting out the timeout", async ({
+  page,
+}) => {
+  await ensureSignedIn(page);
+
+  // Arrives here with the lock closed, which is the state the control must not
+  // appear in: nothing is open, so there is nothing to close.
+  await page.goto("/");
+  const lockNow = page.getByRole("button", { name: "Lock private content now" });
+  await expect(lockNow).toHaveCount(0);
+
+  await page.goto("/unlock?next=/");
+  await page.getByLabel("PIN").fill(PIN);
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.waitForURL("/");
+
+  // Now it is the one visible sign that private content is open at all.
+  await expect(lockNow).toBeVisible();
+  await lockNow.click();
+  await page.waitForURL("/");
+
+  // The lock really closed, rather than the button only changing appearance.
+  await expect(lockNow).toHaveCount(0);
+  await page.goto("/dating");
+  await expect(page).toHaveURL(/\/unlock/);
+
+  // Leaves the suite locked, which is how it was found.
+});
+
 test("cleaning up: unhide, unmark, and remove the PIN", async ({ page }) => {
   await ensureSignedIn(page);
   await openPrivacySettings(page);
