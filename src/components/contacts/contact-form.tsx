@@ -30,6 +30,8 @@ export interface ContactFormValues {
   occupation: string | null;
   employer: string | null;
   city: string | null;
+  region: string | null;
+  country: string | null;
   summary: string | null;
   howWeMet: string | null;
   whereWeMet: string | null;
@@ -146,9 +148,17 @@ export function ContactForm({
             </Field>
           </div>
 
-          <Field label="City" htmlFor="city">
-            <Input id="city" name="city" defaultValue={contact?.city ?? ""} />
-          </Field>
+          <div className="grid gap-3.5 sm:grid-cols-3">
+            <Field label="City" htmlFor="city">
+              <Input id="city" name="city" defaultValue={contact?.city ?? ""} />
+            </Field>
+            <Field label="Region" htmlFor="region">
+              <Input id="region" name="region" defaultValue={contact?.region ?? ""} />
+            </Field>
+            <Field label="Country" htmlFor="country">
+              <Input id="country" name="country" defaultValue={contact?.country ?? ""} />
+            </Field>
+          </div>
 
           <DateField
             name="birthDate"
@@ -193,6 +203,19 @@ export function ContactForm({
             defaultValue={contact?.meetingSourceId}
             placeholder="Not sure"
           />
+
+          <Field
+            label="The place"
+            htmlFor="whereWeMet"
+            hint="The room, not the category — “Kellogg's on Fifth”, “Priya's housewarming”."
+          >
+            <Input
+              id="whereWeMet"
+              name="whereWeMet"
+              defaultValue={contact?.whereWeMet ?? ""}
+              placeholder="Ronnie's, in the back room"
+            />
+          </Field>
 
           <Field label="The story" htmlFor="howWeMet">
             <Textarea

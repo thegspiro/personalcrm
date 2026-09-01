@@ -52,6 +52,8 @@ export interface TimelineEntry {
   sentiment?: number | null;
   reachedOutBy?: string | null;
   location?: string | null;
+  /** Interactions only. Collected when logging; shown beside the time. */
+  durationMinutes?: number | null;
   href: string;
   editable?:
     | { kind: "important-date"; recurrence: "NONE" | "ANNUAL" | "MONTHLY"; typeId: string | null; notes: string | null; reminderDaysBefore: number[] | null }
@@ -340,6 +342,7 @@ function interactionEntry(row: InteractionRow, timezone: string, now: Date): Tim
     sentiment: row.sentiment,
     reachedOutBy: row.reachedOutBy,
     location: row.location,
+    durationMinutes: row.durationMinutes,
     href: contacts[0] ? `/people/${contacts[0].id}#timeline-entry-interaction-${row.id}` : "/timeline",
   };
 }

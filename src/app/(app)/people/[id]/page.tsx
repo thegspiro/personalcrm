@@ -8,7 +8,7 @@ import { listDateEntries } from "@/server/queries/dating";
 import { listPlans } from "@/server/queries/plans";
 import { canSeeDating } from "@/server/privacy/filter";
 import { getContactFamily, listHouseholdOptions } from "@/server/queries/family";
-import { fieldsFor } from "@/server/queries/custom-fields";
+import { fieldsFor, fieldValuesForMany } from "@/server/queries/custom-fields";
 import { offlineCacheable } from "@/server/privacy/offline";
 import { CacheThisPage } from "@/components/offline/offline";
 import { CustomFieldValues } from "@/components/custom-fields/field-values";
@@ -84,6 +84,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     allHouseholds,
     customFields,
     interactionFields,
+    romanticFields,
+    dateEntryFields,
     reciprocity,
     upcomingDates,
     locations,
@@ -109,10 +111,33 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     listHouseholdOptions(user.id),
     fieldsFor(user.id, "CONTACT", id, { categoryId: contact.categoryId }),
     fieldsFor(user.id, "INTERACTION", null),
+    showDating ? fieldsFor(user.id, "ROMANTIC", id) : Promise.resolve([]),
+    showDating ? fieldsFor(user.id, "DATE_ENTRY", null) : Promise.resolve([]),
     getReciprocity(user.id, id),
     getUpcomingDates(user.id, timezone, 366, 100, id),
     listContactLocations(user.id, id),
   ]);
+
+  // Definitions come back once; the saved values for every logged date come
+  // back in a single query, so the edit forms are not N round trips.
+  const dateFieldValues =
+    dateEntryFields.length > 0 && dateEntries.length > 0
+      ? await fieldValuesForMany(
+          user.id,
+          "DATE_ENTRY",
+          dateEntries.map((entry) => entry.id),
+        )
+      : new Map<string, Map<string, unknown>>();
+
+  const customFieldsByDate = Object.fromEntries(
+    dateEntries.map((entry) => [
+      entry.id,
+      dateEntryFields.map((field) => ({
+        definition: field.definition,
+        value: dateFieldValues.get(entry.id)?.get(field.definition.id) ?? null,
+      })),
+    ]),
+  );
 
   const primaryMethod = contact.methods.find((method) => method.isPrimary) ?? null;
 
@@ -231,6 +256,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             <RomanticSection
               contactId={contact.id}
               contactName={contact.firstName}
+              customFields={romanticFields}
               blurPrivate={prefs.blurPrivateNotes}
               stages={terms.DATING_STAGE}
               sources={terms.MEETING_SOURCE}
@@ -273,6 +299,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
             <DateLogSection
               contactId={contact.id}
+              customFields={dateEntryFields}
+              customFieldsByDate={customFieldsByDate}
               blurPrivate={prefs.blurPrivateNotes}
               activityTypes={terms.DATE_ACTIVITY_TYPE}
               plans={plans.map((plan) => ({

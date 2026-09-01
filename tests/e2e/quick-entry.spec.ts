@@ -137,6 +137,25 @@ test("the command palette finds a person and navigates", async ({ page }) => {
   await expect(page.getByRole("heading", { name: new RegExp(SOLO()), level: 2 })).toBeVisible();
 });
 
+test("the palette's log action opens the sheet, not just the dashboard", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto("/people");
+
+  await page.getByRole("button", { name: "Search" }).click();
+  await page.getByRole("button", { name: "Log an interaction" }).click();
+
+  // It navigates to /?log=1, and the sheet lives with the floating button —
+  // for a long time nothing read the parameter, so this landed on the
+  // dashboard and stopped.
+  await expect(page.getByRole("heading", { name: "Log an interaction" })).toBeVisible();
+
+  // Dismissing drops the parameter, so a reload does not reopen it.
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/\/$/);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Log an interaction" })).toBeHidden();
+});
+
 test("the palette opens on the keyboard shortcut", async ({ page }) => {
   await ensureSignedIn(page);
   await page.goto("/");

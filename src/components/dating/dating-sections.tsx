@@ -10,6 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
+import {
+  CollapsibleCustomFields,
+  type RenderableField,
+} from "@/components/custom-fields/field-renderer";
 import { DateField, DateTimeField } from "@/components/form/date-field";
 import { RatingInput, RatingDisplay } from "@/components/form/rating-input";
 import { TermChips, TermSelect, type TermOption } from "@/components/form/term-select";
@@ -94,6 +98,7 @@ export function RomanticSection({
   stages,
   sources,
   blurPrivate,
+  customFields = [],
 }: {
   contactId: string;
   contactName: string;
@@ -101,6 +106,8 @@ export function RomanticSection({
   stages: TermOption[];
   sources: TermOption[];
   blurPrivate: boolean;
+  /** Defined under Settings → Fields → Dating profiles. */
+  customFields?: RenderableField[];
 }) {
   const run = useRun();
   const router = useRouter();
@@ -193,6 +200,8 @@ export function RomanticSection({
             <input type="checkbox" name="exclusive" value="true" defaultChecked={profile?.exclusive ?? false} className="size-4" />
             Exclusive
           </label>
+
+          <CollapsibleCustomFields fields={customFields} />
 
           <div className="flex gap-2">
             <SubmitButton size="sm" className="flex-1">Save</SubmitButton>
@@ -377,12 +386,20 @@ function DateEntryFields({
   entry,
   venue,
   onVenueChange,
+  customFields = [],
 }: {
   formId: string;
   activityTypes: TermOption[];
   entry?: DateLogItem;
   venue?: string;
   onVenueChange?: (value: string) => void;
+  /**
+   * Defined under Settings → Fields → Dates. Rendered here rather than on each
+   * form, so the hidden "which fields were on screen" marker is present on
+   * both — without it a save from the form that omits them clears every
+   * boolean on the record.
+   */
+  customFields?: RenderableField[];
 }) {
   return (
     <>
@@ -492,6 +509,7 @@ function DateEntryFields({
         />
         Hide this behind the privacy lock
       </label>
+      <CollapsibleCustomFields fields={customFields} />
     </>
   );
 }
@@ -502,6 +520,8 @@ export function DateLogSection({
   activityTypes,
   plans = [],
   blurPrivate,
+  customFields = [],
+  customFieldsByDate = {},
 }: {
   contactId: string;
   dates: DateLogItem[];
@@ -509,6 +529,10 @@ export function DateLogSection({
   /** Plans saved for this person — picking one closes it out. */
   plans?: PlanOption[];
   blurPrivate: boolean;
+  /** Field definitions for a new date, with no values yet. */
+  customFields?: RenderableField[];
+  /** The same definitions carrying each existing date's saved values. */
+  customFieldsByDate?: Record<string, RenderableField[]>;
 }) {
   const run = useRun();
   // The venue is prefilled from a picked idea, so it has to be controlled.
@@ -576,6 +600,7 @@ export function DateLogSection({
             activityTypes={activityTypes}
             venue={venue}
             onVenueChange={setVenue}
+            customFields={customFields}
           />
           <SubmitButton size="sm">Log it</SubmitButton>
         </form>
@@ -596,6 +621,7 @@ export function DateLogSection({
                   formId={`date-${entry.id}`}
                   activityTypes={activityTypes}
                   entry={entry}
+                  customFields={customFieldsByDate[entry.id] ?? []}
                 />
                 <SubmitButton size="sm">Save</SubmitButton>
               </form>

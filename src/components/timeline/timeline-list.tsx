@@ -9,6 +9,7 @@ import { Icon } from "@/components/nav/icon";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
+  formatDuration,
   timelineDateLabel,
   reachedOutByLabel,
   sentimentLabel,
@@ -168,6 +169,9 @@ export function TimelineList({
                   {entry.term ? <span>{entry.term.label}</span> : null}
                   {entry.occurredAt && entry.precision === "DAY" ? (
                     <span>{timeOfDay(entry.occurredAt, timezone)}</span>
+                  ) : null}
+                  {formatDuration(entry.durationMinutes) ? (
+                    <span>{formatDuration(entry.durationMinutes)}</span>
                   ) : null}
                   {entry.location ? <span className="truncate">{entry.location}</span> : null}
                   {reachedOutByLabel(entry.reachedOutBy) ? (

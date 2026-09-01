@@ -104,12 +104,17 @@ function buildOrderBy(sort: ContactSort = "name"): Prisma.ContactOrderByWithRela
       // Never-contacted people sort last rather than jumping to the top.
       return [{ lastInteractionAt: { sort: "desc", nulls: "last" } }, { firstName: "asc" }];
     case "overdue":
+      // Deliberately not pinning favourites here. This list means "who is most
+      // overdue"; floating anyone above that answers a different question and
+      // makes the one it was asked look wrong.
       return [{ nextTouchAt: { sort: "asc", nulls: "last" } }, { firstName: "asc" }];
     case "added":
       return [{ createdAt: "desc" }];
     case "name":
     default:
-      return [{ firstName: "asc" }, { lastName: "asc" }];
+      // The checkbox says favouriting pins someone near the top of your lists,
+      // so the default sort has to actually do it.
+      return [{ isFavorite: "desc" }, { firstName: "asc" }, { lastName: "asc" }];
   }
 }
 
