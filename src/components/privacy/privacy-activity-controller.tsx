@@ -96,11 +96,15 @@ export function PrivacyActivityController({
     setClosed(true);
 
     void (async () => {
-      // The server write goes first and is awaited. Purging waits on the
-      // service worker, so doing it first leaves a window in which closing the
-      // tab loses a lock the viewer explicitly asked for -- the shell would
-      // have blanked and nothing else would have happened.
-      const result = await lockPrivacyNow().catch(() => null);
+      // Both start now rather than in sequence. Posting the purge immediately
+      // hands it to the service worker, whose `waitUntil` finishes on its own
+      // even if this document goes away mid-flight; awaiting the lock first
+      // would leave a cached private page behind when it does.
+      const purged = purgeOfflineCaches();
+      const locked = lockPrivacyNow().catch(() => null);
+
+      const result = await locked;
+      await purged;
 
       if (!result?.ok) {
         // Deliberately does not restore the shell. A lost response and a lost
@@ -113,11 +117,17 @@ export function PrivacyActivityController({
         return;
       }
 
-      await purgeOfflineCaches();
-      router.replace("/");
-      router.refresh();
+      // A full document navigation, not `router.replace`. This component lives
+      // in the app layout and survives client routing, so a soft navigation --
+      // to the current route especially -- keeps `closed` true and strands the
+      // viewer on the blank panel. Reloading also guarantees the next render
+      // comes from the now-locked server rather than anything held in memory.
+      // The rule below advises `router.push`, which is the soft navigation
+      // this is deliberately avoiding.
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.assign("/");
     })();
-  }, [locking, router]);
+  }, [locking]);
 
   React.useEffect(() => {
     if (!enabled || !unlocked || !deadline || closed) return;

@@ -408,7 +408,14 @@ test("the header offers a way to close the lock without waiting out the timeout"
   await page.getByRole("button", { name: "Reload" }).click();
   await expect(lockNow).toBeVisible();
   await lockNow.click();
-  await page.waitForURL("/");
+
+  // Locking from "/" is the case a soft navigation cannot serve: the
+  // controller lives in the app layout and survives client routing, so
+  // `router.replace` to the route already showing would leave the viewer on
+  // the blank panel for good. Assert a usable page comes back, before any
+  // navigation of the test's own that would paper over it.
+  await expect(page.getByText("Privacy lock closed.")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Account menu" })).toBeVisible();
 
   // The lock really closed, rather than the button only changing appearance.
   await expect(lockNow).toHaveCount(0);
