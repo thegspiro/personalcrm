@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ContactCard } from "@/components/contacts/contact-card";
 import { ContactFilters } from "@/components/contacts/contact-filters";
+import { ListCapNotice } from "@/components/ui/list-cap-notice";
 import { getUserContext } from "@/server/user/context";
 import { offlineCacheable } from "@/server/privacy/offline";
 import { CacheThisPage } from "@/components/offline/offline";
@@ -86,13 +87,23 @@ export default async function PeoplePage({
           }
         />
       ) : (
-        <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
-          {items.map((contact) => (
-            <li key={contact.id}>
-              <ContactCard contact={contact} timezone={timezone} />
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
+            {items.map((contact) => (
+              <li key={contact.id}>
+                <ContactCard contact={contact} timezone={timezone} />
+              </li>
+            ))}
+          </ul>
+          {items.length < total ? (
+            <ListCapNotice
+              shown={items.length}
+              total={total}
+              noun="people"
+              hint="Search or filter to reach the rest."
+            />
+          ) : null}
+        </>
       )}
     </div>
   );

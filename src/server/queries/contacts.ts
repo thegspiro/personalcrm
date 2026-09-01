@@ -270,6 +270,7 @@ export async function listContactInteractions(
 export async function getReciprocity(
   ownerId: string,
   contactId: string,
+  timezone: string,
 ): Promise<ReciprocitySummary> {
   const scope = await privacyScope();
   // `participants` is a key in both halves, so spreading the privacy fragment
@@ -290,5 +291,5 @@ export async function getReciprocity(
     prisma.interaction.count({ where: mine }),
   ]);
 
-  return summarizeReciprocity(rows, total);
+  return summarizeReciprocity(rows, total, timezone);
 }

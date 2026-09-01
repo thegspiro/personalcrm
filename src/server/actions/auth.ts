@@ -7,9 +7,12 @@ import { prisma } from "@/server/db/client";
 import { createAccount, needsFirstRunSetup, signupsAllowed } from "@/server/auth/provision";
 import { checkPasswordStrength, verifyPassword } from "@/server/auth/password";
 import { createSession, destroySession } from "@/server/auth/session";
+import { clearLoginAttempts, registerLoginAttempt } from "@/server/auth/login-throttle";
 
 export interface FormState {
   error?: string;
+  /** Seconds before another sign-in may be attempted, when throttled. */
+  retryAfterSeconds?: number;
   fieldErrors?: Record<string, string>;
 }
 
@@ -49,9 +52,23 @@ export async function loginAction(_prev: FormState, formData: FormData): Promise
   });
   if (!parsed.success) return { fieldErrors: flatten(parsed.error) };
 
-  const user = await prisma.user.findUnique({
-    where: { email: parsed.data.email.toLowerCase() },
-  });
+  const email = parsed.data.email.toLowerCase();
+  const meta = await requestMeta();
+
+  // Counted before the password is looked at, so a burst of guesses cannot all
+  // pass the gate on the same stale count — and so that attempts against an
+  // address with no account are throttled too. If only real accounts were
+  // counted, the throttle would answer a question the error message refuses
+  // to: whether that address is one of ours.
+  const throttle = await registerLoginAttempt(email, meta.ip);
+  if (throttle.blocked) {
+    return {
+      error: throttle.message ?? "Too many sign-in attempts. Try again shortly.",
+      retryAfterSeconds: throttle.retryAfterSeconds,
+    };
+  }
+
+  const user = await prisma.user.findUnique({ where: { email } });
 
   // Same message and roughly the same work either way, so this can't be used to
   // discover which addresses have accounts.
@@ -60,10 +77,13 @@ export async function loginAction(_prev: FormState, formData: FormData): Promise
     return { error: "That email and password don't match." };
   }
   if (!user.isActive) {
+    // The attempt stays counted: a disabled account is still an account, and
+    // letting it be probed at full speed defeats the point.
     return { error: "This account has been disabled." };
   }
 
-  await createSession(user.id, await requestMeta());
+  await clearLoginAttempts(email, meta.ip);
+  await createSession(user.id, meta);
   redirect("/");
 }
 

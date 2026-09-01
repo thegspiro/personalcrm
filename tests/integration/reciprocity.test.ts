@@ -63,7 +63,7 @@ describe.skipIf(!hasTestDatabase)("reciprocity for one contact", () => {
 
     for (const unlocked of [false, true]) {
       state.unlocked = unlocked;
-      const summary = await getReciprocity(state.ownerId, ada.id);
+      const summary = await getReciprocity(state.ownerId, ada.id, "UTC");
       expect({ unlocked, ...summary }).toMatchObject({
         unlocked,
         me: 1,

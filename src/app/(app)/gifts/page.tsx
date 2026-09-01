@@ -6,6 +6,8 @@ import { listTerms } from "@/server/taxonomy/queries";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/nav/icon";
 import { GiftList } from "@/components/lists/gift-list";
+import { ListCapNotice } from "@/components/ui/list-cap-notice";
+import { applyCap } from "@/lib/list-cap";
 import { plainDateFromDb } from "@/lib/dates";
 import { offlineCacheable } from "@/server/privacy/offline";
 import { CacheThisPage } from "@/components/offline/offline";
@@ -13,11 +15,14 @@ import { CacheThisPage } from "@/components/offline/offline";
 export const metadata: Metadata = { title: "Gifts" };
 export const dynamic = "force-dynamic";
 
+/** One more than this is fetched, so the page can tell a full list from a cut one. */
+const CAP = 200;
+
 export default async function GiftsPage() {
   const { user } = await getUserContext();
   const scope = await privacyScope();
 
-  const [gifts, occasions, cacheable] = await Promise.all([
+  const [rows, occasions, cacheable] = await Promise.all([
     prisma.gift.findMany({
       // A gift names the person it is for, so listing one bought for a private
       // contact discloses that contact while the lock is closed.
@@ -27,11 +32,13 @@ export default async function GiftsPage() {
         contact: { select: { id: true, firstName: true, lastName: true } },
       },
       orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-      take: 200,
+      take: CAP + 1,
     }),
     listTerms(user.id, "GIFT_OCCASION"),
     offlineCacheable(user.id),
   ]);
+
+  const { items: gifts, truncated } = applyCap(rows, CAP);
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
@@ -65,6 +72,13 @@ export default async function GiftsPage() {
           occasions={occasions}
         />
       )}
+      {truncated ? (
+        <ListCapNotice
+          shown={gifts.length}
+          noun="gifts"
+          hint="Mark older ones as given to keep the list current."
+        />
+      ) : null}
       {cacheable ? <CacheThisPage /> : null}
     </div>
   );

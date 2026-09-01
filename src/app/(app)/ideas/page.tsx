@@ -8,6 +8,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/nav/icon";
 import { PlansSection } from "@/components/plans/plans-section";
 import { IdeaList } from "@/components/lists/idea-list";
+import { ListCapNotice } from "@/components/ui/list-cap-notice";
+import { applyCap } from "@/lib/list-cap";
 import { plainDateFromDb } from "@/lib/dates";
 import { displayName } from "@/lib/utils";
 import { privacyScope, viaOptionalContactPrivacyWhere } from "@/server/privacy/filter";
@@ -16,6 +18,10 @@ import { CacheThisPage } from "@/components/offline/offline";
 
 export const metadata: Metadata = { title: "Ideas" };
 export const dynamic = "force-dynamic";
+
+/** One more than each is fetched, so the page can tell a full list from a cut one. */
+const IDEA_CAP = 200;
+const PLAN_CAP = 200;
 
 /**
  * The two halves of "I had an idea": something to say, and something to do.
@@ -28,7 +34,7 @@ export default async function IdeasPage() {
   const { user } = await getUserContext();
   const scope = await privacyScope();
 
-  const [ideas, plans, planCategories, contacts, cacheable] = await Promise.all([
+  const [ideaRows, planRows, planCategories, contacts, cacheable] = await Promise.all([
     prisma.idea.findMany({
       where: {
         ownerId: user.id,
@@ -37,13 +43,16 @@ export default async function IdeasPage() {
       },
       include: { contact: { select: { id: true, firstName: true, lastName: true } } },
       orderBy: { createdAt: "desc" },
-      take: 200,
+      take: IDEA_CAP + 1,
     }),
-    listPlans(user.id),
+    listPlans(user.id, { take: PLAN_CAP + 1 }),
     listTerms(user.id, "PLAN_CATEGORY"),
     listContactOptions(user.id),
     offlineCacheable(user.id),
   ]);
+
+  const { items: ideas, truncated: ideasTruncated } = applyCap(ideaRows, IDEA_CAP);
+  const { items: plans, truncated: plansTruncated } = applyCap(planRows, PLAN_CAP);
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
@@ -84,6 +93,13 @@ export default async function IdeasPage() {
           lastName: contact.lastName,
         }))}
       />
+      {plansTruncated ? (
+        <ListCapNotice
+          shown={plans.length}
+          noun="plans"
+          hint="Mark some done or archived to see the rest."
+        />
+      ) : null}
 
       <div className="grid gap-2">
         <h3 className="text-sm font-semibold tracking-tight">Bring this up</h3>
@@ -103,6 +119,13 @@ export default async function IdeasPage() {
             }))}
           />
         )}
+        {ideasTruncated ? (
+          <ListCapNotice
+            shown={ideas.length}
+            noun="ideas"
+            hint="Mark some used to see the rest."
+          />
+        ) : null}
       </div>
       {cacheable ? <CacheThisPage /> : null}
     </div>

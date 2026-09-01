@@ -395,6 +395,44 @@ reason the AI layer uses none. Requests identify the application in their
 `User-Agent`, which Nominatim's policy asks for and which is why a stock HTTP
 library's default would be rejected.
 
+## Sign-in throttling
+
+The privacy lock has always backed off after repeated wrong PINs. The front
+door did not, which left the secondary lock better defended than the primary
+one. It does now, on the same schedule: five attempts at full speed, then a
+wait doubling from five seconds to a ceiling of fifteen minutes, measured from
+the last attempt. A successful sign-in clears the record; a run of failures is
+forgotten after twenty-four hours, so five typos last week do not throttle the
+first attempt today.
+
+**What it is keyed on, and why.** One counter per *address-and-client pair*
+(`LoginAttempt`), not a counter on the account. A counter on the account would
+hand anyone who knows your email address a way to lock you out of it, which
+trades one denial of service for another. The pair also means the throttle
+covers addresses that have no account behind it — necessary, because a throttle
+that only fired for real accounts would answer the question the login error
+carefully refuses to: whether that address is one of ours. Both the refusal and
+the rejection are the same for an address that has never existed.
+
+**What it does not do.** The client half of the key is whatever the request
+presents as `X-Forwarded-For` (falling back to `X-Real-IP`, then to no address
+at all, which is counted as one group). Nothing verifies it. An attacker who
+can vary that header can therefore have as many buckets as they like, and the
+per-client dimension is worth exactly as much as the proxy in front of the app
+— which, in the intended deployment, is one the operator controls and which
+overwrites the header. What the throttle does buy unconditionally is that a
+single client cannot grind through a password list, and that every attempt now
+costs a counted, serialised write before any password is checked. It is not a
+substitute for a strong password or for keeping the instance off the open
+internet.
+
+**Where it happens.** `registerLoginAttempt` runs *before* the password is
+verified, so a burst of concurrent guesses cannot all read the same count and
+pass the gate together. The bcrypt call is deliberately outside that
+transaction: verifying a password takes a quarter of a second at this cost
+factor, and holding a locked row across it would turn every sign-in into a
+queue.
+
 ## What the app never does
 
 - No telemetry, no analytics, no crash reporting. `NEXT_TELEMETRY_DISABLED=1`
