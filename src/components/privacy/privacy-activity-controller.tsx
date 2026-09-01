@@ -83,6 +83,14 @@ export function PrivacyActivityController({
 
   const [locking, setLocking] = React.useState(false);
   const [lockFailed, setLockFailed] = React.useState(false);
+  const failureRef = React.useRef<HTMLDivElement>(null);
+
+  // Blanking the shell takes focus with it, and an arbitrary DOM swap is not
+  // announced. Without this a screen-reader user is told nothing: the lock
+  // they asked for silently did not happen, and the way back is unfindable.
+  React.useEffect(() => {
+    if (lockFailed) failureRef.current?.focus();
+  }, [lockFailed]);
 
   /**
    * The deliberate version of `close`: the timeout covers walking away, this
@@ -205,7 +213,12 @@ export function PrivacyActivityController({
         data-testid="privacy-locked"
       >
         {lockFailed ? (
-          <div className="grid justify-items-center gap-3 px-6 text-center">
+          <div
+            ref={failureRef}
+            role="alert"
+            tabIndex={-1}
+            className="grid justify-items-center gap-3 px-6 text-center outline-none"
+          >
             <p className="text-sm text-muted-foreground">
               Could not confirm the lock closed. Reload to see where things
               stand.

@@ -398,7 +398,13 @@ test("the header offers a way to close the lock without waiting out the timeout"
   // already locked. The shell stays closed and offers a reload instead.
   await page.context().setOffline(true);
   await lockNow.click();
-  await expect(page.getByText(/Could not confirm the lock closed/i)).toBeVisible();
+  // Announced, not merely rendered: blanking the shell takes focus with it, so
+  // an unannounced swap leaves a screen-reader user with no idea the lock they
+  // asked for did not happen.
+  // Scoped: Next's route announcer is also role="alert".
+  const failure = page.getByTestId("privacy-locked").getByRole("alert");
+  await expect(failure).toContainText(/Could not confirm the lock closed/i);
+  await expect(failure).toBeFocused();
   await expect(lockNow).toHaveCount(0);
 
   // The reload re-reads the truth from the server. Nothing committed here, so
