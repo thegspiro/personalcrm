@@ -352,6 +352,54 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     ).toBe(true);
   });
 
+  it("applies the same boundary to an SMTP host, which is not a URL", async () => {
+    // The guard read `url`, and an email channel has none — so the hole it
+    // left was exactly the size of a host plus any port, opened from the
+    // server by nodemailer.
+    state.role = "MEMBER";
+
+    const inward = await createChannel(form({ ...EMAIL, host: "127.0.0.1" }));
+    expect(inward.ok).toBe(false);
+    expect(inward.fieldErrors).toMatchObject({ host: expect.any(String) });
+    expect(await prisma.notificationChannel.count()).toBe(0);
+
+    expect((await createChannel(form(EMAIL))).ok).toBe(true);
+
+    state.role = "ADMIN";
+    expect((await createChannel(form({ ...EMAIL, name: "LAN mail", host: "10.0.0.25" }))).ok).toBe(true);
+  });
+
+  it("does not follow a redirect to somewhere the boundary would refuse", async () => {
+    const channel = await prisma.notificationChannel.create({
+      data: {
+        ownerId,
+        kind: "WEBHOOK",
+        name: "Redirector",
+        config: { url: "https://public.example/hook" },
+      },
+    });
+
+    const seen: string[] = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      seen.push(String(url));
+      // What an endpoint the member controls can answer with.
+      expect(init?.redirect).toBe("manual");
+      return new Response(null, {
+        status: 307,
+        headers: { location: "http://127.0.0.1:8080/internal" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await expect(deliverToChannel(channel, "subject", "body")).rejects.toThrow(/redirect/i);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    // Only the configured address was contacted; the redirect was not taken.
+    expect(seen).toEqual(["https://public.example/hook"]);
+  });
+
   it("refuses a Gotify channel with no application token", async () => {
     const blank = await createChannel(
       form({ kind: "GOTIFY", name: "Gotify", url: "https://gotify.example.com/message" }),

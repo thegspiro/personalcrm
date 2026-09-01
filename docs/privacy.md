@@ -297,6 +297,15 @@ address**. The server makes the request and reports what came back, so without
 that line any member could use it to probe the host's own network. A
 single-account install never meets it — the only account is the administrator.
 
+That applies to an SMTP host as much as to a URL — an email channel names a
+host and a port rather than an address, and it is opened from the server just
+the same.
+
+**Redirects are not followed.** An allowed address that answers with a redirect
+to a refused one would otherwise walk straight through the boundary, since the
+destination never passes back through it. A notification endpoint has no reason
+to redirect; configure the address it points at.
+
 Literal addresses only. A hostname that resolves inwards is not caught, and
 cannot be without a DNS lookup inside the validator whose answer can change
 before the request is made. The literal form is what a probe uses.

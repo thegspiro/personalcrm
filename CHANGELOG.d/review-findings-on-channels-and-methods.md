@@ -3,6 +3,14 @@
 *Schema: none*
 
 #### Fixed
+- **The private-address boundary covers SMTP hosts and refuses redirects.** It
+  read the URL field, which an email channel does not have — so a host and a
+  port went straight past it. And an allowed address that answered with a
+  redirect to a refused one was followed, since the destination never passed
+  back through the check.
+- **Adding a contact method locks the contact first.** A plain read inside a
+  transaction is still non-locking under MariaDB's default isolation, so the
+  previous fix did not actually serialise anything.
 - **Only an administrator can aim a channel at an address on this network.**
   Pointing ntfy or Gotify at your own box stays a first-class use — but the
   server makes the request and reports what came back, so on an install with

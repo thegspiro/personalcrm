@@ -1255,11 +1255,16 @@ export async function createContactMethod(form: FormData): Promise<ActionResult<
   const type = await termFromForm(ownerId, form, "typeId", "CONTACT_METHOD_TYPE");
   if (!type.ok) return fail(UNKNOWN_TERM);
 
-  // Both derived values are read inside the write's own transaction. Read
-  // outside it, two requests adding the first method for one contact each see
-  // an empty list and both claim primary at sortOrder 0 — and there is no
-  // partial unique index in MariaDB to catch it afterwards.
+  // The contact row is locked first, which is what actually serialises this.
+  // A plain read inside a transaction is still a non-locking consistent read
+  // under MariaDB's default isolation, so two requests adding the first method
+  // for one contact would both see an empty list, both claim primary, and both
+  // write sortOrder 0 — and there is no partial unique index to catch it after
+  // the fact. Locking the parent is cheaper than serialising the whole
+  // transaction and scopes the contention to the one contact.
   const created = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM Contact WHERE id = ${contactId} FOR UPDATE`;
+
     const existing = await tx.contactMethod.findMany({
       where: { contactId },
       orderBy: { sortOrder: "desc" },

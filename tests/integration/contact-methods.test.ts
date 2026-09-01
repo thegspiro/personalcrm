@@ -202,6 +202,24 @@ describe.skipIf(!hasTestDatabase)("contact methods and addresses", () => {
     expect(await prisma.contactMethod.count({ where: { isPrimary: true } })).toBe(2);
   });
 
+  it("keeps one primary when two methods are added at the same moment", async () => {
+    // A plain read inside a transaction is still non-locking under MariaDB's
+    // default isolation, so without the row lock both of these see an empty
+    // list, both claim primary, and both write sortOrder 0.
+    await Promise.all([
+      createContactMethod(form({ contactId: danaId, typeId: mobileTypeId, value: "first" })),
+      createContactMethod(form({ contactId: danaId, typeId: emailTypeId, value: "second" })),
+    ]);
+
+    const rows = await prisma.contactMethod.findMany({
+      where: { contactId: danaId },
+      orderBy: { sortOrder: "asc" },
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((row) => row.isPrimary)).toHaveLength(1);
+    expect(rows.map((row) => row.sortOrder)).toEqual([0, 1]);
+  });
+
   it("swaps with its neighbour, and does nothing at the ends", async () => {
     const ids: string[] = [];
     for (const value of ["a", "b", "c"]) {

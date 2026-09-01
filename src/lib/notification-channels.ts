@@ -230,13 +230,9 @@ export function validateChannelConfig(
  * answer can change between the check and the request anyway. The literal form
  * is what a probe uses.
  */
-export function targetsPrivateHost(rawUrl: string): boolean {
-  let host: string;
-  try {
-    host = new URL(rawUrl).hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  } catch {
-    return false;
-  }
+export function isPrivateHostname(rawHost: string): boolean {
+  const host = rawHost.trim().replace(/^\[|\]$/g, "").toLowerCase();
+  if (!host) return false;
 
   if (host === "localhost" || host.endsWith(".localhost")) return true;
   // IPv6 loopback and unique-local / link-local prefixes.
@@ -257,6 +253,15 @@ export function targetsPrivateHost(rawUrl: string): boolean {
     (a === 192 && b === 168) ||
     (a === 100 && b >= 64 && b <= 127)
   );
+}
+
+/** The same question asked of a URL. */
+export function targetsPrivateHost(rawUrl: string): boolean {
+  try {
+    return isPrivateHostname(new URL(rawUrl).hostname);
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -60,6 +60,18 @@ export async function deliverToChannel(
     headers,
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(15_000),
+    // Not followed, deliberately. An address allowed by the private-target
+    // check can answer with a redirect to one that would not have been, and a
+    // followed redirect never passes back through that check — so the server
+    // would make the request the boundary exists to refuse. A notification
+    // endpoint has no reason to redirect; the final address is the one to
+    // configure.
+    redirect: "manual",
   });
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error(
+      `Channel redirected (HTTP ${response.status}), which is not followed. Configure the address it points at.`,
+    );
+  }
   if (!response.ok) throw new Error(`Channel returned HTTP ${response.status}.`);
 }

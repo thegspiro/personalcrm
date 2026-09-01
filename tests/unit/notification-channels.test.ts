@@ -7,6 +7,7 @@ import {
   encryptedKeyFor,
   isChannelKind,
   secretFieldsFor,
+  isPrivateHostname,
   targetsPrivateHost,
   validateChannelConfig,
 } from "@/lib/notification-channels";
@@ -168,6 +169,16 @@ describe("targetsPrivateHost", () => {
     ]) {
       expect(targetsPrivateHost(url), url).toBe(false);
     }
+  });
+
+  it("answers the same question of a bare hostname, which is what SMTP gives", () => {
+    // An email channel has a host and a port, not a URL.
+    expect(isPrivateHostname("127.0.0.1")).toBe(true);
+    expect(isPrivateHostname("localhost")).toBe(true);
+    expect(isPrivateHostname("10.0.0.25")).toBe(true);
+    expect(isPrivateHostname("[::1]")).toBe(true);
+    expect(isPrivateHostname("smtp.example.com")).toBe(false);
+    expect(isPrivateHostname("  ")).toBe(false);
   });
 
   it("does not treat a hostname that merely looks numeric as private", () => {

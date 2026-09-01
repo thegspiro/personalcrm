@@ -7,6 +7,7 @@ import { type ActionResult, fail, isAdmin, ok, owner, str } from "./helpers";
 import {
   CHANNEL_FIELDS,
   CHANNEL_LABELS,
+  isPrivateHostname,
   targetsPrivateHost,
   isChannelKind,
   TEST_NOTIFICATION_BODY,
@@ -92,8 +93,14 @@ function credentialsComplete(config: Record<string, unknown>): boolean {
  * account is the administrator.
  */
 async function privateTargetAllowed(input: Record<string, string | undefined>): Promise<boolean> {
+  // Both shapes a destination takes: a URL for the HTTP kinds, and a bare
+  // hostname for SMTP. Checking only the URL left the boundary with a hole
+  // exactly the size of an email channel — `host` plus any port, which
+  // nodemailer then opens from the server.
   const url = input.url?.trim();
-  if (!url || !targetsPrivateHost(url)) return true;
+  const host = input.host?.trim();
+  const inward = (url && targetsPrivateHost(url)) || (host && isPrivateHostname(host));
+  if (!inward) return true;
   return isAdmin();
 }
 
@@ -120,7 +127,8 @@ export async function createChannel(form: FormData): Promise<ActionResult<{ id: 
 
   if (!(await privateTargetAllowed(input))) {
     return fieldErrors({
-      url: "Only an administrator can point a channel at an address on this network.",
+      [kind === "EMAIL" ? "host" : "url"]:
+        "Only an administrator can point a channel at an address on this network.",
     });
   }
 
@@ -166,7 +174,8 @@ export async function updateChannel(form: FormData): Promise<ActionResult> {
 
   if (!(await privateTargetAllowed(input))) {
     return fieldErrors({
-      url: "Only an administrator can point a channel at an address on this network.",
+      [kind === "EMAIL" ? "host" : "url"]:
+        "Only an administrator can point a channel at an address on this network.",
     });
   }
 
