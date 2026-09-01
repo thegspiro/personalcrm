@@ -71,38 +71,6 @@ token; only its SHA-256 hash is stored.
 
 Indexes: `userId`, `expiresAt` (the expiry sweep at boot).
 
-### `LoginAttempt`
-
-Sign-in throttling. One row per address-and-client pair, holding how many
-attempts have been made and when the last one was.
-
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | `cuid` | PK |
-| `email` | `varchar(191)` | Lowercased and trimmed. **Not** a foreign key |
-| `ip` | `varchar(64)` | The client address as the app sees it, or `""` when the request carried none |
-| `failedCount` | `int` | Attempts in the current run |
-| `failedAt` | `datetime` | The most recent attempt; backoff is measured from here |
-
-Indexes: unique on (`email`, `ip`), plus `failedAt` for the retention sweep at
-boot.
-
-Two things about the shape are deliberate. It is **not** a counter on `User`,
-because that would let anyone who knows an address lock its owner out simply by
-guessing wrongly — and because attempts against an address with no account
-would go uncounted, which turns the throttle itself into an oracle for which
-addresses exist. And `email` is not a foreign key, for the same second reason:
-an address nobody has registered has to be counted too.
-
-Backoff mirrors the privacy PIN: five attempts at full speed, then a wait
-doubling from five seconds to a ceiling of fifteen minutes, measured from the
-last attempt. A successful sign-in deletes the row. Rows untouched for
-twenty-four hours are swept at boot and never block anyone in the meantime, so
-five typos last week do not throttle the first attempt today.
-
-The per-client half of the key is only as trustworthy as whatever sets
-`X-Forwarded-For` — see [privacy.md](privacy.md#sign-in-throttling).
-
 ### `UserPreference`
 
 One row per user, PK is `userId`.
@@ -705,7 +673,8 @@ the `init-migrate` s6 oneshot).
 | `20260831120000_add_locations` | Adds `Location` and the nullable `locationId` on `Interaction` and `Plan`, backfilling from the existing free-text labels by case and whitespace only. The original `location` columns are deliberately kept, not dropped: they are the historical wording |
 | `20260831120000_distinguish_allergy_categories` | Splits allergies from dietary preferences: `Contact.allergyStatus`, and `category`/`reaction` and the adrenaline columns on `DietaryNeed`. **Hand-edited**: existing rows describe food, so `FOOD` is the only honest backfill |
 | `20260831205130_add_location_osm_reference` | Additive nullable `Location.osmType` and `osmId`, so a place can be tied to a real OpenStreetMap object |
-| `20260901120000_add_login_attempt_throttle` | Adds `LoginAttempt`. Purely additive — one new table, nothing existing altered — so an older image keeps working against a database that has run it. Rolling back is `DROP TABLE \`LoginAttempt\`;` and costs only the in-flight backoff state |
+| `20260901120000_add_login_attempt_throttle` | Added `LoginAttempt`, a durable store for sign-in backoff counters. Superseded three commits later — see below |
+| `20260901191500_drop_login_attempt_table` | Drops it again. Both halves of its key came from whoever was knocking, which made it a store an attacker chose the size of; bounding it meant dropping records, and dropping records meant the throttle could be switched off by filling it. Sign-in throttling now lives in the process serving the request, in a structure of fixed size. The table held only ephemeral counters, so nothing is lost but whatever backoff was in flight at the upgrade |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).

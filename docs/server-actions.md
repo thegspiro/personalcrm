@@ -46,7 +46,7 @@ enforces rather than documents:
 
 | Action | Notes |
 | --- | --- |
-| `loginAction` | Failures are indistinguishable between an unknown email and a wrong password. Throttled per address-and-client pair *before* the password is checked, so an unknown address is counted too and cannot be told apart by whether it backs off — see [privacy.md](privacy.md#sign-in-throttling) |
+| `loginAction` | Failures are indistinguishable between an unknown email and a wrong password. Throttled per address-and-client pair *before* the password is checked, and synchronously, so a burst cannot slip through between the read and the write; an unknown address is counted too and cannot be told apart by whether it backs off — see [privacy.md](privacy.md#sign-in-throttling) |
 | `setupAction` | First-run wizard; the first account becomes `ADMIN`, a label nothing checks yet. Hands off to `/welcome` |
 | `signupAction` | Refused when `DISABLE_SIGNUP=true` |
 | `logoutAction` | Deletes the session row and clears the cookie |
