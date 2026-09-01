@@ -46,7 +46,7 @@
           Type="Port" Display="always" Required="true" Mask="false">3000</Config>
 
   <Config Name="Appdata" Target="/config" Default="/mnt/user/appdata/personalcrm" Mode="rw"
-          Description="Holds the MariaDB database, uploads, backups, and the generated secrets file. Back this up."
+          Description="Holds the MariaDB database, the generated secrets file, and the directories reserved for uploads and backups. Back this up."
           Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/personalcrm</Config>
 
   <Config Name="PUID" Target="PUID" Default="99" Mode=""
@@ -62,7 +62,7 @@
           Type="Variable" Display="always" Required="true" Mask="false">America/New_York</Config>
 
   <Config Name="App URL" Target="APP_URL" Default="" Mode=""
-          Description="Full external URL you reach the app on, e.g. https://crm.example.com. Used for links inside reminder notifications, and required for secure cookies behind HTTPS."
+          Description="Full external URL you reach the app on, e.g. https://crm.example.com. Required for secure cookies behind HTTPS."
           Type="Variable" Display="always" Required="false" Mask="false"/>
 
   <Config Name="Disable signups" Target="DISABLE_SIGNUP" Default="false" Mode=""
@@ -72,12 +72,4 @@
   <Config Name="External database URL" Target="DATABASE_URL" Default="" Mode=""
           Description="Optional. Leave empty to use the MariaDB built into this container. Set it to use your own server, e.g. mysql://user:password@192.168.1.10:3306/personalcrm"
           Type="Variable" Display="advanced" Required="false" Mask="true"/>
-
-  <Config Name="Backup schedule" Target="BACKUP_CRON" Default="0 4 * * *" Mode=""
-          Description="Cron expression for the nightly database dump written to /config/backups. Empty disables it."
-          Type="Variable" Display="advanced" Required="false" Mask="false">0 4 * * *</Config>
-
-  <Config Name="Backup retention (days)" Target="BACKUP_RETENTION_DAYS" Default="14" Mode=""
-          Description="How long to keep database dumps in /config/backups."
-          Type="Variable" Display="advanced" Required="false" Mask="false">14</Config>
 </Container>

@@ -11,9 +11,10 @@ import {
  *
  * The key is only stored here at all when it hasn't been supplied as an
  * environment variable, which is the preferred path. When it is stored, it
- * lands in a database that gets backed up nightly, so it is encrypted with a
- * key derived from the `authSecret` the container already provisions into
- * `/config` — a file with 0600 permissions that never leaves the host.
+ * lands in a database that ends up in whatever backup the operator takes, so
+ * it is encrypted with a key derived from the `authSecret` the container
+ * already provisions into `/config` — a file with 0600 permissions that never
+ * leaves the host.
  *
  * This protects a key sitting in a backup file. It does not protect against
  * someone who has both the database and `/config`, and nothing claims it does.

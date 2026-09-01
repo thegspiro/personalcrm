@@ -68,9 +68,12 @@ Documented so nobody assumes a feature works:
 
 | Gap | State |
 | --- | --- |
-| **Cadence, task, and digest notifications** | Important dates are delivered through enabled notification channels with retry and deduplication. The other reminder entity types and digest preferences are not scheduled yet |
+| **Reminders never reach you** | The delivery engine is complete — important dates, retry, deduplication, five channel kinds — but nothing in the app can create a `NotificationChannel`, so the hourly job finds no channel and sends nothing. Reminder timing you set on a date is stored and never acted on. Cadence, task and digest reminders are not scheduled at all, and `digestHour`/`digestEnabled` are stored only |
 | **Nightly backups** | `/config/backups` is created at boot and nothing writes to it — see [backup.md](backup.md) |
 | **Avatar upload** | `Contact.avatarPath` is read and rendered throughout, but no upload path writes it and nothing writes to `/config/uploads` |
+| **Account management** | Your name is set once in the welcome wizard and never again. There is no change-password, no email edit, no password reset and no session list |
+| **Tags** | `Tag` and `ContactTag` exist in the schema with no UI behind them |
+| **Editing a place** | Places are created implicitly from what you type as a venue. Only the name, address and link are ever set — the phone, notes and coordinates in the schema have no editor |
 | **Offline writes** | Deliberately absent. Non-GET requests go straight to the network and fail honestly rather than pretending something was saved |
 
 The project is under active development and nothing has been tagged as a

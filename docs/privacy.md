@@ -214,10 +214,53 @@ is required, and nothing leaves your network if the endpoint doesn't. Replies
 are read forgivingly (fenced, prefaced with prose, or wrapped in an array),
 because smaller local models do all three.
 
+## Reminder delivery
+
+The one part of the app that reaches the network on its own. An hourly job
+(`src/server/reminder-scheduler.ts`) looks for important dates coming due and
+delivers them through the notification channels on the account. No channel, no
+outbound request — and today there is no way to add one from the app, so on a
+stock install this job finds nothing to do and sends nothing. See
+[known gaps](README.md#known-gaps).
+
+### What a reminder sends
+
+More than most people assume, so it is written out here rather than left to be
+discovered:
+
+| Field | Example |
+| --- | --- |
+| The date's label | `Anniversary` |
+| The contact's first and last name | `Dana Whitfield` |
+| The occurrence date | `2026-09-14` |
+| How far out it is | `in 7 days` |
+
+That goes to whatever host the channel names, on the hour, with no preview and
+no confirmation step. A retry after a failure sends a shorter body carrying the
+scheduled date only.
+
+**Email is different in kind from the rest.** An ntfy, Gotify or webhook URL can
+point at a box on your own network, and then nothing leaves it. SMTP goes
+through a mail relay — a third party unless you run your own — and the contents
+of every reminder sit in that relay's logs.
+
+### Private contacts and the send
+
+While the privacy lock is **switched on**, people marked private are excluded
+from reminders entirely — whether or not you happen to be unlocked at the
+moment the job runs. The hourly job has no request context and so cannot ask;
+it reads the setting instead.
+
+With the lock switched **off**, `isPrivate` is a display preference rather than
+an access gate, and those contacts are included like anyone else. That follows
+from what the lock is (see above), but it is worth saying plainly: turning the
+lock off turns off this filter too.
+
 ## What the app never does
 
 - No telemetry, no analytics, no crash reporting. `NEXT_TELEMETRY_DISABLED=1`
   is set in the image.
-- No outbound request at all unless assisted reading is switched on and
-  configured.
+- No outbound request for assisted reading unless it is switched on and
+  configured. Reminder delivery is the other way out, and only to the
+  channels you add yourself — see [What a reminder sends](#what-a-reminder-sends).
 - No third-party fonts, scripts or asset CDNs at runtime.
