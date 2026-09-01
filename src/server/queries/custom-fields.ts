@@ -2,6 +2,11 @@ import "server-only";
 import { cache } from "react";
 import type { CustomFieldEntity, Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
+import {
+  contactPrivacyWhere,
+  interactionPrivacyWhere,
+  type PrivacyScope,
+} from "@/server/privacy/where";
 import { appliesTo } from "@/lib/custom-fields";
 
 const DEFINITION_SELECT = {
@@ -124,4 +129,50 @@ export async function fieldValuesForMany(
     out.set(row.entityId, byDefinition);
   }
   return out;
+}
+
+/**
+ * How many values each definition holds, for the Fields tab's delete warning.
+ *
+ * Privacy-filtered, because Settings stays reachable while the lock is closed:
+ * an unfiltered tally answers "how many private people have this filled in"
+ * from a page the lock does not gate. `entityId` is not a foreign key, so this
+ * cannot be a join — the visible ids are gathered per entity and matched.
+ *
+ * `ROMANTIC` and `DATE_ENTRY` report nothing at all while locked rather than a
+ * filtered number, because the dating module is hidden whole rather than
+ * row-by-row.
+ */
+export async function valueCountsByDefinition(
+  ownerId: string,
+  scope: PrivacyScope,
+): Promise<Map<string, number>> {
+  const where: Prisma.CustomFieldValueWhereInput = { ownerId };
+
+  if (scope.enabled && !scope.unlocked) {
+    const [contacts, interactions] = await Promise.all([
+      prisma.contact.findMany({
+        where: { ownerId, ...contactPrivacyWhere(scope) },
+        select: { id: true },
+      }),
+      prisma.interaction.findMany({
+        where: { ownerId, ...interactionPrivacyWhere(scope) },
+        select: { id: true },
+      }),
+    ]);
+    const contactIds = contacts.map((row) => row.id);
+    const interactionIds = interactions.map((row) => row.id);
+
+    where.OR = [
+      { entityType: "CONTACT", entityId: { in: contactIds } },
+      { entityType: "INTERACTION", entityId: { in: interactionIds } },
+    ];
+  }
+
+  const rows = await prisma.customFieldValue.groupBy({
+    by: ["definitionId"],
+    where,
+    _count: { _all: true },
+  });
+  return new Map(rows.map((row) => [row.definitionId, row._count._all]));
 }

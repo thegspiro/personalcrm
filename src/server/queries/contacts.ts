@@ -20,7 +20,6 @@ export type ContactSort = "name" | "recent" | "overdue" | "added";
 export interface ContactListOptions {
   search?: string;
   categoryId?: string;
-  tagSlug?: string;
   /** "all" includes archived; the default hides them. */
   scope?: "active" | "archived" | "all";
   romanticOnly?: boolean;
@@ -47,7 +46,6 @@ const LIST_SELECT = {
   nextTouchAt: true,
   createdAt: true,
   category: { select: { id: true, label: true, icon: true, color: true } },
-  tags: { select: { tag: { select: { id: true, name: true, slug: true, color: true } } } },
 } satisfies Prisma.ContactSelect;
 
 export type ContactListItem = Prisma.ContactGetPayload<{ select: typeof LIST_SELECT }>;
@@ -66,7 +64,6 @@ function buildWhere(
   if (options.categoryId) where.categoryId = options.categoryId;
   if (options.romanticOnly) where.isRomantic = true;
   if (options.favoritesOnly) where.isFavorite = true;
-  if (options.tagSlug) where.tags = { some: { tag: { slug: options.tagSlug } } };
   if (options.overdueOnly) where.nextTouchAt = { lte: new Date() };
 
   const search = options.search?.trim();
@@ -107,12 +104,17 @@ function buildOrderBy(sort: ContactSort = "name"): Prisma.ContactOrderByWithRela
       // Never-contacted people sort last rather than jumping to the top.
       return [{ lastInteractionAt: { sort: "desc", nulls: "last" } }, { firstName: "asc" }];
     case "overdue":
+      // Deliberately not pinning favourites here. This list means "who is most
+      // overdue"; floating anyone above that answers a different question and
+      // makes the one it was asked look wrong.
       return [{ nextTouchAt: { sort: "asc", nulls: "last" } }, { firstName: "asc" }];
     case "added":
       return [{ createdAt: "desc" }];
     case "name":
     default:
-      return [{ firstName: "asc" }, { lastName: "asc" }];
+      // The checkbox says favouriting pins someone near the top of your lists,
+      // so the default sort has to actually do it.
+      return [{ isFavorite: "desc" }, { firstName: "asc" }, { lastName: "asc" }];
   }
 }
 
@@ -150,8 +152,9 @@ const DETAIL_INCLUDE = {
   category: true,
   meetingSource: true,
   methods: { include: { type: true }, orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }] },
-  addresses: true,
-  tags: { include: { tag: true } },
+  // Ordered explicitly: without it the rows come back in whatever order the
+  // database happens to return, so they reshuffle between renders.
+  addresses: { orderBy: [{ label: "asc" }, { id: "asc" }] },
   facts: {
     include: { category: true },
     orderBy: [{ importance: "desc" }, { createdAt: "desc" }],
@@ -197,6 +200,9 @@ export const getContact = cache(
     // Facts carry their own marker, so a single private note about an
     // otherwise ordinary person stays hidden.
     if (!scope.unlocked) {
+      // The same rule as `lifeEventPrivacyWhere`, applied in memory because
+      // DETAIL_INCLUDE has already fetched the row: an event stays hidden when
+      // any participant is private, not only when the anchor contact is.
       contact.lifeEvents = contact.lifeEvents.filter(
         (event) => event.participants.every((participant) => !participant.contact.isPrivate),
       );
@@ -249,14 +255,6 @@ export async function listContactInteractions(
     },
     orderBy: { occurredAt: "desc" },
     take,
-  });
-}
-
-export async function listTags(ownerId: string) {
-  return prisma.tag.findMany({
-    where: { ownerId },
-    select: { id: true, name: true, slug: true, color: true, _count: { select: { contacts: true } } },
-    orderBy: { name: "asc" },
   });
 }
 

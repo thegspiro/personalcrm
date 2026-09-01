@@ -24,11 +24,14 @@ healthcheck.
 src/
   app/
     (app)/          signed-in routes — dashboard, people, timeline, dating,
-                    family, gifts, ideas, tasks, settings, more, unlock
+                    family, gifts, ideas, locations, tasks, settings, more,
+                    unlock
     (auth)/         login, signup, first-run setup
     (onboarding)/   the welcome flow, once per account
     api/health/     container healthcheck (the only route handler)
-    manifest.ts     PWA manifest;  icon.tsx  draws the icon at build time
+    offline/        what the service worker serves for an uncached page
+    manifest.ts     PWA manifest;  icon.tsx / apple-icon.tsx draw them at build
+                    time;  not-found.tsx is the 404
   components/       UI, grouped by feature; ui/ is the Radix-backed primitives
   lib/              pure logic — no Prisma, no request context, unit-testable
   server/
@@ -38,7 +41,7 @@ src/
     privacy/        the lock: state, where-fragments, offline eligibility
     auth/           password hashing, sessions, first-run provisioning
     taxonomy/       seed definitions and per-account provisioning
-    ai/             optional assisted parsing (deletable — see below)
+    ai/             optional assisted parsing (off by default — see below)
     db/             Prisma client, app settings
     user/           per-request user + preferences context
     startup.ts      idempotent boot tasks
@@ -132,7 +135,7 @@ that render nothing. With server components, a hidden section has still been
 fetched and serialised into the payload. Full reasoning, including what the lock
 does *not* protect against, is in [privacy.md](privacy.md).
 
-## The optional AI layer is deletable
+## Quick add works without the optional layers
 
 Quick add is [`lib/quick-parse.ts`](../src/lib/quick-parse.ts): chrono-node for
 dates resolved in the account timezone, matching against your own contacts and
@@ -146,9 +149,9 @@ participant *and* is part of the sentence; removing it outright left titles like
 "First time at 's place", which nothing downstream could repair.
 
 `src/server/ai/` is a separate, optional layer that produces a better reading of
-awkward phrasing when you switch it on and point it at a provider. The whole
-directory can be deleted and quick add keeps working — that is the test of
-whether the split is real. Its answer is run back through the local matcher
+awkward phrasing when you switch it on and point it at a provider. Switched off
+— which is how it ships — nothing in it runs, and quick add is exactly the local
+parser above. Its answer is run back through the local matcher
 rather than trusted, so an assisted parse cannot do anything the local parse
 refuses to do — including the venue it reads, which is re-matched against your
 own places rather than taken on the model's word.
@@ -176,8 +179,8 @@ init-perms  →  init-preflight  →  init-mariadb  →  svc-mariadb  →  init-
 
 | Step | Does |
 | --- | --- |
-| `init-preflight` | Validates what the operator supplied — `APP_URL`, a writable `/config` — before anything else starts. Ordered first deliberately: a wrong value is far easier to read here than as a failure three services later |
-| `init-perms` | Creates the `abc` user from `PUID`/`PGID`, makes `/config` writable, creates `db/ uploads/ backups/ logs/ cache/`. Only chowns recursively when the top-level owner is actually wrong |
+| `init-perms` | Creates the `abc` user from `PUID`/`PGID`, makes `/config` writable, creates `db/ uploads/ backups/ logs/ cache/`. Only chowns recursively when the top-level owner is actually wrong. First, because preflight's writability check needs the directory to exist and be owned correctly |
+| `init-preflight` | Validates what the operator supplied — `APP_URL`, a writable `/config` — before any service starts. Ordered ahead of the database deliberately: a wrong value is far easier to read here than as a failure three services later |
 | `init-mariadb` | Generates `/config/secrets.json` (0600) on first boot with a random DB password and `authSecret`, initialises the data directory, publishes `DATABASE_URL` and `AUTH_SECRET` into the supervision tree. Skipped entirely when `DATABASE_URL` is set |
 | `svc-mariadb` | The bundled server (longrun) |
 | `init-db-ready` | Waits for the socket |
@@ -231,7 +234,9 @@ can mutate data while disconnected.
 | `/family` | Cacheable read-only | Relationships, contacts, suggestions, household members, and every household associated with a private contact are privacy-filtered; empty households remain visible. The account-wide gate applies, and each `anchor` query is a distinct saved page. |
 | `/dating`, `/dating/compare` | Deliberately unavailable | Dating content is never written to offline storage. |
 | `/people/new`, `/people/[id]/edit`, `/people/[id]/backfill` | Deliberately unavailable | Create/edit forms require live reads and server-action validation. |
-| `/settings` | Deliberately unavailable | Contains security, privacy, account, and integration controls. |
+| `/locations/[id]` | Deliberately unavailable | Has not opted in: a place page names everyone recorded there, and the set changes as soon as the lock does. |
+| `/offline` | Cacheable read-only | Precached by the worker at install. It is what an uncached page falls back to, so it has to be there before the network is not. |
+| `/settings` | Deliberately unavailable | Contains security, privacy, account, notification, and integration controls. |
 | `/more` | Deliberately unavailable | Navigation-only page has not opted in; its destinations retain their own policies. |
 | `/unlock` | Deliberately unavailable | The privacy boundary must always be evaluated live. |
 | `/login`, `/signup`, `/setup`, `/welcome` | Deliberately unavailable | Authentication and onboarding state must always be evaluated live. |

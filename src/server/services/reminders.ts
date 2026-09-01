@@ -1,51 +1,11 @@
 import "server-only";
-import { Prisma, type NotificationChannel } from "@prisma/client";
-import nodemailer from "nodemailer";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import { plainDateFromDb, plainDateKey, plainDateToDb, todayInTz } from "@/lib/dates";
 import { dueOccurrence, effectiveReminderDays } from "@/lib/reminders";
+import { deliverToChannel } from "./notify";
 
 const MAX_ATTEMPTS = 5;
-
-type ChannelConfig = Record<string, unknown>;
-
-function configOf(channel: NotificationChannel): ChannelConfig {
-  return typeof channel.config === "object" && channel.config && !Array.isArray(channel.config)
-    ? channel.config as ChannelConfig
-    : {};
-}
-
-async function deliver(channel: NotificationChannel, subject: string, body: string): Promise<void> {
-  const config = configOf(channel);
-  if (channel.kind === "EMAIL") {
-    if (typeof config.host !== "string" || typeof config.to !== "string" || typeof config.from !== "string") {
-      throw new Error("Email channel requires host, from, and to.");
-    }
-    const transport = nodemailer.createTransport({
-      host: config.host,
-      port: typeof config.port === "number" ? config.port : 587,
-      secure: config.secure === true,
-      auth: typeof config.user === "string" && typeof config.pass === "string"
-        ? { user: config.user, pass: config.pass }
-        : undefined,
-    });
-    await transport.sendMail({ from: config.from, to: config.to, subject, text: body });
-    return;
-  }
-
-  const url = typeof config.url === "string" ? config.url : null;
-  if (!url) throw new Error(`${channel.kind} channel requires a URL.`);
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  if (typeof config.token === "string") headers.authorization = `Bearer ${config.token}`;
-  const payload = channel.kind === "DISCORD" ? { content: `${subject}\n${body}` } : { title: subject, message: body };
-  const response = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) throw new Error(`Channel returned HTTP ${response.status}.`);
-}
 
 /**
  * Creates one durable attempt per occurrence/offset/channel before delivery.
@@ -54,10 +14,10 @@ async function deliver(channel: NotificationChannel, subject: string, body: stri
  */
 export async function processImportantDateReminders(
   now = new Date(),
-  dependencies: { db?: typeof prisma; send?: typeof deliver } = {},
+  dependencies: { db?: typeof prisma; send?: typeof deliverToChannel } = {},
 ): Promise<{ sent: number; failed: number }> {
   const db = dependencies.db ?? prisma;
-  const send = dependencies.send ?? deliver;
+  const send = dependencies.send ?? deliverToChannel;
   let sent = 0;
   let failed = 0;
   const users = await db.user.findMany({
@@ -108,7 +68,9 @@ export async function processImportantDateReminders(
           }
           const person = [date.contact.firstName, date.contact.lastName].filter(Boolean).join(" ");
           const subject = `Reminder: ${date.label}`;
-          const body = `${date.label} for ${person} is ${offset === 0 ? "today" : `in ${offset} days`} (${plainDateKey(occurrence)}).`;
+          const when =
+            offset === 0 ? "today" : offset === 1 ? "tomorrow" : `in ${offset} days`;
+          const body = `${date.label} for ${person} is ${when} (${plainDateKey(occurrence)}).`;
           try {
             await send(channel, subject, body);
             await db.reminderLog.update({ where: { id: log.id }, data: { ok: true, sentAt: now, attemptCount: 1 } });

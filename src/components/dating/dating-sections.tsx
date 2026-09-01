@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
 import { Flag, HeartCrack, ShieldAlert, ThumbsUp, UserMinus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +9,11 @@ import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
+import { useAction } from "@/components/form/use-action";
+import {
+  CollapsibleCustomFields,
+  type RenderableField,
+} from "@/components/custom-fields/field-renderer";
 import { DateField, DateTimeField } from "@/components/form/date-field";
 import { RatingInput, RatingDisplay } from "@/components/form/rating-input";
 import { TermChips, TermSelect, type TermOption } from "@/components/form/term-select";
@@ -19,7 +23,6 @@ import { EndRelationshipSheet } from "./end-relationship-sheet";
 import { formatMoney } from "@/lib/format";
 import { formatPartialDate } from "@/lib/date-precision";
 import { plainDateFromDb, plainDateKey, type PlainDate } from "@/lib/dates";
-import type { ActionResult } from "@/server/actions/helpers";
 import {
   convertToFriend,
   createDateEntry,
@@ -32,22 +35,6 @@ import {
 } from "@/server/actions/dating";
 import { createPlan } from "@/server/actions/details";
 
-function useRun() {
-  const router = useRouter();
-  return React.useCallback(
-    async (run: () => Promise<ActionResult<unknown>>, message?: string) => {
-      const result = await run();
-      if (!result.ok) {
-        toast.error(result.error ?? "Something went wrong.");
-        return false;
-      }
-      if (message) toast.success(message);
-      router.refresh();
-      return true;
-    },
-    [router],
-  );
-}
 
 // --- profile ---------------------------------------------------------------
 
@@ -94,6 +81,7 @@ export function RomanticSection({
   stages,
   sources,
   blurPrivate,
+  customFields = [],
 }: {
   contactId: string;
   contactName: string;
@@ -101,8 +89,10 @@ export function RomanticSection({
   stages: TermOption[];
   sources: TermOption[];
   blurPrivate: boolean;
+  /** Defined under Settings → Fields → Dating profiles. */
+  customFields?: RenderableField[];
 }) {
-  const run = useRun();
+  const run = useAction();
   const router = useRouter();
   const [editing, setEditing] = React.useState(!profile);
   const [ending, setEnding] = React.useState(false);
@@ -193,6 +183,8 @@ export function RomanticSection({
             <input type="checkbox" name="exclusive" value="true" defaultChecked={profile?.exclusive ?? false} className="size-4" />
             Exclusive
           </label>
+
+          <CollapsibleCustomFields fields={customFields} formId="romantic" />
 
           <div className="flex gap-2">
             <SubmitButton size="sm" className="flex-1">Save</SubmitButton>
@@ -377,12 +369,20 @@ function DateEntryFields({
   entry,
   venue,
   onVenueChange,
+  customFields = [],
 }: {
   formId: string;
   activityTypes: TermOption[];
   entry?: DateLogItem;
   venue?: string;
   onVenueChange?: (value: string) => void;
+  /**
+   * Defined under Settings → Fields → Dates. Rendered here rather than on each
+   * form, so the hidden "which fields were on screen" marker is present on
+   * both — without it a save from the form that omits them clears every
+   * boolean on the record.
+   */
+  customFields?: RenderableField[];
 }) {
   return (
     <>
@@ -492,6 +492,7 @@ function DateEntryFields({
         />
         Hide this behind the privacy lock
       </label>
+      <CollapsibleCustomFields fields={customFields} formId={formId} />
     </>
   );
 }
@@ -502,6 +503,8 @@ export function DateLogSection({
   activityTypes,
   plans = [],
   blurPrivate,
+  customFields = [],
+  customFieldsByDate = {},
 }: {
   contactId: string;
   dates: DateLogItem[];
@@ -509,8 +512,12 @@ export function DateLogSection({
   /** Plans saved for this person — picking one closes it out. */
   plans?: PlanOption[];
   blurPrivate: boolean;
+  /** Field definitions for a new date, with no values yet. */
+  customFields?: RenderableField[];
+  /** The same definitions carrying each existing date's saved values. */
+  customFieldsByDate?: Record<string, RenderableField[]>;
 }) {
-  const run = useRun();
+  const run = useAction();
   // The venue is prefilled from a picked idea, so it has to be controlled.
   const [venue, setVenue] = React.useState("");
   const [pickedPlan, setPickedPlan] = React.useState<PlanOption | null>(null);
@@ -576,6 +583,7 @@ export function DateLogSection({
             activityTypes={activityTypes}
             venue={venue}
             onVenueChange={setVenue}
+            customFields={customFields}
           />
           <SubmitButton size="sm">Log it</SubmitButton>
         </form>
@@ -596,6 +604,7 @@ export function DateLogSection({
                   formId={`date-${entry.id}`}
                   activityTypes={activityTypes}
                   entry={entry}
+                  customFields={customFieldsByDate[entry.id] ?? []}
                 />
                 <SubmitButton size="sm">Save</SubmitButton>
               </form>
@@ -756,7 +765,7 @@ export function FlagsSection({
   flags: FlagItem[];
   blurPrivate: boolean;
 }) {
-  const run = useRun();
+  const run = useAction();
 
   function add(close: () => void) {
     return async (form: FormData) => {

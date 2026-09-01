@@ -20,6 +20,7 @@ export interface AiSettingsProps {
   keySource: "env" | "stored" | null;
   keyHint: string | null;
   providers: ProviderDefinition[];
+  canEdit: boolean;
 }
 
 /**
@@ -40,6 +41,7 @@ export function AiSettings({
   keySource,
   keyHint,
   providers,
+  canEdit,
 }: AiSettingsProps) {
   const run = useAction();
   const save = useAddAction();
@@ -72,7 +74,7 @@ export function AiSettings({
           <Switch
             checked={enabled}
             aria-label="Use smarter suggestions"
-            disabled={!usable}
+            disabled={!usable || !canEdit}
             onCheckedChange={(checked) =>
               void run(() => updateAiEnabled(checked), checked ? "Turned on" : "Turned off")
             }
@@ -102,7 +104,15 @@ export function AiSettings({
             </p>
           ) : null}
 
+          {!canEdit ? (
+            <p className="text-xs text-muted-foreground">
+              This provider is shared by everyone using this installation, so only an
+              administrator can change it.
+            </p>
+          ) : null}
+
           <form action={save(saveAiConnection, () => {}, "Connection saved")} className="grid gap-2.5">
+            <fieldset disabled={!canEdit} className="contents">
             <Field label="Provider" htmlFor="ai-provider">
               <select
                 id="ai-provider"
@@ -207,6 +217,7 @@ export function AiSettings({
                 </Button>
               ) : null}
             </div>
+            </fieldset>
           </form>
         </div>
       </section>

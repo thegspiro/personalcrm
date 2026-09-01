@@ -4,9 +4,9 @@ Three suites, three different jobs.
 
 | Suite | Runner | Needs | Count | Command |
 | --- | --- | --- | --- | --- |
-| Unit | Vitest | Nothing | 14 files | `npm test` |
-| Integration | Vitest | A throwaway MariaDB | 8 files | `npm test` (skipped without `TEST_DATABASE_URL`) |
-| End-to-end | Playwright | A running instance | 13 specs | `npx playwright test` |
+| Unit | Vitest | Nothing | 29 files | `npm test` |
+| Integration | Vitest | A throwaway MariaDB | 20 files | `npm test` (skipped without `TEST_DATABASE_URL`) |
+| End-to-end | Playwright | A running instance | 23 specs | `npx playwright test` |
 
 File counts are what is in the tree; the case counts move with every change, so
 run the suite rather than trusting a number written here.
@@ -30,6 +30,19 @@ does not own. That is what makes these fast and worth writing.
 | `setup-checklist.test.ts` | What the welcome flow considers done |
 | `taxonomy-seeds.test.ts` | The seeded default terms |
 | `ai-providers.test.ts` | Forgiving response parsing across provider dialects |
+| `birthdays.test.ts`, `life-events.test.ts` | Recurring-date projection; milestone ranges over partial dates |
+| `reminders.test.ts` | Reminder offsets, and which occurrence is due today |
+| `notification-channels.test.ts` | Per-kind channel validation, and that the test message interpolates nothing |
+| `secrets.test.ts` | At-rest encryption, and that the two HKDF purpose strings stay pinned |
+| `contact-methods.test.ts` | Turning a stored number or handle into a link worth offering |
+| `locations.test.ts` | Matching a typed venue to a place already recorded |
+| `plan-checklist.test.ts` | The validated JSON checklist on a plan |
+| `privacy-where.test.ts`, `privacy-lock.test.ts` | The where-fragments themselves, and the lock's timing constants |
+| `security-headers.test.ts` | The response headers the app sets, and the one it leaves to the proxy |
+| `service-worker.test.ts` | That `public/sw.js` parses as a classic script |
+| `migrations.test.ts` | That every migration on disk is accounted for |
+| `geo-providers.test.ts` | Reading an address-lookup reply across provider dialects |
+| `ai-quick-add.test.ts` | That an assisted parse cannot do what the local one refuses to |
 
 The date-sensitive suites run against a **fixed clock**, and the timezone-aware
 ones assert in a zone that is not UTC — a DST bug in `snoozeUntil` that
@@ -62,6 +75,29 @@ the schema do, not things a mock can:
   debt's settlement, a task's tick), that a private fact or debt is out of
   reach while the lock is closed, and that re-typing a relationship moves both
   halves of the pair.
+- `contact-methods.test.ts` — phone numbers and addresses, which carry no
+  `ownerId` of their own: that ownership and the lock are enforced through the
+  contact, that exactly one method stays primary, and that searching for a
+  private contact's number finds nothing while the lock is closed.
+- `notifications.test.ts` — that a channel credential is stored encrypted and
+  never reaches the browser, that a blank field keeps the stored one, and that
+  a secret which will not decrypt refuses to send rather than going out without
+  it.
+- `reminders.test.ts` — the delivery ledger: one send per occurrence, retries
+  that do not duplicate a row, and both the encrypted and the legacy plaintext
+  channel shapes reaching the network with their credential attached.
+- `privacy-actions.test.ts`, `privacy-pin.test.ts` — disabling the lock, and
+  the shared backoff that separate sessions cannot race around.
+- `reciprocity.test.ts` — the reaching-out ratio against real interaction rows.
+- `geo-settings.test.ts`, `ai-settings.test.ts` — that the two settings stored
+  per installation rather than per owner are only writable by an `ADMIN`, and
+  that a refusal leaves the stored value alone.
+- `settings-counts.test.ts` — the aggregates on a page the lock does not gate:
+  that every usage total and custom-field count is filtered by the same scope
+  as the rows behind it, that a life event naming a private participant is
+  excluded even though its anchor contact is public, that dating taxonomies
+  report nothing at all rather than a filtered number, and that refusing to
+  delete a term in use does not quote a count while locked.
 
 `interactions.test.ts` and `entry-editing.test.ts` call the server actions
 themselves rather than reproducing their steps. That needs `server-only` neutralised — `vitest.config.ts` aliases it
@@ -132,6 +168,16 @@ visit with a venue — then adds a second person to that visit from the timeline
 and reads the place back, so the aggregation is exercised across participants
 rather than echoing whoever logged it.
 
+`contact-methods.spec.ts` records a number and an email, presses the resulting
+`tel:` and `mailto:` links into existence, and moves the primary from one to
+the other — the header chip has to follow, since a primary nothing points at is
+the state that made this look broken before.
+
+`notifications.spec.ts` adds a channel, edits it without retyping its token,
+switches it off and deletes it. Its test-send deliberately points at a port
+nothing listens on: a spec that needed a reachable endpoint would be a spec
+that fails on a plane.
+
 ### Specs that must clean up after themselves
 
 `privacy.spec.ts` creates a private contact. Leaving one behind correctly
@@ -153,6 +199,7 @@ npm run typecheck                     # tsc --noEmit
 npm run lint                          # eslint .
 npm run lint:sw                       # public/sw.js parses as a classic script
 npm run changelog:check               # CHANGELOG.d/ entries are well formed
+npm run changelog:guard               # CHANGELOG.md itself was not hand-edited
 npm test                              # unit + integration
 npm run build                         # production build
 ```

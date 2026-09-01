@@ -342,7 +342,8 @@ export async function updateDateEntry(form: FormData): Promise<ActionResult> {
     return fail("Choose yes or no for the post-date reflection.");
   }
 
-  await prisma.$transaction(async (tx) => {
+  try {
+    await prisma.$transaction(async (tx) => {
     const place = await resolveLocation(tx, ownerId, venue);
     await tx.dateEntry.update({
       where: { id },
@@ -381,7 +382,16 @@ export async function updateDateEntry(form: FormData): Promise<ActionResult> {
     // is still the most recent contact.
     await recomputeContactActivity(tx, [existing.contactId]);
     await resequenceDateEntries(tx, existing.contactId);
+
+    // The edit form renders these too, so without this every correction to a
+    // custom field was submitted, reported as saved, and discarded.
+    await saveCustomFieldValuesOrThrow(tx, ownerId, "DATE_ENTRY", existing.id, form);
   });
+  } catch (error) {
+    const failure = customFieldFailure(error);
+    if (failure) return failure;
+    throw error;
+  }
 
   touch(existing.contactId);
   return ok();

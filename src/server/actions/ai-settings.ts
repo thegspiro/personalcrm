@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { type ActionResult, fail, ok, owner, str } from "./helpers";
+import { type ActionResult, fail, isAdmin, ok, owner, str } from "./helpers";
 import {
   clearApiKey,
   resolveApiKey,
@@ -17,7 +17,17 @@ import { providerById } from "@/server/ai/providers";
  * Every one of these is about a feature the app works fine without, so failure
  * here is never fatal — the worst case is that quick add keeps parsing
  * locally, which is what it does by default anyway.
+ *
+ * All three writes are administrator-only, for the same reason the address
+ * lookup's are: the provider is stored per *installation* rather than per
+ * account, so `owner()` has no row to scope by. On an install with more than
+ * one person, any member could otherwise point the endpoint at a server they
+ * control and collect the lines every other account types into quick add —
+ * and these same actions store an API key, which makes the endpoint worth
+ * pointing somewhere on its own.
  */
+
+const NOT_ADMIN = "Only an administrator can change this.";
 
 function touch() {
   revalidatePath("/settings");
@@ -25,6 +35,7 @@ function touch() {
 
 export async function updateAiEnabled(enabled: boolean): Promise<ActionResult> {
   await owner();
+  if (!(await isAdmin())) return fail(NOT_ADMIN);
   await setAiEnabled(enabled);
   touch();
   return ok();
@@ -38,6 +49,7 @@ export async function updateAiEnabled(enabled: boolean): Promise<ActionResult> {
  */
 export async function saveAiConnection(form: FormData): Promise<ActionResult> {
   await owner();
+  if (!(await isAdmin())) return fail(NOT_ADMIN);
 
   const providerId = str(form, "provider") ?? "";
   const definition = providerById(providerId);
@@ -87,6 +99,7 @@ export async function saveAiConnection(form: FormData): Promise<ActionResult> {
 
 export async function removeApiKey(): Promise<ActionResult> {
   await owner();
+  if (!(await isAdmin())) return fail(NOT_ADMIN);
   await clearApiKey();
   touch();
   return ok();

@@ -1,13 +1,16 @@
 "use server";
 
 import { randomBytes } from "node:crypto";
+import { z } from "zod";
 import { Prisma, type TaxonomyKind } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
 import { resolveLocation } from "@/server/services/locations";
 import {
+  contactPrivacyWhere,
   debtPrivacyWhere,
   factPrivacyWhere,
+  lifeEventPrivacyWhere,
   privacyScope,
   viaContactPrivacyWhere,
 } from "@/server/privacy/filter";
@@ -24,6 +27,7 @@ import { planChecklistSchema } from "@/lib/plan-checklist";
 import {
   type ActionResult,
   bool,
+  invalid,
   fail,
   fieldError,
   num,
@@ -49,9 +53,22 @@ function touch(contactId?: string | null) {
   if (contactId) revalidatePath(`/people/${contactId}`);
 }
 
+/**
+ * Whether this contact is both yours and currently reachable.
+ *
+ * Ownership alone is not the check. Every `update*` and `delete*` here looks
+ * its row up through `contactPrivacyWhere`, so a closed lock refuses them — but
+ * the create paths asked only "is this mine", which let an id remembered from
+ * an unlocked session go on attaching facts, dates, numbers and addresses to a
+ * private contact while the lock was shut. A row you cannot read is not a row
+ * you may write to, and this is the one place every create passes through.
+ */
 async function ownsContact(ownerId: string, contactId: string): Promise<boolean> {
   return Boolean(
-    await prisma.contact.findFirst({ where: { id: contactId, ownerId }, select: { id: true } }),
+    await prisma.contact.findFirst({
+      where: { id: contactId, ownerId, ...contactPrivacyWhere(await privacyScope()) },
+      select: { id: true },
+    }),
   );
 }
 
@@ -294,10 +311,7 @@ export async function updateLifeEvent(form: FormData): Promise<ActionResult> {
     where: {
       id,
       ownerId,
-      ...viaContactPrivacyWhere(scope),
-      ...(!scope.unlocked
-        ? { participants: { none: { contact: { isPrivate: true } } } }
-        : {}),
+      ...lifeEventPrivacyWhere(scope),
     },
     select: { contactId: true, participants: { select: { contactId: true } } },
   });
@@ -354,10 +368,7 @@ export async function deleteLifeEvent(id: string): Promise<ActionResult> {
     where: {
       id,
       ownerId,
-      ...viaContactPrivacyWhere(scope),
-      ...(!scope.unlocked
-        ? { participants: { none: { contact: { isPrivate: true } } } }
-        : {}),
+      ...lifeEventPrivacyWhere(scope),
     },
     select: { contactId: true, participants: { select: { contactId: true } } },
   });
@@ -1175,6 +1186,299 @@ export async function deleteRelationship(id: string): Promise<ActionResult> {
 
   touch(existing.fromContactId);
   touch(existing.toContactId);
+  return ok();
+}
+
+// --- contact methods -------------------------------------------------------
+
+/**
+ * Bounded to the column widths, so an over-long paste comes back as a field
+ * error rather than a database rejection thrown out of the action. The forms
+ * mirror these with `maxLength`, which stops it happening in the first place
+ * without being the thing relied on — a server action is a public POST.
+ */
+const methodSchema = z.object({
+  value: z.string().trim().min(1, "A value is required.").max(255),
+  label: z.string().trim().max(96).optional(),
+});
+
+const addressSchema = z.object({
+  label: z.string().trim().max(96).optional(),
+  line1: z.string().trim().max(191).optional(),
+  line2: z.string().trim().max(191).optional(),
+  city: z.string().trim().max(120).optional(),
+  region: z.string().trim().max(120).optional(),
+  postalCode: z.string().trim().max(32).optional(),
+  country: z.string().trim().max(120).optional(),
+  notes: z.string().trim().max(5000).optional(),
+});
+
+/**
+ * Phone numbers, email addresses and handles.
+ *
+ * `ContactMethod` and `Address` carry no `ownerId` and no `isPrivate` — they
+ * exist only beneath a contact, and a phone number is not separately hideable
+ * from the person it belongs to. Both facts shape every query below: ownership
+ * and the privacy lock are checked on the *contact*, so an id remembered from
+ * an unlocked session is not a way back into a private person's number.
+ */
+async function methodParent(
+  ownerId: string,
+  id: string,
+): Promise<{ contactId: string } | null> {
+  return prisma.contactMethod.findFirst({
+    where: { id, contact: { ownerId, ...contactPrivacyWhere(await privacyScope()) } },
+    select: { contactId: true },
+  });
+}
+
+export async function createContactMethod(form: FormData): Promise<ActionResult<{ id: string }>> {
+  const { ownerId } = await owner();
+  const contactId = str(form, "contactId");
+  if (!contactId) return fail("Contact not found.");
+  if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
+
+  // Stored exactly as typed, only trimmed. Reformatting "07700 900461" into
+  // "+44 7700 900461" would guess a country nobody gave — the same lie about
+  // certainty that DatePrecision exists to prevent.
+  const parsed = methodSchema.safeParse({
+    value: str(form, "value"),
+    label: str(form, "label"),
+  });
+  if (!parsed.success) return invalid(parsed.error);
+
+  const type = await termFromForm(ownerId, form, "typeId", "CONTACT_METHOD_TYPE");
+  if (!type.ok) return fail(UNKNOWN_TERM);
+
+  // The contact row is locked first, which is what actually serialises this.
+  // A plain read inside a transaction is still a non-locking consistent read
+  // under MariaDB's default isolation, so two requests adding the first method
+  // for one contact would both see an empty list, both claim primary, and both
+  // write sortOrder 0 — and there is no partial unique index to catch it after
+  // the fact. Locking the parent is cheaper than serialising the whole
+  // transaction and scopes the contention to the one contact.
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM Contact WHERE id = ${contactId} FOR UPDATE`;
+
+    const existing = await tx.contactMethod.findMany({
+      where: { contactId },
+      orderBy: { sortOrder: "desc" },
+      select: { sortOrder: true },
+    });
+
+    return tx.contactMethod.create({
+      data: {
+        contactId,
+        typeId: type.id,
+        value: parsed.data.value,
+        label: parsed.data.label ?? null,
+        // The only method there is, is the one to try first. Leaving it
+        // unmarked means the header shows nothing until a button nobody knows
+        // about is pressed, which reads as the number not having saved.
+        isPrimary: existing.length === 0,
+        sortOrder: (existing[0]?.sortOrder ?? -1) + 1,
+      },
+    });
+  });
+
+  touch(contactId);
+  return ok({ id: created.id });
+}
+
+export async function updateContactMethod(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  if (!id) return fail("Missing method.");
+  const existing = await methodParent(ownerId, id);
+  if (!existing) return fail("Not found.");
+
+  const parsed = methodSchema.safeParse({
+    value: str(form, "value"),
+    label: str(form, "label"),
+  });
+  if (!parsed.success) return invalid(parsed.error);
+
+  const type = await termFromForm(ownerId, form, "typeId", "CONTACT_METHOD_TYPE");
+  if (!type.ok) return fail(UNKNOWN_TERM);
+
+  await prisma.contactMethod.update({
+    where: { id },
+    data: { typeId: type.id, value: parsed.data.value, label: parsed.data.label ?? null },
+  });
+
+  touch(existing.contactId);
+  return ok();
+}
+
+export async function deleteContactMethod(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const existing = await methodParent(ownerId, id);
+  if (!existing) return fail("Not found.");
+  await prisma.contactMethod.delete({ where: { id } });
+  touch(existing.contactId);
+  return ok();
+}
+
+/**
+ * Promote one method to primary, demoting whatever held it.
+ *
+ * Its own action rather than a checkbox on the form: as a field it is written
+ * on every save, so ticking it twice leaves two rows claiming to be primary and
+ * the detail page silently picks whichever sorts first. MariaDB has no partial
+ * unique index to lean on, so "exactly one" is only ever as true as the
+ * transaction that clears the others in the same breath.
+ */
+export async function setPrimaryContactMethod(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const existing = await methodParent(ownerId, id);
+  if (!existing) return fail("Not found.");
+
+  await prisma.$transaction(async (tx) => {
+    await tx.contactMethod.updateMany({
+      where: { contactId: existing.contactId, isPrimary: true },
+      data: { isPrimary: false },
+    });
+    await tx.contactMethod.update({ where: { id }, data: { isPrimary: true } });
+
+    // Promotion moves the row to the front, rather than only flagging it.
+    // The list renders primary-first and the arrows step through `sortOrder`,
+    // so leaving the two to disagree makes a promoted last method render at
+    // the top with a down arrow that finds no greater `sortOrder` and appears
+    // to do nothing. One order, and the arrows mean what they show.
+    const rest = await tx.contactMethod.findMany({
+      where: { contactId: existing.contactId, id: { not: id } },
+      orderBy: { sortOrder: "asc" },
+      select: { id: true },
+    });
+    await tx.contactMethod.update({ where: { id }, data: { sortOrder: 0 } });
+    for (const [index, row] of rest.entries()) {
+      await tx.contactMethod.update({ where: { id: row.id }, data: { sortOrder: index + 1 } });
+    }
+  });
+
+  touch(existing.contactId);
+  return ok();
+}
+
+export async function moveContactMethod(
+  id: string,
+  direction: "up" | "down",
+): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const current = await prisma.contactMethod.findFirst({
+    where: { id, contact: { ownerId, ...contactPrivacyWhere(await privacyScope()) } },
+    select: { id: true, contactId: true, sortOrder: true, isPrimary: true },
+  });
+  if (!current) return fail("Not found.");
+
+  // The list renders primary-first, so the primary row cannot move: swapping
+  // its sortOrder leaves it exactly where it was on screen, which reads as the
+  // arrow doing nothing. It is pinned by being primary; promoting another
+  // method is how it stops being first.
+  if (current.isPrimary) return ok();
+
+  const neighbour = await prisma.contactMethod.findFirst({
+    where: {
+      contactId: current.contactId,
+      isPrimary: false,
+      sortOrder: direction === "up" ? { lt: current.sortOrder } : { gt: current.sortOrder },
+    },
+    orderBy: { sortOrder: direction === "up" ? "desc" : "asc" },
+    select: { id: true, sortOrder: true },
+  });
+  // Already at the end — not an error, just nothing to do.
+  if (!neighbour) return ok();
+
+  await prisma.$transaction([
+    prisma.contactMethod.update({ where: { id: current.id }, data: { sortOrder: neighbour.sortOrder } }),
+    prisma.contactMethod.update({ where: { id: neighbour.id }, data: { sortOrder: current.sortOrder } }),
+  ]);
+
+  touch(current.contactId);
+  return ok();
+}
+
+// --- addresses -------------------------------------------------------------
+
+const ADDRESS_PARTS = ["line1", "line2", "city", "region", "postalCode", "country"] as const;
+
+/**
+ * An address with nothing in it renders as a row that is only a delete button,
+ * so at least one line has to say where.
+ */
+type AddressFields =
+  | { ok: true; data: Record<string, string | null> }
+  | { ok: false; result: ActionResult<never> };
+
+function addressFields(form: FormData): AddressFields {
+  const parsed = addressSchema.safeParse({
+    label: str(form, "label"),
+    line1: str(form, "line1"),
+    line2: str(form, "line2"),
+    city: str(form, "city"),
+    region: str(form, "region"),
+    postalCode: str(form, "postalCode"),
+    country: str(form, "country"),
+    notes: str(form, "notes"),
+  });
+  if (!parsed.success) return { ok: false, result: invalid(parsed.error) };
+
+  if (!ADDRESS_PARTS.some((part) => parsed.data[part])) {
+    return { ok: false, result: fieldError("line1", "Fill in at least one line of the address.") };
+  }
+
+  const data: Record<string, string | null> = {};
+  for (const key of [...ADDRESS_PARTS, "label", "notes"] as const) {
+    data[key] = parsed.data[key] ?? null;
+  }
+  return { ok: true, data };
+}
+
+async function addressParent(
+  ownerId: string,
+  id: string,
+): Promise<{ contactId: string } | null> {
+  return prisma.address.findFirst({
+    where: { id, contact: { ownerId, ...contactPrivacyWhere(await privacyScope()) } },
+    select: { contactId: true },
+  });
+}
+
+export async function createAddress(form: FormData): Promise<ActionResult<{ id: string }>> {
+  const { ownerId } = await owner();
+  const contactId = str(form, "contactId");
+  if (!contactId) return fail("Contact not found.");
+  if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
+
+  const fields = addressFields(form);
+  if (!fields.ok) return fields.result;
+
+  const created = await prisma.address.create({ data: { contactId, ...fields.data } });
+  touch(contactId);
+  return ok({ id: created.id });
+}
+
+export async function updateAddress(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  if (!id) return fail("Missing address.");
+  const existing = await addressParent(ownerId, id);
+  if (!existing) return fail("Not found.");
+
+  const fields = addressFields(form);
+  if (!fields.ok) return fields.result;
+
+  await prisma.address.update({ where: { id }, data: fields.data });
+  touch(existing.contactId);
+  return ok();
+}
+
+export async function deleteAddress(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const existing = await addressParent(ownerId, id);
+  if (!existing) return fail("Not found.");
+  await prisma.address.delete({ where: { id } });
+  touch(existing.contactId);
   return ok();
 }
 

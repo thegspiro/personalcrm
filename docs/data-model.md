@@ -5,7 +5,7 @@ schema rather than in prose.
 
 - **Engine:** MariaDB (Prisma `mysql` provider), `utf8mb4`
 - **Source of truth:** [`prisma/schema.prisma`](../prisma/schema.prisma)
-- **Tables:** 33 · **Enums:** 19 · **Migrations:** 8
+- **Tables:** 36 · **Enums:** 21 · **Migrations:** 15
 - **Primary keys:** `cuid()` strings unless the table is a join table (composite)
   or a per-user singleton (`UserPreference`, `DashboardLayout` key on `userId`).
 
@@ -199,10 +199,37 @@ Indexes: `(ownerId, isArchived, lastName)`, `(ownerId, isArchived, firstName)`,
 Phone numbers, emails, handles. `contactId` (cascade), `typeId` →
 `CONTACT_METHOD_TYPE` (`SET NULL`), `value`, `label`, `isPrimary`, `sortOrder`.
 
+`value` is stored exactly as it was typed, trimmed and nothing else. Nothing
+normalises a number to E.164, because doing so has to guess a country the user
+never supplied — the same class of invented certainty `DatePrecision` exists to
+prevent. The consequence is that search matches the stored string: someone
+filed as `+1 (555) 010-4477` is not found by typing `5550104477`.
+
+`isPrimary` is set through its own action, which clears the flag on the
+contact's other methods in the same transaction. MariaDB has no partial unique
+index, so "exactly one primary" is only as true as that transaction — there is
+no constraint behind it.
+
+No `ownerId` and no `isPrivate`: it exists only beneath a contact, and a phone
+number is not separately hideable from the person it belongs to. Ownership and
+the privacy lock are therefore enforced on the *contact* in every action, which
+is why each one looks the row up through `contact: { ownerId, ...
+contactPrivacyWhere(scope) }` rather than by id alone.
+
 ### `Address`
 
 `contactId` (cascade), `label`, `line1`, `line2`, `city`, `region`,
-`postalCode`, `country`, `notes`.
+`postalCode`, `country`, `notes`. Every part is optional, but at least one of
+the address lines has to be filled in — a row with only a label renders as
+nothing but a delete button.
+
+`label` is deliberately free text rather than a taxonomy: an `ADDRESS_TYPE`
+kind would need an enum migration, defaults, a usage count and an admin group
+to replace a field whose realistic values are "Home" and "Work". The form
+offers a `<datalist>` of suggestions instead.
+
+Same privacy shape as `ContactMethod` — no `ownerId`, no `isPrivate`, scoped
+through the contact.
 
 ### `Tag` / `ContactTag`
 
@@ -538,9 +565,30 @@ Enabled channels receive due important-date reminders from the hourly scheduler.
 ### `NotificationChannel`
 
 `kind`: `EMAIL` | `NTFY` | `GOTIFY` | `DISCORD` | `WEBHOOK`; `name`; `config`
-JSON (channel-specific); `isEnabled`. Email uses `host`, optional `port`,
-`secure`, optional `user`/`pass`, and required `from`/`to`. HTTP-backed channels
-use `url` and an optional bearer `token`.
+JSON (channel-specific); `isEnabled`. Email uses `host`, `port` (a **number**,
+defaulted to 587), `secure`, optional `user`, and required `from`/`to`.
+HTTP-backed channels use `url`.
+
+**Credentials are stored encrypted, under their own key.** The SMTP password
+lands in `passEnc` and a bearer token in `tokenEnc`, AES-256-GCM under a key
+derived (HKDF) from `AUTH_SECRET` with the purpose string
+`personalcrm-channel-secret` — deliberately different from the one the AI key
+uses, so a ciphertext written for one cannot decrypt as the other. A plaintext
+`pass`/`token` under the bare field name is still honoured, for rows inserted
+by hand before there was a settings page; the next save rewrites them
+encrypted, which is the whole migration.
+
+The ciphertext gets its own key rather than replacing the plaintext one on
+purpose. Encrypting in place and recognising ciphertext by its `v1.` prefix
+would mean a bearer token that legitimately starts `v1.` is read as ciphertext,
+fails its auth tag, and comes back null — silently, and in the direction of
+sending the request unauthenticated.
+
+**A credential that will not decrypt stops delivery.** Unlike the AI key, which
+is treated as absent, an unreadable channel secret throws: an unauthenticated
+SMTP login or a webhook POST missing its Authorization header is a request that
+still leaves, just without its credential. The failure lands in
+`ReminderLog.error` and is flagged on the channel in Settings.
 
 ### `ReminderLog`
 
@@ -549,6 +597,13 @@ The dedupe/retry ledger, so a restart never re-sends a reminder. Unique on
 `entityType` a `ReminderEntity` (`IMPORTANT_DATE` | `CADENCE` | `TASK` |
 `DIGEST`). Records `attemptCount`, `nextAttemptAt`, `ok`, and `error`; failed
 sends retry with exponential delay up to five attempts.
+
+Only `IMPORTANT_DATE` is ever written. `CADENCE`, `TASK` and `DIGEST` are
+reserved for reminder types that are not scheduled yet — see
+[known gaps](README.md#known-gaps).
+
+`channelId` is `SET NULL`, so deleting a channel keeps the record of what was
+already sent and cannot start it re-sending.
 
 ---
 
@@ -574,6 +629,8 @@ sends retry with exponential delay up to five attempts.
 | `CustomFieldEntity` | `CONTACT`, `ROMANTIC`, `INTERACTION`, `DATE_ENTRY` |
 | `CustomFieldType` | `TEXT`, `LONGTEXT`, `NUMBER`, `DATE`, `BOOLEAN`, `SELECT`, `MULTISELECT`, `URL` |
 | `NotificationChannelKind` | `EMAIL`, `NTFY`, `GOTIFY`, `DISCORD`, `WEBHOOK` |
+| `AllergyStatus` | `UNKNOWN`, `NONE_KNOWN`, `HAS_ALLERGIES` |
+| `AllergyCategory` | `FOOD`, `MEDICATION`, `ENVIRONMENTAL`, `OTHER` |
 | `ReminderEntity` | `IMPORTANT_DATE`, `CADENCE`, `TASK`, `DIGEST` |
 
 `UNSPECIFIED` appears in both `ReachedOutBy` and `WhoPaid` for the same reason:
@@ -609,12 +666,12 @@ the `init-migrate` s6 oneshot).
 | `20260824182152_add_dietary_debts_and_reach_out` | `Debt`, `DietaryNeed`, `Interaction.reachedOutBy` |
 | `20260825094500_add_plans` | `Plan`, `PlanStatus`, and `PLAN_CATEGORY` on `TaxonomyKind` |
 | `20260825120000_add_onboarding_state` | `UserPreference.onboardingCompletedAt` |
+| `20260829120000_enable_reminder_delivery` | Widens the `ReminderLog` ledger for real delivery — `offsetDays`, `attemptCount`, `nextAttemptAt`, a nullable `sentAt` — and replaces the unique index with `ReminderLog_delivery_key`, named by hand because Prisma's generated name exceeds MariaDB's 64-character identifier limit. Pre-delivery rows are preserved rather than dropped |
 | `20260830120000_add_date_entry_retrospective` | Additive nullable `DateEntry.wouldDoAgain` and `nextTimeNotes` reflections; existing rows remain unanswered |
 | `20260830120000_expand_plan_practical_details` | Renames `Plan.city` to the wider `address` without losing values and adds the validated JSON checklist |
 | `20260831120000_add_shared_family_context` | Adds interaction mentions and shared life-event participants; backfills every existing life event into its participant join |
-| `20260829120000_enable_reminder_delivery` | `NotificationChannel` delivery state and `ReminderLog`, so an important-date reminder is sent once and retried on failure |
 | `20260831120000_add_locations` | Adds `Location` and the nullable `locationId` on `Interaction` and `Plan`, backfilling from the existing free-text labels by case and whitespace only. The original `location` columns are deliberately kept, not dropped: they are the historical wording |
-| `20260831120000_distinguish_allergy_categories` | Separates allergy categories from dietary needs |
+| `20260831120000_distinguish_allergy_categories` | Splits allergies from dietary preferences: `Contact.allergyStatus`, and `category`/`reaction` and the adrenaline columns on `DietaryNeed`. **Hand-edited**: existing rows describe food, so `FOOD` is the only honest backfill |
 | `20260831205130_add_location_osm_reference` | Additive nullable `Location.osmType` and `osmId`, so a place can be tied to a real OpenStreetMap object |
 
 Writing a migration that changes the meaning of existing data — not just its

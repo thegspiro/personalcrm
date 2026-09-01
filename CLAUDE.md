@@ -42,7 +42,7 @@ npm run dev
 | `npm run lint` | ESLint (`eslint .`, flat config in `eslint.config.mjs`). `next.config.ts` sets `eslint.ignoreDuringBuilds`, so a build never catches lint — the CI lint job is what does |
 | `npm run lint:sw` | Parses `public/sw.js` with **classic-script** grammar. ESLint ignores the worker and it is not TypeScript, so this is its only static check — and `node --check` is not equivalent, since `type: "module"` makes it accept `export` and top-level `await` that a classic worker rejects |
 | `npm run changelog` | What is pending in `CHANGELOG.d/`; `changelog:check` validates, `changelog:release` folds them into `CHANGELOG.md` |
-| `npm run verify` | typecheck → lint → lint:sw → changelog:check → test → build, in one command |
+| `npm run verify` | typecheck → lint → lint:sw → changelog:check → changelog:guard → test → build, in one command |
 
 Before pushing: `npm run verify`, plus `npx playwright test` for UI changes. CI
 (`.github/workflows/ci.yml`) runs the same set on every PR — quality, unit +
@@ -179,11 +179,17 @@ a `main` that already carried the instruction.
 
 ## Things that look optional but are not
 
-- **`src/server/ai/` is deletable.** Quick add is `src/lib/quick-parse.ts` —
-  local, no key, no network, always on. The AI layer only improves a reading of
-  awkward phrasing, its answer is re-run through the local matcher rather than
-  trusted, and a line naming a private contact never leaves the machine
-  whatever the toggle says.
+- **Quick add does not need `src/server/ai/`.** The feature is
+  `src/lib/quick-parse.ts` — local, no key, no network, always on. The AI layer
+  only improves a reading of awkward phrasing; it is off by default, nothing in
+  it runs while it is off, its runtime path sits behind a dynamic `import()` in
+  a `try` so an unreachable endpoint degrades to the local reading, its answer
+  is re-run through the local matcher rather than trusted, and a line naming a
+  private contact never leaves the machine whatever the toggle says. The same
+  holds for `src/server/geo/`. What is *not* true of either — and used to be
+  claimed here — is that the directory can simply be deleted: the settings page
+  and its action import the provider table statically, so removing one is a
+  build change.
 - **Mobile-first is tested, not assumed.** `tests/e2e/layout.spec.ts` asserts no
   route scrolls horizontally. `truncate` only shrinks when *every* flex and grid
   ancestor carries `min-w-0` (both default to `min-width: auto`); overflow on a
@@ -196,11 +202,15 @@ a `main` that already carried the instruction.
 
 ## Not implemented (do not assume otherwise)
 
-Important-date reminders are delivered through enabled `NotificationChannel`
-rows by the hourly scheduler. Cadence, task, and digest notifications are not
-yet implemented, so `digestHour` and `digestEnabled` are still stored only.
-Nothing writes to `/config/backups` or `/config/uploads` (`Contact.avatarPath` is
-rendered but never set). Full list in [docs/README.md](docs/README.md#known-gaps).
+Important-date reminders are delivered by the hourly scheduler through the
+channels configured under Settings → Reminders. Cadence, task, and digest
+notifications are not implemented, so `ReminderEntity.CADENCE`, `.TASK` and
+`.DIGEST` are never written and `digestHour`/`digestEnabled` are stored only.
+`UserPreference.weekStartsOn` is likewise reserved and read by nothing. Nothing
+writes to `/config/backups` or `/config/uploads` (`Contact.avatarPath` is
+rendered but never set). Tags exist in the schema with no UI. There is no
+account management after the welcome wizard. Full list in
+[docs/README.md](docs/README.md#known-gaps).
 
 ## Commits
 

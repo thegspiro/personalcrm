@@ -8,10 +8,13 @@ import { parsePlainDate } from "@/lib/dates";
 /**
  * An optional better reading of a quick-add line.
  *
- * This whole directory can be deleted and quick add keeps working —
- * `src/lib/quick-parse.ts` is the feature. This only helps with phrasing the
- * local parser reads badly, and only when you have switched it on and pointed
- * it at a model.
+ * Quick add does not need any of this — `src/lib/quick-parse.ts` is the
+ * feature. This only helps with phrasing the local parser reads badly, and only
+ * when you have switched it on and pointed it at a model; off, which is how it
+ * ships, nothing here runs at all.
+ *
+ * Note the directory is not straightforwardly *deletable*, though it reads that
+ * way: the settings page and its action import the provider table statically.
  *
  * Every failure path returns null so the local reading stands. An error
  * message where a decent guess would do is the wrong trade for something you

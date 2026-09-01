@@ -72,7 +72,6 @@ test("the wizard walks through every step and lands on the dashboard", async ({ 
   // Step 2 — about you.
   await expect(page.getByText("Step 2 of 5")).toBeVisible();
   await page.getByLabel("Your name").fill("Wizard Walker");
-  await page.getByLabel("Weeks start on").selectOption("1");
   await page.getByRole("button", { name: "Continue" }).click();
 
   // Step 3 — preferences.

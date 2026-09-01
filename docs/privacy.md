@@ -44,13 +44,22 @@ still gated on the server.
 [`src/server/privacy/where.ts`](../src/server/privacy/where.ts) exports
 where-fragments applied to the queries themselves:
 
-| Fragment                  | Applied to                                                              |
-| ------------------------- | ----------------------------------------------------------------------- |
-| `contactPrivacyWhere`     | Contact queries                                                         |
-| `factPrivacyWhere`        | Fact queries                                                            |
-| `debtPrivacyWhere`        | Debt queries                                                            |
-| `interactionPrivacyWhere` | Interactions — withheld if the row is private **or any participant is** |
-| `viaContactPrivacyWhere`  | Anything reached through a contact                                      |
+| Fragment                         | Applied to                                                                                     |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `contactPrivacyWhere`            | Contact queries                                                                                 |
+| `factPrivacyWhere`               | Fact queries                                                                                    |
+| `debtPrivacyWhere`               | Debt queries                                                                                    |
+| `interactionPrivacyWhere`        | Interactions — withheld if the row is private, **or any participant is, or anyone mentioned is** |
+| `lifeEventPrivacyWhere`          | Life events — withheld if the anchor contact is private, **or any participant is**              |
+| `viaContactPrivacyWhere`         | Anything reached through a contact                                                              |
+| `viaOptionalContactPrivacyWhere` | Anything whose contact is optional — a task or idea can stand on its own                        |
+| `householdPrivacyWhere`          | Household lists — a household with a private member can name them in its own title or notes     |
+
+`viaOptionalContactPrivacyWhere` cannot be `viaContactPrivacyWhere` dropped into
+an `OR` beside `{ contactId: null }`: that fragment is `{}` when unlocked, and an
+empty member of an `OR` matches nothing rather than everything. That inversion
+emptied the list for exactly the accounts entitled to see all of it — including
+every account that never switched the lock on, which is unlocked by definition.
 
 > A component that renders nothing is not a lock. With server components the
 > rows would already have been fetched and serialised into the payload sent to
@@ -145,6 +154,47 @@ quietly writes someone's private notes to disk.
 > forgetting is silent: offline caching stays on and the private row is written
 > to disk.
 
+### What a cached contact page holds
+
+Worth knowing rather than discovering: a contact page cached for offline
+reading carries everything that page shows, which now includes phone numbers,
+email addresses, handles and postal addresses alongside the facts, allergies
+and dietary notes that were already there. That is the same rule as before —
+what lands on disk is what the page rendered — but the contents got more
+sensitive when the reach-them sections landed, and "cache this page" is a
+decision worth making with that in mind.
+
+`ContactMethod` and `Address` carry no `isPrivate` of their own, by design: a
+phone number is not separately hideable from the person it belongs to. They
+inherit the contact's state, so a private contact's number is withheld exactly
+when the contact is, and never reaches the cache while the lock is closed.
+
+### Counts, not only rows
+
+Settings is reachable while the lock is closed, and it is full of totals: how
+many records use a type, how many values a custom field holds. Those are
+filtered by the same scope as the rows they count. An unfiltered total answers
+"how many private people are filed under this" from a page the lock does not
+gate, which is the whole reason the invariant covers counts.
+
+Dating taxonomies and dating custom fields report nothing at all while locked,
+rather than a number filtered row by row — the module is hidden whole, so a
+count of it would be the only part still visible.
+
+A total is filtered by the *same* predicate as the rows, not merely a similar
+one. A life event has an anchor contact and any number of participants, and the
+timeline withholds it when either is private; filtering the settings tally on
+the anchor alone counted events the timeline was hiding, and reported their
+type. Both now go through `lifeEventPrivacyWhere`, which is what the fragment
+exists for — the rule had been hand-copied at four call sites and forgotten at
+the fifth.
+
+One count is deliberately **not** filtered: the guard that refuses to delete a
+taxonomy term still in use. Filtering it would let a locked session delete a
+term that private rows point at, cascading them away — the history-rewrite the
+refusal exists to prevent. Only the *figure* is withheld: a locked session is
+told something still uses the term, without the number.
+
 ### Locking or signing out wipes it
 
 A saved copy of a page seen while unlocked would make the lock decorative.
@@ -208,6 +258,18 @@ someone holding both the database and `/config`, and nothing claims it does. A
 key that will not decrypt — after a rotated `AUTH_SECRET`, say — is treated as
 absent rather than as an error.
 
+**Notification channel credentials** — the SMTP password, a webhook bearer
+token — are encrypted the same way, under a *separate* key derived with its own
+purpose string, so a ciphertext written for one cannot decrypt as the other.
+They differ from the API key in what happens when one cannot be read: delivery
+**stops**, rather than degrading to absent. An unauthenticated SMTP login, or a
+POST to a third-party host with its Authorization header quietly missing, is a
+request that still leaves — just without its credential. The channel is flagged
+in Settings until it is re-entered.
+
+Rotating `AUTH_SECRET` therefore invalidates the stored API key *and* every
+channel credential.
+
 ### Providers
 
 Provider-neutral by construction: an OpenAI-compatible endpoint covers OpenAI,
@@ -221,9 +283,84 @@ is required, and nothing leaves your network if the endpoint doesn't. Replies
 are read forgivingly (fenced, prefaced with prose, or wrapped in an array),
 because smaller local models do all three.
 
+## Reminder delivery
+
+The one part of the app that reaches the network on its own. An hourly job
+(`src/server/reminder-scheduler.ts`) looks for important dates coming due and
+delivers them through the channels added under **Settings → Reminders**. No
+channel, no outbound request — a fresh install has none, so nothing leaves the
+machine until you say where it should go.
+
+### What a reminder sends
+
+More than most people assume, so it is written out here rather than left to be
+discovered:
+
+| Field | Example |
+| --- | --- |
+| The date's label | `Anniversary` |
+| The contact's first and last name | `Dana Whitfield` |
+| The occurrence date | `2026-09-14` |
+| How far out it is | `in 7 days` |
+
+That goes to whatever host the channel names, on the hour, with no preview and
+no confirmation step. A retry after a failure sends a shorter body carrying the
+scheduled date only.
+
+**Email is different in kind from the rest.** An ntfy, Gotify or webhook URL can
+point at a box on your own network, and then nothing leaves it. SMTP goes
+through a mail relay — a third party unless you run your own — and the contents
+of every reminder sit in that relay's logs.
+
+### Where a channel may point
+
+Any `http(s)` address, including one on your own network — that is how ntfy and
+Gotify are meant to be run, and it is the case where nothing leaves the
+building at all.
+
+With one boundary: on an installation with more than one account, only an
+administrator may aim a channel at a **private, loopback or link-local
+address**. The server makes the request and reports what came back, so without
+that line any member could use it to probe the host's own network. A
+single-account install never meets it — the only account is the administrator.
+
+That applies to an SMTP host as much as to a URL — an email channel names a
+host and a port rather than an address, and it is opened from the server just
+the same.
+
+**Redirects are not followed.** An allowed address that answers with a redirect
+to a refused one would otherwise walk straight through the boundary, since the
+destination never passes back through it. A notification endpoint has no reason
+to redirect; configure the address it points at.
+
+**Literal addresses only, and that is a deliberate limit rather than an
+oversight.** A hostname that resolves to a private address is not caught. Doing
+so properly means resolving the name and then pinning the connection to the
+address that was checked — otherwise the answer can change between the check
+and the connection — in both the HTTP client and the mail transport. That is
+not implemented; see [known gaps](README.md#known-gaps).
+
+So the boundary raises the cost of probing rather than making it impossible. It
+is worth having on those terms, and it is not worth mistaking for more. If the
+people with accounts on your installation are not people you trust with an
+outbound request from the server, `DISABLE_SIGNUP` is the control that actually
+answers that, and it is the recommended posture anyway.
+
+### Private contacts and the send
+
+While the privacy lock is **switched on**, people marked private are excluded
+from reminders entirely — whether or not you happen to be unlocked at the
+moment the job runs. The hourly job has no request context and so cannot ask;
+it reads the setting instead.
+
+With the lock switched **off**, `isPrivate` is a display preference rather than
+an access gate, and those contacts are included like anyone else. That follows
+from what the lock is (see above), but it is worth saying plainly: turning the
+lock off turns off this filter too.
+
 ## Optional address lookup
 
-The second — and only other — thing in the app that sends anything anywhere.
+The third and last thing in the app that sends anything anywhere.
 `src/server/geo/` is off by default: switched off, nothing in it runs and a
 place's address is simply something you type.
 
@@ -262,6 +399,10 @@ library's default would be rejected.
 
 - No telemetry, no analytics, no crash reporting. `NEXT_TELEMETRY_DISABLED=1`
   is set in the image.
-- No outbound request at all unless assisted reading is switched on and
-  configured.
+- **Three ways out, all of them yours to open.** Assisted reading and address
+  lookup are both off until switched on and configured, and neither sends
+  anything except when you ask it to. Reminder delivery is the one that acts on
+  its own, hourly — and only to channels you added yourself, so a fresh install
+  has nowhere to send and sends nothing. What a reminder carries is written out
+  under [What a reminder sends](#what-a-reminder-sends).
 - No third-party fonts, scripts or asset CDNs at runtime.

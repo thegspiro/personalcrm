@@ -4,6 +4,7 @@ import {
   recomputeContactActivity,
   resequenceDateEntries,
 } from "@/server/services/contact-activity";
+import { RENDERED_FIELDS_INPUT, fieldInputName } from "@/lib/custom-fields";
 
 const actionState = vi.hoisted(() => ({ ownerId: "", locked: false }));
 vi.mock("@/server/db/client", async () => ({ prisma: (await import("./db")).prisma }));
@@ -135,6 +136,50 @@ describe.skipIf(!hasTestDatabase)("dating", () => {
     stored = await prisma.dateEntry.findUniqueOrThrow({ where: { id: stored.id } });
     expect(stored.wouldDoAgain).toBe(false);
     expect(stored.nextTimeNotes).toBe("Try somewhere quieter.");
+  });
+
+  it("saves a custom field on a date edit, not only on create", async () => {
+    // The edit form renders these, so an update that never persisted them
+    // reported success and discarded every correction typed into one.
+    const definition = await prisma.customFieldDefinition.create({
+      data: {
+        ownerId,
+        entity: "DATE_ENTRY",
+        key: "venue-vibe",
+        label: "Vibe",
+        fieldType: "TEXT",
+        sortOrder: 0,
+      },
+    });
+
+    const created = await createDateEntry(actionForm({
+      contactId: (await makeRomantic()).id,
+      occurredAt: new Date().toISOString(),
+      [RENDERED_FIELDS_INPUT]: definition.id,
+      [fieldInputName(definition.id)]: "Loud",
+    }));
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error(created.error);
+    const id = created.data!.id;
+
+    expect(
+      await prisma.customFieldValue.findFirst({
+        where: { ownerId, entityType: "DATE_ENTRY", entityId: id },
+      }),
+    ).toMatchObject({ value: "Loud" });
+
+    const updated = await updateDateEntry(actionForm({
+      id,
+      [RENDERED_FIELDS_INPUT]: definition.id,
+      [fieldInputName(definition.id)]: "Quieter than expected",
+    }));
+    expect(updated.ok).toBe(true);
+
+    expect(
+      await prisma.customFieldValue.findFirst({
+        where: { ownerId, entityType: "DATE_ENTRY", entityId: id },
+      }),
+    ).toMatchObject({ value: "Quieter than expected" });
   });
 
   it("rejects creating a retrospective against another owner's contact", async () => {

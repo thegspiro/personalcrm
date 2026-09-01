@@ -39,7 +39,6 @@ export async function updateDefaults(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
 
   const cadence = num(form, "defaultCadenceDays");
-  const weekStartsOn = num(form, "weekStartsOn");
   const timezone = str(form, "timezone");
 
   if (timezone) {
@@ -64,7 +63,6 @@ export async function updateDefaults(form: FormData): Promise<ActionResult> {
       ...(carriesCadence
         ? { defaultCadenceDays: cadence && cadence > 0 ? Math.round(cadence) : null }
         : {}),
-      ...(weekStartsOn === 0 || weekStartsOn === 1 ? { weekStartsOn } : {}),
       ...(timezone ? { timezone } : {}),
     },
   });

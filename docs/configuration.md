@@ -10,7 +10,7 @@ Everything the app reads from its environment, and everything it keeps on disk.
 | --- | --- | --- | --- |
 | `APP_URL` | — | Behind HTTPS | Your external URL, e.g. `https://crm.example.com`. Session cookies are marked `secure` only when this starts with `https://`, so sign-in fails silently behind a TLS proxy if it is unset |
 | `DATABASE_URL` | generated | No | Set it and the bundled MariaDB never starts. Format: `mysql://user:password@host:3306/personalcrm` |
-| `AUTH_SECRET` | generated | No (container) / Yes (bare) | 32+ random bytes. Signs sessions **and** derives the key that encrypts a stored AI key. Generated into `/config/secrets.json` on first boot; rotating it invalidates sessions and makes a stored AI key undecryptable |
+| `AUTH_SECRET` | generated | No (container) / Yes (bare) | 32+ random bytes. Signs sessions **and** derives the keys that encrypt a stored AI key and every notification channel credential. Generated into `/config/secrets.json` on first boot. Rotating it signs everyone out, makes a stored AI key undecryptable — treated as no key — and **stops reminder delivery** on any channel with a saved password or token until it is re-entered |
 | `DISABLE_SIGNUP` | `false` | No | Set `true` once your accounts exist. The first-run wizard still works on an empty instance |
 | `TZ` | `Etc/UTC` (image) | No | Container clock. Note the account's own `UserPreference.timezone` is what every reminder and "overdue" calculation actually uses — this only affects logs and the default for a brand-new account |
 | `PUID` / `PGID` | `99` / `100` | No | Unraid's `nobody:users`. `/config` is chowned to this |

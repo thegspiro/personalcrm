@@ -6,7 +6,7 @@ import { z } from "zod";
 import { prisma } from "@/server/db/client";
 import { createAccount, needsFirstRunSetup, signupsAllowed } from "@/server/auth/provision";
 import { checkPasswordStrength, verifyPassword } from "@/server/auth/password";
-import { createSession, destroySession, getCurrentUser } from "@/server/auth/session";
+import { createSession, destroySession } from "@/server/auth/session";
 
 export interface FormState {
   error?: string;
@@ -125,6 +125,3 @@ export async function logoutAction(): Promise<void> {
   redirect("/login");
 }
 
-export async function currentUserAction() {
-  return getCurrentUser();
-}

@@ -9,6 +9,7 @@ const TABS = [
   { value: "fields", label: "Fields", icon: "SlidersHorizontal" },
   { value: "taxonomies", label: "Types", icon: "Tags" },
   { value: "dashboard", label: "Home", icon: "LayoutDashboard" },
+  { value: "notifications", label: "Reminders", icon: "Bell" },
   { value: "quickadd", label: "Quick add", icon: "Zap" },
   { value: "places", label: "Places", icon: "MapPin" },
   { value: "privacy", label: "Privacy", icon: "Lock" },
@@ -26,12 +27,25 @@ export function SettingsTabs({
   fields,
   taxonomies,
   dashboard,
+  notifications,
   quickadd,
   places,
   privacy,
   app,
 }: Record<(typeof TABS)[number]["value"], React.ReactNode>) {
-  const panels = { appearance, fields, taxonomies, dashboard, quickadd, places, privacy, app };
+  // Every entry in TABS needs one here, or its tab renders empty. Two branches
+  // each adding a tab is exactly how one goes missing.
+  const panels = {
+    appearance,
+    fields,
+    taxonomies,
+    dashboard,
+    notifications,
+    quickadd,
+    places,
+    privacy,
+    app,
+  };
 
   return (
     <Tabs defaultValue="appearance" className="grid grid-cols-[minmax(0,1fr)] gap-4">

@@ -39,11 +39,14 @@ export default async function PeoplePage({
       search: first("q"),
       categoryId: first("category"),
       scope: first("scope") === "archived" ? "archived" : "active",
+      favoritesOnly: first("favorites") === "1",
       sort,
     }),
   ]);
 
-  const isFiltered = Boolean(first("q") || first("category") || first("scope"));
+  const isFiltered = Boolean(
+    first("q") || first("category") || first("scope") || first("favorites"),
+  );
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">

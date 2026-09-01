@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/server/db/client";
 import {
   interactionPrivacyWhere,
+  lifeEventPrivacyWhere,
   privacyScope,
   viaContactPrivacyWhere,
   type PrivacyScope,
@@ -53,6 +54,8 @@ export interface TimelineEntry {
   sentiment?: number | null;
   reachedOutBy?: string | null;
   location?: string | null;
+  /** Interactions only. Collected when logging; shown beside the time. */
+  durationMinutes?: number | null;
   /**
    * The canonical place, when the interaction was linked to one.
    *
@@ -271,15 +274,12 @@ async function fetchLifeEvents(
   return prisma.lifeEvent.findMany({
     where: {
       ownerId,
-      ...viaContactPrivacyWhere(scope),
-      AND: [
-        ...(!scope.unlocked
-          ? [{ participants: { none: { contact: { isPrivate: true } } } }]
-          : []),
-        ...(options.contactId
-          ? [{ participants: { some: { contactId: options.contactId } } }]
-          : []),
-      ],
+      ...lifeEventPrivacyWhere(scope),
+      // The privacy predicate lives in the fragment; this AND carries only the
+      // caller's own filter, which needs `some` where the fragment needs `none`.
+      ...(options.contactId
+        ? { AND: [{ participants: { some: { contactId: options.contactId } } }] }
+        : {}),
       date: { lte: historicalTo, ...(options.from ? { gte: options.from } : {}) },
     },
     include: {
@@ -378,6 +378,7 @@ function interactionEntry(row: InteractionRow, timezone: string, now: Date): Tim
     sentiment: row.sentiment,
     reachedOutBy: row.reachedOutBy,
     location: row.location,
+    durationMinutes: row.durationMinutes,
     placeId: row.place?.id ?? null,
     placeName: row.place?.name ?? null,
     href: contacts[0] ? `/people/${contacts[0].id}#timeline-entry-interaction-${row.id}` : "/timeline",

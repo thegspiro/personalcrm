@@ -29,7 +29,6 @@ const TOTAL_STEPS = 5;
 export interface WizardProps {
   name: string;
   timezone: string;
-  weekStartsOn: number;
   accent: string;
   density: string;
   defaultCadenceDays: number | null;
@@ -138,7 +137,6 @@ export function OnboardingWizard(props: WizardProps) {
               pending={pending}
               name={props.name}
               timezone={props.timezone}
-              weekStartsOn={props.weekStartsOn}
             />
           ) : null}
 

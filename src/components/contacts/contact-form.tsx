@@ -209,6 +209,20 @@ export function ContactForm({
             placeholder="Not sure"
           />
 
+          <Field
+            label="The place"
+            htmlFor="whereWeMet"
+            hint="The room, not the category — “Kellogg's on Fifth”, “Priya's housewarming”."
+          >
+            <Input
+              id="whereWeMet"
+              name="whereWeMet"
+              maxLength={191}
+              defaultValue={contact?.whereWeMet ?? ""}
+              placeholder="Ronnie's, in the back room"
+            />
+          </Field>
+
           <Field label="The story" htmlFor="howWeMet">
             <Textarea
               id="howWeMet"

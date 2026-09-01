@@ -4,7 +4,10 @@ import { prisma } from "@/server/db/client";
 import { normalizeDashboardLayout } from "@/lib/dashboard";
 import { listTerms } from "@/server/taxonomy/queries";
 import { listTaxonomyAdmin } from "@/server/queries/taxonomy-admin";
-import { listAllFieldDefinitions } from "@/server/queries/custom-fields";
+import {
+  listAllFieldDefinitions,
+  valueCountsByDefinition,
+} from "@/server/queries/custom-fields";
 import { TAXONOMY_KIND_LABELS } from "@/server/taxonomy/defaults";
 import { PrivacySettings } from "@/components/dating/privacy-settings";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
@@ -14,8 +17,11 @@ import { DashboardSettings } from "@/components/settings/dashboard-settings";
 import { TaxonomySettings } from "@/components/settings/taxonomy-settings";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { AiSettings } from "@/components/settings/ai-settings";
+import { NotificationSettings } from "@/components/settings/notification-settings";
+import { listChannelsForSettings } from "@/server/queries/notifications";
 import { getAiStatus } from "@/server/ai/config";
 import { getPrivacyState } from "@/server/privacy/lock";
+import { privacyScope } from "@/server/privacy/filter";
 import { PROVIDERS } from "@/server/ai/providers";
 import { GeoSettings } from "@/components/settings/geo-settings";
 import { getGeoStatus } from "@/server/geo/config";
@@ -27,24 +33,34 @@ export const dynamic = "force-dynamic";
 export default async function SettingsPage() {
   const { user, prefs } = await getUserContext();
 
-  const [taxonomies, definitions, categories, layoutRow, valueCounts, ai, geo, privacyState] = await Promise.all([
+  // Positional, so the order here has to track the array below exactly — both
+  // branches added a member to it.
+  const [
+    taxonomies,
+    definitions,
+    categories,
+    layoutRow,
+    valueCounts,
+    ai,
+    geo,
+    privacyState,
+    channels,
+  ] = await Promise.all([
     listTaxonomyAdmin(user.id),
     listAllFieldDefinitions(user.id),
     listTerms(user.id, "CONTACT_CATEGORY"),
     prisma.dashboardLayout.findUnique({ where: { userId: user.id } }),
-    prisma.customFieldValue.groupBy({
-      by: ["definitionId"],
-      where: { ownerId: user.id },
-      _count: { _all: true },
-    }),
+    valueCountsByDefinition(user.id, await privacyScope()),
     getAiStatus(),
     getGeoStatus(),
     getPrivacyState(),
+    listChannelsForSettings(user.id),
   ]);
 
   // Value counts drive the delete warning: deleting a field takes everything
-  // recorded in it with it, so the confirmation has to say how much.
-  const counts = new Map(valueCounts.map((row) => [row.definitionId, row._count._all]));
+  // recorded in it with it, so the confirmation has to say how much. Filtered
+  // by the lock, because this page is reachable while it is closed.
+  const counts = valueCounts;
   const withCount = (rows: typeof definitions.CONTACT) =>
     rows.map((row) => ({ ...row, valueCount: counts.get(row.id) ?? 0 }));
   const withCounts = {
@@ -58,7 +74,9 @@ export default async function SettingsPage() {
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
       <div className="min-w-0">
         <h2 className="text-lg font-semibold tracking-tight">Settings</h2>
-        <p className="text-xs text-muted-foreground">Make the app work the way you do.</p>
+        <p className="text-xs text-muted-foreground">
+          Make the app work the way you do.
+        </p>
       </div>
 
       <SettingsTabs
@@ -67,7 +85,6 @@ export default async function SettingsPage() {
             accent={prefs.accent}
             density={prefs.density}
             defaultCadenceDays={prefs.defaultCadenceDays}
-            weekStartsOn={prefs.weekStartsOn}
             timezone={prefs.timezone}
           />
         }
@@ -103,7 +120,12 @@ export default async function SettingsPage() {
             }))}
           />
         }
-        dashboard={<DashboardSettings layout={normalizeDashboardLayout(layoutRow?.widgets)} />}
+        dashboard={
+          <DashboardSettings
+            layout={normalizeDashboardLayout(layoutRow?.widgets)}
+          />
+        }
+        notifications={<NotificationSettings channels={channels} />}
         quickadd={
           <AiSettings
             enabled={ai.enabled}
@@ -115,6 +137,7 @@ export default async function SettingsPage() {
             keySource={ai.keySource}
             keyHint={ai.keyHint}
             providers={PROVIDERS}
+            canEdit={user.role === "ADMIN"}
           />
         }
         places={
@@ -136,7 +159,11 @@ export default async function SettingsPage() {
             retryAfterSeconds={privacyState.retryAfterSeconds}
           />
         }
-        app={<AppSettings installedAt={prefs.pwaInstalledAt?.toISOString() ?? null} />}
+        app={
+          <AppSettings
+            installedAt={prefs.pwaInstalledAt?.toISOString() ?? null}
+          />
+        }
       />
     </div>
   );

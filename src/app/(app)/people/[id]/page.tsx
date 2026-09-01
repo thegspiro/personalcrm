@@ -8,7 +8,7 @@ import { listDateEntries } from "@/server/queries/dating";
 import { listPlans } from "@/server/queries/plans";
 import { canSeeDating } from "@/server/privacy/filter";
 import { getContactFamily, listHouseholdOptions } from "@/server/queries/family";
-import { fieldsFor } from "@/server/queries/custom-fields";
+import { fieldsFor, fieldValuesForMany } from "@/server/queries/custom-fields";
 import { offlineCacheable } from "@/server/privacy/offline";
 import { CacheThisPage } from "@/components/offline/offline";
 import { CustomFieldValues } from "@/components/custom-fields/field-values";
@@ -24,6 +24,8 @@ import { PlansSection } from "@/components/plans/plans-section";
 import { ContactHeader } from "@/components/contacts/contact-header";
 import { DatesSection } from "@/components/contacts/sections/dates";
 import { DebtsSection } from "@/components/contacts/sections/debts";
+import { AddressesSection } from "@/components/contacts/sections/addresses";
+import { ContactMethodsSection } from "@/components/contacts/sections/contact-methods";
 import { DietarySection } from "@/components/contacts/sections/dietary";
 import { FactsSection } from "@/components/contacts/sections/facts";
 import { GiftsSection } from "@/components/contacts/sections/gifts";
@@ -82,12 +84,15 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     allHouseholds,
     customFields,
     interactionFields,
+    romanticFields,
+    dateEntryFields,
     reciprocity,
     upcomingDates,
     locations,
   ] = await Promise.all([
     listTermsByKind(user.id, [
       "INTERACTION_TYPE",
+      "CONTACT_METHOD_TYPE",
       "FACT_CATEGORY",
       "DATE_TYPE",
       "LIFE_EVENT_TYPE",
@@ -106,10 +111,35 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     listHouseholdOptions(user.id),
     fieldsFor(user.id, "CONTACT", id, { categoryId: contact.categoryId }),
     fieldsFor(user.id, "INTERACTION", null),
+    showDating ? fieldsFor(user.id, "ROMANTIC", id) : Promise.resolve([]),
+    showDating ? fieldsFor(user.id, "DATE_ENTRY", null) : Promise.resolve([]),
     getReciprocity(user.id, id),
     getUpcomingDates(user.id, timezone, 366, 100, id),
     listContactLocations(user.id, id),
   ]);
+
+  // Definitions come back once; the saved values for every logged date come
+  // back in a single query, so the edit forms are not N round trips.
+  const dateFieldValues =
+    dateEntryFields.length > 0 && dateEntries.length > 0
+      ? await fieldValuesForMany(
+          user.id,
+          "DATE_ENTRY",
+          dateEntries.map((entry) => entry.id),
+        )
+      : new Map<string, Map<string, unknown>>();
+
+  const customFieldsByDate = Object.fromEntries(
+    dateEntries.map((entry) => [
+      entry.id,
+      dateEntryFields.map((field) => ({
+        definition: field.definition,
+        value: dateFieldValues.get(entry.id)?.get(field.definition.id) ?? null,
+      })),
+    ]),
+  );
+
+  const primaryMethod = contact.methods.find((method) => method.isPrimary) ?? null;
 
   // Family relationships get their own section, so "Connected people" is left
   // holding the friends, colleagues and neighbours it is actually useful for.
@@ -168,6 +198,9 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                   color: contact.category.color,
                 }
               : null,
+            primaryMethod: primaryMethod
+              ? { value: primaryMethod.value, slug: primaryMethod.type?.slug ?? null }
+              : null,
           }}
           interactionFields={interactionFields}
           cadence={{
@@ -223,6 +256,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             <RomanticSection
               contactId={contact.id}
               contactName={contact.firstName}
+              customFields={romanticFields}
               blurPrivate={prefs.blurPrivateNotes}
               stages={terms.DATING_STAGE}
               sources={terms.MEETING_SOURCE}
@@ -265,6 +299,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
             <DateLogSection
               contactId={contact.id}
+              customFields={dateEntryFields}
+              customFieldsByDate={customFieldsByDate}
               blurPrivate={prefs.blurPrivateNotes}
               activityTypes={terms.DATE_ACTIVITY_TYPE}
               plans={plans.map((plan) => ({
@@ -307,6 +343,41 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             />
           </>
         ) : null}
+
+        <ContactMethodsSection
+          contactId={contact.id}
+          types={terms.CONTACT_METHOD_TYPE}
+          methods={contact.methods.map((method) => ({
+            id: method.id,
+            value: method.value,
+            label: method.label,
+            isPrimary: method.isPrimary,
+            typeId: method.typeId,
+            type: method.type
+              ? {
+                  slug: method.type.slug,
+                  label: method.type.label,
+                  icon: method.type.icon,
+                  color: method.type.color,
+                }
+              : null,
+          }))}
+        />
+
+        <AddressesSection
+          contactId={contact.id}
+          addresses={contact.addresses.map((address) => ({
+            id: address.id,
+            label: address.label,
+            line1: address.line1,
+            line2: address.line2,
+            city: address.city,
+            region: address.region,
+            postalCode: address.postalCode,
+            country: address.country,
+            notes: address.notes,
+          }))}
+        />
 
         <DietarySection
           contactId={contact.id}
