@@ -229,7 +229,12 @@ export async function deleteChannel(id: string): Promise<ActionResult> {
   if (!existing) return fail("Not found.");
 
   // ReminderLog.channelId is SET NULL, so the ledger keeps its record of what
-  // was already sent and cannot start re-sending it.
+  // was already sent — but not the id, and the id is part of the uniqueness
+  // key. On its own that is not enough to stop a re-send: a channel deleted and
+  // recreated inside one due window gets a new id, so the key differs and the
+  // scheduler inserts a second row for the same occurrence. The scheduler
+  // therefore checks for the orphaned row before sending; this comment used to
+  // claim the SET NULL alone was the guarantee, and it was not.
   await prisma.notificationChannel.delete({ where: { id } });
   touch();
   return ok();

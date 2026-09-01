@@ -39,6 +39,47 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(await prisma.reminderLog.findFirst()).toMatchObject({ ok: true, attemptCount: 1, offsetDays: 0 });
   });
 
+  it("does not re-send an occurrence when its channel is deleted and recreated", async () => {
+    // The uniqueness key includes channelId, and deleting a channel nulls it on
+    // the ledger row. A replacement therefore gets a fresh key, so nothing in
+    // the constraint stops the same occurrence going out twice inside one due
+    // window. The orphaned row is what proves it was already sent.
+    const user = await createTestUser();
+    await prisma.userPreference.create({
+      data: { userId: user.id, timezone: "America/Los_Angeles" },
+    });
+    const first = await prisma.notificationChannel.create({
+      data: { ownerId: user.id, kind: "WEBHOOK", name: "First", config: { url: "https://example.invalid" } },
+    });
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Visible" } });
+    await prisma.importantDate.create({
+      data: {
+        ownerId: user.id,
+        contactId: contact.id,
+        label: "Birthday",
+        date: new Date("2000-08-29T00:00:00Z"),
+        recurrence: "ANNUAL",
+        reminderDaysBefore: [0],
+      },
+    });
+
+    const now = new Date("2026-08-29T18:00:00Z");
+    const send = vi.fn(async () => undefined);
+    await processImportantDateReminders(now, { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+
+    // Same due window: delete the channel and add another one.
+    await prisma.notificationChannel.delete({ where: { id: first.id } });
+    expect(await prisma.reminderLog.findFirst()).toMatchObject({ channelId: null, ok: true });
+    await prisma.notificationChannel.create({
+      data: { ownerId: user.id, kind: "WEBHOOK", name: "Second", config: { url: "https://example.invalid" } },
+    });
+
+    await processImportantDateReminders(now, { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.count()).toBe(1);
+  });
+
   it("delivers through the real sender for encrypted and legacy plaintext rows alike", async () => {
     // Two shapes exist in the wild: rows written by the settings form, which
     // store the token encrypted, and rows hand-inserted before there was one.

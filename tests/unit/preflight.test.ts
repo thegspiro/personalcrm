@@ -52,16 +52,21 @@ describe("checkEnvironment", () => {
     expect(warnings).toEqual([]);
   });
 
-  it("warns about a trailing slash rather than refusing it", () => {
+  it("says nothing about a trailing slash, because nothing concatenates onto it", () => {
+    // `secureCookies()` is the only reader and asks whether the value starts
+    // with https://. Warning about a slash implied a link this app never sends.
     const { errors, warnings } = check({ ...ok, APP_URL: "https://crm.example.com/" });
     expect(errors).toEqual([]);
-    expect(warnings.join(" ")).toMatch(/trailing slash/);
+    expect(warnings).toEqual([]);
   });
 
-  it("warns when APP_URL is missing entirely", () => {
+  it("warns when APP_URL is missing entirely, about cookies and nothing else", () => {
     const { errors, warnings } = check({ TZ: "UTC" });
     expect(errors).toEqual([]);
     expect(warnings.join(" ")).toMatch(/APP_URL is not set/);
+    expect(warnings.join(" ")).toMatch(/cookies/);
+    // The old wording promised links in notifications. Reminders carry none.
+    expect(warnings.join(" ")).not.toMatch(/Links in notifications will have/);
   });
 
   it("warns about a bad TZ without refusing to boot", () => {

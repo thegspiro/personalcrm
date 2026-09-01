@@ -34,8 +34,8 @@ log names which:
 | `PORT="…" is not a number` | Set a port number, or unset it. |
 | `/config is not writable` | Check the volume mapping, and that `PUID`/`PGID` own the folder on the host. |
 
-Warnings — a bad `TZ`, a trailing slash on `APP_URL`, plain `http` on a real
-hostname — are printed and startup continues.
+Warnings — a bad `TZ`, an unset `APP_URL`, plain `http` on a real hostname —
+are printed and startup continues.
 
 ## Signing in doesn't stick
 

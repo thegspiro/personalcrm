@@ -1,11 +1,22 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
-import { plainDateFromDb, plainDateKey, plainDateToDb, todayInTz } from "@/lib/dates";
+import { plainDateFromDb, plainDateKey, plainDateToDb, todayInTz, type PlainDate } from "@/lib/dates";
 import { dueOccurrence, effectiveReminderDays } from "@/lib/reminders";
 import { deliverToChannel } from "./notify";
 
 const MAX_ATTEMPTS = 5;
+
+/**
+ * Identifies one occurrence independently of the channel it was sent to.
+ *
+ * Both sides go through `plainDateKey` so a `@db.Date` read back as a Date and
+ * a computed `PlainDate` cannot format differently — the set would silently
+ * never match, and the failure would look like the guard simply not working.
+ */
+function orphanKey(entityId: string, occurrence: PlainDate, offset: number): string {
+  return `${entityId}|${plainDateKey(occurrence)}|${offset}`;
+}
 
 /**
  * Creates one durable attempt per occurrence/offset/channel before delivery.
@@ -44,11 +55,40 @@ export async function processImportantDateReminders(
       include: { contact: { select: { firstName: true, lastName: true } } },
     });
 
+    // An occurrence already delivered through a channel that has since been
+    // deleted must not go out again. `ReminderLog.channelId` is SET NULL, so the
+    // ledger keeps the record but loses the id — and the uniqueness key includes
+    // that id, so a replacement channel gets a fresh key and the insert below
+    // succeeds where it should collide. Deleting and recreating a channel inside
+    // one due window is the path that replays an already-sent reminder; the
+    // orphaned row is what proves it was sent. Gathered once per account rather
+    // than per date, because the common case is that there are none.
+    const orphaned = await db.reminderLog.findMany({
+      where: {
+        ownerId: user.id,
+        entityType: "IMPORTANT_DATE",
+        channelId: null,
+        ok: true,
+        // Bounded to what could still come due. Without this the scan grows
+        // with the account's whole delivery history, for a check that only ever
+        // concerns occurrences at or ahead of today.
+        scheduledFor: { gte: plainDateToDb(today) },
+      },
+      select: { entityId: true, scheduledFor: true, offsetDays: true },
+    });
+    const deliveredToARemovedChannel = new Set(
+      orphaned.map((row) =>
+        orphanKey(row.entityId, plainDateFromDb(row.scheduledFor), row.offsetDays),
+      ),
+    );
+
     for (const date of dates) {
       const policy = Array.isArray(date.reminderDaysBefore) ? date.reminderDaysBefore as number[] : null;
       for (const offset of effectiveReminderDays(policy)) {
         const occurrence = dueOccurrence(plainDateFromDb(date.date), date.recurrence, today, offset);
         if (!occurrence) continue;
+        if (deliveredToARemovedChannel.has(orphanKey(date.id, occurrence, offset))) continue;
+
         for (const channel of user.notificationChannels) {
           let log;
           try {

@@ -11,8 +11,8 @@ failed. Watching `docker logs -f personalcrm` on a first boot you'll see:
    app subtly wrong rather than obviously broken is reported here, while the log
    is still short. A bad `APP_URL`, a `DATABASE_URL` that isn't MySQL, a
    non-numeric `PORT` or an unwritable `/config` stop the container. A typo in
-   `TZ`, a trailing slash on `APP_URL`, or plain `http` on a real hostname are
-   warnings — they're printed and boot continues.
+   `TZ`, an unset `APP_URL`, or plain `http` on a real hostname are warnings —
+   they're printed and boot continues.
 3. **`init-mariadb`** — generates `secrets.json` if it isn't there, then creates
    the database on first boot. Skipped entirely when `DATABASE_URL` is set.
 4. **`init-db-ready`** — waits for the database to accept connections.

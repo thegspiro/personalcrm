@@ -598,6 +598,13 @@ The dedupe/retry ledger, so a restart never re-sends a reminder. Unique on
 `DIGEST`). Records `attemptCount`, `nextAttemptAt`, `ok`, and `error`; failed
 sends retry with exponential delay up to five attempts.
 
+`channelId` is part of that key and is `SET NULL` when a channel is deleted, so
+the constraint alone does not survive a delete: a replacement channel gets a new
+id, a different key, and would send the same occurrence again inside one due
+window. The scheduler closes that by skipping an occurrence that already has a
+delivered row whose channel is gone — the orphaned row is the proof it was
+sent. A row is kept rather than deleted for exactly this reason.
+
 Only `IMPORTANT_DATE` is ever written. `CADENCE`, `TASK` and `DIGEST` are
 reserved for reminder types that are not scheduled yet — see
 [known gaps](README.md#known-gaps).

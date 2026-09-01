@@ -128,6 +128,12 @@ export function NotificationSettings({ channels }: { channels: RedactedChannel[]
 
         {adding ? (
           <form
+            // Keyed on the kind so switching remounts the form. Without it the
+            // inputs stay mounted, `defaultValue` is not reapplied, and the
+            // fields shared across kinds keep what was typed — so picking ntfy,
+            // typing its token, then picking Gotify submits a channel named
+            // "ntfy" with the ntfy token encrypted as its application token.
+            key={adding}
             action={submit(createChannel, () => setAdding(null), "Channel added")}
             className="mt-3 grid gap-2.5"
           >

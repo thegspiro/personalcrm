@@ -68,12 +68,8 @@ export function checkEnvironment(env, options = {}) {
           `open the app on, e.g. https://crm.example.com.`,
       );
     } else {
-      if (appUrl.endsWith("/")) {
-        warnings.push(
-          `APP_URL="${appUrl}" ends in a slash, which produces double slashes in ` +
-            `notification links. Drop the trailing slash.`,
-        );
-      }
+      // No trailing-slash check: nothing concatenates onto this value. The one
+      // reader is `secureCookies()`, which asks whether it starts with https://.
       if (parsed.protocol === "http:" && !isLocalHost(parsed.hostname)) {
         warnings.push(
           `APP_URL="${appUrl}" is http. If you actually reach the app over HTTPS — behind ` +
@@ -84,8 +80,8 @@ export function checkEnvironment(env, options = {}) {
     }
   } else {
     warnings.push(
-      "APP_URL is not set. Links in notifications will have no address to point at, and " +
-        "session cookies will not be marked secure. Set it to your external URL.",
+      "APP_URL is not set, so session cookies will not be marked secure. Set it to your " +
+        "external URL. Nothing else reads it — reminders carry no links.",
     );
   }
 
