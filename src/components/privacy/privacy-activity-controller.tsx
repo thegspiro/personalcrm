@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import {
-  lockPrivacyAction,
+  lockPrivacyNow,
   privacyActivityHeartbeat,
 } from "@/server/actions/privacy";
 import { purgeOfflineCaches } from "@/components/offline/offline";
@@ -82,6 +82,7 @@ export function PrivacyActivityController({
   }, [pathname, router, searchParams]);
 
   const [locking, setLocking] = React.useState(false);
+  const [lockFailed, setLockFailed] = React.useState(false);
 
   /**
    * The deliberate version of `close`: the timeout covers walking away, this
@@ -95,28 +96,28 @@ export function PrivacyActivityController({
     setClosed(true);
 
     void (async () => {
-      try {
-        // Caches before the action: `lockPrivacyAction` redirects, so anything
-        // sequenced after it may never run, and private pages the service
-        // worker wrote to disk would outlive the lock they were cached under.
-        await purgeOfflineCaches();
-        await lockPrivacyAction();
-      } catch (error) {
-        // A redirecting server action reports itself by throwing a digest.
-        // That is the success path, so hold the blank shell for the
-        // navigation rather than restoring the page behind it.
-        const digest = (error as { digest?: unknown } | null)?.digest;
-        if (typeof digest === "string" && digest.startsWith("NEXT_REDIRECT")) return;
+      // The server write goes first and is awaited. Purging waits on the
+      // service worker, so doing it first leaves a window in which closing the
+      // tab loses a lock the viewer explicitly asked for -- the shell would
+      // have blanked and nothing else would have happened.
+      const result = await lockPrivacyNow().catch(() => null);
 
-        // Anything else and the lock did not close. Give the app back rather
-        // than stranding the viewer on a blank screen -- worst offline, where
-        // the request cannot land and the cache has already been purged.
-        setClosed(false);
+      if (!result?.ok) {
+        // Deliberately does not restore the shell. A lost response and a lost
+        // request look identical from here, and if the write did commit,
+        // remounting would put the already-rendered private tree back on
+        // screen for a session the server now considers locked. A reload is
+        // the way back, because it re-reads the truth from the server.
+        setLockFailed(true);
         setLocking(false);
-        toast.error("Could not lock. Check your connection and try again.");
+        return;
       }
+
+      await purgeOfflineCaches();
+      router.replace("/");
+      router.refresh();
     })();
-  }, [locking]);
+  }, [locking, router]);
 
   React.useEffect(() => {
     if (!enabled || !unlocked || !deadline || closed) return;
@@ -193,7 +194,19 @@ export function PrivacyActivityController({
         className="grid min-h-dvh place-items-center bg-background"
         data-testid="privacy-locked"
       >
-        <p className="text-sm text-muted-foreground">Privacy lock closed.</p>
+        {lockFailed ? (
+          <div className="grid justify-items-center gap-3 px-6 text-center">
+            <p className="text-sm text-muted-foreground">
+              Could not confirm the lock closed. Reload to see where things
+              stand.
+            </p>
+            <Button size="sm" onClick={() => window.location.reload()}>
+              Reload
+            </Button>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">Privacy lock closed.</p>
+        )}
       </main>
     );
   }

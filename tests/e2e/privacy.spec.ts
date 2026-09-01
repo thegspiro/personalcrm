@@ -392,18 +392,20 @@ test("the header offers a way to close the lock without waiting out the timeout"
   // Now it is the one visible sign that private content is open at all.
   await expect(lockNow).toBeVisible();
 
-  // A lock that cannot reach the server must hand the control back rather than
-  // strand the viewer under the overlay -- and offline is where that is most
-  // likely, and where the cached page has already been purged.
+  // A lock that cannot reach the server must not put the page back. A lost
+  // response and a lost request are indistinguishable from the browser, so
+  // restoring would risk showing private content for a session the server has
+  // already locked. The shell stays closed and offers a reload instead.
   await page.context().setOffline(true);
   await lockNow.click();
-  await expect(page.getByText(/Could not lock/i)).toBeVisible();
-  await expect(lockNow).toBeEnabled();
-  await page.context().setOffline(false);
+  await expect(page.getByText(/Could not confirm the lock closed/i)).toBeVisible();
+  await expect(lockNow).toHaveCount(0);
 
-  // Reload rather than clicking through the toast: on a phone it renders
-  // top-centre, over the header, and would swallow the click.
-  await page.goto("/");
+  // The reload re-reads the truth from the server. Nothing committed here, so
+  // it comes back unlocked -- and that is the server saying so, not the
+  // browser assuming it.
+  await page.context().setOffline(false);
+  await page.getByRole("button", { name: "Reload" }).click();
   await expect(lockNow).toBeVisible();
   await lockNow.click();
   await page.waitForURL("/");
