@@ -50,12 +50,11 @@ enforces rather than documents:
 | `setupAction` | First-run wizard; the first account becomes `ADMIN`, a label nothing checks yet. Hands off to `/welcome` |
 | `signupAction` | Refused when `DISABLE_SIGNUP=true` |
 | `logoutAction` | Deletes the session row and clears the cookie |
-| `currentUserAction` | |
 
 ### Contacts — `actions/contacts.ts`
 
-`createContact`, `updateContact`, `patchContact`, `snoozeContact`,
-`deleteContact`, `setContactArchived`.
+`createContact`, `updateContact`, `updateContactBirthday`, `patchContact`,
+`snoozeContact`, `deleteContact`, `setContactArchived`.
 
 `deleteContact` sweeps the contact's `CustomFieldValue` rows explicitly —
 `entityId` is not a foreign key, so nothing cascades.
@@ -86,6 +85,8 @@ list, because a person missing from the form would be silently dropped on save.
 
 | Group | Actions |
 | --- | --- |
+| Contact methods | `createContactMethod`, `updateContactMethod`, `deleteContactMethod`, `setPrimaryContactMethod`, `moveContactMethod` |
+| Addresses | `createAddress`, `updateAddress`, `deleteAddress` |
 | Facts | `createFact`, `updateFact`, `deleteFact` |
 | Important dates | `createImportantDate`, `updateImportantDate`, `deleteImportantDate` |
 | Significant moments (`LifeEvent`) | `createLifeEvent`, `updateLifeEvent`, `deleteLifeEvent` |
@@ -94,8 +95,19 @@ list, because a person missing from the form would be silently dropped on save.
 | Tasks | `createTask`, `updateTask`, `setTaskDone`, `deleteTask` |
 | Gifts | `createGift`, `updateGift`, `setGiftStatus`, `deleteGift` |
 | Debts | `createDebt`, `updateDebt`, `settleDebt`, `deleteDebt` |
-| Dietary needs | `createDietaryNeed`, `updateDietaryNeed`, `deleteDietaryNeed` |
+| Dietary needs | `createDietaryNeed`, `updateDietaryNeed`, `deleteDietaryNeed`, `updateAllergyStatus` |
 | Relationships | `createRelationship`, `updateRelationship`, `deleteRelationship` |
+
+`ContactMethod` and `Address` carry no `ownerId` of their own, so these are the
+actions where the ownership check is indirect: each looks its row up through
+`contact: { ownerId, ...contactPrivacyWhere(scope) }`. Passing an id alone
+would be a way back into a private contact's phone number using an id
+remembered from an unlocked session.
+
+`setPrimaryContactMethod` is separate from `updateContactMethod` on purpose. As
+a checkbox it would be written on every save, so ticking it on a second row
+leaves two rows claiming to be primary and the header silently picks whichever
+sorts first; as its own action it clears the others in the same transaction.
 
 Life-event ranges compare the possible interval represented by each partial
 date. The create and update actions reject only ranges that are definitively
@@ -197,8 +209,9 @@ runs once per account and records that it did in
 
 ### Privacy — `actions/privacy.ts`
 
-`unlockPrivacyAction`, `lockPrivacyAction`, `setPinAction`, `clearPinAction`,
-`setPrivacyLockEnabled`, `updatePrivacyPreferences`, `setPrivate`.
+`unlockPrivacyAction`, `lockPrivacyAction`, `privacyActivityHeartbeat`,
+`setPinAction`, `clearPinAction`, `setPrivacyLockEnabled`,
+`updatePrivacyPreferences`, `setPrivate`.
 
 Unlock, PIN replacement, and PIN removal return the same retry duration from a
 shared account-level verifier. Its counter is serialized in the database, so
@@ -233,6 +246,9 @@ exists to prevent:
 
 ## The one HTTP endpoint
 
-`GET /api/health` → `200` with `{ status, database, latencyMs, version,
+`GET /api/health` → `200` with `{ status, database, setup, latencyMs, version,
 uptimeSeconds }`, or `503` with `{ status: "error", database: "down", message }`.
 `cache-control: no-store`, runtime `nodejs`, `force-dynamic`.
+
+`setup` is `"complete"` or `"pending"`, so an operator can tell a
+booted-but-unconfigured instance from a working one without opening a browser.

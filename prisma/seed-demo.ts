@@ -20,6 +20,64 @@ function dateOnly(year: number, month: number, day: number): Date {
   return new Date(Date.UTC(year, month - 1, day));
 }
 
+/** Reach-them details for the demo account, keyed by first name. */
+const DEMO_METHODS: Record<string, { slug: string; value: string; label?: string }[]> = {
+  Sarah: [
+    { slug: "mobile", value: "+1 (703) 555-0148" },
+    { slug: "email", value: "sarah.whitfield@example.com", label: "Personal" },
+    { slug: "instagram", value: "@sarahw" },
+  ],
+  Marcus: [
+    { slug: "mobile", value: "+1 (571) 555-0193" },
+    { slug: "signal", value: "+1 (571) 555-0193" },
+  ],
+  Priya: [
+    { slug: "work-phone", value: "+1 (703) 555-0102", label: "Desk" },
+    { slug: "email", value: "p.raman@example.com", label: "Work" },
+    { slug: "linkedin", value: "priya-raman" },
+  ],
+  Dad: [{ slug: "mobile", value: "+1 (804) 555-0166" }],
+  Mom: [
+    { slug: "mobile", value: "+1 (804) 555-0167" },
+    { slug: "home-phone", value: "+1 (804) 555-0100", label: "Landline — rings in the kitchen" },
+  ],
+  Jenna: [
+    { slug: "mobile", value: "+1 (202) 555-0121" },
+    { slug: "website", value: "jennaokoye.example.com" },
+  ],
+  Tom: [{ slug: "home-phone", value: "+1 (571) 555-0177" }],
+  "Dr. Alice": [{ slug: "work-phone", value: "+1 (703) 555-0155", label: "Front desk" }],
+  Walter: [{ slug: "home-phone", value: "+1 (804) 555-0188" }],
+  Ruth: [{ slug: "home-phone", value: "+1 (804) 555-0188", label: "Same line as Walter" }],
+  Elena: [
+    { slug: "mobile", value: "+1 (703) 555-0139" },
+    { slug: "whatsapp", value: "+1 (703) 555-0139" },
+  ],
+};
+
+const DEMO_ADDRESSES: Record<
+  string,
+  { label: string; line1: string; city: string; region: string; postalCode: string; notes?: string }
+> = {
+  Dad: { label: "Home", line1: "1412 Hanover Avenue", city: "Richmond", region: "VA", postalCode: "23220" },
+  Mom: { label: "Home", line1: "1412 Hanover Avenue", city: "Richmond", region: "VA", postalCode: "23220" },
+  Tom: {
+    label: "Home",
+    line1: "308 Greenwich Street",
+    city: "Falls Church",
+    region: "VA",
+    postalCode: "22046",
+    notes: "Two doors down. Leaves the porch light on.",
+  },
+  "Dr. Alice": {
+    label: "Practice",
+    line1: "2200 Clarendon Boulevard, Suite 400",
+    city: "Arlington",
+    region: "VA",
+    postalCode: "22201",
+  },
+};
+
 export async function seedDemoData(prisma: PrismaClient): Promise<void> {
   const existingContacts = await prisma.contact.count();
   if (existingContacts > 0) {
@@ -137,6 +195,27 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
       },
     });
     contactIds.set(p.firstName, contact.id);
+
+    // A contact with no way to reach them looks like a feature that does not
+    // work, so the demo account carries the shapes worth seeing: a primary
+    // number, a second method, and a postal address on the people who would
+    // realistically have one.
+    const methods = DEMO_METHODS[p.firstName];
+    if (methods) {
+      await prisma.contactMethod.createMany({
+        data: methods.map((method, order) => ({
+          contactId: contact.id,
+          typeId: term("CONTACT_METHOD_TYPE", method.slug),
+          value: method.value,
+          label: method.label ?? null,
+          isPrimary: order === 0,
+          sortOrder: order,
+        })),
+      });
+    }
+
+    const address = DEMO_ADDRESSES[p.firstName];
+    if (address) await prisma.address.create({ data: { contactId: contact.id, ...address } });
 
     if (isRomanticSeed(p)) {
       const r = p;

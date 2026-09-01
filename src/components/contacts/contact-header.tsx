@@ -21,6 +21,7 @@ import type { RenderableField } from "@/components/custom-fields/field-renderer"
 import type { TermOption } from "@/components/form/term-select";
 import type { PickerContact } from "@/components/form/contact-picker";
 import { cadenceMessage, termColorClasses } from "@/lib/format";
+import { methodLink } from "@/lib/contact-methods";
 import { cadenceLabel } from "@/lib/cadence";
 import { formatPartialDate, type DatePrecision } from "@/lib/date-precision";
 import type { PlainDate } from "@/lib/dates";
@@ -60,6 +61,8 @@ export function ContactHeader({
     birthDate: PlainDate | null;
     birthDatePrecision: DatePrecision;
     category: { label: string; icon: string | null; color: string | null } | null;
+    /** The method marked primary, if any — shown so it is one tap away. */
+    primaryMethod: { value: string; slug: string | null } | null;
   };
   cadence: { status: string; message: string | null; lastSeen: string | null };
   interactionTypes: TermOption[];
@@ -80,6 +83,11 @@ export function ContactHeader({
     toast.success(message);
     router.refresh();
   }
+
+  const primaryLink = methodLink(
+    contact.primaryMethod?.slug ?? null,
+    contact.primaryMethod?.value ?? "",
+  );
 
   const subtitle = [
     contact.occupation && contact.employer
@@ -116,6 +124,19 @@ export function ContactHeader({
             </p>
           ) : null}
           {subtitle ? <p className="truncate text-xs text-muted-foreground">{subtitle}</p> : null}
+
+          {/* The number you came here for, above the fold and pressable. The
+              alternative is scrolling past six sections to reach it. */}
+          {primaryLink.href ? (
+            <a
+              href={primaryLink.href}
+              className="mt-0.5 inline-flex max-w-full items-center gap-1 truncate text-xs font-medium text-accent-11 underline-offset-2 hover:underline"
+            >
+              {contact.primaryMethod?.value}
+            </a>
+          ) : contact.primaryMethod ? (
+            <p className="truncate text-xs text-muted-foreground">{contact.primaryMethod.value}</p>
+          ) : null}
 
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {contact.category ? (

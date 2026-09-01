@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
 import { resolveLocation } from "@/server/services/locations";
 import {
+  contactPrivacyWhere,
   debtPrivacyWhere,
   factPrivacyWhere,
   privacyScope,
@@ -1172,6 +1173,219 @@ export async function deleteRelationship(id: string): Promise<ActionResult> {
 
   touch(existing.fromContactId);
   touch(existing.toContactId);
+  return ok();
+}
+
+// --- contact methods -------------------------------------------------------
+
+/**
+ * Phone numbers, email addresses and handles.
+ *
+ * `ContactMethod` and `Address` carry no `ownerId` and no `isPrivate` — they
+ * exist only beneath a contact, and a phone number is not separately hideable
+ * from the person it belongs to. Both facts shape every query below: ownership
+ * and the privacy lock are checked on the *contact*, so an id remembered from
+ * an unlocked session is not a way back into a private person's number.
+ */
+async function methodParent(
+  ownerId: string,
+  id: string,
+): Promise<{ contactId: string } | null> {
+  return prisma.contactMethod.findFirst({
+    where: { id, contact: { ownerId, ...contactPrivacyWhere(await privacyScope()) } },
+    select: { contactId: true },
+  });
+}
+
+export async function createContactMethod(form: FormData): Promise<ActionResult<{ id: string }>> {
+  const { ownerId } = await owner();
+  const contactId = str(form, "contactId");
+  // Stored exactly as typed, only trimmed. Reformatting "07700 900461" into
+  // "+44 7700 900461" would guess a country nobody gave — the same lie about
+  // certainty that DatePrecision exists to prevent.
+  const value = str(form, "value");
+  if (!contactId || !value) return fail("A value is required.");
+  if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
+
+  const type = await termFromForm(ownerId, form, "typeId", "CONTACT_METHOD_TYPE");
+  if (!type.ok) return fail(UNKNOWN_TERM);
+
+  const [last, existingCount] = await Promise.all([
+    prisma.contactMethod.findFirst({
+      where: { contactId },
+      orderBy: { sortOrder: "desc" },
+      select: { sortOrder: true },
+    }),
+    prisma.contactMethod.count({ where: { contactId } }),
+  ]);
+
+  const created = await prisma.contactMethod.create({
+    data: {
+      contactId,
+      typeId: type.id,
+      value,
+      label: str(form, "label") ?? null,
+      // The only method there is, is the one to try first. Leaving it unmarked
+      // means the header shows nothing until a button nobody knows about is
+      // pressed, which reads as the number not having saved.
+      isPrimary: existingCount === 0,
+      sortOrder: (last?.sortOrder ?? -1) + 1,
+    },
+  });
+
+  touch(contactId);
+  return ok({ id: created.id });
+}
+
+export async function updateContactMethod(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  if (!id) return fail("Missing method.");
+  const existing = await methodParent(ownerId, id);
+  if (!existing) return fail("Not found.");
+
+  const value = str(form, "value");
+  if (!value) return fail("A value is required.");
+
+  const type = await termFromForm(ownerId, form, "typeId", "CONTACT_METHOD_TYPE");
+  if (!type.ok) return fail(UNKNOWN_TERM);
+
+  await prisma.contactMethod.update({
+    where: { id },
+    data: { typeId: type.id, value, label: str(form, "label") ?? null },
+  });
+
+  touch(existing.contactId);
+  return ok();
+}
+
+export async function deleteContactMethod(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const existing = await methodParent(ownerId, id);
+  if (!existing) return fail("Not found.");
+  await prisma.contactMethod.delete({ where: { id } });
+  touch(existing.contactId);
+  return ok();
+}
+
+/**
+ * Promote one method to primary, demoting whatever held it.
+ *
+ * Its own action rather than a checkbox on the form: as a field it is written
+ * on every save, so ticking it twice leaves two rows claiming to be primary and
+ * the detail page silently picks whichever sorts first. MariaDB has no partial
+ * unique index to lean on, so "exactly one" is only ever as true as the
+ * transaction that clears the others in the same breath.
+ */
+export async function setPrimaryContactMethod(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const existing = await methodParent(ownerId, id);
+  if (!existing) return fail("Not found.");
+
+  await prisma.$transaction([
+    prisma.contactMethod.updateMany({
+      where: { contactId: existing.contactId, isPrimary: true },
+      data: { isPrimary: false },
+    }),
+    prisma.contactMethod.update({ where: { id }, data: { isPrimary: true } }),
+  ]);
+
+  touch(existing.contactId);
+  return ok();
+}
+
+export async function moveContactMethod(
+  id: string,
+  direction: "up" | "down",
+): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const current = await prisma.contactMethod.findFirst({
+    where: { id, contact: { ownerId, ...contactPrivacyWhere(await privacyScope()) } },
+    select: { id: true, contactId: true, sortOrder: true },
+  });
+  if (!current) return fail("Not found.");
+
+  const neighbour = await prisma.contactMethod.findFirst({
+    where: {
+      contactId: current.contactId,
+      sortOrder: direction === "up" ? { lt: current.sortOrder } : { gt: current.sortOrder },
+    },
+    orderBy: { sortOrder: direction === "up" ? "desc" : "asc" },
+    select: { id: true, sortOrder: true },
+  });
+  // Already at the end — not an error, just nothing to do.
+  if (!neighbour) return ok();
+
+  await prisma.$transaction([
+    prisma.contactMethod.update({ where: { id: current.id }, data: { sortOrder: neighbour.sortOrder } }),
+    prisma.contactMethod.update({ where: { id: neighbour.id }, data: { sortOrder: current.sortOrder } }),
+  ]);
+
+  touch(current.contactId);
+  return ok();
+}
+
+// --- addresses -------------------------------------------------------------
+
+const ADDRESS_PARTS = ["line1", "line2", "city", "region", "postalCode", "country"] as const;
+
+/**
+ * An address with nothing in it renders as a row that is only a delete button,
+ * so at least one line has to say where.
+ */
+function addressFields(form: FormData): Record<string, string | null> | null {
+  const fields = Object.fromEntries(
+    ADDRESS_PARTS.map((part) => [part, str(form, part) ?? null]),
+  ) as Record<(typeof ADDRESS_PARTS)[number], string | null>;
+  if (!ADDRESS_PARTS.some((part) => fields[part])) return null;
+  return { ...fields, label: str(form, "label") ?? null, notes: str(form, "notes") ?? null };
+}
+
+async function addressParent(
+  ownerId: string,
+  id: string,
+): Promise<{ contactId: string } | null> {
+  return prisma.address.findFirst({
+    where: { id, contact: { ownerId, ...contactPrivacyWhere(await privacyScope()) } },
+    select: { contactId: true },
+  });
+}
+
+export async function createAddress(form: FormData): Promise<ActionResult<{ id: string }>> {
+  const { ownerId } = await owner();
+  const contactId = str(form, "contactId");
+  if (!contactId) return fail("Contact not found.");
+  if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
+
+  const fields = addressFields(form);
+  if (!fields) return fail("Fill in at least one line of the address.");
+
+  const created = await prisma.address.create({ data: { contactId, ...fields } });
+  touch(contactId);
+  return ok({ id: created.id });
+}
+
+export async function updateAddress(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  if (!id) return fail("Missing address.");
+  const existing = await addressParent(ownerId, id);
+  if (!existing) return fail("Not found.");
+
+  const fields = addressFields(form);
+  if (!fields) return fail("Fill in at least one line of the address.");
+
+  await prisma.address.update({ where: { id }, data: fields });
+  touch(existing.contactId);
+  return ok();
+}
+
+export async function deleteAddress(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const existing = await addressParent(ownerId, id);
+  if (!existing) return fail("Not found.");
+  await prisma.address.delete({ where: { id } });
+  touch(existing.contactId);
   return ok();
 }
 

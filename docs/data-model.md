@@ -199,10 +199,37 @@ Indexes: `(ownerId, isArchived, lastName)`, `(ownerId, isArchived, firstName)`,
 Phone numbers, emails, handles. `contactId` (cascade), `typeId` →
 `CONTACT_METHOD_TYPE` (`SET NULL`), `value`, `label`, `isPrimary`, `sortOrder`.
 
+`value` is stored exactly as it was typed, trimmed and nothing else. Nothing
+normalises a number to E.164, because doing so has to guess a country the user
+never supplied — the same class of invented certainty `DatePrecision` exists to
+prevent. The consequence is that search matches the stored string: someone
+filed as `+1 (555) 010-4477` is not found by typing `5550104477`.
+
+`isPrimary` is set through its own action, which clears the flag on the
+contact's other methods in the same transaction. MariaDB has no partial unique
+index, so "exactly one primary" is only as true as that transaction — there is
+no constraint behind it.
+
+No `ownerId` and no `isPrivate`: it exists only beneath a contact, and a phone
+number is not separately hideable from the person it belongs to. Ownership and
+the privacy lock are therefore enforced on the *contact* in every action, which
+is why each one looks the row up through `contact: { ownerId, ...
+contactPrivacyWhere(scope) }` rather than by id alone.
+
 ### `Address`
 
 `contactId` (cascade), `label`, `line1`, `line2`, `city`, `region`,
-`postalCode`, `country`, `notes`.
+`postalCode`, `country`, `notes`. Every part is optional, but at least one of
+the address lines has to be filled in — a row with only a label renders as
+nothing but a delete button.
+
+`label` is deliberately free text rather than a taxonomy: an `ADDRESS_TYPE`
+kind would need an enum migration, defaults, a usage count and an admin group
+to replace a field whose realistic values are "Home" and "Work". The form
+offers a `<datalist>` of suggestions instead.
+
+Same privacy shape as `ContactMethod` — no `ownerId`, no `isPrivate`, scoped
+through the contact.
 
 ### `Tag` / `ContactTag`
 

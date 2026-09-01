@@ -138,6 +138,21 @@ quietly writes someone's private notes to disk.
 > forgetting is silent: offline caching stays on and the private row is written
 > to disk.
 
+### What a cached contact page holds
+
+Worth knowing rather than discovering: a contact page cached for offline
+reading carries everything that page shows, which now includes phone numbers,
+email addresses, handles and postal addresses alongside the facts, allergies
+and dietary notes that were already there. That is the same rule as before —
+what lands on disk is what the page rendered — but the contents got more
+sensitive when the reach-them sections landed, and "cache this page" is a
+decision worth making with that in mind.
+
+`ContactMethod` and `Address` carry no `isPrivate` of their own, by design: a
+phone number is not separately hideable from the person it belongs to. They
+inherit the contact's state, so a private contact's number is withheld exactly
+when the contact is, and never reaches the cache while the lock is closed.
+
 ### Locking or signing out wipes it
 
 A saved copy of a page seen while unlocked would make the lock decorative.

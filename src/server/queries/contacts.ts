@@ -150,7 +150,9 @@ const DETAIL_INCLUDE = {
   category: true,
   meetingSource: true,
   methods: { include: { type: true }, orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }] },
-  addresses: true,
+  // Ordered explicitly: without it the rows come back in whatever order the
+  // database happens to return, so they reshuffle between renders.
+  addresses: { orderBy: [{ label: "asc" }, { id: "asc" }] },
   tags: { include: { tag: true } },
   facts: {
     include: { category: true },

@@ -24,6 +24,8 @@ import { PlansSection } from "@/components/plans/plans-section";
 import { ContactHeader } from "@/components/contacts/contact-header";
 import { DatesSection } from "@/components/contacts/sections/dates";
 import { DebtsSection } from "@/components/contacts/sections/debts";
+import { AddressesSection } from "@/components/contacts/sections/addresses";
+import { ContactMethodsSection } from "@/components/contacts/sections/contact-methods";
 import { DietarySection } from "@/components/contacts/sections/dietary";
 import { FactsSection } from "@/components/contacts/sections/facts";
 import { GiftsSection } from "@/components/contacts/sections/gifts";
@@ -88,6 +90,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
   ] = await Promise.all([
     listTermsByKind(user.id, [
       "INTERACTION_TYPE",
+      "CONTACT_METHOD_TYPE",
       "FACT_CATEGORY",
       "DATE_TYPE",
       "LIFE_EVENT_TYPE",
@@ -110,6 +113,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     getUpcomingDates(user.id, timezone, 366, 100, id),
     listContactLocations(user.id, id),
   ]);
+
+  const primaryMethod = contact.methods.find((method) => method.isPrimary) ?? null;
 
   // Family relationships get their own section, so "Connected people" is left
   // holding the friends, colleagues and neighbours it is actually useful for.
@@ -167,6 +172,9 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                   icon: contact.category.icon,
                   color: contact.category.color,
                 }
+              : null,
+            primaryMethod: primaryMethod
+              ? { value: primaryMethod.value, slug: primaryMethod.type?.slug ?? null }
               : null,
           }}
           interactionFields={interactionFields}
@@ -307,6 +315,41 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             />
           </>
         ) : null}
+
+        <ContactMethodsSection
+          contactId={contact.id}
+          types={terms.CONTACT_METHOD_TYPE}
+          methods={contact.methods.map((method) => ({
+            id: method.id,
+            value: method.value,
+            label: method.label,
+            isPrimary: method.isPrimary,
+            typeId: method.typeId,
+            type: method.type
+              ? {
+                  slug: method.type.slug,
+                  label: method.type.label,
+                  icon: method.type.icon,
+                  color: method.type.color,
+                }
+              : null,
+          }))}
+        />
+
+        <AddressesSection
+          contactId={contact.id}
+          addresses={contact.addresses.map((address) => ({
+            id: address.id,
+            label: address.label,
+            line1: address.line1,
+            line2: address.line2,
+            city: address.city,
+            region: address.region,
+            postalCode: address.postalCode,
+            country: address.country,
+            notes: address.notes,
+          }))}
+        />
 
         <DietarySection
           contactId={contact.id}
