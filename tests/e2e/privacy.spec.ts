@@ -401,6 +401,10 @@ test("the header offers a way to close the lock without waiting out the timeout"
   await expect(lockNow).toBeEnabled();
   await page.context().setOffline(false);
 
+  // Reload rather than clicking through the toast: on a phone it renders
+  // top-centre, over the header, and would swallow the click.
+  await page.goto("/");
+  await expect(lockNow).toBeVisible();
   await lockNow.click();
   await page.waitForURL("/");
 

@@ -2,8 +2,29 @@
 
 import * as React from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { privacyActivityHeartbeat } from "@/server/actions/privacy";
+import { toast } from "sonner";
+import {
+  lockPrivacyAction,
+  privacyActivityHeartbeat,
+} from "@/server/actions/privacy";
 import { purgeOfflineCaches } from "@/components/offline/offline";
+
+/**
+ * Lets a descendant ask for the lock to close now rather than at the deadline.
+ *
+ * The request has to come back here because closing means unmounting the
+ * shell: a control rendered inside it cannot remove the tree it lives in, and
+ * an overlay drawn over that tree only hides it from people who are looking --
+ * the content stays in the accessibility tree and keyboard-reachable.
+ */
+const ManualLockContext = React.createContext<{
+  lockNow: () => void;
+  locking: boolean;
+} | null>(null);
+
+export function useManualPrivacyLock() {
+  return React.useContext(ManualLockContext);
+}
 
 type Props = {
   enabled: boolean;
@@ -59,6 +80,43 @@ export function PrivacyActivityController({
       router.refresh();
     });
   }, [pathname, router, searchParams]);
+
+  const [locking, setLocking] = React.useState(false);
+
+  /**
+   * The deliberate version of `close`: the timeout covers walking away, this
+   * covers handing someone your phone. Blanking first is the point -- the
+   * private content is out of the DOM before any awaiting starts, so it is
+   * gone for a screen reader and for the tab key too, not merely covered.
+   */
+  const lockNow = React.useCallback(() => {
+    if (locking) return;
+    setLocking(true);
+    setClosed(true);
+
+    void (async () => {
+      try {
+        // Caches before the action: `lockPrivacyAction` redirects, so anything
+        // sequenced after it may never run, and private pages the service
+        // worker wrote to disk would outlive the lock they were cached under.
+        await purgeOfflineCaches();
+        await lockPrivacyAction();
+      } catch (error) {
+        // A redirecting server action reports itself by throwing a digest.
+        // That is the success path, so hold the blank shell for the
+        // navigation rather than restoring the page behind it.
+        const digest = (error as { digest?: unknown } | null)?.digest;
+        if (typeof digest === "string" && digest.startsWith("NEXT_REDIRECT")) return;
+
+        // Anything else and the lock did not close. Give the app back rather
+        // than stranding the viewer on a blank screen -- worst offline, where
+        // the request cannot land and the cache has already been purged.
+        setClosed(false);
+        setLocking(false);
+        toast.error("Could not lock. Check your connection and try again.");
+      }
+    })();
+  }, [locking]);
 
   React.useEffect(() => {
     if (!enabled || !unlocked || !deadline || closed) return;
@@ -140,5 +198,9 @@ export function PrivacyActivityController({
     );
   }
 
-  return <>{children}</>;
+  return (
+    <ManualLockContext.Provider value={{ lockNow, locking }}>
+      {children}
+    </ManualLockContext.Provider>
+  );
 }
