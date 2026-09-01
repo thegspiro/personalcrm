@@ -42,7 +42,7 @@ npm run dev
 | `npm run lint` | ESLint (`eslint .`, flat config in `eslint.config.mjs`). `next.config.ts` sets `eslint.ignoreDuringBuilds`, so a build never catches lint — the CI lint job is what does |
 | `npm run lint:sw` | Parses `public/sw.js` with **classic-script** grammar. ESLint ignores the worker and it is not TypeScript, so this is its only static check — and `node --check` is not equivalent, since `type: "module"` makes it accept `export` and top-level `await` that a classic worker rejects |
 | `npm run changelog` | What is pending in `CHANGELOG.d/`; `changelog:check` validates, `changelog:release` folds them into `CHANGELOG.md` |
-| `npm run verify` | typecheck → lint → lint:sw → changelog:check → test → build, in one command |
+| `npm run verify` | typecheck → lint → lint:sw → changelog:check → changelog:guard → test → build, in one command |
 
 Before pushing: `npm run verify`, plus `npx playwright test` for UI changes. CI
 (`.github/workflows/ci.yml`) runs the same set on every PR — quality, unit +
@@ -196,11 +196,15 @@ a `main` that already carried the instruction.
 
 ## Not implemented (do not assume otherwise)
 
-Important-date reminders are delivered through enabled `NotificationChannel`
-rows by the hourly scheduler. Cadence, task, and digest notifications are not
-yet implemented, so `digestHour` and `digestEnabled` are still stored only.
-Nothing writes to `/config/backups` or `/config/uploads` (`Contact.avatarPath` is
-rendered but never set). Full list in [docs/README.md](docs/README.md#known-gaps).
+Important-date reminders are delivered by the hourly scheduler through the
+channels configured under Settings → Reminders. Cadence, task, and digest
+notifications are not implemented, so `ReminderEntity.CADENCE`, `.TASK` and
+`.DIGEST` are never written and `digestHour`/`digestEnabled` are stored only.
+`UserPreference.weekStartsOn` is likewise reserved and read by nothing. Nothing
+writes to `/config/backups` or `/config/uploads` (`Contact.avatarPath` is
+rendered but never set). Tags exist in the schema with no UI. There is no
+account management after the welcome wizard. Full list in
+[docs/README.md](docs/README.md#known-gaps).
 
 ## Commits
 

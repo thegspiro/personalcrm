@@ -51,16 +51,18 @@ packaged as one container with the database built in.
 | Area | Route | Notes |
 | --- | --- | --- |
 | Dashboard | `/` | Arrangeable widgets |
-| People | `/people` | Contacts, facts, dates, significant moments, gifts, debts, dietary needs |
+| People | `/people` | Contacts, phone numbers and addresses, facts, dates, significant moments, gifts, debts, dietary needs |
 | Timeline | `/timeline` | Every interaction, unified |
 | Family | `/family` | Households, relationship graph, generation banding, suggestions |
 | Dating | `/dating` | Optional layer; pipeline, date log, flags, comparison |
 | Ideas | `/ideas` | Conversation starters, and plans — things to do with someone |
 | Tasks | `/tasks` | Follow-ups |
 | Gifts | `/gifts` | Both directions |
-| Settings | `/settings` | Look, Fields, Types, Home, Privacy |
+| Places | `/locations` | Venues, who you have been there with, and what is planned |
+| Settings | `/settings` | Look, Fields, Types, Home, Reminders, Quick add, Privacy, App |
 | Welcome | `/welcome` | First-run onboarding, once per account |
 | Unlock | `/unlock` | The privacy PIN |
+| Offline | `/offline` | What the service worker serves for an uncached page |
 
 ## Known gaps
 
@@ -68,11 +70,12 @@ Documented so nobody assumes a feature works:
 
 | Gap | State |
 | --- | --- |
-| **Reminders never reach you** | The delivery engine is complete — important dates, retry, deduplication, five channel kinds — but nothing in the app can create a `NotificationChannel`, so the hourly job finds no channel and sends nothing. Reminder timing you set on a date is stored and never acted on. Cadence, task and digest reminders are not scheduled at all, and `digestHour`/`digestEnabled` are stored only |
+| **Cadence, task and digest reminders** | Important dates are delivered, hourly, through the channels you add under Settings → Reminders. The other three `ReminderEntity` values are never written: nothing nudges you about an overdue cadence, a due task, or a daily digest, and `digestHour`/`digestEnabled` are stored only |
 | **Nightly backups** | `/config/backups` is created at boot and nothing writes to it — see [backup.md](backup.md) |
 | **Avatar upload** | `Contact.avatarPath` is read and rendered throughout, but no upload path writes it and nothing writes to `/config/uploads` |
 | **Account management** | Your name is set once in the welcome wizard and never again. There is no change-password, no email edit, no password reset and no session list |
 | **Tags** | `Tag` and `ContactTag` exist in the schema with no UI behind them |
+| **Finding a number by a different format** | Contact search matches the stored string, so someone filed as `+1 (555) 010-4477` is not found by typing `5550104477`. Deliberate: normalising would mean guessing a country nobody supplied |
 | **Editing a place** | Places are created implicitly from what you type as a venue. Only the name, address and link are ever set — the phone, notes and coordinates in the schema have no editor |
 | **Offline writes** | Deliberately absent. Non-GET requests go straight to the network and fail honestly rather than pretending something was saved |
 

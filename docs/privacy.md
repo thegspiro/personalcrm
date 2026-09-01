@@ -44,13 +44,21 @@ still gated on the server.
 [`src/server/privacy/where.ts`](../src/server/privacy/where.ts) exports
 where-fragments applied to the queries themselves:
 
-| Fragment                  | Applied to                                                              |
-| ------------------------- | ----------------------------------------------------------------------- |
-| `contactPrivacyWhere`     | Contact queries                                                         |
-| `factPrivacyWhere`        | Fact queries                                                            |
-| `debtPrivacyWhere`        | Debt queries                                                            |
-| `interactionPrivacyWhere` | Interactions — withheld if the row is private **or any participant is** |
-| `viaContactPrivacyWhere`  | Anything reached through a contact                                      |
+| Fragment                         | Applied to                                                                                     |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `contactPrivacyWhere`            | Contact queries                                                                                 |
+| `factPrivacyWhere`               | Fact queries                                                                                    |
+| `debtPrivacyWhere`               | Debt queries                                                                                    |
+| `interactionPrivacyWhere`        | Interactions — withheld if the row is private, **or any participant is, or anyone mentioned is** |
+| `viaContactPrivacyWhere`         | Anything reached through a contact                                                              |
+| `viaOptionalContactPrivacyWhere` | Anything whose contact is optional — a task or idea can stand on its own                        |
+| `householdPrivacyWhere`          | Household lists — a household with a private member can name them in its own title or notes     |
+
+`viaOptionalContactPrivacyWhere` cannot be `viaContactPrivacyWhere` dropped into
+an `OR` beside `{ contactId: null }`: that fragment is `{}` when unlocked, and an
+empty member of an `OR` matches nothing rather than everything. That inversion
+emptied the list for exactly the accounts entitled to see all of it — including
+every account that never switched the lock on, which is unlocked by definition.
 
 > A component that renders nothing is not a lock. With server components the
 > rows would already have been fetched and serialised into the payload sent to
@@ -216,6 +224,18 @@ someone holding both the database and `/config`, and nothing claims it does. A
 key that will not decrypt — after a rotated `AUTH_SECRET`, say — is treated as
 absent rather than as an error.
 
+**Notification channel credentials** — the SMTP password, a webhook bearer
+token — are encrypted the same way, under a *separate* key derived with its own
+purpose string, so a ciphertext written for one cannot decrypt as the other.
+They differ from the API key in what happens when one cannot be read: delivery
+**stops**, rather than degrading to absent. An unauthenticated SMTP login, or a
+POST to a third-party host with its Authorization header quietly missing, is a
+request that still leaves — just without its credential. The channel is flagged
+in Settings until it is re-entered.
+
+Rotating `AUTH_SECRET` therefore invalidates the stored API key *and* every
+channel credential.
+
 ### Providers
 
 Provider-neutral by construction: an OpenAI-compatible endpoint covers OpenAI,
@@ -233,10 +253,9 @@ because smaller local models do all three.
 
 The one part of the app that reaches the network on its own. An hourly job
 (`src/server/reminder-scheduler.ts`) looks for important dates coming due and
-delivers them through the notification channels on the account. No channel, no
-outbound request — and today there is no way to add one from the app, so on a
-stock install this job finds nothing to do and sends nothing. See
-[known gaps](README.md#known-gaps).
+delivers them through the channels added under **Settings → Reminders**. No
+channel, no outbound request — a fresh install has none, so nothing leaves the
+machine until you say where it should go.
 
 ### What a reminder sends
 

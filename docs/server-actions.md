@@ -231,6 +231,35 @@ lock boundary.
 against the provider before it is stored; the key is encrypted at rest and
 never shown again.
 
+### Notification channels — `actions/notifications.ts`
+
+`createChannel`, `updateChannel`, `setChannelEnabled`, `deleteChannel`,
+`sendTestNotification`.
+
+Where a reminder is allowed to go. Until these existed nothing could create a
+`NotificationChannel`, so the hourly job found none on every account and sent
+nothing — the delivery engine had been complete and unreachable for months.
+
+The kind is fixed at creation. Changing it would leave a config shaped for the
+old one, and the sender reads that JSON with raw `typeof` guards.
+
+Credentials never round-trip. The settings query returns a redacted channel, so
+a blank password field means *keep what is stored* rather than *clear it*; an
+explicit checkbox does the clearing. See
+[data model](data-model.md#notificationchannel) for how they are encrypted, and
+why one that will not decrypt stops delivery instead of degrading to an
+unauthenticated send.
+
+`sendTestNotification` is separate from saving on purpose. Verifying before
+storing is right for the AI key — one global value, where a bad key means
+silent nothingness — and wrong for a row: a Gotify box down for ten minutes
+must not stop you recording its address. It sends fixed copy with nothing
+interpolated, because Settings stays reachable while the privacy lock is
+closed and this is the one button there that could otherwise put a private
+person's name on the wire. It writes no `ReminderLog`: the ledger's unique key
+is the occurrence, and a test has none. It is rate-limited per channel, being
+a public POST that makes an outbound request to a caller-supplied URL.
+
 ## Custom fields on a form
 
 Two failure modes the shared helper

@@ -81,18 +81,22 @@ keeps the secret with the stack that owns the database.
 ## What happens on first boot
 
 ```
-init-perms  →  init-mariadb  →  svc-mariadb  →  init-db-ready  →  init-migrate  →  svc-app
+init-perms  →  init-preflight  →  init-mariadb  →  svc-mariadb  →  init-db-ready  →  init-migrate  →  svc-app
 ```
 
 1. `/config/{db,uploads,backups,logs,cache}` are created and chowned to
    `PUID:PGID`.
-2. `/config/secrets.json` is generated (mode `0600`) with a random database
+2. Preflight validates what the operator supplied — `APP_URL`, a writable
+   `/config`. A bad value **stops the boot here** with the reason in the log,
+   rather than surfacing as a failure three services later; see
+   [troubleshooting](troubleshooting.md).
+3. `/config/secrets.json` is generated (mode `0600`) with a random database
    password and `authSecret`.
-3. MariaDB initialises its data directory under `/config/db`.
-4. `prisma migrate deploy` applies every pending migration.
-5. The app starts; on its own boot it re-provisions taxonomy defaults for every
-   account and purges expired sessions.
-6. You open the WebUI, create the first account, and the welcome flow at `/welcome` takes it from there.
+4. MariaDB initialises its data directory under `/config/db`.
+5. `prisma migrate deploy` applies every pending migration.
+6. The app starts; on its own boot it re-provisions taxonomy defaults for every
+   account, purges expired sessions, and starts the hourly reminder scheduler.
+7. You open the WebUI, create the first account, and the welcome flow at `/welcome` takes it from there.
 
 The recursive `chown` of `/config` only runs when the top-level owner is
 actually wrong — it is slow once `db/` is large.

@@ -24,11 +24,14 @@ healthcheck.
 src/
   app/
     (app)/          signed-in routes — dashboard, people, timeline, dating,
-                    family, gifts, ideas, tasks, settings, more, unlock
+                    family, gifts, ideas, locations, tasks, settings, more,
+                    unlock
     (auth)/         login, signup, first-run setup
     (onboarding)/   the welcome flow, once per account
     api/health/     container healthcheck (the only route handler)
-    manifest.ts     PWA manifest;  icon.tsx  draws the icon at build time
+    offline/        what the service worker serves for an uncached page
+    manifest.ts     PWA manifest;  icon.tsx / apple-icon.tsx draw them at build
+                    time;  not-found.tsx is the 404
   components/       UI, grouped by feature; ui/ is the Radix-backed primitives
   lib/              pure logic — no Prisma, no request context, unit-testable
   server/
@@ -162,8 +165,8 @@ init-perms  →  init-preflight  →  init-mariadb  →  svc-mariadb  →  init-
 
 | Step | Does |
 | --- | --- |
-| `init-preflight` | Validates what the operator supplied — `APP_URL`, a writable `/config` — before anything else starts. Ordered first deliberately: a wrong value is far easier to read here than as a failure three services later |
-| `init-perms` | Creates the `abc` user from `PUID`/`PGID`, makes `/config` writable, creates `db/ uploads/ backups/ logs/ cache/`. Only chowns recursively when the top-level owner is actually wrong |
+| `init-perms` | Creates the `abc` user from `PUID`/`PGID`, makes `/config` writable, creates `db/ uploads/ backups/ logs/ cache/`. Only chowns recursively when the top-level owner is actually wrong. First, because preflight's writability check needs the directory to exist and be owned correctly |
+| `init-preflight` | Validates what the operator supplied — `APP_URL`, a writable `/config` — before any service starts. Ordered ahead of the database deliberately: a wrong value is far easier to read here than as a failure three services later |
 | `init-mariadb` | Generates `/config/secrets.json` (0600) on first boot with a random DB password and `authSecret`, initialises the data directory, publishes `DATABASE_URL` and `AUTH_SECRET` into the supervision tree. Skipped entirely when `DATABASE_URL` is set |
 | `svc-mariadb` | The bundled server (longrun) |
 | `init-db-ready` | Waits for the socket |
@@ -217,7 +220,9 @@ can mutate data while disconnected.
 | `/family` | Cacheable read-only | Relationships, contacts, suggestions, household members, and every household associated with a private contact are privacy-filtered; empty households remain visible. The account-wide gate applies, and each `anchor` query is a distinct saved page. |
 | `/dating`, `/dating/compare` | Deliberately unavailable | Dating content is never written to offline storage. |
 | `/people/new`, `/people/[id]/edit`, `/people/[id]/backfill` | Deliberately unavailable | Create/edit forms require live reads and server-action validation. |
-| `/settings` | Deliberately unavailable | Contains security, privacy, account, and integration controls. |
+| `/locations/[id]` | Deliberately unavailable | Has not opted in: a place page names everyone recorded there, and the set changes as soon as the lock does. |
+| `/offline` | Cacheable read-only | Precached by the worker at install. It is what an uncached page falls back to, so it has to be there before the network is not. |
+| `/settings` | Deliberately unavailable | Contains security, privacy, account, notification, and integration controls. |
 | `/more` | Deliberately unavailable | Navigation-only page has not opted in; its destinations retain their own policies. |
 | `/unlock` | Deliberately unavailable | The privacy boundary must always be evaluated live. |
 | `/login`, `/signup`, `/setup`, `/welcome` | Deliberately unavailable | Authentication and onboarding state must always be evaluated live. |

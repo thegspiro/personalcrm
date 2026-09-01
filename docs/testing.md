@@ -4,9 +4,9 @@ Three suites, three different jobs.
 
 | Suite | Runner | Needs | Count | Command |
 | --- | --- | --- | --- | --- |
-| Unit | Vitest | Nothing | 14 files | `npm test` |
-| Integration | Vitest | A throwaway MariaDB | 8 files | `npm test` (skipped without `TEST_DATABASE_URL`) |
-| End-to-end | Playwright | A running instance | 13 specs | `npx playwright test` |
+| Unit | Vitest | Nothing | 27 files | `npm test` |
+| Integration | Vitest | A throwaway MariaDB | 17 files | `npm test` (skipped without `TEST_DATABASE_URL`) |
+| End-to-end | Playwright | A running instance | 23 specs | `npx playwright test` |
 
 File counts are what is in the tree; the case counts move with every change, so
 run the suite rather than trusting a number written here.
@@ -153,6 +153,7 @@ npm run typecheck                     # tsc --noEmit
 npm run lint                          # eslint .
 npm run lint:sw                       # public/sw.js parses as a classic script
 npm run changelog:check               # CHANGELOG.d/ entries are well formed
+npm run changelog:guard               # CHANGELOG.md itself was not hand-edited
 npm test                              # unit + integration
 npm run build                         # production build
 ```

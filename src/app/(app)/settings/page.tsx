@@ -14,6 +14,8 @@ import { DashboardSettings } from "@/components/settings/dashboard-settings";
 import { TaxonomySettings } from "@/components/settings/taxonomy-settings";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { AiSettings } from "@/components/settings/ai-settings";
+import { NotificationSettings } from "@/components/settings/notification-settings";
+import { listChannelsForSettings } from "@/server/queries/notifications";
 import { getAiStatus } from "@/server/ai/config";
 import { getPrivacyState } from "@/server/privacy/lock";
 import { PROVIDERS } from "@/server/ai/providers";
@@ -24,7 +26,16 @@ export const dynamic = "force-dynamic";
 export default async function SettingsPage() {
   const { user, prefs } = await getUserContext();
 
-  const [taxonomies, definitions, categories, layoutRow, valueCounts, ai, privacyState] = await Promise.all([
+  const [
+    taxonomies,
+    definitions,
+    categories,
+    layoutRow,
+    valueCounts,
+    ai,
+    privacyState,
+    channels,
+  ] = await Promise.all([
     listTaxonomyAdmin(user.id),
     listAllFieldDefinitions(user.id),
     listTerms(user.id, "CONTACT_CATEGORY"),
@@ -36,11 +47,14 @@ export default async function SettingsPage() {
     }),
     getAiStatus(),
     getPrivacyState(),
+    listChannelsForSettings(user.id),
   ]);
 
   // Value counts drive the delete warning: deleting a field takes everything
   // recorded in it with it, so the confirmation has to say how much.
-  const counts = new Map(valueCounts.map((row) => [row.definitionId, row._count._all]));
+  const counts = new Map(
+    valueCounts.map((row) => [row.definitionId, row._count._all]),
+  );
   const withCount = (rows: typeof definitions.CONTACT) =>
     rows.map((row) => ({ ...row, valueCount: counts.get(row.id) ?? 0 }));
   const withCounts = {
@@ -54,7 +68,9 @@ export default async function SettingsPage() {
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
       <div className="min-w-0">
         <h2 className="text-lg font-semibold tracking-tight">Settings</h2>
-        <p className="text-xs text-muted-foreground">Make the app work the way you do.</p>
+        <p className="text-xs text-muted-foreground">
+          Make the app work the way you do.
+        </p>
       </div>
 
       <SettingsTabs
@@ -98,7 +114,12 @@ export default async function SettingsPage() {
             }))}
           />
         }
-        dashboard={<DashboardSettings layout={normalizeDashboardLayout(layoutRow?.widgets)} />}
+        dashboard={
+          <DashboardSettings
+            layout={normalizeDashboardLayout(layoutRow?.widgets)}
+          />
+        }
+        notifications={<NotificationSettings channels={channels} />}
         quickadd={
           <AiSettings
             enabled={ai.enabled}
@@ -121,7 +142,11 @@ export default async function SettingsPage() {
             retryAfterSeconds={privacyState.retryAfterSeconds}
           />
         }
-        app={<AppSettings installedAt={prefs.pwaInstalledAt?.toISOString() ?? null} />}
+        app={
+          <AppSettings
+            installedAt={prefs.pwaInstalledAt?.toISOString() ?? null}
+          />
+        }
       />
     </div>
   );

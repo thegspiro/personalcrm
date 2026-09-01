@@ -1,0 +1,188 @@
+/**
+ * What each kind of notification channel needs to be configured.
+ *
+ * One table, used twice: the settings form renders from it, and the server
+ * validates against it. Two hand-written lists would drift, and drift here is
+ * expensive in a particular way — a channel that saves happily and then throws
+ * inside the sender an hour later, in a cron job nobody is watching.
+ *
+ * Pure: no Prisma, no `server-only`, so it can be unit-tested and imported by
+ * the client component.
+ */
+
+export const CHANNEL_KINDS = ["EMAIL", "NTFY", "GOTIFY", "DISCORD", "WEBHOOK"] as const;
+export type ChannelKind = (typeof CHANNEL_KINDS)[number];
+
+export interface ChannelField {
+  name: string;
+  label: string;
+  hint?: string;
+  type: "text" | "url" | "email" | "number" | "password" | "checkbox";
+  required?: boolean;
+  placeholder?: string;
+  /** Encrypted at rest and never sent back to the browser. */
+  secret?: boolean;
+}
+
+export const CHANNEL_LABELS: Record<ChannelKind, string> = {
+  EMAIL: "Email",
+  NTFY: "ntfy",
+  GOTIFY: "Gotify",
+  DISCORD: "Discord",
+  WEBHOOK: "Webhook",
+};
+
+export const CHANNEL_BLURBS: Record<ChannelKind, string> = {
+  EMAIL:
+    "Sends through an SMTP server you provide. The relay's logs will hold the contents of every reminder.",
+  NTFY: "Posts to an ntfy topic. Point it at your own server and nothing leaves your network.",
+  GOTIFY: "Posts to a Gotify server, usually one you host yourself.",
+  DISCORD: "Posts to a Discord webhook URL.",
+  WEBHOOK: "Posts JSON to any URL you name — for wiring into something else.",
+};
+
+const URL_FIELDS: ChannelField[] = [
+  {
+    name: "url",
+    label: "URL",
+    type: "url",
+    required: true,
+    placeholder: "https://ntfy.example.com/my-topic",
+  },
+  {
+    name: "token",
+    label: "Token",
+    type: "password",
+    secret: true,
+    hint: "Optional. Sent as a bearer token.",
+  },
+];
+
+export const CHANNEL_FIELDS: Record<ChannelKind, ChannelField[]> = {
+  EMAIL: [
+    { name: "host", label: "SMTP host", type: "text", required: true, placeholder: "smtp.example.com" },
+    { name: "port", label: "Port", type: "number", placeholder: "587" },
+    { name: "secure", label: "Connect with TLS directly (port 465)", type: "checkbox" },
+    { name: "user", label: "Username", type: "text", hint: "Optional, if the server needs a login." },
+    { name: "pass", label: "Password", type: "password", secret: true },
+    { name: "from", label: "From", type: "email", required: true, placeholder: "crm@example.com" },
+    { name: "to", label: "To", type: "email", required: true, placeholder: "you@example.com" },
+  ],
+  NTFY: URL_FIELDS,
+  GOTIFY: URL_FIELDS,
+  DISCORD: URL_FIELDS,
+  WEBHOOK: URL_FIELDS,
+};
+
+/** The stored key holding the encrypted form of a secret field. */
+export function encryptedKeyFor(field: string): string {
+  return `${field}Enc`;
+}
+
+export function secretFieldsFor(kind: ChannelKind): ChannelField[] {
+  return CHANNEL_FIELDS[kind].filter((field) => field.secret);
+}
+
+export function isChannelKind(value: unknown): value is ChannelKind {
+  return typeof value === "string" && (CHANNEL_KINDS as readonly string[]).includes(value);
+}
+
+const DEFAULT_SMTP_PORT = 587;
+
+/** JSON-safe, because this is written straight into `NotificationChannel.config`. */
+export type ChannelConfigValue = string | number | boolean;
+
+export interface ValidationResult {
+  ok: boolean;
+  /** Keyed by field name, so the form can point at the input that is wrong. */
+  errors: Record<string, string>;
+  /** The non-secret configuration, ready to merge with the encrypted values. */
+  config: Record<string, ChannelConfigValue>;
+}
+
+function looksLikeEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(value);
+}
+
+/**
+ * Validate the non-secret half of a channel's configuration.
+ *
+ * The sender reads this JSON back with raw `typeof` guards and throws when it
+ * does not like what it finds, so anything that gets past here has to be a
+ * shape it will accept. Two consequences worth naming:
+ *
+ * - `port` must be stored as a **number**. The sender does
+ *   `typeof config.port === "number" ? config.port : 587`, so a string "2525"
+ *   silently becomes 587 and mail goes to the wrong port with no error.
+ * - `host`, `from` and `to` must all be present strings, or the sender throws
+ *   on every send for a channel that saved without complaint.
+ */
+export function validateChannelConfig(
+  kind: ChannelKind,
+  input: Record<string, string | undefined>,
+): ValidationResult {
+  const errors: Record<string, string> = {};
+  const config: Record<string, ChannelConfigValue> = {};
+
+  if (kind === "EMAIL") {
+    const host = input.host?.trim();
+    if (!host) errors.host = "The SMTP host is required.";
+    else config.host = host;
+
+    const rawPort = input.port?.trim();
+    if (rawPort) {
+      const port = Number(rawPort);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        errors.port = "The port has to be a whole number between 1 and 65535.";
+      } else {
+        config.port = port;
+      }
+    } else {
+      config.port = DEFAULT_SMTP_PORT;
+    }
+
+    config.secure = input.secure === "true" || input.secure === "on";
+
+    const user = input.user?.trim();
+    if (user) config.user = user;
+
+    for (const key of ["from", "to"] as const) {
+      const value = input[key]?.trim();
+      if (!value) errors[key] = `A "${key}" address is required.`;
+      else if (!looksLikeEmail(value)) errors[key] = "That doesn't look like an email address.";
+      else config[key] = value;
+    }
+
+    return { ok: Object.keys(errors).length === 0, errors, config };
+  }
+
+  const url = input.url?.trim();
+  if (!url) {
+    errors.url = "A URL is required.";
+  } else {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        errors.url = "The address should start with http:// or https://.";
+      } else {
+        config.url = url;
+      }
+    } catch {
+      errors.url = "That isn't a valid address.";
+    }
+  }
+
+  return { ok: Object.keys(errors).length === 0, errors, config };
+}
+
+/**
+ * The fixed body of a test notification.
+ *
+ * No interpolation, ever. Channels are configured on a page that stays
+ * reachable while the privacy lock is closed, so this is the one path by which
+ * a button there could push a private person's name off the machine. There is
+ * nothing here to leak.
+ */
+export const TEST_NOTIFICATION_SUBJECT = "Personal CRM test";
+export const TEST_NOTIFICATION_BODY =
+  "If you're reading this, this channel works. Nothing else was sent.";
