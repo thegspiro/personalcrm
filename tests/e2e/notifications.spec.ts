@@ -198,3 +198,23 @@ test("the daily digest can be switched off and given an hour", async ({ page }) 
   await openReminderSettings(page);
   await expect(digest.getByLabel("Send a daily digest")).toBeChecked();
 });
+
+test("switching kind clears what was typed for the previous one", async ({ page }) => {
+  await ensureSignedIn(page);
+  await openReminderSettings(page);
+
+  // The form is uncontrolled, so without a remount on the kind the inputs keep
+  // their values and `defaultValue` is never reapplied. That saved a Gotify
+  // channel named "ntfy" whose application token was the ntfy token — a
+  // credential silently filed under the wrong scheme.
+  const addForm = page.locator("section").filter({ hasText: "Add a channel" });
+  await addForm.getByRole("button", { name: "ntfy", exact: true }).click();
+  await expect(addForm.getByLabel("Name", { exact: true })).toHaveValue("ntfy");
+  await addForm.getByLabel("URL", { exact: true }).fill("https://ntfy.example.com/mine");
+  await addForm.getByLabel("Token", { exact: true }).fill("ntfy-only-token");
+
+  await addForm.getByRole("button", { name: "Gotify", exact: true }).click();
+  await expect(addForm.getByLabel("Name", { exact: true })).toHaveValue("Gotify");
+  await expect(addForm.getByLabel("URL", { exact: true })).toHaveValue("");
+  await expect(addForm.getByLabel("Application token", { exact: true })).toHaveValue("");
+});
