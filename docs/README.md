@@ -70,7 +70,6 @@ Documented so nobody assumes a feature works:
 
 | Gap | State |
 | --- | --- |
-| **Cadence, task and digest reminders** | Important dates are delivered, hourly, through the channels you add under Settings → Reminders. The other three `ReminderEntity` values are never written: nothing nudges you about an overdue cadence, a due task, or a daily digest, and `digestHour`/`digestEnabled` are stored only |
 | **Nightly backups** | `/config/backups` is created at boot and nothing writes to it — see [backup.md](backup.md) |
 | **Avatar upload** | `Contact.avatarPath` is read and rendered throughout, but no upload path writes it and nothing writes to `/config/uploads` |
 | **Account management** | Your name is set once in the welcome wizard and never again. There is no change-password, no email edit, no password reset and no session list — so a session you want to end early can only be ended by deleting its row |

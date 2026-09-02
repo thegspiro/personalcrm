@@ -31,10 +31,8 @@ import {
 /**
  * Where reminders are allowed to go.
  *
- * The delivery engine was finished long before this page existed, and with no
- * channel on the account the hourly job had nothing to send to — so every
- * reminder policy set on an important date was stored and silently never
- * acted on. This is the missing destination.
+ * Channels receive every eligible reminder policy. Content is intentionally
+ * descriptive because sending through a relay can expose it outside this app.
  */
 /**
  * Runs a channel form and keeps the field errors it returns.
@@ -80,14 +78,14 @@ export function NotificationSettings({ channels }: { channels: RedactedChannel[]
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
       <section className="rounded-xl border border-border bg-card p-4">
-        <h3 className="text-sm font-semibold">Reminders about important dates</h3>
+        <h3 className="text-sm font-semibold">Reminders and daily digest</h3>
         <p className="mt-1 text-xs text-muted-foreground">
           Once there is at least one channel switched on here, the app checks every hour for
-          dates coming due and sends them. Each date carries its own timing — a week before, on
-          the day, or whatever you set on it.
+          important dates, overdue keep-in-touch cadences, due tasks, and your daily digest.
+          Important dates keep their own timing — a week before, on the day, or whatever you set.
         </p>
         <p className="mt-2 text-xs text-muted-foreground">
-          A reminder carries the date&rsquo;s label, the person&rsquo;s name and when it falls.
+          Messages can carry a date or task label, a person&rsquo;s name, and when it is due.
           Choose where that goes accordingly: an ntfy or webhook URL can point at a box on your
           own network, but email travels through a mail relay whose logs keep the contents.
         </p>

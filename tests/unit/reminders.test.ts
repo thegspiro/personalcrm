@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dueOccurrence, effectiveReminderDays, parseReminderDays } from "@/lib/reminders";
+import { dailyOccurrence, digestIsDue, localClock, reminderDedupKey } from "@/lib/reminder-schedule";
 
 describe("reminder policies", () => {
   it("keeps account default, custom, and disabled distinct", () => {
@@ -17,6 +18,37 @@ describe("reminder policies", () => {
     expect(() => parseReminderDays("custom", "")).toThrow();
     expect(() => parseReminderDays("custom", "tomorrow")).toThrow();
     expect(() => parseReminderDays(undefined, undefined)).toThrow();
+  });
+});
+
+describe("daily reminder scheduling", () => {
+  it("uses the account timezone at a UTC date boundary", () => {
+    const now = new Date("2026-09-02T01:30:00Z");
+    expect(dailyOccurrence(now, "America/Los_Angeles")).toBe("2026-09-01");
+    expect(dailyOccurrence(now, "Asia/Tokyo")).toBe("2026-09-02");
+  });
+
+  it("honors the local digest hour and catches a skipped DST hour", () => {
+    expect(digestIsDue(new Date("2026-03-08T06:59:00Z"), "America/New_York", 2)).toBe(false);
+    // 02:00 does not exist on this spring-forward day; the 03:00 pass is due.
+    expect(localClock(new Date("2026-03-08T07:00:00Z"), "America/New_York")).toMatchObject({ hour: 3 });
+    expect(digestIsDue(new Date("2026-03-08T07:00:00Z"), "America/New_York", 2)).toBe(true);
+  });
+
+  it("maps both repeated fall-back hours to one durable daily occurrence", () => {
+    const first = new Date("2026-11-01T05:30:00Z");
+    const second = new Date("2026-11-01T06:30:00Z");
+    expect(localClock(first, "America/New_York").hour).toBe(1);
+    expect(localClock(second, "America/New_York").hour).toBe(1);
+    expect(dailyOccurrence(first, "America/New_York")).toBe(dailyOccurrence(second, "America/New_York"));
+  });
+
+  it("deduplicates identical deliveries but separates policy, occurrence, and channel", () => {
+    const base = { ownerId: "owner", entityType: "TASK", entityId: "task", policy: "INCOMPLETE_TASK_DUE" as const,
+      occurrence: "2026-09-02", offsetDays: 0, channelId: "email" };
+    expect(reminderDedupKey(base)).toBe(reminderDedupKey({ ...base }));
+    expect(reminderDedupKey(base)).not.toBe(reminderDedupKey({ ...base, channelId: "ntfy" }));
+    expect(reminderDedupKey(base)).not.toBe(reminderDedupKey({ ...base, occurrence: "2026-09-03" }));
   });
 });
 

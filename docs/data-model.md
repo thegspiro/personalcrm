@@ -83,8 +83,8 @@ One row per user, PK is `userId`.
 | `timezone` | `varchar(64)` | `America/New_York` | **Every** date calculation anchors here, never to `process.env.TZ` |
 | `weekStartsOn` | `int` | `0` | |
 | `defaultCadenceDays` | `int?` | — | Fallback keep-in-touch cadence |
-| `digestHour` | `int` | `8` | Reserved for the digest (see [Not yet wired](#not-yet-wired)) |
-| `digestEnabled` | `bool` | `true` | Same |
+| `digestHour` | `int` | `8` | Local hour after which the hourly scheduler sends that day's digest |
+| `digestEnabled` | `bool` | `true` | Enables one daily digest per configured channel |
 | `privacyLockEnabled` | `bool` | `false` | The lock switch |
 | `hideDating` | `bool` | `false` | Removes the dating module from nav and dashboard entirely |
 | `blurPrivateNotes` | `bool` | `true` | Shoulder-surfing layer *after* the lock is open |
@@ -592,15 +592,21 @@ still leaves, just without its credential. The failure lands in
 
 ### `ReminderLog`
 
-The dedupe/retry ledger, so a restart never re-sends a reminder. Unique on
-`(ownerId, entityType, entityId, scheduledFor, offsetDays, channelId)` with
-`entityType` a `ReminderEntity` (`IMPORTANT_DATE` | `CADENCE` | `TASK` |
-`DIGEST`). Records `attemptCount`, `nextAttemptAt`, `ok`, and `error`; failed
-sends retry with exponential delay up to five attempts.
+The dedupe/retry ledger, so a restart never re-sends a reminder. Every row records
+the explicit `schedulingPolicy` that produced it and a SHA-256 `dedupKey`, unique
+per owner, derived from the entity, policy, occurrence, offset, and channel. The
+older composite delivery unique key remains as additional protection. `entityType`
+is a `ReminderEntity` (`IMPORTANT_DATE` | `CADENCE` | `TASK` | `DIGEST`). Failed
+sends retry with exponential delay up to five attempts. Before retrying, the
+engine re-runs the current policy and privacy-filtered owner query; completion,
+archival, locking private content, policy changes, or disabling digests cancels
+the stale delivery.
 
-Only `IMPORTANT_DATE` is ever written. `CADENCE`, `TASK` and `DIGEST` are
-reserved for reminder types that are not scheduled yet — see
-[known gaps](README.md#known-gaps).
+Cadence rows use overdue `Contact.nextTouchAt`, task rows use an incomplete task's
+due date, and digest rows use the user's local calendar date. Digest scheduling
+uses `UserPreference.timezone`, `digestHour`, and `digestEnabled`; a late hourly
+pass catches up once, including after a skipped spring-forward hour, while the
+daily key suppresses a repeated fall-back hour.
 
 `channelId` is `SET NULL`, so deleting a channel keeps the record of what was
 already sent and cannot start it re-sending.
@@ -675,6 +681,7 @@ the `init-migrate` s6 oneshot).
 | `20260831205130_add_location_osm_reference` | Additive nullable `Location.osmType` and `osmId`, so a place can be tied to a real OpenStreetMap object |
 | `20260901120000_add_login_attempt_throttle` | Added `LoginAttempt`, a durable store for sign-in backoff counters. Superseded three commits later — see below |
 | `20260901191500_drop_login_attempt_table` | Drops it again. Both halves of its key came from whoever was knocking, which made it a store an attacker chose the size of; bounding it meant dropping records, and dropping records meant the throttle could be switched off by filling it. Sign-in throttling now lives in the process serving the request, in a structure of fixed size. The table held only ephemeral counters, so nothing is lost but whatever backoff was in flight at the upgrade |
+| `20260902120000_add_reminder_policy_and_dedup_key` | Adds and backfills an explicit scheduling policy and SHA-256 durable deduplication key for every existing reminder ledger row before making the key required and unique per owner |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).
@@ -688,7 +695,6 @@ writes yet. Documented here so nobody assumes the feature works:
 
 | Table / column | State |
 | --- | --- |
-| `UserPreference.digestHour`, `digestEnabled` | Stored, not acted on |
 | `Contact.avatarPath` | Read and rendered everywhere, but nothing uploads an image to set it |
 
 `/config/backups` is likewise created at boot but nothing writes to it — the
