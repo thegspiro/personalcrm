@@ -26,7 +26,12 @@ import {
 import { deliverToChannel } from "./notify";
 
 const MAX_ATTEMPTS = 5;
+/** How long after a ledger row is written before a retry pass may claim it. */
+const FIRST_RETRY_MS = 60_000;
 const DEFAULT_TIMEZONE = "America/New_York";
+
+/** A retry that is neither owed now nor cancelled: leave the row for a later pass. */
+const NOT_YET = Symbol("not-yet");
 
 type Db = typeof prisma;
 type Channel = Awaited<ReturnType<Db["notificationChannel"]["findFirstOrThrow"]>>;
@@ -192,7 +197,7 @@ async function currentMessage(
   user: UserSchedule,
   log: { entityId: string; schedulingPolicy: string; scheduledFor: Date; offsetDays: number },
   now: Date,
-): Promise<ReminderMessage | null> {
+): Promise<ReminderMessage | null | typeof NOT_YET> {
   const schedule = scheduleFor(user, now);
   const scheduled = plainDateFromDb(log.scheduledFor);
 
@@ -249,6 +254,10 @@ async function currentMessage(
       if (!user.preference?.digestEnabled || plainDateKey(schedule.today) !== plainDateKey(scheduled)) {
         return null;
       }
+      // The hour may have been moved later since the row was written. A fresh
+      // candidate would wait for it; so does the retry, keeping its row and
+      // its key rather than sending early or being cancelled outright.
+      if (!digestIsDue(now, schedule.timezone, user.preference.digestHour)) return NOT_YET;
       const [cadence, tasks] = await Promise.all([
         db.contact.count({ where: cadenceWhere(user, schedule, now) }),
         db.task.count({ where: taskWhere(user, schedule) }),
@@ -260,20 +269,8 @@ async function currentMessage(
   }
 }
 
-/**
- * Creates one durable ledger row per candidate and channel before delivery.
- * A concurrent scheduler loses the unique-key race and therefore cannot send
- * the same reminder twice. Returns null when the row already existed.
- */
-async function createAndDeliver(
-  db: Db,
-  send: typeof deliverToChannel,
-  user: UserSchedule,
-  candidate: Candidate,
-  channel: Channel,
-  now: Date,
-): Promise<boolean | null> {
-  const dedupKey = reminderDedupKey({
+function dedupKeyFor(user: UserSchedule, candidate: Candidate, channel: Channel): string {
+  return reminderDedupKey({
     ownerId: user.id,
     entityType: candidate.entityType,
     entityId: candidate.entityId,
@@ -282,6 +279,29 @@ async function createAndDeliver(
     offsetDays: candidate.offsetDays,
     channelId: channel.id,
   });
+}
+
+/**
+ * Creates one durable ledger row per candidate and channel before delivery.
+ * A concurrent scheduler loses the unique-key race and therefore cannot send
+ * the same reminder twice. Returns null when the row already existed.
+ *
+ * The row is written with its first retry deadline already set. Without it,
+ * a process that died between this insert and the update after the send
+ * would leave a row that is neither sent nor due for retry, and the unique
+ * key would then stop the reminder being created ever again — lost in
+ * exactly the restart the ledger exists to survive. Seeded, the same row is
+ * picked up by the next retry pass, revalidated, and sent.
+ */
+async function createAndDeliver(
+  db: Db,
+  send: typeof deliverToChannel,
+  user: UserSchedule,
+  candidate: Candidate,
+  channel: Channel,
+  dedupKey: string,
+  now: Date,
+): Promise<boolean | null> {
   let log;
   try {
     log = await db.reminderLog.create({
@@ -294,6 +314,7 @@ async function createAndDeliver(
         scheduledFor: candidate.scheduledFor,
         offsetDays: candidate.offsetDays,
         channelId: channel.id,
+        nextAttemptAt: new Date(now.getTime() + FIRST_RETRY_MS),
       },
     });
   } catch (error) {
@@ -302,7 +323,10 @@ async function createAndDeliver(
   }
   try {
     await send(channel, candidate.subject, candidate.body);
-    await db.reminderLog.update({ where: { id: log.id }, data: { ok: true, sentAt: now, attemptCount: 1 } });
+    await db.reminderLog.update({
+      where: { id: log.id },
+      data: { ok: true, sentAt: now, attemptCount: 1, nextAttemptAt: null },
+    });
     return true;
   } catch (error) {
     await db.reminderLog.update({
@@ -310,7 +334,7 @@ async function createAndDeliver(
       data: {
         attemptCount: 1,
         error: error instanceof Error ? error.message : "Delivery failed.",
-        nextAttemptAt: new Date(now.getTime() + 60_000),
+        nextAttemptAt: new Date(now.getTime() + FIRST_RETRY_MS),
       },
     });
     return false;
@@ -344,12 +368,28 @@ export async function processReminderDeliveries(
 
   for (const user of users) {
     if (user.notificationChannels.length === 0) continue;
-    for (const candidate of await candidatesForUser(db, user, now)) {
-      for (const channel of user.notificationChannels) {
-        const result = await createAndDeliver(db, send, user, candidate, channel, now);
-        if (result === true) sent += 1;
-        if (result === false) failed += 1;
-      }
+    const candidates = await candidatesForUser(db, user, now);
+    if (candidates.length === 0) continue;
+
+    // An overdue cadence or task stays a candidate every hour until someone
+    // acts on it, so most of what is owed on any pass has already been sent.
+    // One read of the keys already in the ledger keeps that from being one
+    // failed insert per item per channel per hour, with the unique key kept
+    // for the race between two schedulers rather than as the normal path.
+    const pairs = candidates.flatMap((candidate) =>
+      user.notificationChannels.map((channel) => ({ candidate, channel, dedupKey: dedupKeyFor(user, candidate, channel) })),
+    );
+    const ledgered = new Set(
+      (await db.reminderLog.findMany({
+        where: { ownerId: user.id, dedupKey: { in: pairs.map((pair) => pair.dedupKey) } },
+        select: { dedupKey: true },
+      })).map((row) => row.dedupKey),
+    );
+    for (const { candidate, channel, dedupKey } of pairs) {
+      if (ledgered.has(dedupKey)) continue;
+      const result = await createAndDeliver(db, send, user, candidate, channel, dedupKey, now);
+      if (result === true) sent += 1;
+      if (result === false) failed += 1;
     }
   }
 
@@ -367,6 +407,7 @@ export async function processReminderDeliveries(
     if (!log.channel) continue;
     const user = usersById.get(log.ownerId);
     const message = user ? await currentMessage(db, user, log, now) : null;
+    if (message === NOT_YET) continue;
     if (!message) {
       // Policy, state or privacy changes cancel queued delivery rather than
       // leaking content that is no longer meant to go out.

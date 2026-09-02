@@ -87,7 +87,10 @@ the schema do, not things a mock can:
 - `reminders.test.ts` — all four delivery policies; that a cadence due later
   in the local day is due; retries that outlive the day they were owed on, and
   cancellation after task, date or privacy changes; that a digest is retried
-  within its day with fresh counts and dropped after it; owner isolation;
+  within its day with fresh counts, waits for an hour moved later, and is
+  dropped after its day; that a process dying between the ledger insert and
+  the send loses nothing; that what is already ledgered is not written again;
+  owner isolation;
   multiple channels; and both encrypted and legacy plaintext channel shapes
   reaching the network with credentials.
 - `avatars.test.ts`, `avatar-route.test.ts` — that an upload is refused before

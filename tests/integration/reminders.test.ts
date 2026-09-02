@@ -3,6 +3,24 @@ import { processImportantDateReminders } from "@/server/services/reminders";
 import { encryptSecret } from "@/server/crypto/secrets";
 import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
 
+/**
+ * The real client with one ledger method replaced, so a test can stand in for
+ * a process that dies mid-way, or count how often a path is taken.
+ */
+function withLedger(overrides: Partial<Record<keyof typeof prisma.reminderLog, unknown>>): typeof prisma {
+  return new Proxy(prisma, {
+    get(target, property, receiver) {
+      if (property !== "reminderLog") return Reflect.get(target, property, receiver);
+      return new Proxy(target.reminderLog, {
+        get(ledger, method, ledgerReceiver) {
+          const override = overrides[method as keyof typeof overrides];
+          return override ?? Reflect.get(ledger, method, ledgerReceiver);
+        },
+      });
+    },
+  });
+}
+
 describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
   beforeEach(reset);
   afterAll(() => prisma.$disconnect());
@@ -290,5 +308,71 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     const bodies = send.mock.calls.slice(1).map((call) => call[2]);
     expect(bodies).toContain("Call the plumber was due 2026-09-02.");
     expect(bodies).toContain("0 cadence reminders and 1 due task need attention today.");
+  });
+
+  it("still sends a reminder whose process died between the ledger insert and the send", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Renew the passport", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string) => undefined);
+
+    // The row is written, the send happens, and the process is gone before the
+    // row can say so. Before the deadline was seeded on insert this row was
+    // never retried, and the unique key stopped it ever being created again.
+    const dying = withLedger({ update: () => Promise.reject(new Error("process died")) });
+    const first = new Date("2026-09-02T09:00:00Z");
+    await expect(processImportantDateReminders(first, { db: dying, send })).rejects.toThrow("process died");
+    expect(await prisma.reminderLog.findFirst()).toMatchObject({ ok: false, attemptCount: 0, nextAttemptAt: expect.any(Date) });
+
+    await processImportantDateReminders(new Date(first.getTime() + 61_000), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][2]).toBe("Renew the passport was due 2026-09-02.");
+    expect(await prisma.reminderLog.count()).toBe(1);
+    expect(await prisma.reminderLog.findFirst()).toMatchObject({ ok: true, attemptCount: 1, nextAttemptAt: null });
+  });
+
+  it("waits for a digest hour moved later rather than retrying early or giving up", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const send = vi.fn(async (): Promise<void> => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    const failed = await prisma.reminderLog.findFirstOrThrow();
+    await prisma.userPreference.update({ where: { userId: user.id }, data: { digestHour: 12 } });
+
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: failed.nextAttemptAt, error: "offline" });
+
+    await processImportantDateReminders(new Date("2026-09-02T12:30:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(await prisma.reminderLog.count()).toBe(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true, attemptCount: 2 });
+  });
+
+  it("does not attempt an insert for anything the ledger already holds", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.createMany({ data: [
+      { ownerId: user.id, kind: "WEBHOOK", name: "A", config: { url: "https://example.invalid/a" } },
+      { ownerId: user.id, kind: "NTFY", name: "B", config: { url: "https://example.invalid/b" } },
+    ] });
+    await prisma.contact.create({ data: { ownerId: user.id, firstName: "Overdue", nextTouchAt: new Date("2026-08-01T00:00:00Z") } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Still open", dueDate: new Date("2026-08-01T00:00:00Z") } });
+    const send = vi.fn(async () => undefined);
+    const create = vi.fn(prisma.reminderLog.create.bind(prisma.reminderLog));
+    const counted = withLedger({ create });
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: counted, send });
+    expect(create).toHaveBeenCalledTimes(4);
+
+    // An overdue cadence and an open task stay candidates every hour; the
+    // second pass must know they are sent without trying to write them again.
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: counted, send });
+    expect(create).toHaveBeenCalledTimes(4);
+    expect(send).toHaveBeenCalledTimes(4);
   });
 });

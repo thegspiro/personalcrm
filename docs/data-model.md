@@ -592,10 +592,15 @@ still leaves, just without its credential. The failure lands in
 
 ### `ReminderLog`
 
-The dedupe/retry ledger, so a restart never re-sends a reminder. Every row records
+The dedupe/retry ledger, so a restart never re-sends a reminder — nor loses
+one: a row is written with its first retry deadline already set, before the
+send, so a process that dies between the two leaves a row the next pass
+retries rather than one the unique key silently buries. Every row records
 the explicit `schedulingPolicy` that produced it and a SHA-256 `dedupKey`, unique
 per owner, derived from the entity, policy, occurrence, offset, and channel. The
-older composite delivery unique key remains as additional protection. `entityType`
+older composite delivery unique key remains as additional protection, and the
+scheduler reads the keys it already holds before inserting rather than
+treating a refused insert as the normal case. `entityType`
 is a `ReminderEntity` (`IMPORTANT_DATE` | `CADENCE` | `TASK` | `DIGEST`). Failed
 sends retry with exponential delay up to five attempts. Before retrying, the
 engine re-reads the row's own entity under the same owner, archive and privacy
@@ -604,8 +609,9 @@ failed on the last pass of one day would never appear in on the first pass of
 the next. Completion, a corrected date, an interaction that moved a cadence on,
 archival, locking private content or a policy change cancels the retry; a
 retry that goes out is worded for the day it goes out on. A digest is the
-exception: within its day it is retried with its counts read afresh, and once
-its day has ended it is dropped rather than sent stale.
+exception: within its day it is retried with its counts read afresh — and
+waits if its hour has since been moved later — and once its day has ended it
+is dropped rather than sent stale.
 
 Cadence rows use `Contact.nextTouchAt` falling on or before the end of the
 owner's local day — the same reading as the overdue count and the People
