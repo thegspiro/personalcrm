@@ -1,8 +1,9 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/server/auth/session";
+import { getCurrentUser, hashSessionToken, SESSION_COOKIE } from "@/server/auth/session";
 import { prisma } from "@/server/db/client";
-import { getPrivacyState } from "@/server/privacy/lock";
-import { readAvatarFile } from "@/server/services/avatars";
+import { findVisibleAvatarContact } from "@/server/queries/avatars";
+import { isAvatarFilename, readAvatarFile } from "@/server/services/avatars";
 
 export const dynamic = "force-dynamic";
 
@@ -12,25 +13,28 @@ const CONTENT_TYPES: Record<string, string> = {
   webp: "image/webp",
 };
 
+/** Every refusal looks the same: whether a file exists is itself a disclosure. */
+function notFound() {
+  return new NextResponse(null, { status: 404 });
+}
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ filename: string }> },
 ) {
-  const user = await getCurrentUser();
-  if (!user) return new NextResponse(null, { status: 404 });
-
   const { filename } = await params;
-  const publicPath = `/api/avatars/${filename}`;
-  const privacy = await getPrivacyState();
-  const contact = await prisma.contact.findFirst({
-    where: {
-      ownerId: user.id,
-      avatarPath: publicPath,
-      ...(privacy.enabled && !privacy.unlocked ? { isPrivate: false } : {}),
-    },
-    select: { id: true },
+  if (!isAvatarFilename(filename)) return notFound();
+
+  const user = await getCurrentUser();
+  if (!user) return notFound();
+
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  const contact = await findVisibleAvatarContact(prisma, {
+    ownerId: user.id,
+    publicPath: `/api/avatars/${filename}`,
+    sessionTokenHash: token ? hashSessionToken(token) : null,
   });
-  if (!contact) return new NextResponse(null, { status: 404 });
+  if (!contact) return notFound();
 
   try {
     const bytes = await readAvatarFile(filename);
@@ -44,6 +48,6 @@ export async function GET(
       },
     });
   } catch {
-    return new NextResponse(null, { status: 404 });
+    return notFound();
   }
 }

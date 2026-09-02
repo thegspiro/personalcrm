@@ -34,7 +34,8 @@ packaged as one container with the database built in.
   permissions → database → migrations → app. Set `DATABASE_URL` and the bundled
   server never starts. Everything persistent is in `/config`.
 - **No API layer.** Pages are server components querying Prisma directly;
-  mutations are server actions. `GET /api/health` is the only route handler.
+  mutations are server actions. The only route handlers are `GET /api/health`
+  and the authenticated avatar read at `GET /api/avatars/[filename]`.
 - **Every "type" is data.** Interaction types, fact categories, relationship
   types, dating stages, plan categories — all `TaxonomyTerm` rows you can
   rename, recolour, reorder or add to. Enums are reserved for states the code

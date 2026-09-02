@@ -88,7 +88,8 @@ src/server/actions/    server actions — the entire write surface
 src/server/services/   multi-step writes shared by several actions (take a Tx client)
 src/server/privacy/    the lock: state, where-fragments, offline eligibility
 src/app/(app)|(auth)|(onboarding)
-                       routes;  src/app/api/health is the ONLY route handler
+                       routes;  src/app/api/ has two route handlers: health
+                       and the authenticated avatar read
 ```
 
 There is no REST API and no client data store. Pages are server components
