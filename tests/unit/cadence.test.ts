@@ -7,6 +7,7 @@ import {
   daysUntilTouch,
   snoozeUntil,
 } from "@/lib/cadence";
+import { endOfDayInTz } from "@/lib/dates";
 
 const NY = "America/New_York";
 const CREATED = new Date("2026-01-01T12:00:00Z");
@@ -84,7 +85,9 @@ describe("cadenceStatus", () => {
   });
 
   it("reports overdue on the day it comes due, even later that evening", () => {
-    expect(cadenceStatus(new Date("2026-06-16T02:00:00Z"), NY, now)).toBe("overdue");
+    const laterToday = new Date("2026-06-16T02:00:00Z");
+    expect(cadenceStatus(laterToday, NY, now)).toBe("overdue");
+    expect(laterToday.getTime()).toBeLessThanOrEqual(endOfDayInTz(now, NY).getTime());
   });
 
   it("reports due-soon inside the window", () => {

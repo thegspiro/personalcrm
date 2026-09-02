@@ -73,6 +73,12 @@ export function startOfDayInTz(instant: Date, timeZone: string): Date {
   return zonedStartOfDay(calendarDateInTz(instant, timeZone), timeZone);
 }
 
+/** The final instant of the calendar day containing `instant` in `timeZone`. */
+export function endOfDayInTz(instant: Date, timeZone: string): Date {
+  const tomorrow = addPlainDays(calendarDateInTz(instant, timeZone), 1);
+  return new Date(zonedStartOfDay(tomorrow, timeZone).getTime() - 1);
+}
+
 /** Read a MySQL DATE column (Prisma gives UTC midnight) as a plain calendar date. */
 export function plainDateFromDb(value: Date): PlainDate {
   return {

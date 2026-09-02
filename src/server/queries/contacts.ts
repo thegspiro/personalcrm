@@ -1,6 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import type { Prisma } from "@prisma/client";
+import { endOfDayInTz } from "@/lib/dates";
 import { prisma } from "@/server/db/client";
 import {
   RECIPROCITY_WINDOW,
@@ -54,6 +55,7 @@ function buildWhere(
   ownerId: string,
   options: ContactListOptions,
   privacy: PrivacyScope,
+  timezone: string,
 ): Prisma.ContactWhereInput {
   const where: Prisma.ContactWhereInput = { ownerId, ...contactPrivacyWhere(privacy) };
 
@@ -64,7 +66,7 @@ function buildWhere(
   if (options.categoryId) where.categoryId = options.categoryId;
   if (options.romanticOnly) where.isRomantic = true;
   if (options.favoritesOnly) where.isFavorite = true;
-  if (options.overdueOnly) where.nextTouchAt = { lte: new Date() };
+  if (options.overdueOnly) where.nextTouchAt = { lte: endOfDayInTz(new Date(), timezone) };
 
   const search = options.search?.trim();
   if (search) {
@@ -120,10 +122,11 @@ function buildOrderBy(sort: ContactSort = "name"): Prisma.ContactOrderByWithRela
 
 export async function listContacts(
   ownerId: string,
-  options: ContactListOptions = {},
+  options: ContactListOptions,
+  timezone: string,
 ): Promise<{ items: ContactListItem[]; total: number }> {
   const privacy = await privacyScope();
-  const where = buildWhere(ownerId, options, privacy);
+  const where = buildWhere(ownerId, options, privacy, timezone);
   const [items, total] = await Promise.all([
     prisma.contact.findMany({
       where,

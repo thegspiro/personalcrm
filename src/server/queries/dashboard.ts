@@ -11,6 +11,7 @@ import {
   addPlainDays,
   calendarDateInTz,
   diffPlainDays,
+  endOfDayInTz,
   projectDateOccurrences,
   plainDateFromDb,
   zonedStartOfDay,
@@ -235,6 +236,7 @@ export interface DashboardStats {
 export async function getStats(ownerId: string, timezone: string): Promise<DashboardStats> {
   const now = new Date();
   const today = calendarDateInTz(now, timezone);
+  const dueThrough = endOfDayInTz(now, timezone);
   const monthStart = new Date(Date.UTC(today.year, today.month - 1, 1));
 
   const privacy = await privacyScope();
@@ -255,7 +257,7 @@ export async function getStats(ownerId: string, timezone: string): Promise<Dashb
           ownerId,
           isArchived: false,
           cadenceDays: { not: null },
-          nextTouchAt: { lte: now },
+          nextTouchAt: { lte: dueThrough },
           ...contactPrivacy,
         },
       }),

@@ -325,17 +325,17 @@ describe.skipIf(!hasTestDatabase)("contact methods and addresses", () => {
 
     state.enabled = true;
     state.unlocked = false;
-    const locked = await listContacts(ownerId, { search: "555-0111" });
+    const locked = await listContacts(ownerId, { search: "555-0111" }, TZ);
     // The count has to move with the rows: a total that shifts on unlock is
     // itself a disclosure.
     expect(locked.items).toHaveLength(0);
     expect(locked.total).toBe(0);
 
     state.unlocked = true;
-    const unlocked = await listContacts(ownerId, { search: "555-0111" });
+    const unlocked = await listContacts(ownerId, { search: "555-0111" }, TZ);
     expect(unlocked.items.map((row) => row.firstName)).toEqual(["Robin"]);
 
-    const byEmail = await listContacts(ownerId, { search: "dana@example" });
+    const byEmail = await listContacts(ownerId, { search: "dana@example" }, TZ);
     expect(byEmail.items.map((row) => row.firstName)).toEqual(["Dana"]);
   });
 
