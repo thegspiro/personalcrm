@@ -67,6 +67,7 @@ export function TasksSection({ contactId, tasks }: { contactId: string; tasks: T
 
   return (
     <SectionCard
+      id="follow-ups"
       title="Follow-ups"
       icon="CircleCheck"
       count={open.length}

@@ -1,3 +1,4 @@
+import * as React from "react";
 import Link from "next/link";
 import { cn, displayName, initialsOf } from "@/lib/utils";
 import { Icon } from "@/components/nav/icon";
@@ -230,20 +231,30 @@ export function TasksWidget({ tasks }: { tasks: TaskRow[] }) {
       ) : (
         <ul className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
           {tasks.map((task) => (
-            <li key={task.id} className="flex min-w-0 items-center gap-2 px-1 py-1">
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm">{task.title}</span>
-                {task.contact ? (
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {displayName(task.contact)}
+            <li key={task.id} className="min-w-0">
+              <Link
+                href={task.contact ? `/people/${task.contact.id}#follow-ups` : "/tasks"}
+                aria-label={
+                  task.contact
+                    ? `${task.title} — follow up with ${displayName(task.contact)}`
+                    : `${task.title} — view in Follow-ups`
+                }
+                className="flex min-w-0 items-center gap-2 rounded-lg px-1 py-1 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm">{task.title}</span>
+                  {task.contact ? (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {displayName(task.contact)}
+                    </span>
+                  ) : null}
+                </span>
+                {task.dueDate ? (
+                  <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground">
+                    {formatPartialDate(task.dueDate, "MONTH_DAY", { short: true })}
                   </span>
                 ) : null}
-              </span>
-              {task.dueDate ? (
-                <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground">
-                  {formatPartialDate(task.dueDate, "MONTH_DAY", { short: true })}
-                </span>
-              ) : null}
+              </Link>
             </li>
           ))}
         </ul>
