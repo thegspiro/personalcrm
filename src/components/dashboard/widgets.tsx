@@ -1,6 +1,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { cn, displayName, initialsOf } from "@/lib/utils";
+import { dueLabel } from "@/lib/cadence";
 import { Icon } from "@/components/nav/icon";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -73,13 +74,7 @@ export function OverdueWidget({ contacts }: { contacts: OverdueContact[] }) {
                   : "bg-destructive/12 text-destructive",
               )}
             >
-              {contact.daysUntilDue < 0
-                ? `${-contact.daysUntilDue}d overdue`
-                : contact.daysUntilDue === 0
-                  ? "today"
-                  : contact.daysUntilDue === 1
-                    ? "tomorrow"
-                    : `in ${contact.daysUntilDue} days`}
+              {dueLabel(contact.daysUntilDue)}
             </span>
           </Link>
         </li>
@@ -88,7 +83,7 @@ export function OverdueWidget({ contacts }: { contacts: OverdueContact[] }) {
   );
 
   return (
-    <WidgetShell title="Time to reach out" icon="BellRing" href="/people?sort=overdue" testId="widget-overdue">
+    <WidgetShell title="Time to reach out" icon="BellRing" href="/people?due=soon&sort=overdue" testId="widget-overdue">
       {contacts.length === 0 ? (
         <Empty>Nobody is due now or soon. Nice.</Empty>
       ) : (
@@ -225,7 +220,7 @@ export interface TaskRow {
 
 export function TasksWidget({ tasks }: { tasks: TaskRow[] }) {
   return (
-    <WidgetShell title="Follow-ups" icon="CircleCheck" href="/tasks">
+    <WidgetShell title="Things to do" icon="CircleCheck" href="/tasks#things-to-do" hrefLabel="All follow-ups">
       {tasks.length === 0 ? (
         <Empty>Nothing outstanding.</Empty>
       ) : (
@@ -233,7 +228,7 @@ export function TasksWidget({ tasks }: { tasks: TaskRow[] }) {
           {tasks.map((task) => (
             <li key={task.id} className="min-w-0">
               <Link
-                href={task.contact ? `/people/${task.contact.id}#follow-ups` : "/tasks"}
+                href={task.contact ? `/people/${task.contact.id}#tasks` : "/tasks#things-to-do"}
                 aria-label={
                   task.contact
                     ? `${task.title} — follow up with ${displayName(task.contact)}`
@@ -300,7 +295,7 @@ export function StatsWidget({ stats }: { stats: DashboardStats }) {
     { label: "People", value: stats.people },
     { label: "Logged this month", value: stats.interactionsThisMonth },
     { label: "Overdue", value: stats.overdue },
-    { label: "Open follow-ups", value: stats.openTasks },
+    { label: "Open tasks", value: stats.openTasks },
   ];
 
   return (

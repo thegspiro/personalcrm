@@ -13,7 +13,7 @@ function render(tasks: TaskRow[]) {
 }
 
 describe("TasksWidget", () => {
-  it("gives a contact task one descriptive, keyboard-focusable route to its follow-ups", () => {
+  it("gives a contact task one descriptive, keyboard-focusable route to its tasks", () => {
     const html = render([
       {
         id: "task-1",
@@ -23,7 +23,7 @@ describe("TasksWidget", () => {
       },
     ]);
 
-    expect(html).toContain('href="/people/contact-1#follow-ups"');
+    expect(html).toContain('href="/people/contact-1#tasks"');
     expect(html).toContain('aria-label="Return the borrowed book — follow up with Avery Ng"');
     // One row, one native link: there is no nested or competing target for a
     // keyboard or screen-reader user to interpret.
@@ -31,12 +31,14 @@ describe("TasksWidget", () => {
     expect(html).toContain("focus-visible:ring-2");
   });
 
-  it("routes a task without a contact to the addressable tasks view", () => {
+  it("routes a task without a contact past the people section, to the task list", () => {
     const html = render([
       { id: "task-2", title: "Renew membership", dueDate: null, contact: null },
     ]);
 
-    expect(html).toContain('href="/tasks"');
+    // Not bare "/tasks": the hub opens on "People to contact", which can run to
+    // a couple of hundred rows, leaving the task the reader clicked offscreen.
+    expect(html).toContain('href="/tasks#things-to-do"');
     expect(html).toContain('aria-label="Renew membership — view in Follow-ups"');
     expect(html).not.toContain("/people/");
   });

@@ -4,6 +4,7 @@ import {
   calendarDateInTz,
   clampPlainDate,
   diffPlainDays,
+  endOfDayInTz,
   nextOccurrence,
   parsePlainDate,
   plainDateFromDb,
@@ -51,6 +52,43 @@ describe("zonedStartOfDay", () => {
   it("handles the US fall-back day", () => {
     const start = zonedStartOfDay({ year: 2026, month: 11, day: 1 }, NY);
     expect(start.toISOString()).toBe("2026-11-01T04:00:00.000Z");
+  });
+
+  it("starts the day at the transition where the clocks jump over midnight", () => {
+    // Santiago moves to DST at 24:00 on 2026-09-05, so 00:00 on the 6th never
+    // happens and the day begins at 01:00. Answering 23:00 on the 5th — which
+    // the arithmetic guess does — loses the last hour of the 5th from every
+    // query bounded by a day boundary.
+    const start = zonedStartOfDay({ year: 2026, month: 9, day: 6 }, "America/Santiago");
+    expect(start.toISOString()).toBe("2026-09-06T04:00:00.000Z");
+  });
+
+  it("starts the day at the transition when the jump is at midnight itself", () => {
+    // Beirut goes straight from 00:00 to 01:00 on 2026-03-29.
+    const start = zonedStartOfDay({ year: 2026, month: 3, day: 29 }, "Asia/Beirut");
+    expect(start.toISOString()).toBe("2026-03-28T22:00:00.000Z");
+  });
+
+  it("returns the first of a midnight the clocks roll back through", () => {
+    // Amman rolled back an hour at midnight on 2000-09-29, so 00:00 happened
+    // twice. Answering the second puts the repeated hour on the wrong day, and
+    // a contact due in it is read as due a day early.
+    const start = zonedStartOfDay({ year: 2000, month: 9, day: 29 }, "Asia/Amman");
+    expect(start.toISOString()).toBe("2000-09-28T21:00:00.000Z");
+  });
+
+  it("returns the first of a midnight repeated by a multi-hour rollback", () => {
+    // Casey went from +11 to +08 across midnight on 2019-03-17: three hours,
+    // so both naive guesses land on the later 00:00.
+    const start = zonedStartOfDay({ year: 2019, month: 3, day: 17 }, "Antarctica/Casey");
+    expect(start.toISOString()).toBe("2019-03-16T13:00:00.000Z");
+  });
+
+  it("handles a day the zone skipped entirely", () => {
+    // Apia crossed the date line at the end of 2011: 30 December never
+    // happened, so the 31st begins where the 29th ended.
+    const start = zonedStartOfDay({ year: 2011, month: 12, day: 31 }, "Pacific/Apia");
+    expect(start.toISOString()).toBe("2011-12-30T10:00:00.000Z");
   });
 
   it("round-trips through startOfDayInTz", () => {
@@ -314,5 +352,18 @@ describe("yearsBetween", () => {
 
   it("counts the birthday on the day itself", () => {
     expect(yearsBetween({ year: 1990, month: 6, day: 15 }, { year: 2026, month: 6, day: 15 })).toBe(36);
+  });
+});
+
+describe("endOfDayInTz", () => {
+  it("keeps the final second of a day the clocks jump out of", () => {
+    const end = endOfDayInTz(new Date("2026-09-05T20:00:00Z"), "America/Santiago");
+    // 23:59:59.999 local on the 5th, one millisecond before the 6th begins.
+    expect(end.toISOString()).toBe("2026-09-06T03:59:59.999Z");
+  });
+
+  it("covers a whole ordinary day", () => {
+    const end = endOfDayInTz(new Date("2026-07-15T18:45:00Z"), NY);
+    expect(end.toISOString()).toBe("2026-07-16T03:59:59.999Z");
   });
 });

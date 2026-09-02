@@ -109,6 +109,12 @@ test("they remain on the overdue list", async ({ page }) => {
 
   // The dashboard widget only shows the most overdue handful, so assert on the
   // full overdue-sorted list — the point is that backdating did not clear them.
+  //
+  // Deliberately the unfiltered list, not the widget's `due` filter: the test
+  // above logs a present-day interaction with this person, which correctly
+  // pushes their next check-in a fortnight out. What is being asserted here is
+  // that they are still listed, not that they are still due. The due filter is
+  // covered in follow-ups.spec.ts, against someone who stays overdue.
   await page.goto("/people?sort=overdue");
   await expect(page.getByRole("link", { name: new RegExp(`${name} Case`) })).toBeVisible();
 
@@ -155,7 +161,7 @@ test("record a fact and a follow-up", async ({ page }) => {
   await facts.getByRole("button", { name: "Add", exact: true }).click();
   await expect(facts.getByText("Hates coriander with a passion")).toBeVisible();
 
-  const tasks = page.locator("section").filter({ hasText: "Follow-ups" }).first();
+  const tasks = page.locator("section").filter({ hasText: "Tasks" }).first();
   await tasks.getByRole("button", { name: /Add/ }).click();
   await tasks.getByLabel("What do you need to do?").fill("Send the Denver recommendations");
   await tasks.getByRole("button", { name: "Add", exact: true }).click();
@@ -172,15 +178,15 @@ test("dashboard follow-ups are clear keyboard routes on a narrow screen", async 
     name: `Send the Denver recommendations — follow up with ${contact}`,
   });
   await expect(link).toBeVisible();
-  await expect(link).toHaveAttribute("href", /\/people\/[^/]+#follow-ups$/);
+  await expect(link).toHaveAttribute("href", /\/people\/[^/]+#tasks$/);
 
   // A native, focused link must reach the relevant context by keyboard. The
   // row has no nested link competing for focus or changing its announcement.
   await link.focus();
   await expect(link).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/people\/[^/]+#follow-ups$/);
-  await expect(page.locator("section#follow-ups")).toBeVisible();
+  await expect(page).toHaveURL(/\/people\/[^/]+#tasks$/);
+  await expect(page.locator("section#tasks")).toBeVisible();
 
   const width = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,

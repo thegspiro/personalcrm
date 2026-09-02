@@ -25,7 +25,7 @@ export const PRIMARY_NAV: NavItem[] = [
 export const SECONDARY_NAV: NavItem[] = [
   { href: "/locations", label: "Places", icon: "MapPin", match: ["/locations"] },
   { href: "/family", label: "Family", icon: "Home", match: ["/family"] },
-  { href: "/tasks", label: "Follow-ups", icon: "CircleCheck" },
+  { href: "/tasks", label: "Follow-ups", icon: "ListChecks" },
   { href: "/ideas", label: "Ideas", icon: "Lightbulb" },
   { href: "/gifts", label: "Gifts", icon: "Gift" },
   { href: "/settings", label: "Settings", icon: "Settings" },

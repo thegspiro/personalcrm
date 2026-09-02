@@ -5,8 +5,10 @@ import {
   computeNextTouchAt,
   daysSinceLastInteraction,
   daysUntilTouch,
+  dueLabel,
   snoozeUntil,
 } from "@/lib/cadence";
+import { endOfDayInTz } from "@/lib/dates";
 
 const NY = "America/New_York";
 const CREATED = new Date("2026-01-01T12:00:00Z");
@@ -84,7 +86,9 @@ describe("cadenceStatus", () => {
   });
 
   it("reports overdue on the day it comes due, even later that evening", () => {
-    expect(cadenceStatus(new Date("2026-06-16T02:00:00Z"), NY, now)).toBe("overdue");
+    const laterToday = new Date("2026-06-16T02:00:00Z");
+    expect(cadenceStatus(laterToday, NY, now)).toBe("overdue");
+    expect(laterToday.getTime()).toBeLessThanOrEqual(endOfDayInTz(now, NY).getTime());
   });
 
   it("reports due-soon inside the window", () => {
@@ -141,5 +145,15 @@ describe("cadenceLabel", () => {
 
   it("falls back to a day count for custom cadences", () => {
     expect(cadenceLabel(45)).toBe("Every 45 days");
+  });
+});
+
+describe("dueLabel", () => {
+  it("reads the near days as words and everything overdue as a count", () => {
+    expect(dueLabel(-3)).toBe("3d overdue");
+    expect(dueLabel(-1)).toBe("1d overdue");
+    expect(dueLabel(0)).toBe("today");
+    expect(dueLabel(1)).toBe("tomorrow");
+    expect(dueLabel(4)).toBe("in 4 days");
   });
 });

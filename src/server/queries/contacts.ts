@@ -1,12 +1,14 @@
 import "server-only";
 import { cache } from "react";
 import type { Prisma } from "@prisma/client";
+import { addPlainDays, calendarDateInTz, zonedStartOfDay } from "@/lib/dates";
 import { prisma } from "@/server/db/client";
 import {
   RECIPROCITY_WINDOW,
   summarizeReciprocity,
   type ReciprocitySummary,
 } from "@/lib/reciprocity";
+import { DUE_SOON_DAYS } from "@/lib/cadence";
 import {
   contactPrivacyWhere,
   factPrivacyWhere,
@@ -16,6 +18,7 @@ import {
 } from "@/server/privacy/filter";
 
 export type ContactSort = "name" | "recent" | "overdue" | "added";
+export type ContactDueStatus = "actionable" | "soon";
 
 export interface ContactListOptions {
   search?: string;
@@ -24,7 +27,12 @@ export interface ContactListOptions {
   scope?: "active" | "archived" | "all";
   romanticOnly?: boolean;
   favoritesOnly?: boolean;
-  overdueOnly?: boolean;
+  /**
+   * "actionable" is everyone due through the end of today; "soon" widens that
+   * to the same horizon the dashboard widget reaches, so following the widget
+   * through lands on the list it was showing.
+   */
+  dueStatus?: ContactDueStatus;
   sort?: ContactSort;
   take?: number;
   skip?: number;
@@ -54,6 +62,7 @@ function buildWhere(
   ownerId: string,
   options: ContactListOptions,
   privacy: PrivacyScope,
+  timezone: string,
 ): Prisma.ContactWhereInput {
   const where: Prisma.ContactWhereInput = { ownerId, ...contactPrivacyWhere(privacy) };
 
@@ -64,7 +73,17 @@ function buildWhere(
   if (options.categoryId) where.categoryId = options.categoryId;
   if (options.romanticOnly) where.isRomantic = true;
   if (options.favoritesOnly) where.isFavorite = true;
-  if (options.overdueOnly) where.nextTouchAt = { lte: new Date() };
+  if (options.dueStatus) {
+    // `cadenceStatus` calls the whole account-local due date overdue, so the
+    // bound has to be the end of that day in the account timezone. A
+    // millisecond offset from the server clock would drop someone due at 9pm
+    // tonight and would land on the wrong instant across a DST change.
+    const daysAhead = options.dueStatus === "soon" ? DUE_SOON_DAYS : 0;
+    const today = calendarDateInTz(new Date(), timezone);
+    const horizon = zonedStartOfDay(addPlainDays(today, daysAhead + 1), timezone);
+    where.cadenceDays = { not: null };
+    where.nextTouchAt = { not: null, lt: horizon };
+  }
 
   const search = options.search?.trim();
   if (search) {
@@ -120,10 +139,11 @@ function buildOrderBy(sort: ContactSort = "name"): Prisma.ContactOrderByWithRela
 
 export async function listContacts(
   ownerId: string,
-  options: ContactListOptions = {},
+  options: ContactListOptions,
+  timezone: string,
 ): Promise<{ items: ContactListItem[]; total: number }> {
   const privacy = await privacyScope();
-  const where = buildWhere(ownerId, options, privacy);
+  const where = buildWhere(ownerId, options, privacy, timezone);
   const [items, total] = await Promise.all([
     prisma.contact.findMany({
       where,

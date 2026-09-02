@@ -20,7 +20,7 @@ export interface TaskItem {
   priority: "LOW" | "NORMAL" | "HIGH";
 }
 
-/** Adding a follow-up and correcting one. Shared with the /tasks page. */
+/** Adding a manual task and correcting one. Shared with the /tasks page. */
 export function TaskFields({ formId, task }: { formId: string; task?: TaskItem }) {
   return (
     <>
@@ -67,11 +67,11 @@ export function TasksSection({ contactId, tasks }: { contactId: string; tasks: T
 
   return (
     <SectionCard
-      id="follow-ups"
-      title="Follow-ups"
+      id="tasks"
+      title="Tasks"
       icon="CircleCheck"
       count={open.length}
-      addLabel="Add a follow-up"
+      addLabel="Add a task"
       form={(close) => (
         <form action={add(createTask, close, "Added")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
@@ -87,8 +87,8 @@ export function TasksSection({ contactId, tasks }: { contactId: string; tasks: T
           <SectionRow
             key={task.id}
             onDelete={() => void run(() => deleteTask(task.id), "Removed")}
-            deleteLabel="Delete follow-up"
-            editLabel="Edit follow-up"
+            deleteLabel="Delete task"
+            editLabel="Edit task"
             editForm={(close) => (
               <form action={add(updateTask, close, "Saved")} className="grid gap-2.5">
                 <input type="hidden" name="id" value={task.id} />
