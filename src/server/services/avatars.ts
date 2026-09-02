@@ -1,8 +1,8 @@
 import "server-only";
 
 import { randomBytes } from "node:crypto";
-import { mkdir, open, rename, unlink, writeFile } from "node:fs/promises";
-import { basename, resolve, sep } from "node:path";
+import { mkdir, open, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { inspectImage } from "@/lib/image-format";
 
 export const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
@@ -21,15 +21,35 @@ export function isAvatarFilename(filename: string): boolean {
 }
 
 /**
+ * The path with every symlink followed, for a path that need not exist yet:
+ * the deepest ancestor that does exist is canonicalised and the rest is
+ * joined back on. Nothing is created along the way.
+ */
+async function canonical(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const parent = dirname(path);
+    if (parent === path) return path;
+    return join(await canonical(parent), basename(path));
+  }
+}
+
+/**
  * Where avatar bytes live. Never under `public/`: everything there is served
  * as a static asset to anyone who knows the name, without the session, owner
  * or privacy-lock checks the avatar route exists to apply — immediately in
  * development, and after the next restart in production. The documentation
  * says so; this is what makes it true.
+ *
+ * Compared after following symlinks on both sides, and before anything is
+ * created: a lexical comparison would pass `/config/uploads` while a link at
+ * `/config` pointed it straight into the public tree.
  */
-export function uploadsDirectory(): string {
-  const root = resolve(process.env.UPLOADS_DIR?.trim() || "/config/uploads");
-  const publicRoot = resolve(process.cwd(), "public");
+export async function uploadsDirectory(): Promise<string> {
+  const root = await canonical(resolve(process.env.UPLOADS_DIR?.trim() || "/config/uploads"));
+  const publicRoot = await canonical(resolve(process.cwd(), "public"));
   if (root === publicRoot || root.startsWith(`${publicRoot}${sep}`)) {
     throw new AvatarConfigurationError(
       `UPLOADS_DIR must not be inside ${publicRoot}: files there are served without any access check.`,
@@ -38,11 +58,11 @@ export function uploadsDirectory(): string {
   return root;
 }
 
-function insideUploads(filename: string): string {
+async function insideUploads(filename: string): Promise<string> {
   if (!FILE_NAME.test(filename) || basename(filename) !== filename) {
     throw new AvatarValidationError("Invalid avatar path.");
   }
-  const root = uploadsDirectory();
+  const root = await uploadsDirectory();
   const candidate = resolve(root, filename);
   if (!candidate.startsWith(`${root}${sep}`)) throw new AvatarValidationError("Invalid avatar path.");
   return candidate;
@@ -69,10 +89,10 @@ export async function storeAvatar(file: File): Promise<StagedAvatar> {
     );
   }
 
-  const root = uploadsDirectory();
+  const root = await uploadsDirectory();
   await mkdir(root, { recursive: true, mode: 0o750 });
   const filename = `${randomBytes(16).toString("hex")}.${image.format}`;
-  const finalPath = insideUploads(filename);
+  const finalPath = await insideUploads(filename);
   const temporary = `${finalPath}.tmp-${randomBytes(8).toString("hex")}`;
   const handle = await open(temporary, "wx", 0o640);
   try {
@@ -102,13 +122,13 @@ export function filenameFromAvatarPath(publicPath: string | null): string | null
 export async function removeAvatarFile(publicPath: string | null): Promise<void> {
   const filename = filenameFromAvatarPath(publicPath);
   if (!filename) return;
-  await unlink(insideUploads(filename)).catch((error: NodeJS.ErrnoException) => {
+  await unlink(await insideUploads(filename)).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "ENOENT") throw error;
   });
 }
 
 export async function readAvatarFile(filename: string): Promise<Buffer> {
-  const handle = await open(insideUploads(filename), "r");
+  const handle = await open(await insideUploads(filename), "r");
   try {
     return await handle.readFile();
   } finally {

@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readdir, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -90,6 +90,19 @@ describe("avatar storage", () => {
     // A sibling that merely starts with the same letters is fine.
     process.env.UPLOADS_DIR = join(directory, "publicity");
     await expect(storeAvatar(new File([PNG_TRANSPARENT], "avatar.png"))).resolves.toBeTruthy();
+  });
+
+  it("follows symlinks before deciding a directory is outside public/", async () => {
+    // A link at an ancestor points the lexically innocent path into the
+    // public tree; comparing without following it would write a private
+    // photo where the static file server hands it to anyone.
+    await symlink(join(process.cwd(), "public"), join(directory, "pub"));
+    const inside = join(directory, "pub", `avatars-${Date.now().toString(36)}`);
+    process.env.UPLOADS_DIR = inside;
+    await expect(storeAvatar(new File([PNG_TRANSPARENT], "avatar.png"))).rejects.toBeInstanceOf(AvatarConfigurationError);
+    await expect(readAvatarFile("0".repeat(32) + ".png")).rejects.toBeInstanceOf(AvatarConfigurationError);
+    // Refused before anything was created on the far side of the link.
+    await expect(access(inside)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("leaves nothing behind when the write itself fails", async () => {

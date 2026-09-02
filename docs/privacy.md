@@ -371,7 +371,8 @@ terminator at the very end — so a truncated upload is refused rather than
 published in place of the avatar it was meant to replace. Nothing is decoded.
 Client filenames, extensions, and MIME headers never become filesystem paths,
 and `UPLOADS_DIR` may not point inside `public/`, where the route's checks
-would not apply.
+would not apply — judged after following symlinks on both sides, so a link
+cannot smuggle the directory in under another name.
 Replacement publishes validated new bytes and commits their generated path
 before obsolete bytes are removed; removal and contact deletion clear/delete
 the database row before unlinking. An I/O failure may therefore leave harmless
