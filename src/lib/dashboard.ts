@@ -42,7 +42,7 @@ export const WIDGET_REGISTRY: Record<WidgetId, WidgetDefinition> = {
   overdue: {
     id: "overdue",
     title: "Time to reach out",
-    description: "People whose keep-in-touch cadence has come due.",
+    description: "People whose keep-in-touch cadence is overdue or coming due soon.",
     icon: "BellRing",
     defaultEnabled: true,
     defaultSettings: { limit: 8 },
