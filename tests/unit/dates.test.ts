@@ -69,6 +69,28 @@ describe("zonedStartOfDay", () => {
     expect(start.toISOString()).toBe("2026-03-28T22:00:00.000Z");
   });
 
+  it("returns the first of a midnight the clocks roll back through", () => {
+    // Amman rolled back an hour at midnight on 2000-09-29, so 00:00 happened
+    // twice. Answering the second puts the repeated hour on the wrong day, and
+    // a contact due in it is read as due a day early.
+    const start = zonedStartOfDay({ year: 2000, month: 9, day: 29 }, "Asia/Amman");
+    expect(start.toISOString()).toBe("2000-09-28T21:00:00.000Z");
+  });
+
+  it("returns the first of a midnight repeated by a multi-hour rollback", () => {
+    // Casey went from +11 to +08 across midnight on 2019-03-17: three hours,
+    // so both naive guesses land on the later 00:00.
+    const start = zonedStartOfDay({ year: 2019, month: 3, day: 17 }, "Antarctica/Casey");
+    expect(start.toISOString()).toBe("2019-03-16T13:00:00.000Z");
+  });
+
+  it("handles a day the zone skipped entirely", () => {
+    // Apia crossed the date line at the end of 2011: 30 December never
+    // happened, so the 31st begins where the 29th ended.
+    const start = zonedStartOfDay({ year: 2011, month: 12, day: 31 }, "Pacific/Apia");
+    expect(start.toISOString()).toBe("2011-12-30T10:00:00.000Z");
+  });
+
   it("round-trips through startOfDayInTz", () => {
     const instant = new Date("2026-07-15T18:45:00Z");
     expect(startOfDayInTz(instant, NY).toISOString()).toBe("2026-07-15T04:00:00.000Z");

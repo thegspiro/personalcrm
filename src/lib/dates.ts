@@ -60,29 +60,43 @@ export function calendarDateInTz(instant: Date, timeZone: string): PlainDate {
 /**
  * The instant at which the given calendar day begins in `timeZone`.
  *
- * Solved iteratively because the offset itself depends on the answer (DST).
- * Two arithmetic guesses are enough to bracket the answer, but neither is
- * reliably it: where the clocks jump over local midnight the day starts at the
- * transition and 00:00 never happens, so the guesses land an hour apart with
- * one of them on the previous day. Chile is the case that matters —
- * 2026-09-06 in Santiago begins at 01:00 — and taking the wrong guess loses
- * the last hour of the day before it from every query bounded by a day
- * boundary. So take the earliest guess that actually falls on the day asked
- * for, which also picks the first of the two midnights on a fall-back day.
+ * The offset depends on the answer, so the answer has to be searched for.
+ * Guessing from the offset at the target instant and correcting once is not
+ * enough, because a transition near midnight breaks it in two opposite ways:
+ *
+ *  * The clocks jump over midnight, so 00:00 never happens and the day starts
+ *    at the transition — Santiago on 2026-09-06 begins at 01:00.
+ *  * The clocks roll back through midnight, so 00:00 happens twice and the day
+ *    starts at the first — Casey on 2019-03-17 begins three hours before the
+ *    guesses find it, and Amman on 2000-09-29 an hour before.
+ *
+ * So take the offsets in play a day either side as well, and keep the earliest
+ * candidate that actually lands on the day asked for. Earliest is safe: any
+ * instant whose local date is `date` is at or after the true start, because an
+ * earlier one would read as the previous day.
  */
 export function zonedStartOfDay(date: PlainDate, timeZone: string): Date {
   const naive = Date.UTC(date.year, date.month - 1, date.day, 0, 0, 0, 0);
-  const first = naive - tzOffsetMs(new Date(naive), timeZone);
-  const second = naive - tzOffsetMs(new Date(first), timeZone);
+  const offsets = [
+    tzOffsetMs(new Date(naive - MS_PER_DAY), timeZone),
+    tzOffsetMs(new Date(naive), timeZone),
+    tzOffsetMs(new Date(naive + MS_PER_DAY), timeZone),
+  ];
+  // The correction pass the naive guess needs when the offset changes between
+  // the two, which the day-either-side probes can miss on a short transition.
+  offsets.push(tzOffsetMs(new Date(naive - offsets[1]), timeZone));
 
-  for (const guess of first <= second ? [first, second] : [second, first]) {
-    const landed = calendarDateInTz(new Date(guess), timeZone);
+  let start: number | null = null;
+  for (const offset of offsets) {
+    const candidate = naive - offset;
+    if (start !== null && candidate >= start) continue;
+    const landed = calendarDateInTz(new Date(candidate), timeZone);
     if (landed.year === date.year && landed.month === date.month && landed.day === date.day) {
-      return new Date(guess);
+      start = candidate;
     }
   }
-  // Unreachable for any real zone: one of the two brackets the transition.
-  return new Date(Math.max(first, second));
+  // Unreachable for any real zone: one of the offsets in play produces it.
+  return new Date(start ?? naive - offsets[1]);
 }
 
 export function startOfDayInTz(instant: Date, timeZone: string): Date {
