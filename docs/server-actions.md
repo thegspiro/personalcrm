@@ -59,6 +59,14 @@ enforces rather than documents:
 `deleteContact` sweeps the contact's `CustomFieldValue` rows explicitly —
 `entityId` is not a foreign key, so nothing cascades.
 
+`createContact` and `updateContact` accept an `avatar` file and `updateContact`
+a `removeAvatar` flag. The bytes are checked for being a whole JPEG, PNG or WebP
+and written under a server-generated name *before* the transaction, so a failed
+save removes the new file rather than leaving a row pointing at nothing; the
+previous file is removed only after the row points elsewhere. `deleteContact`
+unlinks the file after the row is gone. An avatar-bearing contact that is
+private is refused while the lock is closed, before any byte is written.
+
 ### Interactions — `actions/interactions.ts`
 
 `createInteraction`, `updateInteraction`, `deleteInteraction`,
@@ -222,13 +230,18 @@ Every place a lookup can be reached from is behind an explicit button. See
 | `actions/taxonomy.ts` | `createTerm`, `updateTerm`, `setTermActive`, `deleteTerm`, `moveTerm`, `restoreMissingDefaults` |
 | `actions/custom-fields.ts` | `createFieldDefinition`, `updateFieldDefinition`, `setFieldActive`, `deleteFieldDefinition`, `moveFieldDefinition` |
 | `actions/dashboard.ts` | `setWidgetEnabled`, `moveWidget`, `setWidgetSetting`, `resetDashboardLayout` |
-| `actions/settings.ts` | `updateAppearance`, `updateDefaults` |
+| `actions/settings.ts` | `updateAppearance`, `updateDefaults`, `updateDigest` |
 
 `deleteTerm` refuses while the term is still referenced — the foreign keys
 would null the reference or cascade the row away. `setTermActive(false)` is the
 supported alternative. A relationship type keeps its reciprocal paired in both
 directions, and `metadata` is not editable from the UI because family tiers and
 pipeline ordering are read from it by code.
+
+`updateDigest` is the switch and local hour for the daily digest, the one
+message the scheduler sends on its own initiative. It lives under Settings →
+Reminders beside the channels it reaches. The hour is validated as a whole
+number from 0 to 23 and refused per field otherwise.
 
 ### Onboarding — `actions/onboarding.ts`
 
@@ -315,7 +328,7 @@ exists to prevent:
 - **A failing field aborts the whole save** rather than leaving a record
   half-written.
 
-## The one HTTP endpoint
+## The two HTTP endpoints
 
 `GET /api/health` → `200` with `{ status, database, setup, latencyMs, version,
 uptimeSeconds }`, or `503` with `{ status: "error", database: "down", message }`.
@@ -323,3 +336,12 @@ uptimeSeconds }`, or `503` with `{ status: "error", database: "down", message }`
 
 `setup` is `"complete"` or `"pending"`, so an operator can tell a
 booted-but-unconfigured instance from a working one without opening a browser.
+
+`GET /api/avatars/[filename]` → the image bytes with `cache-control: private,
+no-store` and `x-content-type-options: nosniff`, or `404`. It is `404` for every
+refusal alike — no session, a name the server did not generate, another owner's
+contact, a private contact while the lock is closed, a missing file — because
+whether a file exists is itself a disclosure. Authorisation is one query beyond
+the session (`queries/avatars.ts`), which folds the privacy lock into the
+contact lookup so a page of two hundred avatars is two hundred queries, not a
+thousand.
