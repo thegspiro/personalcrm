@@ -40,4 +40,15 @@ describe("MariaDB migrations", () => {
     expect(sql).toContain("ADD COLUMN `locationId`");
     expect(sql).not.toMatch(/DROP COLUMN `location`/);
   });
+
+  it("backfills only unambiguous aliases and preserves the legacy JSON", () => {
+    const sql = readFileSync(
+      join(migrationsRoot, "20260902120000_add_location_aliases", "migration.sql"),
+      "utf8",
+    );
+    expect(sql).toContain("COUNT(DISTINCT l2.`id`)");
+    expect(sql).toContain("JSON_TABLE");
+    expect(sql).not.toMatch(/DROP COLUMN `aliases`/);
+    expect(sql).toContain("UNIQUE INDEX `LocationAlias_ownerId_normalizedValue_key`");
+  });
 });

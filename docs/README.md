@@ -6,7 +6,7 @@ packaged as one container with the database built in.
 ## Running it
 
 | Document | For |
-| --- | --- |
+| ---------------------------------------- | --------------------------------------------------------------- |
 | [install.md](install.md) | Unraid, Docker, Compose, and bring-your-own-database |
 | [first-run.md](first-run.md) | The startup sequence, the admin account, and installing the app |
 | [backup.md](backup.md) | What to keep and how to restore it |
@@ -17,7 +17,7 @@ packaged as one container with the database built in.
 ## Working on it
 
 | Document | For |
-| --- | --- |
+| ------------------------------------------- | -------------------------------------------------------------------------- |
 | [architecture.md](architecture.md) | How the app is put together — layering, request context, container startup |
 | [data-model.md](data-model.md) | Every table, column, enum and migration |
 | [server-actions.md](server-actions.md) | The write surface, action by action |
@@ -49,7 +49,7 @@ packaged as one container with the database built in.
 ## Feature areas
 
 | Area | Route | Notes |
-| --- | --- | --- |
+| --------- | ------------ | ----------------------------------------------------------------------------------------------------------- |
 | Dashboard | `/` | Arrangeable widgets |
 | People | `/people` | Contacts, phone numbers and addresses, facts, dates, significant moments, gifts, debts, dietary needs |
 | Timeline | `/timeline` | Every interaction, unified |
@@ -69,7 +69,7 @@ packaged as one container with the database built in.
 Documented so nobody assumes a feature works:
 
 | Gap | State |
-| --- | --- |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Cadence, task and digest reminders** | Important dates are delivered, hourly, through the channels you add under Settings → Reminders. The other three `ReminderEntity` values are never written: nothing nudges you about an overdue cadence, a due task, or a daily digest, and `digestHour`/`digestEnabled` are stored only |
 | **Nightly backups** | `/config/backups` is created at boot and nothing writes to it — see [backup.md](backup.md) |
 | **Avatar upload** | `Contact.avatarPath` is read and rendered throughout, but no upload path writes it and nothing writes to `/config/uploads` |
@@ -78,9 +78,8 @@ Documented so nobody assumes a feature works:
 | **Lists are windows, not pages** | Every list draws a bounded window — 200 people, 100 timeline entries, 200 tasks, gifts, ideas and plans — and there is no paging past it. Reaching the cap is now stated on the page rather than left to look like the end of the data, but the only way to the rest is to narrow the filters |
 | **Tags** | `Tag` and `ContactTag` exist in the schema with no UI behind them |
 | **Finding a number by a different format** | Contact search matches the stored string, so someone filed as `+1 (555) 010-4477` is not found by typing `5550104477`. Deliberate: normalising would mean guessing a country nobody supplied |
-| **Channel targets are checked by literal address only** | Only an administrator may point a notification channel at a private, loopback or link-local address — but a hostname that *resolves* to one is not caught. Closing that needs the name resolved and the connection pinned to the address that was checked, in both the HTTP client and the mail transport. The check raises the cost of probing from a member account; it does not make it impossible |
+| **Channel targets are checked by literal address only**                 | Only an administrator may point a notification channel at a private, loopback or link-local address — but a hostname that _resolves_ to one is not caught. Closing that needs the name resolved and the connection pinned to the address that was checked, in both the HTTP client and the mail transport. The check raises the cost of probing from a member account; it does not make it impossible                                                             |
 | **Offline writes** | Deliberately absent. Non-GET requests go straight to the network and fail honestly rather than pretending something was saved |
-| **Place aliases** | `Location.aliases` exists and nothing writes it. Doing it properly needs its own table with a uniqueness constraint — JSON gives no useful index, and scanning every place on each write would sit on the hot path of four actions |
 
 The project is under active development and nothing has been tagged as a
 release yet.

@@ -30,6 +30,7 @@ const TABLES = [
   "Plan",
   "DateEntry",
   "Interaction",
+  "LocationAlias",
   "Location",
   "Fact",
   "ImportantDate",
@@ -74,7 +75,9 @@ const TABLES = [
 export async function reset(): Promise<void> {
   await prisma.$transaction([
     prisma.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS = 0"),
-    ...TABLES.map((table) => prisma.$executeRawUnsafe(`TRUNCATE TABLE \`${table}\``)),
+    ...TABLES.map((table) =>
+      prisma.$executeRawUnsafe(`TRUNCATE TABLE \`${table}\``),
+    ),
     prisma.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS = 1"),
   ]);
 }

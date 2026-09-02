@@ -64,6 +64,7 @@ model User {
   dateEntries          DateEntry[]
   plans                Plan[]
   locations            Location[]
+  locationAliases      LocationAlias[]
   flags                Flag[]
   customFieldDefs      CustomFieldDefinition[]
   customFieldValues    CustomFieldValue[]
@@ -426,6 +427,8 @@ model Location {
   /// instead of a search guess.
   osmType        String?  @db.VarChar(1)
   osmId          BigInt?
+  /// Legacy import source. New code uses LocationAlias; retained so ambiguous
+  /// historical claims remain available for manual resolution.
   aliases        Json     @default("[]")
   isArchived     Boolean  @default(false)
   createdAt      DateTime @default(now())
@@ -434,9 +437,28 @@ model Location {
   owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   interactions Interaction[]
   plans        Plan[]
+  locationAliases LocationAlias[]
 
   @@unique([ownerId, normalizedName])
   @@index([ownerId, isArchived, name])
+}
+
+/// An indexed name by which one owner's place can be resolved. Canonical names
+/// are represented here too, keeping names and aliases in one unique namespace.
+model LocationAlias {
+  id              String   @id @default(cuid())
+  ownerId         String
+  locationId      String
+  value           String   @db.VarChar(191)
+  normalizedValue String   @db.VarChar(191)
+  isCanonical     Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  owner    User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, normalizedValue])
+  @@index([locationId])
 }
 
 /// A person discussed during an interaction but not present. Keeping this

@@ -29,10 +29,20 @@ export function locationVisibleWhere(
   return {
     ownerId,
     AND: [
-      { OR: [
-        { interactions: { some: { ownerId, ...interactionPrivacyWhere(scope) } } },
-        { plans: { some: { ownerId, ...viaOptionalContactPrivacyWhere(scope) } } },
-      ] },
+      {
+        OR: [
+          {
+            interactions: {
+              some: { ownerId, ...interactionPrivacyWhere(scope) },
+            },
+          },
+          {
+            plans: {
+              some: { ownerId, ...viaOptionalContactPrivacyWhere(scope) },
+            },
+          },
+        ],
+      },
     ],
   };
 }
@@ -48,14 +58,30 @@ export async function listLocations(ownerId: string, search?: string) {
       AND: [
         ...(visible.AND as Prisma.LocationWhereInput[]),
         ...(search?.trim()
-          ? [{ OR: [{ name: { contains: search.trim() } }, { address: { contains: search.trim() } }] }]
+          ? [
+              {
+                OR: [
+                  { name: { contains: search.trim() } },
+                  { address: { contains: search.trim() } },
+                  {
+                    locationAliases: {
+                      some: { ownerId, value: { contains: search.trim() } },
+                    },
+                  },
+                ],
+              },
+            ]
           : []),
       ],
     },
     include: {
       interactions: {
         where: interactionWhere,
-        select: { occurredAt: true, sentiment: true, participants: { select: { contactId: true } } },
+        select: {
+          occurredAt: true,
+          sentiment: true,
+          participants: { select: { contactId: true } },
+        },
         orderBy: { occurredAt: "desc" },
       },
       plans: {
@@ -68,10 +94,18 @@ export async function listLocations(ownerId: string, search?: string) {
   return rows.map((row) => ({
     ...row,
     visitCount: row.interactions.length,
-    peopleCount: new Set(row.interactions.flatMap((item) => item.participants.map((p) => p.contactId))).size,
+    peopleCount: new Set(
+      row.interactions.flatMap((item) =>
+        item.participants.map((p) => p.contactId),
+      ),
+    ).size,
     lastVisitedAt: row.interactions[0]?.occurredAt ?? null,
-    averageSentiment: average(row.interactions.flatMap((item) => item.sentiment ?? [])),
-    openPlanCount: row.plans.filter((plan) => plan.status === "OPEN" || plan.status === "PLANNED").length,
+    averageSentiment: average(
+      row.interactions.flatMap((item) => item.sentiment ?? []),
+    ),
+    openPlanCount: row.plans.filter(
+      (plan) => plan.status === "OPEN" || plan.status === "PLANNED",
+    ).length,
   }));
 }
 
@@ -90,7 +124,11 @@ export async function listLocationOptions(ownerId: string) {
   const scope = await privacyScope();
   return prisma.location.findMany({
     where: { ...locationVisibleWhere(ownerId, scope), isArchived: false },
-    select: { id: true, name: true },
+    select: {
+      id: true,
+      name: true,
+      locationAliases: { select: { value: true } },
+    },
     // By name, not by recency: a "most recently visited" order derived from
     // unfiltered visits is a signal that shifts when the lock opens.
     //
@@ -122,13 +160,22 @@ export async function getLocation(ownerId: string, id: string) {
         where: visibleInteraction,
         include: {
           type: true,
-          participants: { include: { contact: { select: { id: true, firstName: true, lastName: true } } } },
+          participants: {
+            include: {
+              contact: {
+                select: { id: true, firstName: true, lastName: true },
+              },
+            },
+          },
         },
         orderBy: { occurredAt: "desc" },
       },
+      locationAliases: { orderBy: { value: "asc" } },
       plans: {
         where: visiblePlan,
-        include: { contact: { select: { id: true, firstName: true, lastName: true } } },
+        include: {
+          contact: { select: { id: true, firstName: true, lastName: true } },
+        },
         orderBy: { createdAt: "desc" },
       },
     },
@@ -143,7 +190,10 @@ export async function listContactLocations(ownerId: string, contactId: string) {
   // account had visited came back as this person's. AND keeps both.
   const theirs = {
     ownerId,
-    AND: [{ participants: { some: { contactId } } }, interactionPrivacyWhere(scope)],
+    AND: [
+      { participants: { some: { contactId } } },
+      interactionPrivacyWhere(scope),
+    ],
   };
   const rows = await prisma.location.findMany({
     where: { ownerId, interactions: { some: theirs } },
@@ -156,9 +206,16 @@ export async function listContactLocations(ownerId: string, contactId: string) {
     },
     orderBy: { name: "asc" },
   });
-  return rows.map((row) => ({ id: row.id, name: row.name, visits: row.interactions.length, lastVisitedAt: row.interactions[0]?.occurredAt ?? null }));
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    visits: row.interactions.length,
+    lastVisitedAt: row.interactions[0]?.occurredAt ?? null,
+  }));
 }
 
 function average(values: number[]): number | null {
-  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  return values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : null;
 }

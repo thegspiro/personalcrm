@@ -15,10 +15,32 @@ export async function resolveLocation(
   const name = rawName?.trim().replace(/\s+/g, " ");
   if (!name) return null;
   const normalizedName = normalizeLocationName(name);
-  const existing = await tx.location.findUnique({
-    where: { ownerId_normalizedName: { ownerId, normalizedName } },
-    select: { id: true, name: true },
+  const existingAlias = await tx.locationAlias.findUnique({
+    where: {
+      ownerId_normalizedValue: { ownerId, normalizedValue: normalizedName },
+    },
+    select: { location: { select: { id: true, name: true } } },
   });
+  let existing: { id: string; name: string } | null = existingAlias?.location ?? null;
+  // Repair a missing canonical claim for callers that inserted Location
+  // directly (and for a process straddling an upgrade deployment).
+  if (!existing) {
+    existing = await tx.location.findUnique({
+      where: { ownerId_normalizedName: { ownerId, normalizedName } },
+      select: { id: true, name: true },
+    });
+    if (existing) {
+      await tx.locationAlias.create({
+        data: {
+          ownerId,
+          locationId: existing.id,
+          value: existing.name,
+          normalizedValue: normalizedName,
+          isCanonical: true,
+        },
+      });
+    }
+  }
   if (existing) {
     if (details.address || details.url) {
       await tx.location.update({
@@ -32,7 +54,21 @@ export async function resolveLocation(
     return existing;
   }
   return tx.location.create({
-    data: { ownerId, name, normalizedName, address: details.address, url: details.url },
+    data: {
+      ownerId,
+      name,
+      normalizedName,
+      address: details.address,
+      url: details.url,
+      locationAliases: {
+        create: {
+          ownerId,
+          value: name,
+          normalizedValue: normalizedName,
+          isCanonical: true,
+        },
+      },
+    },
     select: { id: true, name: true },
   });
 }
