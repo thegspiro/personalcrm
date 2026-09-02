@@ -49,31 +49,62 @@ function Empty({ children }: { children: React.ReactNode }) {
 }
 
 export function OverdueWidget({ contacts }: { contacts: OverdueContact[] }) {
+  const dueNow = contacts.filter((contact) => contact.daysUntilDue <= 0);
+  const comingUp = contacts.filter((contact) => contact.daysUntilDue > 0);
+
+  const rows = (items: OverdueContact[], upcoming: boolean) => (
+    <ul className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
+      {items.map((contact) => (
+        <li key={contact.id}>
+          <Link
+            href={`/people/${contact.id}`}
+            className="flex min-w-0 items-center gap-2.5 rounded-lg px-1 py-1.5 transition-colors hover:bg-muted"
+          >
+            <Avatar className="size-8">
+              <AvatarFallback>{initialsOf(contact.firstName, contact.lastName)}</AvatarFallback>
+            </Avatar>
+            <span className="min-w-0 flex-1 truncate text-sm">{displayName(contact)}</span>
+            <span
+              className={cn(
+                "shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium",
+                upcoming
+                  ? "bg-accent/12 text-accent-11"
+                  : "bg-destructive/12 text-destructive",
+              )}
+            >
+              {contact.daysUntilDue < 0
+                ? `${-contact.daysUntilDue}d overdue`
+                : contact.daysUntilDue === 0
+                  ? "today"
+                  : contact.daysUntilDue === 1
+                    ? "tomorrow"
+                    : `in ${contact.daysUntilDue} days`}
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+
   return (
     <WidgetShell title="Time to reach out" icon="BellRing" href="/people?sort=overdue" testId="widget-overdue">
       {contacts.length === 0 ? (
-        <Empty>Nobody&apos;s overdue. Nice.</Empty>
+        <Empty>Nobody is due now or soon. Nice.</Empty>
       ) : (
-        <ul className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
-          {contacts.map((contact) => (
-            <li key={contact.id}>
-              <Link
-                href={`/people/${contact.id}`}
-                className="flex min-w-0 items-center gap-2.5 rounded-lg px-1 py-1.5 transition-colors hover:bg-muted"
-              >
-                <Avatar className="size-8">
-                  <AvatarFallback>
-                    {initialsOf(contact.firstName, contact.lastName)}
-                  </AvatarFallback>
-                </Avatar>
-                <span className="min-w-0 flex-1 truncate text-sm">{displayName(contact)}</span>
-                <span className="shrink-0 whitespace-nowrap rounded-full bg-destructive/12 px-2 py-0.5 text-[11px] font-medium text-destructive">
-                  {contact.daysOverdue === 0 ? "today" : `${contact.daysOverdue}d`}
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
+        <div className="grid gap-3">
+          {dueNow.length > 0 ? (
+            <section aria-label="Due now">
+              <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Due now</p>
+              {rows(dueNow, false)}
+            </section>
+          ) : null}
+          {comingUp.length > 0 ? (
+            <section aria-label="Coming up">
+              <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Coming up</p>
+              {rows(comingUp, true)}
+            </section>
+          ) : null}
+        </div>
       )}
     </WidgetShell>
   );
