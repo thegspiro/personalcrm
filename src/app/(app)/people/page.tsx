@@ -11,6 +11,7 @@ import { offlineCacheable } from "@/server/privacy/offline";
 import { CacheThisPage } from "@/components/offline/offline";
 import { listContacts, type ContactSort } from "@/server/queries/contacts";
 import { listTerms } from "@/server/taxonomy/queries";
+import { listTags } from "@/server/queries/tags";
 
 export const metadata: Metadata = { title: "People" };
 export const dynamic = "force-dynamic";
@@ -32,13 +33,18 @@ export default async function PeoplePage({
   };
 
   const sortParam = first("sort");
-  const sort = sortParam && SORTS.has(sortParam as ContactSort) ? (sortParam as ContactSort) : "name";
+  const sort =
+    sortParam && SORTS.has(sortParam as ContactSort)
+      ? (sortParam as ContactSort)
+      : "name";
 
-  const [categories, { items, total }] = await Promise.all([
+  const [categories, tags, { items, total }] = await Promise.all([
     listTerms(user.id, "CONTACT_CATEGORY"),
+    listTags(user.id),
     listContacts(user.id, {
       search: first("q"),
       categoryId: first("category"),
+      tagId: first("tag"),
       scope: first("scope") === "archived" ? "archived" : "active",
       favoritesOnly: first("favorites") === "1",
       sort,
@@ -46,7 +52,11 @@ export default async function PeoplePage({
   ]);
 
   const isFiltered = Boolean(
-    first("q") || first("category") || first("scope") || first("favorites"),
+    first("q") ||
+    first("category") ||
+    first("tag") ||
+    first("scope") ||
+    first("favorites"),
   );
 
   return (
@@ -67,7 +77,10 @@ export default async function PeoplePage({
         </Button>
       </div>
 
-      <ContactFilters categories={categories.map((c) => ({ id: c.id, label: c.label }))} />
+      <ContactFilters
+        categories={categories.map((c) => ({ id: c.id, label: c.label }))}
+        tags={tags}
+      />
 
       {items.length === 0 ? (
         <EmptyState

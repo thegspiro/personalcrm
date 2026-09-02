@@ -26,6 +26,8 @@ import { PROVIDERS } from "@/server/ai/providers";
 import { GeoSettings } from "@/components/settings/geo-settings";
 import { getGeoStatus } from "@/server/geo/config";
 import { GEO_PROVIDERS } from "@/server/geo/providers";
+import { listTags } from "@/server/queries/tags";
+import { TagSettings } from "@/components/settings/tag-settings";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
@@ -45,6 +47,7 @@ export default async function SettingsPage() {
     geo,
     privacyState,
     channels,
+    tags,
   ] = await Promise.all([
     listTaxonomyAdmin(user.id),
     listAllFieldDefinitions(user.id),
@@ -55,6 +58,7 @@ export default async function SettingsPage() {
     getGeoStatus(),
     getPrivacyState(),
     listChannelsForSettings(user.id),
+    listTags(user.id),
   ]);
 
   // Value counts drive the delete warning: deleting a field takes everything
@@ -120,6 +124,7 @@ export default async function SettingsPage() {
             }))}
           />
         }
+        tags={<TagSettings tags={tags} />}
         dashboard={
           <DashboardSettings
             layout={normalizeDashboardLayout(layoutRow?.widgets)}

@@ -7,26 +7,36 @@ import { ContactForm } from "@/components/contacts/contact-form";
 import { fieldsFor } from "@/server/queries/custom-fields";
 import { plainDateFromDb, plainDateKey } from "@/lib/dates";
 import { displayName } from "@/lib/utils";
+import { listTags } from "@/server/queries/tags";
 
 export const metadata: Metadata = { title: "Edit" };
 export const dynamic = "force-dynamic";
 
-export default async function EditContactPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function EditContactPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   const { user } = await getUserContext();
   const { id } = await params;
 
   const contact = await getContact(user.id, id);
   if (!contact) notFound();
 
-  const [terms, customFields] = await Promise.all([
+  const [terms, customFields, tags] = await Promise.all([
     listTermsByKind(user.id, ["CONTACT_CATEGORY", "MEETING_SOURCE"]),
-    fieldsFor(user.id, "CONTACT", contact.id, { categoryId: contact.categoryId }),
+    fieldsFor(user.id, "CONTACT", contact.id, {
+      categoryId: contact.categoryId,
+    }),
+    listTags(user.id),
   ]);
 
   return (
     <div className="mx-auto grid w-full max-w-2xl gap-4">
       <div>
-        <h2 className="text-lg font-semibold tracking-tight">Edit {displayName(contact)}</h2>
+        <h2 className="text-lg font-semibold tracking-tight">
+          Edit {displayName(contact)}
+        </h2>
       </div>
       <ContactForm
         categories={terms.CONTACT_CATEGORY}
@@ -47,15 +57,21 @@ export default async function EditContactPage({ params }: { params: Promise<{ id
           howWeMet: contact.howWeMet,
           whereWeMet: contact.whereWeMet,
           meetingSourceId: contact.meetingSourceId,
-          birthDate: contact.birthDate ? plainDateKey(plainDateFromDb(contact.birthDate)) : null,
+          birthDate: contact.birthDate
+            ? plainDateKey(plainDateFromDb(contact.birthDate))
+            : null,
           birthDatePrecision: contact.birthDatePrecision,
-          metOn: contact.metOn ? plainDateKey(plainDateFromDb(contact.metOn)) : null,
+          metOn: contact.metOn
+            ? plainDateKey(plainDateFromDb(contact.metOn))
+            : null,
           metOnPrecision: contact.metOnPrecision,
           cadenceDays: contact.cadenceDays,
           isFavorite: contact.isFavorite,
           isRomantic: contact.isRomantic,
+          tagIds: contact.tags.map(({ tagId }) => tagId),
         }}
         customFields={customFields}
+        tags={tags}
       />
     </div>
   );

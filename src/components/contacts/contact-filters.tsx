@@ -15,8 +15,10 @@ const SORTS = [
 
 export function ContactFilters({
   categories,
+  tags,
 }: {
   categories: Array<{ id: string; label: string }>;
+  tags: Array<{ id: string; name: string }>;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -43,6 +45,7 @@ export function ContactFilters({
   const activeSort = params.get("sort") ?? "name";
   const showArchived = params.get("scope") === "archived";
   const showFavorites = params.get("favorites") === "1";
+  const activeTag = params.get("tag") ?? "";
 
   return (
     <div className="grid gap-2.5">
@@ -68,16 +71,33 @@ export function ContactFilters({
       </div>
 
       <div className="scroll-x no-scrollbar -mx-4 flex gap-1.5 px-4 pb-0.5 lg:mx-0 lg:flex-wrap lg:px-0">
-        <FilterChip active={activeCategory === ""} onClick={() => update("category", null)}>
+        <FilterChip
+          active={activeCategory === ""}
+          onClick={() => update("category", null)}
+        >
           Everyone
         </FilterChip>
         {categories.map((category) => (
           <FilterChip
             key={category.id}
             active={activeCategory === category.id}
-            onClick={() => update("category", activeCategory === category.id ? null : category.id)}
+            onClick={() =>
+              update(
+                "category",
+                activeCategory === category.id ? null : category.id,
+              )
+            }
           >
             {category.label}
+          </FilterChip>
+        ))}
+        {tags.map((tag) => (
+          <FilterChip
+            key={tag.id}
+            active={activeTag === tag.id}
+            onClick={() => update("tag", activeTag === tag.id ? null : tag.id)}
+          >
+            #{tag.name}
           </FilterChip>
         ))}
         <FilterChip
@@ -100,10 +120,14 @@ export function ContactFilters({
           <button
             key={sort.value}
             type="button"
-            onClick={() => update("sort", sort.value === "name" ? null : sort.value)}
+            onClick={() =>
+              update("sort", sort.value === "name" ? null : sort.value)
+            }
             className={cn(
               "rounded-full px-2 py-1 font-medium transition-colors",
-              activeSort === sort.value ? "bg-accent-3 text-accent-11" : "hover:bg-muted",
+              activeSort === sort.value
+                ? "bg-accent-3 text-accent-11"
+                : "hover:bg-muted",
             )}
           >
             {sort.label}

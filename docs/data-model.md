@@ -236,6 +236,11 @@ through the contact.
 Free-form labels. `Tag` is unique per `(ownerId, slug)`; `ContactTag` is the
 join table with composite PK `(contactId, tagId)`, cascading from both sides.
 
+Names normalize to lowercase ASCII hyphenated slugs. Renaming preserves assignments;
+merging deduplicates assignments into the destination before deleting the source; deleting
+a tag removes only join rows, never contacts. All operations are owner-scoped. While the
+privacy lock is closed, private-only tags are omitted and counts include visible contacts only.
+
 ### `Relationship`
 
 The people graph. **Reciprocal rows are always created in pairs.**

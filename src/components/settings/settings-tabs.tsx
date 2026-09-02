@@ -8,6 +8,7 @@ const TABS = [
   { value: "appearance", label: "Look", icon: "Palette" },
   { value: "fields", label: "Fields", icon: "SlidersHorizontal" },
   { value: "taxonomies", label: "Types", icon: "Tags" },
+  { value: "tags", label: "Tags", icon: "Tag" },
   { value: "dashboard", label: "Home", icon: "LayoutDashboard" },
   { value: "notifications", label: "Reminders", icon: "Bell" },
   { value: "quickadd", label: "Quick add", icon: "Zap" },
@@ -26,6 +27,7 @@ export function SettingsTabs({
   appearance,
   fields,
   taxonomies,
+  tags,
   dashboard,
   notifications,
   quickadd,
@@ -39,6 +41,7 @@ export function SettingsTabs({
     appearance,
     fields,
     taxonomies,
+    tags,
     dashboard,
     notifications,
     quickadd,
@@ -48,7 +51,10 @@ export function SettingsTabs({
   };
 
   return (
-    <Tabs defaultValue="appearance" className="grid grid-cols-[minmax(0,1fr)] gap-4">
+    <Tabs
+      defaultValue="appearance"
+      className="grid grid-cols-[minmax(0,1fr)] gap-4"
+    >
       <div className="-mx-4 overflow-x-auto px-4 lg:mx-0 lg:px-0">
         <TabsList className="w-max">
           {TABS.map((tab) => (

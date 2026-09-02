@@ -22,6 +22,7 @@ packaged as one container with the database built in.
 | [data-model.md](data-model.md) | Every table, column, enum and migration |
 | [server-actions.md](server-actions.md) | The write surface, action by action |
 | [privacy.md](privacy.md) | The PIN lock, offline caching, and where data can go |
+| [data-model.md](data-model.md#tag--contacttag) | Contact tag assignment and management semantics |
 | [testing.md](testing.md) | The three suites and what a change must pass |
 | [../CHANGELOG.md](../CHANGELOG.md) | What changed, when, and why — released history |
 | [../CHANGELOG.d/](../CHANGELOG.d/README.md) | Entries for changes not yet folded into it |
