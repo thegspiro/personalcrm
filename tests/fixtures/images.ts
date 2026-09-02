@@ -26,13 +26,38 @@ export const JPEG_MINIMAL = Uint8Array.from([
   0xff, 0xd9,
 ]);
 
-/** A RIFF container whose size field is honest, holding a four-byte lossless chunk. */
-export const WEBP_MINIMAL = Uint8Array.from([
-  ...Buffer.from("RIFF"), 16, 0, 0, 0,
-  ...Buffer.from("WEBP"),
-  ...Buffer.from("VP8L"), 4, 0, 0, 0,
-  0x2f, 0x00, 0x00, 0x00,
-]);
+function riff(...chunks: Array<[string, number[]]>): Uint8Array<ArrayBuffer> {
+  const body = chunks.flatMap(([kind, data]) => [
+    ...Buffer.from(kind),
+    data.length & 0xff, (data.length >>> 8) & 0xff, (data.length >>> 16) & 0xff, (data.length >>> 24) & 0xff,
+    ...data,
+    ...(data.length % 2 ? [0] : []),
+  ]);
+  const size = body.length + 4;
+  return Uint8Array.from([
+    ...Buffer.from("RIFF"), size & 0xff, (size >>> 8) & 0xff, (size >>> 16) & 0xff, (size >>> 24) & 0xff,
+    ...Buffer.from("WEBP"),
+    ...body,
+  ]);
+}
+
+/** A 1×1 lossless header: the signature byte, then width-1, height-1, no alpha, version 0. */
+const VP8L_1x1 = [0x2f, 0x00, 0x00, 0x00, 0x00];
+
+/** A lossless WebP: one VP8L chunk, padded to an even length. */
+export const WEBP_MINIMAL = riff(["VP8L", VP8L_1x1]);
+
+/** A lossy WebP: frame tag, the key-frame start code, then 1×1 in 14-bit fields. */
+export const WEBP_LOSSY = riff(["VP8 ", [0x00, 0x00, 0x00, 0x9d, 0x01, 0x2a, 0x01, 0x00, 0x01, 0x00]]);
+
+/** An extended WebP: a VP8X canvas header for 1×1, then the lossless picture. */
+export const WEBP_EXTENDED = riff(["VP8X", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]], ["VP8L", VP8L_1x1]);
+
+/** Size-consistent, correctly named, and holding no picture at all: what the first check accepted. */
+export const WEBP_EXTENDED_EMPTY = riff(["VP8X", []]);
+
+/** A lossless chunk whose signature byte is wrong. */
+export const WEBP_BAD_SIGNATURE = riff(["VP8L", [0x2e, 0x00, 0x00, 0x00, 0x00]]);
 
 /** The PNG signature and nothing that makes it a picture: what the old check accepted. */
 export const PNG_SIGNATURE_ONLY = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);

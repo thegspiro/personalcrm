@@ -8,6 +8,10 @@ import {
   PNG_TRANSPARENT,
   PNG_TRUNCATED,
   PNG_ZERO_WIDTH,
+  WEBP_BAD_SIGNATURE,
+  WEBP_EXTENDED,
+  WEBP_EXTENDED_EMPTY,
+  WEBP_LOSSY,
   WEBP_MINIMAL,
   WEBP_TRUNCATED,
 } from "../fixtures/images";
@@ -18,6 +22,8 @@ describe("inspectImage", () => {
     expect(inspectImage(PNG_RED)).toEqual({ ok: true, format: "png" });
     expect(inspectImage(JPEG_MINIMAL)).toEqual({ ok: true, format: "jpg" });
     expect(inspectImage(WEBP_MINIMAL)).toEqual({ ok: true, format: "webp" });
+    expect(inspectImage(WEBP_LOSSY)).toEqual({ ok: true, format: "webp" });
+    expect(inspectImage(WEBP_EXTENDED)).toEqual({ ok: true, format: "webp" });
   });
 
   it("tells a file that is not an image from one that is not all of an image", () => {
@@ -57,7 +63,22 @@ describe("inspectImage", () => {
 
   it("requires the WebP size field to match the file", () => {
     const lying = Uint8Array.from(WEBP_MINIMAL);
-    lying[4] = 15;
+    lying[4] -= 1;
     expect(inspectImage(lying)).toEqual({ ok: false, reason: "incomplete" });
+  });
+
+  it("requires a WebP to carry a picture, not just a well-named chunk", () => {
+    // An extended header with nothing after it passed the first version of this check.
+    expect(inspectImage(WEBP_EXTENDED_EMPTY)).toEqual({ ok: false, reason: "incomplete" });
+    expect(inspectImage(WEBP_BAD_SIGNATURE)).toEqual({ ok: false, reason: "incomplete" });
+
+    const noStartCode = Uint8Array.from(WEBP_LOSSY);
+    noStartCode[23] = 0x00;
+    expect(inspectImage(noStartCode)).toEqual({ ok: false, reason: "incomplete" });
+
+    // Chunks have to consume the file exactly: a stray byte after the padding is not a WebP.
+    const trailing = Uint8Array.from([...WEBP_MINIMAL, 0]);
+    trailing[4] += 1;
+    expect(inspectImage(trailing)).toEqual({ ok: false, reason: "incomplete" });
   });
 });

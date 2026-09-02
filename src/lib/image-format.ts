@@ -34,6 +34,10 @@ function u16be(bytes: Uint8Array, at: number): number {
   return (bytes[at] << 8) + bytes[at + 1];
 }
 
+function u16le(bytes: Uint8Array, at: number): number {
+  return bytes[at] + (bytes[at + 1] << 8);
+}
+
 function ascii(bytes: Uint8Array, start: number, end: number): string {
   return String.fromCharCode(...bytes.subarray(start, end));
 }
@@ -104,13 +108,60 @@ function jpegIsWhole(bytes: Uint8Array): boolean {
   return false;
 }
 
-/** A RIFF whose declared size is the file's, holding one of the three WebP chunk kinds. */
+function u24le(bytes: Uint8Array, at: number): number {
+  return bytes[at] + (bytes[at + 1] << 8) + (bytes[at + 2] << 16);
+}
+
+/** The header each kind of WebP bitstream chunk must open with, dimensions included. */
+function webpChunkIsWhole(kind: string, bytes: Uint8Array, at: number, size: number): boolean {
+  switch (kind) {
+    case "VP8 ":
+      // A lossy key frame: three-byte frame tag, the start code, then 14-bit dimensions.
+      return size >= 10 && bytes[at + 3] === 0x9d && bytes[at + 4] === 0x01 && bytes[at + 5] === 0x2a &&
+        plausible(u16le(bytes, at + 6) & 0x3fff, u16le(bytes, at + 8) & 0x3fff);
+    case "VP8L": {
+      // Lossless: a signature byte, then 14-bit width-1 and height-1 and a 3-bit version that must be 0.
+      if (size < 5 || bytes[at] !== 0x2f) return false;
+      const bits = u32le(bytes, at + 1);
+      return (bits >>> 29) === 0 && plausible((bits & 0x3fff) + 1, ((bits >>> 14) & 0x3fff) + 1);
+    }
+    case "VP8X":
+      // Extended: flags, then 24-bit canvas width-1 and height-1.
+      return size === 10 && plausible(u24le(bytes, at + 4) + 1, u24le(bytes, at + 7) + 1);
+    default:
+      return true;
+  }
+}
+
+/**
+ * A RIFF whose declared size is the file's, whose chunks (each padded to an
+ * even length) consume it exactly, whose first chunk is one of the three
+ * WebP bitstream kinds with a header that parses, and which carries image
+ * data somewhere: an extended file may open with VP8X and put the picture in
+ * a later chunk, or in animation frames.
+ */
 function webpIsWhole(bytes: Uint8Array): boolean {
-  if (bytes.length < 20) return false;
-  if (u32le(bytes, 4) !== bytes.length - 8) return false;
-  const chunk = ascii(bytes, 12, 16);
-  if (chunk !== "VP8 " && chunk !== "VP8L" && chunk !== "VP8X") return false;
-  return 20 + u32le(bytes, 16) <= bytes.length;
+  if (bytes.length < 20 || u32le(bytes, 4) !== bytes.length - 8) return false;
+  let at = 12;
+  let first = true;
+  let extended = false;
+  let sawImage = false;
+  while (at + 8 <= bytes.length) {
+    const kind = ascii(bytes, at, at + 4);
+    const size = u32le(bytes, at + 4);
+    const next = at + 8 + size + (size & 1);
+    if (next > bytes.length) return false;
+    if (first) {
+      if (kind !== "VP8 " && kind !== "VP8L" && kind !== "VP8X") return false;
+      extended = kind === "VP8X";
+      first = false;
+    }
+    if (!webpChunkIsWhole(kind, bytes, at + 8, size)) return false;
+    if (kind === "VP8 " || kind === "VP8L" || kind === "ANMF") sawImage = true;
+    at = next;
+  }
+  if (at !== bytes.length || first) return false;
+  return extended ? sawImage : true;
 }
 
 export function inspectImage(bytes: Uint8Array): ImageInspection {
