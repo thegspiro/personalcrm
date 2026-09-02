@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { ensureSignedIn } from "./helpers";
+import { createContact, ensureSignedIn } from "./helpers";
 
 const STAMP = `${process.env.E2E_RUN_ID ?? "local"}-${Date.now().toString(36)}`;
 
@@ -9,6 +9,12 @@ test("the follow-up hub connects cadence reminders and manual tasks", async ({
   await ensureSignedIn(page);
   const person = `Followup ${test.info().project.name} ${STAMP}`;
   const taskTitle = `Send notes ${test.info().project.name} ${STAMP}`;
+
+  // Someone with no cadence at all: they belong in People and must not appear
+  // behind the due filter, which is the difference between filtering and
+  // merely re-sorting.
+  const noCadence = `Nocadence ${test.info().project.name} ${STAMP}`;
+  await createContact(page, noCadence);
 
   await page.goto("/people/new");
   await page.getByLabel("First name").fill(person);
@@ -47,10 +53,14 @@ test("the follow-up hub connects cadence reminders and manual tasks", async ({
   await expect(
     page.getByRole("heading", { name: "Things to do" }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: person })).toBeVisible();
+  // The same person is linked twice here: once as someone to contact, and once
+  // from their own task in the section below. Scope to the section being
+  // asserted rather than matching the name across the whole page.
+  const toContact = page.locator("#people-to-contact");
+  await expect(toContact.getByRole("link", { name: new RegExp(person) })).toBeVisible();
   await expect(page.getByText(taskTitle)).toBeVisible();
 
-  await page.getByRole("link", { name: person }).click();
+  await toContact.getByRole("link", { name: new RegExp(person) }).click();
   await expect(
     page.getByRole("heading", { name: person, level: 2 }),
   ).toBeVisible();
@@ -74,4 +84,22 @@ test("the follow-up hub connects cadence reminders and manual tasks", async ({
     await page.getByRole("link", { name: "Follow-ups" }).click();
   }
   await expect(page.getByRole("heading", { name: "Follow-ups" })).toBeVisible();
+
+  // "Time to reach out" leads to People filtered to who it was showing, not to
+  // the whole list re-sorted. Asserted here rather than in contacts.spec.ts,
+  // whose person is deliberately contacted again mid-suite.
+  await page.goto("/");
+  await page
+    .getByTestId("widget-overdue")
+    .getByRole("link", { name: "See all" })
+    .click();
+  await expect(page).toHaveURL(/due=soon/);
+  await expect(page.getByRole("link", { name: new RegExp(person) })).toBeVisible();
+  await expect(page.getByRole("link", { name: new RegExp(noCadence) })).toHaveCount(0);
+
+  // Every control edits the existing URLSearchParams. Exercise one of them to
+  // guard the due filter against being dropped as other filters change.
+  await page.getByRole("button", { name: "Favourites" }).click();
+  await expect(page).toHaveURL(/due=soon/);
+  await expect(page).toHaveURL(/favorites=1/);
 });
