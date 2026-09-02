@@ -228,7 +228,7 @@ can mutate data while disconnected.
 | `/people/[id]` | Cacheable read-only | Conditional: only a non-private contact with no dating section, plus the account-wide gate. Query strings are cached as distinct pages. |
 | `/timeline` | Cacheable read-only | Interactions and their participants are privacy-filtered; account-wide gate applies. |
 | `/locations` | Cacheable read-only | Canonical places aggregate only privacy-filtered interactions and plans; counts use the same scope. |
-| `/tasks` | Cacheable read-only | Tasks without a contact and tasks attached to a visible contact only; account-wide gate applies. |
+| `/tasks` | Cacheable read-only | Due cadences for visible contacts, plus tasks without a contact and tasks attached to a visible contact; account-wide gate applies. |
 | `/gifts` | Cacheable read-only | Gifts inherit contact privacy; account-wide gate applies. |
 | `/ideas` | Cacheable read-only | General ideas/plans and those attached to visible contacts only; contact pickers are filtered; account-wide gate applies. |
 | `/family` | Cacheable read-only | Relationships, contacts, suggestions, household members, and every household associated with a private contact are privacy-filtered; empty households remain visible. The account-wide gate applies, and each `anchor` query is a distinct saved page. |

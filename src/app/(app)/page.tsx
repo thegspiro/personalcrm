@@ -165,7 +165,7 @@ export default async function HomePage() {
         </h2>
         <p className="text-xs text-muted-foreground">
           {overdue.length > 0
-            ? `${overdue.length} ${overdue.length === 1 ? "person" : "people"} to reach out to.`
+            ? `${overdue.length} ${overdue.length === 1 ? "person" : "people"} due now or soon.`
             : "You're on top of things."}
         </p>
       </div>

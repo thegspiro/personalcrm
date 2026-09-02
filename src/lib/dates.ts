@@ -59,18 +59,54 @@ export function calendarDateInTz(instant: Date, timeZone: string): PlainDate {
 
 /**
  * The instant at which the given calendar day begins in `timeZone`.
- * Solved iteratively because the offset itself depends on the answer (DST).
+ *
+ * The offset depends on the answer, so the answer has to be searched for.
+ * Guessing from the offset at the target instant and correcting once is not
+ * enough, because a transition near midnight breaks it in two opposite ways:
+ *
+ *  * The clocks jump over midnight, so 00:00 never happens and the day starts
+ *    at the transition — Santiago on 2026-09-06 begins at 01:00.
+ *  * The clocks roll back through midnight, so 00:00 happens twice and the day
+ *    starts at the first — Casey on 2019-03-17 begins three hours before the
+ *    guesses find it, and Amman on 2000-09-29 an hour before.
+ *
+ * So take the offsets in play a day either side as well, and keep the earliest
+ * candidate that actually lands on the day asked for. Earliest is safe: any
+ * instant whose local date is `date` is at or after the true start, because an
+ * earlier one would read as the previous day.
  */
 export function zonedStartOfDay(date: PlainDate, timeZone: string): Date {
   const naive = Date.UTC(date.year, date.month - 1, date.day, 0, 0, 0, 0);
-  let guess = naive - tzOffsetMs(new Date(naive), timeZone);
-  // One correction pass resolves days where the offset changes at midnight.
-  guess = naive - tzOffsetMs(new Date(guess), timeZone);
-  return new Date(guess);
+  const offsets = [
+    tzOffsetMs(new Date(naive - MS_PER_DAY), timeZone),
+    tzOffsetMs(new Date(naive), timeZone),
+    tzOffsetMs(new Date(naive + MS_PER_DAY), timeZone),
+  ];
+  // The correction pass the naive guess needs when the offset changes between
+  // the two, which the day-either-side probes can miss on a short transition.
+  offsets.push(tzOffsetMs(new Date(naive - offsets[1]), timeZone));
+
+  let start: number | null = null;
+  for (const offset of offsets) {
+    const candidate = naive - offset;
+    if (start !== null && candidate >= start) continue;
+    const landed = calendarDateInTz(new Date(candidate), timeZone);
+    if (landed.year === date.year && landed.month === date.month && landed.day === date.day) {
+      start = candidate;
+    }
+  }
+  // Unreachable for any real zone: one of the offsets in play produces it.
+  return new Date(start ?? naive - offsets[1]);
 }
 
 export function startOfDayInTz(instant: Date, timeZone: string): Date {
   return zonedStartOfDay(calendarDateInTz(instant, timeZone), timeZone);
+}
+
+/** The final instant of the calendar day containing `instant` in `timeZone`. */
+export function endOfDayInTz(instant: Date, timeZone: string): Date {
+  const tomorrow = addPlainDays(calendarDateInTz(instant, timeZone), 1);
+  return new Date(zonedStartOfDay(tomorrow, timeZone).getTime() - 1);
 }
 
 /** Read a MySQL DATE column (Prisma gives UTC midnight) as a plain calendar date. */
