@@ -59,7 +59,7 @@ packaged as one container with the database built in.
 | Tasks | `/tasks` | Follow-ups |
 | Gifts | `/gifts` | Both directions |
 | Places | `/locations` | Venues shared by interactions and plans; who you saw there, what is planned, and an optional address lookup |
-| Settings | `/settings` | Look, Fields, Types, Home, Reminders, Quick add, Places, Privacy, App |
+| Settings | `/settings` | Account, Look, Fields, Types, Home, Reminders, Quick add, Places, Privacy, App |
 | Welcome | `/welcome` | First-run onboarding, once per account |
 | Unlock | `/unlock` | The privacy PIN |
 | Offline | `/offline` | What the service worker serves for an uncached page |
@@ -73,7 +73,7 @@ Documented so nobody assumes a feature works:
 | **Cadence, task and digest reminders** | Important dates are delivered, hourly, through the channels you add under Settings → Reminders. The other three `ReminderEntity` values are never written: nothing nudges you about an overdue cadence, a due task, or a daily digest, and `digestHour`/`digestEnabled` are stored only |
 | **Nightly backups** | `/config/backups` is created at boot and nothing writes to it — see [backup.md](backup.md) |
 | **Avatar upload** | `Contact.avatarPath` is read and rendered throughout, but no upload path writes it and nothing writes to `/config/uploads` |
-| **Account management** | Your name is set once in the welcome wizard and never again. There is no change-password, no email edit, no password reset and no session list — so a session you want to end early can only be ended by deleting its row |
+| **Password recovery delivery** | Account details, passwords, and sessions are manageable in Settings. Password recovery is intentionally not exposed until an operator configures a trusted delivery channel or an explicit administrator-assisted recovery mechanism; reset secrets must never be logged |
 | **Sign-in throttling trusts the forwarded address, and is per process** | Repeated wrong passwords back off per address-and-client pair, but the client half is whatever the request presents as `X-Forwarded-For` and nothing verifies it. Counters live in the process, so they reset when the container restarts and each replica keeps its own. It stops one client grinding a password list; it does not stop one that varies the header, and volumetric defence belongs at the proxy. See [privacy.md](privacy.md#sign-in-throttling) |
 | **Lists are windows, not pages** | Every list draws a bounded window — 200 people, 100 timeline entries, 200 tasks, gifts, ideas and plans — and there is no paging past it. Reaching the cap is now stated on the page rather than left to look like the end of the data, but the only way to the rest is to narrow the filters |
 | **Tags** | `Tag` and `ContactTag` exist in the schema with no UI behind them |

@@ -62,6 +62,13 @@ why sessions and the database survive an image upgrade — losing it while keepi
 
 ## Per-account settings (not environment)
 
+Account name, email, password, and active sessions are managed under **Settings
+→ Account**. Email and password changes require the current password. Changing
+the password keeps the requesting session, revokes all other sessions, and
+closes the requesting session's privacy unlock. Password recovery remains
+disabled until the installation has a trusted delivery or administrator-assisted
+mechanism; no environment variable enables an unsafe token-in-logs fallback.
+
 These live in the database and are edited in **Settings**, not in the container
 config:
 

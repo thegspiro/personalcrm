@@ -26,6 +26,8 @@ import { PROVIDERS } from "@/server/ai/providers";
 import { GeoSettings } from "@/components/settings/geo-settings";
 import { getGeoStatus } from "@/server/geo/config";
 import { GEO_PROVIDERS } from "@/server/geo/providers";
+import { AccountSettings } from "@/components/settings/account-settings";
+import { listSessions } from "@/server/auth/session";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
@@ -45,6 +47,7 @@ export default async function SettingsPage() {
     geo,
     privacyState,
     channels,
+    sessions,
   ] = await Promise.all([
     listTaxonomyAdmin(user.id),
     listAllFieldDefinitions(user.id),
@@ -55,6 +58,7 @@ export default async function SettingsPage() {
     getGeoStatus(),
     getPrivacyState(),
     listChannelsForSettings(user.id),
+    listSessions(user.id),
   ]);
 
   // Value counts drive the delete warning: deleting a field takes everything
@@ -80,6 +84,13 @@ export default async function SettingsPage() {
       </div>
 
       <SettingsTabs
+        account={
+          <AccountSettings
+            name={user.name}
+            email={user.email}
+            sessions={sessions}
+          />
+        }
         appearance={
           <AppearanceSettings
             accent={prefs.accent}

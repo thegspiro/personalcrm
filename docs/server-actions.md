@@ -51,6 +51,17 @@ enforces rather than documents:
 | `signupAction` | Refused when `DISABLE_SIGNUP=true` |
 | `logoutAction` | Deletes the session row and clears the cookie |
 
+### Account — `actions/account.ts`
+
+All mutations derive the account from the authenticated session; no caller may
+choose an owner. `updateDisplayName` changes the navigation/profile label.
+`updateEmail` uses registration's trim-and-lowercase normalization, requires the
+current password, and relies on the database uniqueness constraint. Password
+changes reuse the signup strength and bcrypt helpers, preserve the current
+session, revoke every other session, and clear `privacyUnlockedAt` on the
+preserved session. Individual and bulk revocation predicates include `userId`
+and explicitly exclude the current token hash.
+
 ### Contacts — `actions/contacts.ts`
 
 `createContact`, `updateContact`, `updateContactBirthday`, `patchContact`,

@@ -25,6 +25,12 @@ Two design decisions carry the whole thing:
 never client state. A client cannot claim to be unlocked, and the unlock dies
 with the session rather than lingering after sign-out.
 
+A password change is also a privacy boundary: it revokes every other session
+and clears `privacyUnlockedAt` on the current session. The current session is
+preserved so a successful credential change does not strand the person who
+made it. Session settings expose device metadata and database IDs only; raw
+cookie tokens and their stored hashes never enter the page payload.
+
 An unlock lasts **15 minutes of inactivity** (`IDLE_TIMEOUT_MS`). “Activity” is
 successful use of protected content: opening dating views, reading
 private-capable records, or completing a guarded write. Ordinary public page
