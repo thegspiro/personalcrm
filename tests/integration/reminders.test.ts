@@ -422,4 +422,47 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(await prisma.reminderLog.count()).toBe(1);
     expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true, attemptCount: 2, error: null });
   });
+
+  it("sends nothing for an owner whose preference row is missing, whatever else they have", async () => {
+    // A partial import can leave a PIN and channels without the row that
+    // says whether the lock is on. Reading that as "off" would send a
+    // private person's name out; the scheduler leaves the owner alone.
+    const user = await createTestUser();
+    await prisma.user.update({ where: { id: user.id }, data: { privacyPinHash: "pin" } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.contact.create({ data: { ownerId: user.id, firstName: "Secret", isPrivate: true, nextTouchAt: new Date("2026-08-01T00:00:00Z") } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Open task", dueDate: new Date("2026-08-01T00:00:00Z") } });
+    const send = vi.fn(async () => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.count()).toBe(0);
+
+    // The row exists again: the next pass picks the owner up, lock honoured.
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", privacyLockEnabled: true, digestEnabled: false } });
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ entityType: "TASK" });
+  });
+
+  it("keeps retrying a cadence reminder after the owner changes timezone", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    // 18:00 UTC on the 2nd is already the 3rd fourteen hours east.
+    await prisma.contact.create({ data: { ownerId: user.id, firstName: "Alex", nextTouchAt: new Date("2026-09-02T18:00:00Z") } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-02T20:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    await prisma.userPreference.update({ where: { userId: user.id }, data: { timezone: "Pacific/Kiritimati" } });
+
+    // The cadence has not moved; only the calendar it is read against has.
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T21:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][2]).toBe("Alex's keep-in-touch cadence has been due since 2026-09-03.");
+    expect(await prisma.reminderLog.count()).toBe(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true, attemptCount: 2 });
+  });
 });

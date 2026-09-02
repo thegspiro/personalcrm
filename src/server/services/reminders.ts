@@ -65,16 +65,31 @@ type UserSchedule = {
   notificationChannels: Channel[];
 };
 
+/** An owner the scheduler may act for: one whose preference row exists. */
+type ScheduledUser = UserSchedule & { preference: NonNullable<UserSchedule["preference"]> };
+
 /** The owner's clock, as every policy sees it. */
 type Schedule = { timezone: string; locked: boolean; today: PlainDate };
 
-function scheduleFor(user: UserSchedule, now: Date): Schedule {
-  const timezone = user.preference?.timezone ?? DEFAULT_TIMEZONE;
+function scheduleFor(user: ScheduledUser, now: Date): Schedule {
+  const timezone = user.preference.timezone || DEFAULT_TIMEZONE;
   return {
     timezone,
-    locked: user.preference?.privacyLockEnabled ?? false,
+    locked: user.preference.privacyLockEnabled,
     today: todayInTz(timezone, now),
   };
+}
+
+/**
+ * Without a preference row there is no timezone to anchor a day to and no
+ * lock setting to honour — and reading the lock as "off" would send a
+ * private person's name out of the building for an owner who set a PIN
+ * before a partial import dropped the row. The avatar query treats that
+ * state as locked; so does this, by leaving such an owner alone entirely.
+ * Their next request creates the row, and the next pass picks them up.
+ */
+function hasPreferences(user: UserSchedule): user is ScheduledUser {
+  return user.preference !== null;
 }
 
 /** Archived people never get reminders; private ones only while the lock is off. */
@@ -98,7 +113,7 @@ const CONTACT_NAME = { select: { firstName: true, lastName: true } } as const;
  * instant `nextTouchAt` happens to hold, which for someone last seen in the
  * evening would keep the reminder until that evening comes round.
  */
-function cadenceWhere(user: UserSchedule, schedule: Schedule, now: Date) {
+function cadenceWhere(user: ScheduledUser, schedule: Schedule, now: Date) {
   return {
     ownerId: user.id,
     ...visibleContact(schedule.locked),
@@ -106,7 +121,7 @@ function cadenceWhere(user: UserSchedule, schedule: Schedule, now: Date) {
   };
 }
 
-function taskWhere(user: UserSchedule, schedule: Schedule) {
+function taskWhere(user: ScheduledUser, schedule: Schedule) {
   return {
     ownerId: user.id,
     completedAt: null,
@@ -115,7 +130,7 @@ function taskWhere(user: UserSchedule, schedule: Schedule) {
   };
 }
 
-async function candidatesForUser(db: Db, user: UserSchedule, now: Date): Promise<Candidate[]> {
+async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promise<Candidate[]> {
   const schedule = scheduleFor(user, now);
   const candidates: Candidate[] = [];
 
@@ -175,7 +190,7 @@ async function candidatesForUser(db: Db, user: UserSchedule, now: Date): Promise
     });
   }
 
-  if (user.preference?.digestEnabled && digestIsDue(now, schedule.timezone, user.preference.digestHour)) {
+  if (user.preference.digestEnabled && digestIsDue(now, schedule.timezone, user.preference.digestHour)) {
     candidates.push({
       entityType: "DIGEST",
       entityId: user.id,
@@ -202,8 +217,16 @@ async function candidatesForUser(db: Db, user: UserSchedule, now: Date): Promise
  */
 async function currentMessage(
   db: Db,
-  user: UserSchedule,
-  log: { entityId: string; schedulingPolicy: string; scheduledFor: Date; offsetDays: number },
+  user: ScheduledUser,
+  log: {
+    entityType: ReminderEntity;
+    entityId: string;
+    schedulingPolicy: string;
+    scheduledFor: Date;
+    offsetDays: number;
+    channelId: string | null;
+    dedupKey: string;
+  },
   now: Date,
 ): Promise<ReminderMessage | null | typeof NOT_YET> {
   const schedule = scheduleFor(user, now);
@@ -234,11 +257,22 @@ async function currentMessage(
         where: { id: log.entityId, ownerId: user.id, ...visibleContact(schedule.locked) },
         select: { firstName: true, lastName: true, nextTouchAt: true },
       });
-      if (!contact?.nextTouchAt) return null;
-      // An interaction logged since moved the cadence on; that reminder is spent.
-      const dueDay = calendarDateInTz(contact.nextTouchAt, schedule.timezone);
-      if (plainDateKey(dueDay) !== plainDateKey(scheduled)) return null;
-      return cadenceMessage(personName(contact), dueDay);
+      if (!contact?.nextTouchAt || !log.channelId) return null;
+      // An interaction logged since moved the cadence on; that reminder is
+      // spent. The test is the instant the row was keyed by, not the local
+      // date it fell on: a timezone change can move the date without the
+      // cadence itself having moved, and must not cost the reminder.
+      const stillOwed = reminderDedupKey({
+        ownerId: user.id,
+        entityType: log.entityType,
+        entityId: log.entityId,
+        policy: "OVERDUE_CADENCE",
+        occurrence: contact.nextTouchAt.toISOString(),
+        offsetDays: log.offsetDays,
+        channelId: log.channelId,
+      }) === log.dedupKey;
+      if (!stillOwed) return null;
+      return cadenceMessage(personName(contact), calendarDateInTz(contact.nextTouchAt, schedule.timezone));
     }
     case "INCOMPLETE_TASK_DUE": {
       const task = await db.task.findFirst({
@@ -259,7 +293,7 @@ async function currentMessage(
       // A digest is that day's summary. Once the day has ended it is either
       // out of date or a copy of the one about to be sent, so it is dropped
       // rather than retried; within the day its counts are read afresh.
-      if (!user.preference?.digestEnabled || plainDateKey(schedule.today) !== plainDateKey(scheduled)) {
+      if (!user.preference.digestEnabled || plainDateKey(schedule.today) !== plainDateKey(scheduled)) {
         return null;
       }
       // The hour may have been moved later since the row was written. A fresh
@@ -277,7 +311,7 @@ async function currentMessage(
   }
 }
 
-function dedupKeyFor(user: UserSchedule, candidate: Candidate, channel: Channel): string {
+function dedupKeyFor(user: ScheduledUser, candidate: Candidate, channel: Channel): string {
   return reminderDedupKey({
     ownerId: user.id,
     entityType: candidate.entityType,
@@ -304,7 +338,7 @@ function dedupKeyFor(user: UserSchedule, candidate: Candidate, channel: Channel)
 async function createAndDeliver(
   db: Db,
   send: typeof deliverToChannel,
-  user: UserSchedule,
+  user: ScheduledUser,
   candidate: Candidate,
   channel: Channel,
   dedupKey: string,
@@ -375,7 +409,7 @@ export async function processReminderDeliveries(
   const usersById = new Map(users.map((user) => [user.id, user]));
 
   for (const user of users) {
-    if (user.notificationChannels.length === 0) continue;
+    if (!hasPreferences(user) || user.notificationChannels.length === 0) continue;
     const candidates = await candidatesForUser(db, user, now);
     if (candidates.length === 0) continue;
 
@@ -427,6 +461,9 @@ export async function processReminderDeliveries(
   for (const log of retries) {
     if (!log.channel) continue;
     const user = usersById.get(log.ownerId);
+    // An owner with no preference row is left alone, row included; one who
+    // is no longer active has nothing owed.
+    if (user && !hasPreferences(user)) continue;
     const message = user ? await currentMessage(db, user, log, now) : null;
     if (message === NOT_YET) continue;
     if (!message) {
