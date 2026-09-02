@@ -162,6 +162,33 @@ test("record a fact and a follow-up", async ({ page }) => {
   await expect(tasks.getByText("Send the Denver recommendations")).toBeVisible();
 });
 
+test("dashboard follow-ups are clear keyboard routes on a narrow screen", async ({ page }) => {
+  await ensureSignedIn(page);
+  const contact = `${personName(page)} Case`;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  const link = page.getByRole("link", {
+    name: `Send the Denver recommendations — follow up with ${contact}`,
+  });
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute("href", /\/people\/[^/]+#follow-ups$/);
+
+  // A native, focused link must reach the relevant context by keyboard. The
+  // row has no nested link competing for focus or changing its announcement.
+  await link.focus();
+  await expect(link).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/people\/[^/]+#follow-ups$/);
+  await expect(page.locator("section#follow-ups")).toBeVisible();
+
+  const width = await page.evaluate(() => ({
+    viewport: document.documentElement.clientWidth,
+    content: document.documentElement.scrollWidth,
+  }));
+  expect(width.content).toBeLessThanOrEqual(width.viewport);
+});
+
 test("save something to do with an ordinary friend", async ({ page }) => {
   await ensureSignedIn(page);
   const name = personName(page);
