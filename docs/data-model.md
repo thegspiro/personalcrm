@@ -592,10 +592,15 @@ still leaves, just without its credential. The failure lands in
 
 ### `ReminderLog`
 
-The dedupe/retry ledger, so a restart never re-sends a reminder — nor loses
-one: a row is written with its first retry deadline already set, before the
-send, so a process that dies between the two leaves a row the next pass
-retries rather than one the unique key silently buries. Every row records
+The dedupe/retry ledger, so a restart never loses a reminder: a row is
+written with its first retry deadline already set, before the send, so a
+process that dies between the two leaves a row the next pass retries rather
+than one the unique key silently buries. Delivery is therefore at-least-once,
+not at-most-once. The one ambiguous case is a process that dies after the
+channel accepted the message and before the row could say so; that reminder
+is sent again. No channel offers idempotent acceptance, so the choice is
+between an occasional duplicate and an occasional silence, and for the one
+thing this app exists to do the duplicate is the right side to err on. Every row records
 the explicit `schedulingPolicy` that produced it and a SHA-256 `dedupKey`, unique
 per owner, derived from the entity, policy, occurrence, offset, and channel. The
 older composite delivery unique key remains as additional protection, and the
