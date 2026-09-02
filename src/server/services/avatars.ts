@@ -3,7 +3,7 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { mkdir, open, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { inspectImage } from "@/lib/image-format";
+import { inspectImage, MAX_PNG_SIDE } from "@/lib/image-format";
 
 export const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const FILE_NAME = /^[a-f0-9]{32}\.(?:jpg|png|webp)$/;
@@ -91,12 +91,12 @@ export async function storeAvatar(file: File): Promise<StagedAvatar> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (bytes.byteLength === 0) throw new AvatarValidationError("Choose a non-empty image.");
   if (bytes.byteLength > MAX_AVATAR_BYTES) throw new AvatarValidationError("Avatar images must be 2 MB or smaller.");
-  const image = inspectImage(bytes);
+  const image = await inspectImage(bytes);
   if (!image.ok) {
     throw new AvatarValidationError(
-      image.reason === "unrecognised"
-        ? "Use a JPEG, PNG, or WebP image."
-        : "That image is incomplete or damaged. Try exporting it again.",
+      image.reason === "unrecognised" ? "Use a JPEG, PNG, or WebP image."
+      : image.reason === "oversized" ? `That image is too large. Use one up to ${MAX_PNG_SIDE} pixels on a side.`
+      : "That image is incomplete or damaged. Try exporting it again.",
     );
   }
 

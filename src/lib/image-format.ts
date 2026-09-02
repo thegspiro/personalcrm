@@ -10,20 +10,36 @@
  * fails is certainly not a complete one.
  */
 
-import { inflateSync } from "node:zlib";
+import { inflate } from "node:zlib";
+import { promisify } from "node:util";
+
+const inflateAsync = promisify(inflate);
 
 export type ImageFormat = "jpg" | "png" | "webp";
 
 export type ImageInspection =
   | { ok: true; format: ImageFormat }
-  /** `unrecognised`: not one of the formats at all. `incomplete`: one of them, but not all of it. */
-  | { ok: false; reason: "unrecognised" | "incomplete" };
+  /**
+   * `unrecognised`: not one of the formats at all. `incomplete`: one of
+   * them, but not all of it. `oversized`: a real picture, and more of one
+   * than an avatar can be.
+   */
+  | { ok: false; reason: "unrecognised" | "incomplete" | "oversized" };
 
 /** No avatar needs more; a header asking for more is a damaged file, not a large one. */
 export const MAX_IMAGE_DIMENSION = 16_384;
 
-/** The most a PNG's pixel data may inflate to: 4096×4096 at four bytes a pixel. */
-export const MAX_PNG_RAW_BYTES = 64 * 1024 * 1024;
+/** The largest square a PNG avatar may be: what the raw-size cap below is sized to. */
+export const MAX_PNG_SIDE = 2048;
+
+/**
+ * The most a PNG's pixel data may inflate to: a 2048-square picture at four
+ * bytes a pixel, filter bytes included — sized from the same arithmetic the
+ * check uses, so the largest image it means to allow is allowed. Small on
+ * purpose: inflating happens off the event loop but still in memory, and an
+ * avatar is drawn at eighty pixels.
+ */
+export const MAX_PNG_RAW_BYTES = MAX_PNG_SIDE * (MAX_PNG_SIDE * 4 + 1);
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -88,10 +104,13 @@ function pngRawSize(width: number, height: number, depth: number, colorType: num
  * inflates to exactly the picture the header describes. That is the one
  * place this file goes beyond structure: a byte or two of filler is a
  * well-formed IDAT chunk, and only inflating it tells it from a picture.
- * The output is capped, so a stream that claims more than an avatar could
- * hold is refused rather than unpacked.
+ * Inflation is asynchronous — it runs from a server action, and a highly
+ * compressible picture unpacks to a great deal more than it arrived as — and
+ * a header that describes more than the cap is refused before a byte of it
+ * is unpacked.
  */
-function pngIsWhole(bytes: Uint8Array): boolean {
+async function pngIsWhole(bytes: Uint8Array): Promise<ImageInspection> {
+  const incomplete = { ok: false, reason: "incomplete" } as const;
   let at = PNG_SIGNATURE.length;
   let rawSize: number | null = null;
   const data: Uint8Array[] = [];
@@ -99,29 +118,31 @@ function pngIsWhole(bytes: Uint8Array): boolean {
     const length = u32be(bytes, at);
     const type = ascii(bytes, at + 4, at + 8);
     const end = at + 12 + length;
-    if (end > bytes.length) return false;
+    if (end > bytes.length) return incomplete;
     if (rawSize === null) {
-      if (type !== "IHDR" || length !== 13) return false;
+      if (type !== "IHDR" || length !== 13) return incomplete;
       const width = u32be(bytes, at + 8);
       const height = u32be(bytes, at + 12);
       // Bit depth, colour type, then compression and filter methods, which
       // have only ever had one value each, then the interlace method.
-      if (!plausible(width, height) || bytes[at + 18] !== 0 || bytes[at + 19] !== 0) return false;
+      if (!plausible(width, height) || bytes[at + 18] !== 0 || bytes[at + 19] !== 0) return incomplete;
       rawSize = pngRawSize(width, height, bytes[at + 16], bytes[at + 17], bytes[at + 20]);
-      if (rawSize === null || rawSize > MAX_PNG_RAW_BYTES) return false;
+      if (rawSize === null) return incomplete;
+      if (rawSize > MAX_PNG_RAW_BYTES) return { ok: false, reason: "oversized" };
     } else if (type === "IDAT") {
       data.push(bytes.subarray(at + 8, at + 8 + length));
     } else if (type === "IEND") {
-      if (length !== 0 || end !== bytes.length || data.length === 0) return false;
+      if (length !== 0 || end !== bytes.length || data.length === 0) return incomplete;
       try {
-        return inflateSync(Buffer.concat(data), { maxOutputLength: rawSize }).length === rawSize;
+        const raw = await inflateAsync(Buffer.concat(data), { maxOutputLength: rawSize });
+        return raw.length === rawSize ? { ok: true, format: "png" } : incomplete;
       } catch {
-        return false;
+        return incomplete;
       }
     }
     at = end;
   }
-  return false;
+  return incomplete;
 }
 
 /**
@@ -235,10 +256,8 @@ function webpIsWhole(bytes: Uint8Array): boolean {
   return webpChunksHoldImage(bytes, 12, bytes.length) === true;
 }
 
-export function inspectImage(bytes: Uint8Array): ImageInspection {
-  if (startsWith(bytes, PNG_SIGNATURE)) {
-    return pngIsWhole(bytes) ? { ok: true, format: "png" } : { ok: false, reason: "incomplete" };
-  }
+export async function inspectImage(bytes: Uint8Array): Promise<ImageInspection> {
+  if (startsWith(bytes, PNG_SIGNATURE)) return pngIsWhole(bytes);
   if (startsWith(bytes, [0xff, 0xd8, 0xff])) {
     return jpegIsWhole(bytes) ? { ok: true, format: "jpg" } : { ok: false, reason: "incomplete" };
   }

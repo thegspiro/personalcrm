@@ -375,7 +375,10 @@ are `private, no-store`, and the service worker never caches API responses.
 JPEG, PNG, and WebP uploads are limited to 2 MB and checked for being a whole
 file of the format their bytes claim — header, plausible dimensions, and the
 terminator at the very end — so a truncated upload is refused rather than
-published in place of the avatar it was meant to replace. Nothing is decoded.
+published in place of the avatar it was meant to replace. A PNG's pixel data
+is also inflated, off the event loop, and must come to exactly the size its
+header implies; a PNG larger than 2048 pixels square is refused before any of
+it is unpacked. JPEG and WebP are not decoded.
 Client filenames, extensions, and MIME headers never become filesystem paths,
 and `UPLOADS_DIR` may not point inside `public/`, where the route's checks
 would not apply — judged after following symlinks on both sides, so a link
