@@ -35,14 +35,11 @@ test("a plan checklist can be created, edited, checked and deleted without mobil
   await plans.getByLabel("Delete checklist item 5").click();
   await plans.getByRole("button", { name: "Save", exact: true }).click();
 
-  // The editor closes when the action returns, but the row keeps the plan it
-  // was rendered with until the refresh that follows lands. Reopening it in
-  // that window shows the checklist as it was, so this is what "persisted"
-  // means: the page loaded again from the server, not the row re-read from
-  // memory. The first reopen above needed no such care — that row did not
-  // exist before the refresh, so waiting for it was waiting for the refresh.
+  // The editor closes only once the refreshed row has rendered, so waiting
+  // for it to close is waiting for the save to be reflected. Reopening it
+  // straight away used to show — and could save back — the checklist as it
+  // was before the edit; this reopen is what guards that.
   await expect(plans.getByLabel("What do you want to do?")).toBeHidden();
-  await page.reload();
   row = plans.locator("[tabindex='-1']").filter({ hasText: title }).first();
   await row.getByRole("button", { name: "Edit plan" }).click();
   await expect(plans.locator('input[value="Pack a picnic blanket"]')).toHaveCount(0);

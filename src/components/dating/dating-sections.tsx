@@ -525,18 +525,18 @@ export function DateLogSection({
   function add(close: () => void) {
     return async (form: FormData) => {
       form.set("contactId", contactId);
-      if (await run(() => createDateEntry(form), "Date logged")) {
+      await run(() => createDateEntry(form), "Date logged", () => {
         setVenue("");
         setPickedPlan(null);
         close();
-      }
+      });
     };
   }
 
   function edit(entry: DateLogItem, close: () => void) {
     return async (form: FormData) => {
       form.set("id", entry.id);
-      if (await run(() => updateDateEntry(form), "Saved")) close();
+      await run(() => updateDateEntry(form), "Saved", close);
     };
   }
 
@@ -770,14 +770,14 @@ export function FlagsSection({
   function add(close: () => void) {
     return async (form: FormData) => {
       form.set("contactId", contactId);
-      if (await run(() => createFlag(form), "Noted")) close();
+      await run(() => createFlag(form), "Noted", close);
     };
   }
 
   function edit(flag: FlagItem, close: () => void) {
     return async (form: FormData) => {
       form.set("id", flag.id);
-      if (await run(() => updateFlag(form), "Saved")) close();
+      await run(() => updateFlag(form), "Saved", close);
     };
   }
 

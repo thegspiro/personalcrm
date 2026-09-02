@@ -2,8 +2,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
 import { cn, displayName } from "@/lib/utils";
 import { Icon } from "@/components/nav/icon";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
+import { useAction } from "@/components/form/use-action";
 import { DateField } from "@/components/form/date-field";
 import { TermChips, type TermOption } from "@/components/form/term-select";
 import {
@@ -26,7 +25,6 @@ import {
   STARTER_PLAN_CHECKLIST,
   type PlanChecklistItem,
 } from "@/lib/plan-checklist";
-import type { ActionResult } from "@/server/actions/helpers";
 import {
   createPlan,
   deletePlan,
@@ -65,23 +63,6 @@ export interface PlanPerson {
   id: string;
   firstName: string;
   lastName: string | null;
-}
-
-function useRun() {
-  const router = useRouter();
-  return React.useCallback(
-    async (run: () => Promise<ActionResult<unknown>>, message?: string) => {
-      const result = await run();
-      if (!result.ok) {
-        toast.error(result.error ?? "Something went wrong.");
-        return false;
-      }
-      if (message) toast.success(message);
-      router.refresh();
-      return true;
-    },
-    [router],
-  );
 }
 
 /**
@@ -245,19 +226,19 @@ export function PlansSection({
   title?: string;
   defaultOpen?: boolean;
 }) {
-  const run = useRun();
+  const run = useAction();
 
   function add(close: () => void) {
     return async (form: FormData) => {
       if (contactId) form.set("contactId", contactId);
-      if (await run(() => createPlan(form), "Saved")) close();
+      await run(() => createPlan(form), "Saved", close);
     };
   }
 
   function edit(plan: PlanItem, close: () => void) {
     return async (form: FormData) => {
       form.set("id", plan.id);
-      if (await run(() => updatePlan(form), "Saved")) close();
+      await run(() => updatePlan(form), "Saved", close);
     };
   }
 
