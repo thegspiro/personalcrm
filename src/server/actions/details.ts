@@ -13,6 +13,7 @@ import {
   lifeEventPrivacyWhere,
   privacyScope,
   viaContactPrivacyWhere,
+  viaOptionalContactPrivacyWhere,
 } from "@/server/privacy/filter";
 import { calendarDateInTz, plainDateFromDb, plainDateToDb } from "@/lib/dates";
 import { isValidPartialDateRange } from "@/lib/date-precision";
@@ -138,8 +139,14 @@ export async function updateFact(form: FormData): Promise<ActionResult> {
   // Scoped by the privacy fragment as well as the owner: a private fact is not
   // merely hidden while the lock is closed, it is out of reach, and an id
   // remembered from an unlocked session must not be a way back in.
+  const scope = await privacyScope();
   const existing = await prisma.fact.findFirst({
-    where: { id, ownerId, ...factPrivacyWhere(await privacyScope()) },
+    where: {
+      id,
+      ownerId,
+      ...factPrivacyWhere(scope),
+      ...viaContactPrivacyWhere(scope),
+    },
     select: { contactId: true, isPrivate: true },
   });
   if (!existing) return fail("Not found.");
@@ -166,7 +173,11 @@ export async function updateFact(form: FormData): Promise<ActionResult> {
 
 export async function deleteFact(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
-  const existing = await prisma.fact.findFirst({ where: { id, ownerId }, select: { contactId: true } });
+  const scope = await privacyScope();
+  const existing = await prisma.fact.findFirst({
+    where: { id, ownerId, ...factPrivacyWhere(scope), ...viaContactPrivacyWhere(scope) },
+    select: { contactId: true },
+  });
   if (!existing) return fail("Not found.");
   await prisma.fact.delete({ where: { id } });
   touch(existing.contactId);
@@ -400,7 +411,7 @@ export async function updateIdea(form: FormData): Promise<ActionResult> {
   if (!id || !content) return fail("What did you want to bring up?");
 
   const existing = await prisma.idea.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...viaOptionalContactPrivacyWhere(await privacyScope()) },
     select: { contactId: true },
   });
   if (!existing) return fail("Not found.");
@@ -417,7 +428,7 @@ export async function setIdeaStatus(
   status: "OPEN" | "USED" | "ARCHIVED",
 ): Promise<ActionResult> {
   const { ownerId } = await owner();
-  const existing = await prisma.idea.findFirst({ where: { id, ownerId }, select: { contactId: true } });
+  const existing = await prisma.idea.findFirst({ where: { id, ownerId, ...viaOptionalContactPrivacyWhere(await privacyScope()) }, select: { contactId: true } });
   if (!existing) return fail("Not found.");
 
   await prisma.idea.update({
@@ -432,7 +443,7 @@ export async function setIdeaStatus(
 
 export async function deleteIdea(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
-  const existing = await prisma.idea.findFirst({ where: { id, ownerId }, select: { contactId: true } });
+  const existing = await prisma.idea.findFirst({ where: { id, ownerId, ...viaOptionalContactPrivacyWhere(await privacyScope()) }, select: { contactId: true } });
   if (!existing) return fail("Not found.");
   await prisma.idea.delete({ where: { id } });
   touch(existing.contactId);
@@ -545,7 +556,7 @@ export async function updatePlan(form: FormData): Promise<ActionResult> {
   if (!id) return fail("Missing plan.");
 
   const existing = await prisma.plan.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...viaOptionalContactPrivacyWhere(await privacyScope()) },
     select: { contactId: true },
   });
   if (!existing) return fail("Not found.");
@@ -575,7 +586,7 @@ export async function updatePlan(form: FormData): Promise<ActionResult> {
 export async function setPlanStatus(id: string, status: PlanStatusValue): Promise<ActionResult> {
   const { ownerId } = await owner();
   const existing = await prisma.plan.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...viaOptionalContactPrivacyWhere(await privacyScope()) },
     select: { contactId: true },
   });
   if (!existing) return fail("Not found.");
@@ -597,7 +608,7 @@ export async function setPlanStatus(id: string, status: PlanStatusValue): Promis
 export async function deletePlan(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
   const existing = await prisma.plan.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...viaOptionalContactPrivacyWhere(await privacyScope()) },
     select: { contactId: true },
   });
   if (!existing) return fail("Not found.");
@@ -648,7 +659,7 @@ export async function updateTask(form: FormData): Promise<ActionResult> {
   if (!id || !title) return fail("Give the follow-up a name.");
 
   const existing = await prisma.task.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...viaOptionalContactPrivacyWhere(await privacyScope()) },
     select: { contactId: true },
   });
   if (!existing) return fail("Not found.");
@@ -670,7 +681,7 @@ export async function updateTask(form: FormData): Promise<ActionResult> {
 
 export async function setTaskDone(id: string, done: boolean): Promise<ActionResult> {
   const { ownerId } = await owner();
-  const existing = await prisma.task.findFirst({ where: { id, ownerId }, select: { contactId: true } });
+  const existing = await prisma.task.findFirst({ where: { id, ownerId, ...viaOptionalContactPrivacyWhere(await privacyScope()) }, select: { contactId: true } });
   if (!existing) return fail("Not found.");
 
   await prisma.task.update({ where: { id }, data: { completedAt: done ? new Date() : null } });
@@ -681,7 +692,7 @@ export async function setTaskDone(id: string, done: boolean): Promise<ActionResu
 
 export async function deleteTask(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
-  const existing = await prisma.task.findFirst({ where: { id, ownerId }, select: { contactId: true } });
+  const existing = await prisma.task.findFirst({ where: { id, ownerId, ...viaOptionalContactPrivacyWhere(await privacyScope()) }, select: { contactId: true } });
   if (!existing) return fail("Not found.");
   await prisma.task.delete({ where: { id } });
   touch(existing.contactId);
@@ -736,7 +747,7 @@ export async function updateGift(form: FormData): Promise<ActionResult> {
   if (!id || !name) return fail("What's the gift?");
 
   const existing = await prisma.gift.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...viaContactPrivacyWhere(await privacyScope()) },
     select: { contactId: true, status: true },
   });
   if (!existing) return fail("Not found.");
@@ -769,7 +780,7 @@ export async function setGiftStatus(
   status: "IDEA" | "RESERVED" | "PURCHASED" | "GIVEN",
 ): Promise<ActionResult> {
   const { ownerId } = await owner();
-  const existing = await prisma.gift.findFirst({ where: { id, ownerId }, select: { contactId: true } });
+  const existing = await prisma.gift.findFirst({ where: { id, ownerId, ...viaContactPrivacyWhere(await privacyScope()) }, select: { contactId: true } });
   if (!existing) return fail("Not found.");
   await prisma.gift.update({ where: { id }, data: { status } });
   touch(existing.contactId);
@@ -779,7 +790,7 @@ export async function setGiftStatus(
 
 export async function deleteGift(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
-  const existing = await prisma.gift.findFirst({ where: { id, ownerId }, select: { contactId: true } });
+  const existing = await prisma.gift.findFirst({ where: { id, ownerId, ...viaContactPrivacyWhere(await privacyScope()) }, select: { contactId: true } });
   if (!existing) return fail("Not found.");
   await prisma.gift.delete({ where: { id } });
   touch(existing.contactId);
@@ -838,8 +849,14 @@ export async function updateDebt(form: FormData): Promise<ActionResult> {
 
   // As with facts: while the lock is closed a private debt is out of reach,
   // not merely hidden.
+  const scope = await privacyScope();
   const existing = await prisma.debt.findFirst({
-    where: { id, ownerId, ...debtPrivacyWhere(await privacyScope()) },
+    where: {
+      id,
+      ownerId,
+      ...debtPrivacyWhere(scope),
+      ...viaContactPrivacyWhere(scope),
+    },
     select: { contactId: true, incurredOn: true, settledOn: true, isPrivate: true },
   });
   if (!existing) return fail("Not found.");
@@ -875,8 +892,14 @@ export async function updateDebt(form: FormData): Promise<ActionResult> {
 
 export async function settleDebt(id: string, on: Date | null): Promise<ActionResult> {
   const { ownerId } = await owner();
+  const scope = await privacyScope();
   const existing = await prisma.debt.findFirst({
-    where: { id, ownerId },
+    where: {
+      id,
+      ownerId,
+      ...debtPrivacyWhere(scope),
+      ...viaContactPrivacyWhere(scope),
+    },
     select: { contactId: true, incurredOn: true },
   });
   if (!existing) return fail("Not found.");
@@ -891,8 +914,14 @@ export async function settleDebt(id: string, on: Date | null): Promise<ActionRes
 
 export async function deleteDebt(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
+  const scope = await privacyScope();
   const existing = await prisma.debt.findFirst({
-    where: { id, ownerId },
+    where: {
+      id,
+      ownerId,
+      ...debtPrivacyWhere(scope),
+      ...viaContactPrivacyWhere(scope),
+    },
     select: { contactId: true },
   });
   if (!existing) return fail("Not found.");
@@ -956,7 +985,7 @@ export async function updateDietaryNeed(form: FormData): Promise<ActionResult> {
   if (!id || !label) return fail("What can't they have?");
 
   const existing = await prisma.dietaryNeed.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...viaContactPrivacyWhere(await privacyScope()) },
     select: { contactId: true, kind: true },
   });
   if (!existing) return fail("Not found.");
@@ -1003,7 +1032,7 @@ export async function updateDietaryNeed(form: FormData): Promise<ActionResult> {
 export async function deleteDietaryNeed(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
   const existing = await prisma.dietaryNeed.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...viaContactPrivacyWhere(await privacyScope()) },
     select: { contactId: true, kind: true },
   });
   if (!existing) return fail("Not found.");
@@ -1045,6 +1074,7 @@ export async function updateAllergyStatus(form: FormData): Promise<ActionResult>
  */
 export async function createRelationship(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
+  const scope = await privacyScope();
   const fromContactId = str(form, "fromContactId");
   const toContactId = str(form, "toContactId");
   const typeId = str(form, "typeId");
@@ -1052,8 +1082,8 @@ export async function createRelationship(form: FormData): Promise<ActionResult> 
   if (fromContactId === toContactId) return fail("Someone can't be related to themselves.");
 
   const [from, to, type] = await Promise.all([
-    prisma.contact.findFirst({ where: { id: fromContactId, ownerId }, select: { id: true } }),
-    prisma.contact.findFirst({ where: { id: toContactId, ownerId }, select: { id: true } }),
+    prisma.contact.findFirst({ where: { id: fromContactId, ownerId, ...contactPrivacyWhere(scope) }, select: { id: true } }),
+    prisma.contact.findFirst({ where: { id: toContactId, ownerId, ...contactPrivacyWhere(scope) }, select: { id: true } }),
     prisma.taxonomyTerm.findFirst({
       where: { id: typeId, ownerId, kind: "RELATIONSHIP_TYPE" },
       select: { id: true, inverseTermId: true },
@@ -1114,7 +1144,12 @@ export async function updateRelationship(form: FormData): Promise<ActionResult> 
   if (!id || !typeId) return fail("Pick a relationship.");
 
   const existing = await prisma.relationship.findFirst({
-    where: { id, ownerId },
+    where: {
+      id,
+      ownerId,
+      fromContact: contactPrivacyWhere(await privacyScope()),
+      toContact: contactPrivacyWhere(await privacyScope()),
+    },
     select: { pairId: true, fromContactId: true, toContactId: true, notes: true },
   });
   if (!existing) return fail("Not found.");
@@ -1176,7 +1211,12 @@ export async function updateRelationship(form: FormData): Promise<ActionResult> 
 export async function deleteRelationship(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
   const existing = await prisma.relationship.findFirst({
-    where: { id, ownerId },
+    where: {
+      id,
+      ownerId,
+      fromContact: contactPrivacyWhere(await privacyScope()),
+      toContact: contactPrivacyWhere(await privacyScope()),
+    },
     select: { pairId: true, fromContactId: true, toContactId: true },
   });
   if (!existing) return fail("Not found.");

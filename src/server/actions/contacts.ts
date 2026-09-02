@@ -45,8 +45,9 @@ function revalidateContact(id?: string) {
 
 /** Assert a row belongs to the signed-in user before touching it. */
 async function assertOwnedContact(ownerId: string, contactId: string): Promise<boolean> {
+  const scope = await privacyScope();
   const found = await prisma.contact.findFirst({
-    where: { id: contactId, ownerId },
+    where: { id: contactId, ownerId, ...contactPrivacyWhere(scope) },
     select: { id: true },
   });
   return Boolean(found);
@@ -278,4 +279,3 @@ export async function deleteContact(id: string): Promise<ActionResult> {
 export async function setContactArchived(id: string, archived: boolean): Promise<ActionResult> {
   return patchContact(id, { isArchived: archived });
 }
-
