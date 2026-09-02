@@ -6,7 +6,7 @@ one folder and you have backed up the whole installation.
 | Path | Why it matters |
 | --- | --- |
 | `db/` | The database. Everything you've recorded. |
-| `uploads/` | Avatars and photos. Not in the database. |
+| `uploads/` | Contact avatars. The database stores only their generated paths, so the directory and database must be backed up and restored together. |
 | `secrets.json` | The session signing key **and the database password**. Without it, a restored `db/` cannot be opened. |
 | `backups/` | Reserved for database dumps. See the note below. |
 | `logs/`, `cache/` | Not worth keeping. |
@@ -60,6 +60,11 @@ Onto a fresh container:
 2. Put the `/config` folder back where it was, `secrets.json` included.
 3. Start it. `init-migrate` brings the schema up to date if the backup came
    from an older version, so a restore and an upgrade can happen together.
+
+Do not restore only the SQL when contacts have avatars: those rows would point
+at missing files. Restore `uploads/` from the same backup generation as the
+database. Conversely, extra unreferenced files are harmless and may be removed
+after the matching database has been restored.
 
 Restoring a `.sql` dump instead:
 

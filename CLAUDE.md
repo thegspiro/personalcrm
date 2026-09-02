@@ -207,8 +207,7 @@ channels configured under Settings → Reminders. Cadence, task, and digest
 notifications are not implemented, so `ReminderEntity.CADENCE`, `.TASK` and
 `.DIGEST` are never written and `digestHour`/`digestEnabled` are stored only.
 `UserPreference.weekStartsOn` is likewise reserved and read by nothing. Nothing
-writes to `/config/backups` or `/config/uploads` (`Contact.avatarPath` is
-rendered but never set). Tags exist in the schema with no UI. There is no
+writes to `/config/backups`. Tags exist in the schema with no UI. There is no
 account management after the welcome wizard. Full list in
 [docs/README.md](docs/README.md#known-gaps).
 

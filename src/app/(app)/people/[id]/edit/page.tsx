@@ -54,6 +54,7 @@ export default async function EditContactPage({ params }: { params: Promise<{ id
           cadenceDays: contact.cadenceDays,
           isFavorite: contact.isFavorite,
           isRomantic: contact.isRomantic,
+          avatarPath: contact.avatarPath,
         }}
         customFields={customFields}
       />

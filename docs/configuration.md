@@ -16,6 +16,7 @@ Everything the app reads from its environment, and everything it keeps on disk.
 | `PUID` / `PGID` | `99` / `100` | No | Unraid's `nobody:users`. `/config` is chowned to this |
 | `PORT` / `HOSTNAME` | `3000` / `0.0.0.0` | No | Set in the image |
 | `APP_VERSION` | `dev` | No | Reported by `/api/health` |
+| `UPLOADS_DIR` | `/config/uploads` | No | Server-only avatar storage. For a bare install, set this to a persistent directory writable by the app; it must not be inside `public/` |
 
 ### Optional assisted reading
 
@@ -50,7 +51,7 @@ Provider, base URL and model are configured in Settings (stored in
 | Path | Contents | Back up? |
 | --- | --- | --- |
 | `db/` | MariaDB data directory | **Yes** |
-| `uploads/` | Avatars and photos. Created at boot; **no upload path writes here yet** | **Yes**, once it holds anything |
+| `uploads/` | Contact avatars, stored under random server-generated names and served only through the authenticated, privacy-filtered avatar endpoint | **Yes** |
 | `secrets.json` | `authSecret` + `dbPassword`, mode `0600` | **Yes — without it the database is unreadable** |
 | `backups/` | Created at boot; **nothing writes here yet** (see [Known gaps](README.md#known-gaps)) | — |
 | `logs/` | MariaDB error log | No |

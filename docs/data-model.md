@@ -163,7 +163,7 @@ The centre of the model.
 | `firstName` | `varchar(120)` | The only required name field |
 | `lastName` / `nickname` | `varchar(120)?` | |
 | `pronouns` | `varchar(48)?` | |
-| `avatarPath` | `varchar(255)?` | Rendered when set. No upload path writes it yet — see [Not yet wired](#not-yet-wired) |
+| `avatarPath` | `varchar(255)?` | Authenticated `/api/avatars/<server-name>` URL. The bytes live in `UPLOADS_DIR`, outside the public tree; ownership and the live privacy lock are checked on every read and write |
 | `categoryId` | `cuid?` | → `TaxonomyTerm` (`CONTACT_CATEGORY`), `SET NULL` |
 | `birthDate` | `date?` | |
 | `birthDatePrecision` | `DatePrecision` | `MONTH_DAY` covers the birthday whose year nobody remembers |
@@ -644,7 +644,7 @@ nobody gave.
 | Deleting… | Takes with it | Leaves behind |
 | --- | --- | --- |
 | A `User` | Everything they own, by cascade | — |
-| A `Contact` | Methods, addresses, tags, facts, dates, life events, gifts, debts, dietary needs, flags, ideas, plans, tasks, household memberships, relationships (both halves), participations, romantic profile, date entries | `CustomFieldValue` rows — **swept explicitly** by the action |
+| A `Contact` | Methods, addresses, tags, facts, dates, life events, gifts, debts, dietary needs, flags, ideas, plans, tasks, household memberships, relationships (both halves), participations, romantic profile, date entries, and its avatar file | `CustomFieldValue` rows — **swept explicitly** by the action |
 | An `Interaction` | Participants, its `DateEntry` | `Fact.sourceInteractionId`, `Idea.usedInInteractionId` and `Plan.usedInInteractionId` set to null |
 | A `TaxonomyTerm` | `Relationship` rows of that type (cascade) — which is why deleting a term still in use is blocked; other references are `SET NULL` | The records themselves |
 | A `Session` | Nothing | The unlock state dies with it |
@@ -689,7 +689,6 @@ writes yet. Documented here so nobody assumes the feature works:
 | Table / column | State |
 | --- | --- |
 | `UserPreference.digestHour`, `digestEnabled` | Stored, not acted on |
-| `Contact.avatarPath` | Read and rendered everywhere, but nothing uploads an image to set it |
 
 `/config/backups` is likewise created at boot but nothing writes to it — the
 nightly dump described in the README is not implemented. Back up `/config`

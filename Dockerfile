@@ -86,6 +86,7 @@ ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     PUID=99 \
     PGID=100 \
+    UPLOADS_DIR=/config/uploads \
     TZ=Etc/UTC \
     S6_BEHAVIOUR_IF_STAGE2_FAILS=2 \
     S6_KEEP_ENV=1 \

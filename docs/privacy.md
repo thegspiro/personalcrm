@@ -358,6 +358,20 @@ an access gate, and those contacts are included like anyone else. That follows
 from what the lock is (see above), but it is worth saying plainly: turning the
 lock off turns off this filter too.
 
+### Avatar files
+
+Avatar bytes never live under `public/`. The generated `/api/avatars/<name>`
+URL requires a session, an owner-scoped contact reference, and visibility under
+the live privacy lock before the handler reads from `UPLOADS_DIR`. Responses
+are `private, no-store`, and the service worker never caches API responses.
+
+JPEG, PNG, and WebP uploads are signature-checked and limited to 2 MB. Client
+filenames, extensions, and MIME headers never become filesystem paths.
+Replacement publishes validated new bytes and commits their generated path
+before obsolete bytes are removed; removal and contact deletion clear/delete
+the database row before unlinking. An I/O failure may therefore leave harmless
+unreferenced bytes, but not a contact path broken by the operation.
+
 ## Optional address lookup
 
 The third and last thing in the app that sends anything anywhere.
