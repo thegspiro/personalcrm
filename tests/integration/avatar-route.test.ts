@@ -86,9 +86,13 @@ describe.skipIf(!hasTestDatabase)("avatar visibility query", () => {
     expect(await lookup()).toBeNull();
   });
 
-  it("treats an owner with a PIN but no preference row as locked", async () => {
+  it("treats an owner with a PIN but no preference row as locked, whatever their session says", async () => {
     await prisma.user.update({ where: { id: ownerId }, data: { privacyPinHash: "pin" } });
     await privateContact(ownerId);
+    expect(await lookup()).toBeNull();
+    // A partial import can leave a session that was unlocked a minute ago
+    // beside no preference row at all; that is not an open lock.
+    await session(ownerId, tokenHash, new Date(now.getTime() - 60_000));
     expect(await lookup()).toBeNull();
   });
 });

@@ -11,10 +11,11 @@ import { IDLE_TIMEOUT_MS } from "@/server/privacy/lock";
  * one page load into the better part of a thousand queries. So the lock is
  * folded into the contact query: the row is visible if it is not private, or
  * if the owner has no PIN, or the lock is switched off, or this very session
- * opened it within the idle timeout. That is `getPrivacyState` restated as a
- * where-clause, with one deliberate difference: an owner with a PIN but no
- * preference row at all (a partial import) is treated as locked rather than
- * having a row created for them mid-request.
+ * opened it within the idle timeout — and that last only while the lock is
+ * actually on. That is `getPrivacyState` restated as a where-clause, with one
+ * deliberate difference: an owner with a PIN but no preference row at all (a
+ * partial import) is treated as locked rather than having a row created for
+ * them mid-request, whatever their sessions say.
  */
 export async function findVisibleAvatarContact(
   db: PrismaClient | Prisma.TransactionClient,
@@ -30,6 +31,9 @@ export async function findVisibleAvatarContact(
   const unlockedBy: Prisma.ContactWhereInput[] = args.sessionTokenHash
     ? [{
         owner: {
+          // An unlock is only meaningful against a lock that is on; without
+          // a preference row there is no lock to have opened.
+          preference: { is: { privacyLockEnabled: true } },
           sessions: {
             some: {
               tokenHash: args.sessionTokenHash,
