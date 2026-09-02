@@ -26,8 +26,16 @@ import {
 import { deliverToChannel } from "./notify";
 
 const MAX_ATTEMPTS = 5;
-/** How long after a ledger row is written before a retry pass may claim it. */
+/** How soon after a failed send the next attempt may be made. */
 const FIRST_RETRY_MS = 60_000;
+/**
+ * How long a row is held while its delivery is in flight, both when it is
+ * first written and when a retry claims it. Longer than any delivery can take:
+ * the HTTP channels abort at fifteen seconds and SMTP is bounded to about a
+ * minute of connecting, greeting and sending. Only after this can another
+ * pass conclude the sender is gone and take the row over.
+ */
+const CLAIM_LEASE_MS = 5 * 60_000;
 const DEFAULT_TIMEZONE = "America/New_York";
 
 /** A retry that is neither owed now nor cancelled: leave the row for a later pass. */
@@ -314,7 +322,7 @@ async function createAndDeliver(
         scheduledFor: candidate.scheduledFor,
         offsetDays: candidate.offsetDays,
         channelId: channel.id,
-        nextAttemptAt: new Date(now.getTime() + FIRST_RETRY_MS),
+        nextAttemptAt: new Date(now.getTime() + CLAIM_LEASE_MS),
       },
     });
   } catch (error) {
@@ -379,12 +387,25 @@ export async function processReminderDeliveries(
     const pairs = candidates.flatMap((candidate) =>
       user.notificationChannels.map((channel) => ({ candidate, channel, dedupKey: dedupKeyFor(user, candidate, channel) })),
     );
-    const ledgered = new Set(
-      (await db.reminderLog.findMany({
-        where: { ownerId: user.id, dedupKey: { in: pairs.map((pair) => pair.dedupKey) } },
-        select: { dedupKey: true },
-      })).map((row) => row.dedupKey),
-    );
+    const rows = await db.reminderLog.findMany({
+      where: { ownerId: user.id, dedupKey: { in: pairs.map((pair) => pair.dedupKey) } },
+      select: { id: true, dedupKey: true, ok: true, nextAttemptAt: true, attemptCount: true },
+    });
+    const ledgered = new Set(rows.map((row) => row.dedupKey));
+
+    // A row cancelled while its reminder was ineligible — the task completed,
+    // the person made private — keeps its key, so the candidate it matches
+    // now would otherwise be skipped for ever once the task is reopened or
+    // the person made visible again. Being a candidate again is exactly the
+    // eligibility the cancellation was waiting on, so the row is put back on
+    // the retry path, which revalidates and claims it like any other.
+    const cancelled = rows.filter((row) => !row.ok && row.nextAttemptAt === null && row.attemptCount < MAX_ATTEMPTS);
+    if (cancelled.length > 0) {
+      await db.reminderLog.updateMany({
+        where: { id: { in: cancelled.map((row) => row.id) }, ok: false, nextAttemptAt: null },
+        data: { nextAttemptAt: now, error: null },
+      });
+    }
     for (const { candidate, channel, dedupKey } of pairs) {
       if (ledgered.has(dedupKey)) continue;
       const result = await createAndDeliver(db, send, user, candidate, channel, dedupKey, now);
@@ -421,10 +442,11 @@ export async function processReminderDeliveries(
     // external database — and both will have selected this row. The unique
     // key only guards the first delivery, so the retry is claimed the same
     // way: one conditional update wins, the other sees nothing to claim. The
-    // claim is a lease, so a process that dies mid-send hands the row back.
+    // claim is a lease longer than any delivery, so a process that dies
+    // mid-send hands the row back, and one that is merely slow is not raced.
     const claimed = await db.reminderLog.updateMany({
       where: { id: log.id, ok: false, nextAttemptAt: log.nextAttemptAt },
-      data: { nextAttemptAt: new Date(now.getTime() + FIRST_RETRY_MS) },
+      data: { nextAttemptAt: new Date(now.getTime() + CLAIM_LEASE_MS) },
     });
     if (claimed.count === 0) continue;
     try {

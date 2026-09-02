@@ -38,6 +38,13 @@ export async function deliverToChannel(
       auth: typeof config.user === "string" && typeof config.pass === "string"
         ? { user: config.user, pass: config.pass }
         : undefined,
+      // Bounded like the HTTP channels are, so a delivery cannot outlive the
+      // lease the scheduler holds on its ledger row: an SMTP session that
+      // hangs would otherwise still be sending when another scheduler pass
+      // reclaimed the row and sent it again.
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 30_000,
     });
     await transport.sendMail({ from: config.from, to: config.to, subject, text: body });
     return;

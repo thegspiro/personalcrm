@@ -601,8 +601,11 @@ per owner, derived from the entity, policy, occurrence, offset, and channel. The
 older composite delivery unique key remains as additional protection, and the
 scheduler reads the keys it already holds before inserting rather than
 treating a refused insert as the normal case. A retry is claimed with one
-conditional update before it is sent, so two overlapping processes cannot
-both deliver it. `entityType`
+conditional update before it is sent, for a lease longer than any delivery
+can take, so two overlapping processes cannot both deliver it. A row
+cancelled while its reminder was ineligible is put back on the retry path if
+its reminder becomes a candidate again — a task reopened, a person made
+visible — rather than being skipped for ever under its key. `entityType`
 is a `ReminderEntity` (`IMPORTANT_DATE` | `CADENCE` | `TASK` | `DIGEST`). Failed
 sends retry with exponential delay up to five attempts. Before retrying, the
 engine re-reads the row's own entity under the same owner, archive and privacy

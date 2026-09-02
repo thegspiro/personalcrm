@@ -325,7 +325,10 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     await expect(processImportantDateReminders(first, { db: dying, send })).rejects.toThrow("process died");
     expect(await prisma.reminderLog.findFirst()).toMatchObject({ ok: false, attemptCount: 0, nextAttemptAt: expect.any(Date) });
 
-    await processImportantDateReminders(new Date(first.getTime() + 61_000), { db: prisma, send });
+    // Not before the lease is up: a slow sender is not a dead one.
+    await processImportantDateReminders(new Date(first.getTime() + 4 * 60_000), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    await processImportantDateReminders(new Date(first.getTime() + 6 * 60_000), { db: prisma, send });
     expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.calls[1][2]).toBe("Renew the passport was due 2026-09-02.");
     expect(await prisma.reminderLog.count()).toBe(1);
@@ -395,5 +398,28 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(send).toHaveBeenCalledTimes(2);
     expect(await prisma.reminderLog.count()).toBe(1);
     expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true, attemptCount: 2, nextAttemptAt: null });
+  });
+
+  it("delivers a cancelled reminder after all once its task is reopened", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const task = await prisma.task.create({ data: { ownerId: user.id, title: "Return the library books", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    await prisma.task.update({ where: { id: task.id }, data: { completedAt: new Date("2026-09-02T09:30:00Z") } });
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null });
+
+    // Reopened with the same due date: the same key, which used to mean "already handled".
+    await prisma.task.update({ where: { id: task.id }, data: { completedAt: null } });
+    await processImportantDateReminders(new Date("2026-09-02T11:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][2]).toBe("Return the library books was due 2026-09-02.");
+    expect(await prisma.reminderLog.count()).toBe(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true, attemptCount: 2, error: null });
   });
 });
