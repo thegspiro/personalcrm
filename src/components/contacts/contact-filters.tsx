@@ -24,13 +24,24 @@ export function ContactFilters({
 
   const [search, setSearch] = React.useState(params.get("q") ?? "");
 
-  // The debounced search below fires up to 250ms after the render that
-  // scheduled it. A chip clicked inside that window has already rewritten the
-  // URL, so building the next one from that render's snapshot would drop the
-  // filter the reader just chose — which is exactly what the due chips promise
-  // not to do. Read the live parameters at fire time instead.
-  const paramsRef = React.useRef(params);
-  paramsRef.current = params;
+  // Every control here edits the existing parameters, so each one has to see
+  // what the last one asked for. Two things get in the way. The debounced
+  // search fires up to 250ms after the render that scheduled it, and
+  // `router.replace` does not re-render synchronously, so an update issued
+  // before a navigation lands would otherwise compose with the pre-navigation
+  // snapshot and silently drop the filter just chosen — the debounce landing
+  // after a chip click, or two chips in quick succession.
+  //
+  // So hold the parameters last *requested*, not last rendered, and re-sync
+  // only when the URL genuinely changes: every keystroke re-renders, and
+  // syncing unconditionally would put the stale snapshot back.
+  const paramsKey = params.toString();
+  const paramsRef = React.useRef<URLSearchParams>(params);
+  const syncedKeyRef = React.useRef(paramsKey);
+  if (syncedKeyRef.current !== paramsKey) {
+    syncedKeyRef.current = paramsKey;
+    paramsRef.current = params;
+  }
 
   // Debounced so typing doesn't fire a navigation per keystroke.
   React.useEffect(() => {
@@ -44,6 +55,7 @@ export function ContactFilters({
     const next = new URLSearchParams(paramsRef.current.toString());
     if (value === null || value === "") next.delete(key);
     else next.set(key, value);
+    paramsRef.current = next;
     router.replace(`${pathname}?${next.toString()}`, { scroll: false });
   }
 
