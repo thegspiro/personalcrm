@@ -4,6 +4,8 @@ import { prisma } from "@/server/db/client";
 import {
   addPlainDays,
   calendarDateInTz,
+  comparePlainDates,
+  diffPlainDays,
   endOfDayInTz,
   plainDateFromDb,
   plainDateKey,
@@ -121,12 +123,21 @@ function cadenceWhere(user: Pick<ScheduledUser, "id">, schedule: Schedule, now: 
   };
 }
 
+/**
+ * A task's contact must belong to the same owner. The two are independent
+ * foreign keys, so a repaired or partially imported row can point at someone
+ * else's person; that name must never travel through this owner's channels.
+ */
+function taskContactWhere(user: Pick<ScheduledUser, "id">, schedule: Schedule) {
+  return { OR: [{ contactId: null }, { contact: { ownerId: user.id, ...visibleContact(schedule.locked) } }] };
+}
+
 function taskWhere(user: Pick<ScheduledUser, "id">, schedule: Schedule) {
   return {
     ownerId: user.id,
     completedAt: null,
     dueDate: { lte: plainDateToDb(schedule.today) },
-    OR: [{ contactId: null }, { contact: visibleContact(schedule.locked) }],
+    ...taskContactWhere(user, schedule),
   };
 }
 
@@ -205,15 +216,19 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
 }
 
 /**
- * Whether a failed delivery is still owed, and what it should say now.
+ * Whether a delivery is still owed, and what it should say now. Every send
+ * passes through here, first attempts and retries alike, once its row is held.
  *
  * Deliberately not "is it among today's candidates": a send that fails on the
  * last hourly pass of a day is first retried on the next day's, when the
  * occurrence is no longer due and would never match. Each policy instead
  * re-reads its own row and applies the same ownership, archive and privacy
  * rules it was created under, so a completed task, a corrected date, a
- * contact made private or a digest switched off cancels the retry — and
- * nothing else does.
+ * contact made private or a digest switched off cancels the delivery — and
+ * nothing else does. The one thing checked forwards rather than backwards is
+ * that the occurrence has arrived in the owner's timezone *as it is now*: a
+ * candidate read just after midnight in one zone is not yet due in a zone
+ * the owner moved to a moment later, and goes out when it is.
  */
 async function currentMessage(
   db: Db,
@@ -250,6 +265,7 @@ async function currentMessage(
         log.offsetDays,
       );
       if (!occurrence || plainDateKey(occurrence) !== plainDateKey(scheduled)) return null;
+      if (diffPlainDays(schedule.today, occurrence) > log.offsetDays) return NOT_YET;
       return importantDateMessage(date.label, personName(date.contact), occurrence, schedule.today);
     }
     case "OVERDUE_CADENCE": {
@@ -272,21 +288,18 @@ async function currentMessage(
         channelId: log.channelId,
       }) === log.dedupKey;
       if (!stillOwed) return null;
+      if (contact.nextTouchAt > endOfDayInTz(now, schedule.timezone)) return NOT_YET;
       return cadenceMessage(personName(contact), calendarDateInTz(contact.nextTouchAt, schedule.timezone));
     }
     case "INCOMPLETE_TASK_DUE": {
       const task = await db.task.findFirst({
-        where: {
-          id: log.entityId,
-          ownerId: user.id,
-          completedAt: null,
-          OR: [{ contactId: null }, { contact: visibleContact(schedule.locked) }],
-        },
+        where: { id: log.entityId, ownerId: user.id, completedAt: null, ...taskContactWhere(user, schedule) },
         include: { contact: CONTACT_NAME },
       });
       if (!task?.dueDate) return null;
       const dueDay = plainDateFromDb(task.dueDate);
       if (plainDateKey(dueDay) !== plainDateKey(scheduled)) return null;
+      if (comparePlainDates(dueDay, schedule.today) > 0) return NOT_YET;
       return taskMessage(task.title, task.contact ? personName(task.contact) : null, dueDay);
     }
     case "DAILY_DIGEST": {
@@ -365,6 +378,7 @@ async function createAndDeliver(
   channel: Channel,
   dedupKey: string,
   now: Date,
+  clock: () => Date,
 ): Promise<boolean | null> {
   let log;
   try {
@@ -378,7 +392,7 @@ async function createAndDeliver(
         scheduledFor: candidate.scheduledFor,
         offsetDays: candidate.offsetDays,
         channelId: channel.id,
-        nextAttemptAt: new Date(now.getTime() + CLAIM_LEASE_MS),
+        nextAttemptAt: new Date(clock().getTime() + CLAIM_LEASE_MS),
       },
     });
   } catch (error) {
@@ -423,11 +437,20 @@ async function createAndDeliver(
  * against the owner's current state before retrying them.
  */
 export async function processReminderDeliveries(
-  now = new Date(),
-  dependencies: { db?: Db; send?: typeof deliverToChannel } = {},
+  at?: Date,
+  dependencies: { db?: Db; send?: typeof deliverToChannel; clock?: () => Date } = {},
 ): Promise<{ sent: number; failed: number }> {
   const db = dependencies.db ?? prisma;
   const send = dependencies.send ?? deliverToChannel;
+  // `now` is the pass's one reading of the calendar, so every owner is judged
+  // against the same day. Leases are a different matter: a pass can run for
+  // minutes across many owners and channels, and a deadline stamped from its
+  // opening instant could already be spent by the time a row is written or
+  // claimed, letting another process take the row mid-send. Those come from
+  // the clock at the moment of the write. A test that fixes the pass time
+  // fixes the clock with it unless it says otherwise.
+  const now = at ?? new Date();
+  const clock = dependencies.clock ?? (at ? () => at : () => new Date());
   let sent = 0;
   let failed = 0;
 
@@ -470,7 +493,7 @@ export async function processReminderDeliveries(
     }
     for (const { candidate, channel, dedupKey } of pairs) {
       if (ledgered.has(dedupKey)) continue;
-      const result = await createAndDeliver(db, send, user, candidate, channel, dedupKey, now);
+      const result = await createAndDeliver(db, send, user, candidate, channel, dedupKey, now, clock);
       if (result === true) sent += 1;
       if (result === false) failed += 1;
     }
@@ -513,7 +536,7 @@ export async function processReminderDeliveries(
     // mid-send hands the row back, and one that is merely slow is not raced.
     const claimed = await db.reminderLog.updateMany({
       where: { id: log.id, ok: false, nextAttemptAt: log.nextAttemptAt },
-      data: { nextAttemptAt: new Date(now.getTime() + CLAIM_LEASE_MS) },
+      data: { nextAttemptAt: new Date(clock().getTime() + CLAIM_LEASE_MS) },
     });
     if (claimed.count === 0) continue;
     try {

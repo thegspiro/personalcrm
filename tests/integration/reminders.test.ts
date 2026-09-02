@@ -523,4 +523,74 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(await prisma.reminderLog.count()).toBe(1);
   });
+
+  it("stamps a lease from the moment the row is written, not from the start of the pass", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Slow pass", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async () => undefined);
+
+    // A pass that began at 09:00 reaches this row ten minutes in, and the
+    // process dies after the send. A lease stamped from the pass's start
+    // would already be spent, and a 09:06 pass could take the row mid-send.
+    const dying = withLedger({ update: () => Promise.reject(new Error("process died")) });
+    await expect(processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), {
+      db: dying, send, clock: () => new Date("2026-09-02T09:10:00Z"),
+    })).rejects.toThrow("process died");
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ nextAttemptAt: new Date("2026-09-02T09:15:00Z") });
+
+    await processImportantDateReminders(new Date("2026-09-02T09:06:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    await processImportantDateReminders(new Date("2026-09-02T09:16:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not send a first attempt before its day has arrived in a timezone chosen mid-pass", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Water the plants", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async () => undefined);
+
+    // Ten minutes into the 2nd in UTC the task is due; in Los Angeles it is
+    // still the evening of the 1st. The owner moves there as the row is written.
+    const create = prisma.reminderLog.create.bind(prisma.reminderLog);
+    const movingWest = withLedger({
+      create: async (args: Parameters<typeof create>[0]) => {
+        await prisma.userPreference.update({ where: { userId: user.id }, data: { timezone: "America/Los_Angeles" } });
+        return create(args);
+      },
+    });
+    await processImportantDateReminders(new Date("2026-09-02T00:10:00Z"), { db: movingWest, send });
+    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.count()).toBe(1);
+
+    // Still the 1st there at 22:00 local; due at the first pass on the 2nd.
+    await processImportantDateReminders(new Date("2026-09-02T05:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+    await processImportantDateReminders(new Date("2026-09-02T08:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.count()).toBe(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true });
+  });
+
+  it("never sends another owner's contact through a task that points at them", async () => {
+    const owner = await createTestUser();
+    const other = await createTestUser();
+    await prisma.userPreference.createMany({ data: [
+      { userId: owner.id, timezone: "UTC", digestEnabled: false },
+      { userId: other.id, timezone: "UTC", digestEnabled: false },
+    ] });
+    await prisma.notificationChannel.create({ data: { ownerId: owner.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    // The two foreign keys are independent, so a repaired or imported row can
+    // do this; the other owner's name must not leave through this owner's channel.
+    const strangers = await prisma.contact.create({ data: { ownerId: other.id, firstName: "Somebody", lastName: "Else" } });
+    await prisma.task.create({ data: { ownerId: owner.id, contactId: strangers.id, title: "Call them", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string) => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.count()).toBe(0);
+  });
 });

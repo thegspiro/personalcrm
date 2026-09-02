@@ -607,7 +607,11 @@ older composite delivery unique key remains as additional protection, and the
 scheduler reads the keys it already holds before inserting rather than
 treating a refused insert as the normal case. A retry is claimed with one
 conditional update before it is sent, for a lease longer than any delivery
-can take, so two overlapping processes cannot both deliver it. A row
+can take and stamped from the clock at the moment of the claim rather than
+the start of the pass, so two overlapping processes cannot both deliver it.
+Nothing is sent before its occurrence has arrived in the owner's timezone as
+it is at the moment of sending: a candidate read just after midnight in one
+zone waits if the owner has since moved to one where the day has not begun. A row
 cancelled while its reminder was ineligible is put back on the retry path if
 its reminder becomes a candidate again — a task reopened, a person made
 visible — rather than being skipped for ever under its key. `entityType`
