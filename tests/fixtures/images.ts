@@ -89,6 +89,12 @@ export const JPEG_TRUNCATED = JPEG_MINIMAL.slice(0, JPEG_MINIMAL.length - 2);
 /** The size field claims more bytes than the file holds. */
 export const WEBP_TRUNCATED = WEBP_MINIMAL.slice(0, WEBP_MINIMAL.length - 2);
 
+/** A header and a terminator with nothing between them: every chunk valid, no picture. */
+export const PNG_NO_DATA = Uint8Array.from([
+  ...PNG_TRANSPARENT.slice(0, 33),
+  ...PNG_TRANSPARENT.slice(PNG_TRANSPARENT.length - 12),
+]);
+
 /** A PNG whose header declares a width of zero. */
 export const PNG_ZERO_WIDTH = (() => {
   const bytes = Uint8Array.from(PNG_TRANSPARENT);

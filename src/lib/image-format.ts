@@ -50,10 +50,11 @@ function plausible(width: number, height: number): boolean {
   return width > 0 && height > 0 && width <= MAX_IMAGE_DIMENSION && height <= MAX_IMAGE_DIMENSION;
 }
 
-/** Chunks of length, type, data and CRC; IHDR first, IEND last and final. */
+/** Chunks of length, type, data and CRC; IHDR first, some IDAT, IEND last and final. */
 function pngIsWhole(bytes: Uint8Array): boolean {
   let at = PNG_SIGNATURE.length;
   let sawHeader = false;
+  let sawData = false;
   while (at + 12 <= bytes.length) {
     const length = u32be(bytes, at);
     const type = ascii(bytes, at + 4, at + 8);
@@ -63,8 +64,11 @@ function pngIsWhole(bytes: Uint8Array): boolean {
       if (type !== "IHDR" || length !== 13) return false;
       if (!plausible(u32be(bytes, at + 8), u32be(bytes, at + 12))) return false;
       sawHeader = true;
+    } else if (type === "IDAT") {
+      sawData = length > 0 || sawData;
     } else if (type === "IEND") {
-      return length === 0 && end === bytes.length;
+      // A header and a terminator with no pixels between them is not a picture.
+      return sawData && length === 0 && end === bytes.length;
     }
     at = end;
   }

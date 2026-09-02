@@ -3,6 +3,7 @@ import { inspectImage, MAX_IMAGE_DIMENSION } from "@/lib/image-format";
 import {
   JPEG_MINIMAL,
   JPEG_TRUNCATED,
+  PNG_NO_DATA,
   PNG_RED,
   PNG_SIGNATURE_ONLY,
   PNG_TRANSPARENT,
@@ -41,6 +42,10 @@ describe("inspectImage", () => {
     expect(inspectImage(PNG_TRUNCATED)).toEqual({ ok: false, reason: "incomplete" });
     expect(inspectImage(JPEG_TRUNCATED)).toEqual({ ok: false, reason: "incomplete" });
     expect(inspectImage(WEBP_TRUNCATED)).toEqual({ ok: false, reason: "incomplete" });
+  });
+
+  it("refuses a PNG with a header and a terminator but no image data", () => {
+    expect(inspectImage(PNG_NO_DATA)).toEqual({ ok: false, reason: "incomplete" });
   });
 
   it("refuses trailing bytes after the end of a PNG", () => {
