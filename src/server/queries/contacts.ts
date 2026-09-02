@@ -14,8 +14,10 @@ import {
   privacyScope,
   type PrivacyScope,
 } from "@/server/privacy/filter";
+import { addPlainDays, calendarDateInTz, zonedStartOfDay } from "@/lib/dates";
 
 export type ContactSort = "name" | "recent" | "overdue" | "added";
+export type ContactDueStatus = "actionable";
 
 export interface ContactListOptions {
   search?: string;
@@ -24,7 +26,9 @@ export interface ContactListOptions {
   scope?: "active" | "archived" | "all";
   romanticOnly?: boolean;
   favoritesOnly?: boolean;
-  overdueOnly?: boolean;
+  dueStatus?: ContactDueStatus;
+  /** Required for calendar-relative filters such as `dueStatus`. */
+  timezone?: string;
   sort?: ContactSort;
   take?: number;
   skip?: number;
@@ -64,7 +68,15 @@ function buildWhere(
   if (options.categoryId) where.categoryId = options.categoryId;
   if (options.romanticOnly) where.isRomantic = true;
   if (options.favoritesOnly) where.isFavorite = true;
-  if (options.overdueOnly) where.nextTouchAt = { lte: new Date() };
+  if (options.dueStatus === "actionable") {
+    if (!options.timezone) throw new Error("A timezone is required for the due-status filter.");
+    // cadenceStatus treats the whole account-local due date as overdue. Query
+    // through the start of tomorrow in that same timezone so a contact due
+    // later today is actionable too, without borrowing the server's calendar.
+    const tomorrow = addPlainDays(calendarDateInTz(new Date(), options.timezone), 1);
+    where.cadenceDays = { not: null };
+    where.nextTouchAt = { not: null, lt: zonedStartOfDay(tomorrow, options.timezone) };
+  }
 
   const search = options.search?.trim();
   if (search) {

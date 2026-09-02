@@ -50,7 +50,7 @@ function Empty({ children }: { children: React.ReactNode }) {
 
 export function OverdueWidget({ contacts }: { contacts: OverdueContact[] }) {
   return (
-    <WidgetShell title="Time to reach out" icon="BellRing" href="/people?sort=overdue" testId="widget-overdue">
+    <WidgetShell title="Time to reach out" icon="BellRing" href="/people?due=actionable&sort=overdue" testId="widget-overdue">
       {contacts.length === 0 ? (
         <Empty>Nobody&apos;s overdue. Nice.</Empty>
       ) : (

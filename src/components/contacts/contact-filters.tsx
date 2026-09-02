@@ -43,6 +43,7 @@ export function ContactFilters({
   const activeSort = params.get("sort") ?? "name";
   const showArchived = params.get("scope") === "archived";
   const showFavorites = params.get("favorites") === "1";
+  const showActionable = params.get("due") === "actionable";
 
   return (
     <div className="grid gap-2.5">
@@ -80,6 +81,12 @@ export function ContactFilters({
             {category.label}
           </FilterChip>
         ))}
+        <FilterChip
+          active={showActionable}
+          onClick={() => update("due", showActionable ? null : "actionable")}
+        >
+          Due now
+        </FilterChip>
         <FilterChip
           active={showFavorites}
           onClick={() => update("favorites", showFavorites ? null : "1")}
