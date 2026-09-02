@@ -375,4 +375,25 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(create).toHaveBeenCalledTimes(4);
     expect(send).toHaveBeenCalledTimes(4);
   });
+
+  it("lets exactly one of two overlapping schedulers send a retry", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Book the dentist", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async (): Promise<void> => { throw new Error("offline"); });
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+
+    // Both passes select the same due row; only the one whose claim lands sends.
+    send.mockImplementation(async () => undefined);
+    const later = new Date("2026-09-02T09:02:00Z");
+    await Promise.all([
+      processImportantDateReminders(later, { db: prisma, send }),
+      processImportantDateReminders(later, { db: prisma, send }),
+    ]);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(await prisma.reminderLog.count()).toBe(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true, attemptCount: 2, nextAttemptAt: null });
+  });
 });

@@ -417,6 +417,16 @@ export async function processReminderDeliveries(
       });
       continue;
     }
+    // Two processes can overlap — a rolling restart, or two replicas on one
+    // external database — and both will have selected this row. The unique
+    // key only guards the first delivery, so the retry is claimed the same
+    // way: one conditional update wins, the other sees nothing to claim. The
+    // claim is a lease, so a process that dies mid-send hands the row back.
+    const claimed = await db.reminderLog.updateMany({
+      where: { id: log.id, ok: false, nextAttemptAt: log.nextAttemptAt },
+      data: { nextAttemptAt: new Date(now.getTime() + FIRST_RETRY_MS) },
+    });
+    if (claimed.count === 0) continue;
     try {
       await send(log.channel, message.subject, message.body);
       await db.reminderLog.update({
