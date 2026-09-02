@@ -82,6 +82,13 @@ export function useAction() {
  * Wraps an add action so a successful submit collapses the panel. Leaving it
  * open with the typed text still sitting there makes the next click look like
  * it did nothing.
+ *
+ * The panel closes as soon as the create returns, not once the refresh has
+ * landed. An add panel shows no row that could go stale, so there is nothing
+ * to wait for — and waiting would leave a filled-in form with a live button
+ * on screen for the length of the refresh, where a second click creates the
+ * same thing twice. Editors are the other way round, and go through the
+ * deferred close in useAction.
  */
 export function useAddAction() {
   const run = useAction();
@@ -92,7 +99,7 @@ export function useAddAction() {
       message?: string,
     ) =>
       async (form: FormData) => {
-        await run(() => action(form), message, close);
+        if (await run(() => action(form), message)) close();
       },
     [run],
   );
