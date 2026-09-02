@@ -13,7 +13,7 @@ function render(tasks: TaskRow[]) {
 }
 
 describe("TasksWidget", () => {
-  it("gives a contact task one descriptive, keyboard-focusable route to its follow-ups", () => {
+  it("gives a contact task one descriptive, keyboard-focusable route to its tasks", () => {
     const html = render([
       {
         id: "task-1",
@@ -23,7 +23,7 @@ describe("TasksWidget", () => {
       },
     ]);
 
-    expect(html).toContain('href="/people/contact-1#follow-ups"');
+    expect(html).toContain('href="/people/contact-1#tasks"');
     expect(html).toContain('aria-label="Return the borrowed book — follow up with Avery Ng"');
     // One row, one native link: there is no nested or competing target for a
     // keyboard or screen-reader user to interpret.

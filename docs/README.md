@@ -56,7 +56,7 @@ packaged as one container with the database built in.
 | Family | `/family` | Households, relationship graph, generation banding, suggestions |
 | Dating | `/dating` | Optional layer; pipeline, date log, flags, comparison |
 | Ideas | `/ideas` | Conversation starters, and plans — things to do with someone |
-| Tasks | `/tasks` | Follow-ups |
+| Follow-ups | `/tasks` | Due contact cadences and manual tasks in separate sections |
 | Gifts | `/gifts` | Both directions |
 | Places | `/locations` | Venues shared by interactions and plans; who you saw there, what is planned, and an optional address lookup |
 | Settings | `/settings` | Look, Fields, Types, Home, Reminders, Quick add, Places, Privacy, App |

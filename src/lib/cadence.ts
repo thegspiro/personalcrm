@@ -47,6 +47,19 @@ export function daysUntilTouch(
   return diffPlainDays(calendarDateInTz(now, timeZone), calendarDateInTz(nextTouchAt, timeZone));
 }
 
+/**
+ * How a due date reads in a list: "3d overdue", "today", "in 4 days".
+ *
+ * Shared by the dashboard widget and the follow-up hub, which show the same
+ * people. Two copies of this drifted apart once already.
+ */
+export function dueLabel(daysUntilDue: number): string {
+  if (daysUntilDue < 0) return `${-daysUntilDue}d overdue`;
+  if (daysUntilDue === 0) return "today";
+  if (daysUntilDue === 1) return "tomorrow";
+  return `in ${daysUntilDue} days`;
+}
+
 export function cadenceStatus(
   nextTouchAt: Date | null | undefined,
   timeZone: string,
