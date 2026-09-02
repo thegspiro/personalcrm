@@ -65,12 +65,25 @@ test("the follow-up hub connects cadence reminders and manual tasks", async ({
     page.getByRole("heading", { name: person, level: 2 }),
   ).toBeVisible();
   await page.goto("/tasks#things-to-do");
-  const task = page.locator("li").filter({ hasText: taskTitle }).first();
-  await task.getByRole("button", { name: "Edit task" }).click();
-  await task.getByLabel("What do you need to do?").fill(`${taskTitle} today`);
-  await task.getByRole("button", { name: "Save", exact: true }).click();
+  // Editing replaces the whole row: the `li` carrying the title is swapped for
+  // one carrying the form, so a locator filtered on that title stops matching
+  // the moment the edit opens. Address the form from the page and re-resolve
+  // the row afterwards, as edit-entries.spec.ts does.
+  await page
+    .locator("li")
+    .filter({ hasText: taskTitle })
+    .first()
+    .getByRole("button", { name: "Edit task" })
+    .click();
+  await page.getByLabel("What do you need to do?").fill(`${taskTitle} today`);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText(`${taskTitle} today`)).toBeVisible();
-  await task.getByRole("checkbox", { name: "Toggle done" }).click();
+  await page
+    .locator("li")
+    .filter({ hasText: `${taskTitle} today` })
+    .first()
+    .getByRole("checkbox", { name: "Toggle done" })
+    .click();
 
   // The same destination is present in the phone overflow navigation and the
   // desktop sidebar; Playwright runs this spec in both responsive projects.
