@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dueOccurrence, effectiveReminderDays, parseReminderDays } from "@/lib/reminders";
-import { dailyOccurrence, digestIsDue, localClock, reminderDedupKey } from "@/lib/reminder-schedule";
+import { dailyOccurrence, digestIsDue, digestMessage, importantDateMessage, localClock, reminderDedupKey } from "@/lib/reminder-schedule";
 
 describe("reminder policies", () => {
   it("keeps account default, custom, and disabled distinct", () => {
@@ -67,5 +67,24 @@ describe("dueOccurrence", () => {
 
   it("does not match an unrelated day", () => {
     expect(dueOccurrence({ year: 2020, month: 12, day: 1 }, "ANNUAL", today, 7)).toBeNull();
+  });
+});
+
+describe("reminder wording", () => {
+  const today = { year: 2026, month: 9, day: 2 };
+
+  it("is written from the day it goes out, so a late retry does not promise a date already past", () => {
+    const say = (day: number) => importantDateMessage("Birthday", "Sam Jones", { year: 2026, month: 9, day }, today).body;
+    expect(say(2)).toBe("Birthday for Sam Jones is today (2026-09-02).");
+    expect(say(3)).toBe("Birthday for Sam Jones is tomorrow (2026-09-03).");
+    expect(say(9)).toBe("Birthday for Sam Jones is in 7 days (2026-09-09).");
+    expect(say(1)).toBe("Birthday for Sam Jones was yesterday (2026-09-01).");
+    expect(importantDateMessage("Birthday", "Sam Jones", { year: 2026, month: 8, day: 30 }, today).body)
+      .toBe("Birthday for Sam Jones was 3 days ago (2026-08-30).");
+  });
+
+  it("counts in the digest without mangling the singular", () => {
+    expect(digestMessage(1, 0).body).toBe("1 cadence reminder and 0 due tasks need attention today.");
+    expect(digestMessage(2, 1).body).toBe("2 cadence reminders and 1 due task need attention today.");
   });
 });

@@ -196,4 +196,99 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(send).toHaveBeenCalledTimes(2);
     expect(await prisma.reminderLog.count({ where: { nextAttemptAt: null, error: { contains: "cancelled" } } })).toBe(2);
   });
+
+  it("counts a cadence due later in the local day as due, like every other overdue reading", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "America/New_York", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    // 7pm and 1am (the next day) in New York.
+    await prisma.contact.create({ data: { ownerId: user.id, firstName: "Evening", nextTouchAt: new Date("2026-09-02T23:00:00Z") } });
+    await prisma.contact.create({ data: { ownerId: user.id, firstName: "Tomorrow", nextTouchAt: new Date("2026-09-03T05:00:00Z") } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string) => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T13:00:00Z"), { db: prisma, send }); // 9am
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][1]).toBe("Time to reach out to Evening");
+  });
+
+  it("keeps retrying a reminder after the day it was owed on has ended, worded for the day it goes out", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Sam" } });
+    await prisma.importantDate.create({ data: { ownerId: user.id, contactId: contact.id, label: "Birthday", date: new Date("2026-09-01T00:00:00Z"), recurrence: "NONE", reminderDaysBefore: [0] } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => { throw new Error("offline"); });
+
+    // The last pass of the day fails; the first pass of the next day is the retry.
+    await processImportantDateReminders(new Date("2026-09-01T23:30:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][2]).toBe("Birthday for Sam is today (2026-09-01).");
+
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T00:30:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][2]).toBe("Birthday for Sam was yesterday (2026-09-01).");
+    expect(await prisma.reminderLog.count()).toBe(1);
+    expect(await prisma.reminderLog.findFirst()).toMatchObject({ ok: true, attemptCount: 2, nextAttemptAt: null });
+  });
+
+  it("cancels a retry when the date it was for has since been corrected", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Sam" } });
+    const date = await prisma.importantDate.create({ data: { ownerId: user.id, contactId: contact.id, label: "Birthday", date: new Date("2026-09-01T00:00:00Z"), recurrence: "NONE", reminderDaysBefore: [0] } });
+    const send = vi.fn(async () => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-01T23:30:00Z"), { db: prisma, send });
+    await prisma.importantDate.update({ where: { id: date.id }, data: { date: new Date("2026-09-20T00:00:00Z") } });
+    await processImportantDateReminders(new Date("2026-09-02T00:30:00Z"), { db: prisma, send });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirst()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("cancelled") });
+  });
+
+  it("retries a digest within its day and drops it once the day has ended", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-02T22:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][1]).toBe("Your Personal CRM daily digest");
+
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T22:30:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(await prisma.reminderLog.findFirst({ where: { entityType: "DIGEST" } })).toMatchObject({ ok: true, attemptCount: 2 });
+
+    // The next day's failure is not retried on the day after: that digest is
+    // stale, and the day after's own digest is what goes out instead.
+    send.mockImplementation(async () => { throw new Error("offline"); });
+    await processImportantDateReminders(new Date("2026-09-03T23:30:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(3);
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-04T00:30:00Z"), { db: prisma, send }); // before the digest hour
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(await prisma.reminderLog.count({ where: { entityType: "DIGEST", ok: false, nextAttemptAt: null, error: { contains: "cancelled" } } })).toBe(1);
+  });
+
+  it("re-reads a retried digest's counts rather than resending what it first said", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send.mock.calls[0][2]).toBe("0 cadence reminders and 0 due tasks need attention today.");
+
+    await prisma.task.create({ data: { ownerId: user.id, title: "Call the plumber", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T09:30:00Z"), { db: prisma, send });
+    // The task itself, then the digest retry that now counts it.
+    const bodies = send.mock.calls.slice(1).map((call) => call[2]);
+    expect(bodies).toContain("Call the plumber was due 2026-09-02.");
+    expect(bodies).toContain("0 cadence reminders and 1 due task need attention today.");
+  });
 });

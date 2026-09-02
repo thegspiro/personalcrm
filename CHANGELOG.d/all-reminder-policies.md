@@ -5,9 +5,12 @@
 #### Added
 - **Cadence, due-task, and timezone-aware daily digest notifications.** Every
   configured channel now receives the reminders enabled for its owner, without
-  including archived or locked-private people.
+  including archived or locked-private people. A cadence counts as due for the
+  whole of its local day, the way the overdue list already reads it.
 
 #### Changed
 - **Reminder retries now re-check current state and privacy.** Completed tasks,
-  changed policies, archived people, and newly locked private content cancel a
-  queued retry, and every delivery has a durable policy-specific deduplication key.
+  corrected dates, changed policies, archived people, and newly locked private
+  content cancel a queued retry; one that still stands is sent even after the
+  day it was owed on, worded for the day it goes out. Every delivery has a
+  durable policy-specific deduplication key.

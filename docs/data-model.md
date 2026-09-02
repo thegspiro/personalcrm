@@ -598,15 +598,22 @@ per owner, derived from the entity, policy, occurrence, offset, and channel. The
 older composite delivery unique key remains as additional protection. `entityType`
 is a `ReminderEntity` (`IMPORTANT_DATE` | `CADENCE` | `TASK` | `DIGEST`). Failed
 sends retry with exponential delay up to five attempts. Before retrying, the
-engine re-runs the current policy and privacy-filtered owner query; completion,
-archival, locking private content, policy changes, or disabling digests cancels
-the stale delivery.
+engine re-reads the row's own entity under the same owner, archive and privacy
+rules it was created under — not today's candidate list, which a send that
+failed on the last pass of one day would never appear in on the first pass of
+the next. Completion, a corrected date, an interaction that moved a cadence on,
+archival, locking private content or a policy change cancels the retry; a
+retry that goes out is worded for the day it goes out on. A digest is the
+exception: within its day it is retried with its counts read afresh, and once
+its day has ended it is dropped rather than sent stale.
 
-Cadence rows use overdue `Contact.nextTouchAt`, task rows use an incomplete task's
-due date, and digest rows use the user's local calendar date. Digest scheduling
-uses `UserPreference.timezone`, `digestHour`, and `digestEnabled`; a late hourly
-pass catches up once, including after a skipped spring-forward hour, while the
-daily key suppresses a repeated fall-back hour.
+Cadence rows use `Contact.nextTouchAt` falling on or before the end of the
+owner's local day — the same reading as the overdue count and the People
+filter — task rows use an incomplete task's due date, and digest rows use the
+user's local calendar date. Digest scheduling uses `UserPreference.timezone`,
+`digestHour`, and `digestEnabled`, all three editable under Settings →
+Reminders; a late hourly pass catches up once, including after a skipped
+spring-forward hour, while the daily key suppresses a repeated fall-back hour.
 
 `channelId` is `SET NULL`, so deleting a channel keeps the record of what was
 already sent and cannot start it re-sending.
@@ -681,7 +688,7 @@ the `init-migrate` s6 oneshot).
 | `20260831205130_add_location_osm_reference` | Additive nullable `Location.osmType` and `osmId`, so a place can be tied to a real OpenStreetMap object |
 | `20260901120000_add_login_attempt_throttle` | Added `LoginAttempt`, a durable store for sign-in backoff counters. Superseded three commits later — see below |
 | `20260901191500_drop_login_attempt_table` | Drops it again. Both halves of its key came from whoever was knocking, which made it a store an attacker chose the size of; bounding it meant dropping records, and dropping records meant the throttle could be switched off by filling it. Sign-in throttling now lives in the process serving the request, in a structure of fixed size. The table held only ephemeral counters, so nothing is lost but whatever backoff was in flight at the upgrade |
-| `20260902120000_add_reminder_policy_and_dedup_key` | Adds and backfills an explicit scheduling policy and SHA-256 durable deduplication key for every existing reminder ledger row before making the key required and unique per owner |
+| `20260902120000_add_reminder_policy_and_dedup_key` | Adds and backfills an explicit scheduling policy and SHA-256 durable deduplication key for every existing reminder ledger row before making the key required and unique per owner. **Hand-edited**: the policy column's default exists only for the backfill and is dropped afterwards, and rows whose channel was since deleted fold in their own id, because the delivery key they derive from lets any number of `NULL` channels coexist |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).
