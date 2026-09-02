@@ -593,4 +593,65 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(send).not.toHaveBeenCalled();
     expect(await prisma.reminderLog.count()).toBe(0);
   });
+
+  it("never retries through a channel that belongs to another owner", async () => {
+    const owner = await createTestUser();
+    const other = await createTestUser();
+    await prisma.userPreference.createMany({ data: [
+      { userId: owner.id, timezone: "UTC", digestEnabled: false },
+      { userId: other.id, timezone: "UTC", digestEnabled: false },
+    ] });
+    const theirs = await prisma.notificationChannel.create({ data: { ownerId: other.id, kind: "WEBHOOK", name: "Theirs", config: { url: "https://example.invalid/theirs" } } });
+    const task = await prisma.task.create({ data: { ownerId: owner.id, title: "Renew the lease", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    // The ledger's owner and channel are independent keys; a repaired or
+    // imported row can point one owner's reminder at another's endpoint.
+    await prisma.reminderLog.create({ data: {
+      ownerId: owner.id, entityType: "TASK", entityId: task.id, schedulingPolicy: "INCOMPLETE_TASK_DUE",
+      dedupKey: "imported-row", scheduledFor: new Date("2026-09-02T00:00:00Z"), offsetDays: 0,
+      channelId: theirs.id, attemptCount: 1, nextAttemptAt: new Date("2026-09-02T08:00:00Z"), error: "offline",
+    } });
+    const send = vi.fn(async () => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("channel") });
+  });
+
+  it("does not send to a channel switched off between the candidate query and the send", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    const channel = await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Feed the cat", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async () => undefined);
+
+    const create = prisma.reminderLog.create.bind(prisma.reminderLog);
+    const switchingOff = withLedger({
+      create: async (args: Parameters<typeof create>[0]) => {
+        await prisma.notificationChannel.update({ where: { id: channel.id }, data: { isEnabled: false } });
+        return create(args);
+      },
+    });
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: switchingOff, send });
+    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("channel") });
+  });
+
+  it("schedules the retry after a failure from the clock at the failure", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Slow pass, failed send", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async (): Promise<void> => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), {
+      db: prisma, send, clock: () => new Date("2026-09-02T09:10:00Z"),
+    });
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ attemptCount: 1, nextAttemptAt: new Date("2026-09-02T09:11:00Z") });
+
+    // A second failure, reached twenty minutes into its pass, backs off from then.
+    await processImportantDateReminders(new Date("2026-09-02T09:12:00Z"), {
+      db: prisma, send, clock: () => new Date("2026-09-02T09:32:00Z"),
+    });
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ attemptCount: 2, nextAttemptAt: new Date("2026-09-02T09:34:00Z") });
+  });
 });
