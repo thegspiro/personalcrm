@@ -37,8 +37,17 @@ async function canonical(path: string): Promise<string> {
 }
 
 /**
- * Where avatar bytes live. Never under `public/`: everything there is served
- * as a static asset to anyone who knows the name, without the session, owner
+ * The directories Next serves as static files, relative to the working
+ * directory: `public/` at the site root, and the build output, whose
+ * `static/` subtree is served under `/_next/static`. The whole build
+ * directory is refused rather than just that subtree; nothing that is not
+ * ours to write belongs anywhere in it.
+ */
+const SERVED_ROOTS = ["public", ".next"];
+
+/**
+ * Where avatar bytes live. Never under a directory Next serves: everything
+ * there is handed to anyone who knows the name, without the session, owner
  * or privacy-lock checks the avatar route exists to apply — immediately in
  * development, and after the next restart in production. The documentation
  * says so; this is what makes it true.
@@ -49,11 +58,13 @@ async function canonical(path: string): Promise<string> {
  */
 export async function uploadsDirectory(): Promise<string> {
   const root = await canonical(resolve(process.env.UPLOADS_DIR?.trim() || "/config/uploads"));
-  const publicRoot = await canonical(resolve(process.cwd(), "public"));
-  if (root === publicRoot || root.startsWith(`${publicRoot}${sep}`)) {
-    throw new AvatarConfigurationError(
-      `UPLOADS_DIR must not be inside ${publicRoot}: files there are served without any access check.`,
-    );
+  for (const name of SERVED_ROOTS) {
+    const served = await canonical(resolve(process.cwd(), name));
+    if (root === served || root.startsWith(`${served}${sep}`)) {
+      throw new AvatarConfigurationError(
+        `UPLOADS_DIR must not be inside ${served}: files there are served without any access check.`,
+      );
+    }
   }
   return root;
 }

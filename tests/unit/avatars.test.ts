@@ -81,8 +81,9 @@ describe("avatar storage", () => {
     await expect(readAvatarFile("../secrets.json")).rejects.toThrow("Invalid avatar path");
   });
 
-  it("refuses an uploads directory beneath public/, where anything is served to anyone", async () => {
-    for (const inside of ["./public/uploads", "public", join(process.cwd(), "public", "avatars")]) {
+  it("refuses an uploads directory beneath anything Next serves", async () => {
+    // public/ at the site root, and the build output under /_next/static.
+    for (const inside of ["./public/uploads", "public", join(process.cwd(), "public", "avatars"), "./.next/static/avatars", ".next"]) {
       process.env.UPLOADS_DIR = inside;
       await expect(storeAvatar(new File([PNG_TRANSPARENT], "avatar.png"))).rejects.toBeInstanceOf(AvatarConfigurationError);
       await expect(readAvatarFile("0".repeat(32) + ".png")).rejects.toBeInstanceOf(AvatarConfigurationError);
