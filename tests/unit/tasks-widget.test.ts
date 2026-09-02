@@ -31,12 +31,14 @@ describe("TasksWidget", () => {
     expect(html).toContain("focus-visible:ring-2");
   });
 
-  it("routes a task without a contact to the addressable tasks view", () => {
+  it("routes a task without a contact past the people section, to the task list", () => {
     const html = render([
       { id: "task-2", title: "Renew membership", dueDate: null, contact: null },
     ]);
 
-    expect(html).toContain('href="/tasks"');
+    // Not bare "/tasks": the hub opens on "People to contact", which can run to
+    // a couple of hundred rows, leaving the task the reader clicked offscreen.
+    expect(html).toContain('href="/tasks#things-to-do"');
     expect(html).toContain('aria-label="Renew membership — view in Follow-ups"');
     expect(html).not.toContain("/people/");
   });

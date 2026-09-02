@@ -59,14 +59,30 @@ export function calendarDateInTz(instant: Date, timeZone: string): PlainDate {
 
 /**
  * The instant at which the given calendar day begins in `timeZone`.
+ *
  * Solved iteratively because the offset itself depends on the answer (DST).
+ * Two arithmetic guesses are enough to bracket the answer, but neither is
+ * reliably it: where the clocks jump over local midnight the day starts at the
+ * transition and 00:00 never happens, so the guesses land an hour apart with
+ * one of them on the previous day. Chile is the case that matters —
+ * 2026-09-06 in Santiago begins at 01:00 — and taking the wrong guess loses
+ * the last hour of the day before it from every query bounded by a day
+ * boundary. So take the earliest guess that actually falls on the day asked
+ * for, which also picks the first of the two midnights on a fall-back day.
  */
 export function zonedStartOfDay(date: PlainDate, timeZone: string): Date {
   const naive = Date.UTC(date.year, date.month - 1, date.day, 0, 0, 0, 0);
-  let guess = naive - tzOffsetMs(new Date(naive), timeZone);
-  // One correction pass resolves days where the offset changes at midnight.
-  guess = naive - tzOffsetMs(new Date(guess), timeZone);
-  return new Date(guess);
+  const first = naive - tzOffsetMs(new Date(naive), timeZone);
+  const second = naive - tzOffsetMs(new Date(first), timeZone);
+
+  for (const guess of first <= second ? [first, second] : [second, first]) {
+    const landed = calendarDateInTz(new Date(guess), timeZone);
+    if (landed.year === date.year && landed.month === date.month && landed.day === date.day) {
+      return new Date(guess);
+    }
+  }
+  // Unreachable for any real zone: one of the two brackets the transition.
+  return new Date(Math.max(first, second));
 }
 
 export function startOfDayInTz(instant: Date, timeZone: string): Date {

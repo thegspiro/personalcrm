@@ -24,6 +24,14 @@ export function ContactFilters({
 
   const [search, setSearch] = React.useState(params.get("q") ?? "");
 
+  // The debounced search below fires up to 250ms after the render that
+  // scheduled it. A chip clicked inside that window has already rewritten the
+  // URL, so building the next one from that render's snapshot would drop the
+  // filter the reader just chose — which is exactly what the due chips promise
+  // not to do. Read the live parameters at fire time instead.
+  const paramsRef = React.useRef(params);
+  paramsRef.current = params;
+
   // Debounced so typing doesn't fire a navigation per keystroke.
   React.useEffect(() => {
     const current = params.get("q") ?? "";
@@ -33,7 +41,7 @@ export function ContactFilters({
   }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function update(key: string, value: string | null) {
-    const next = new URLSearchParams(params.toString());
+    const next = new URLSearchParams(paramsRef.current.toString());
     if (value === null || value === "") next.delete(key);
     else next.set(key, value);
     router.replace(`${pathname}?${next.toString()}`, { scroll: false });

@@ -228,7 +228,7 @@ export function TasksWidget({ tasks }: { tasks: TaskRow[] }) {
           {tasks.map((task) => (
             <li key={task.id} className="min-w-0">
               <Link
-                href={task.contact ? `/people/${task.contact.id}#tasks` : "/tasks"}
+                href={task.contact ? `/people/${task.contact.id}#tasks` : "/tasks#things-to-do"}
                 aria-label={
                   task.contact
                     ? `${task.title} — follow up with ${displayName(task.contact)}`

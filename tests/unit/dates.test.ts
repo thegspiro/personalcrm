@@ -4,6 +4,7 @@ import {
   calendarDateInTz,
   clampPlainDate,
   diffPlainDays,
+  endOfDayInTz,
   nextOccurrence,
   parsePlainDate,
   plainDateFromDb,
@@ -51,6 +52,21 @@ describe("zonedStartOfDay", () => {
   it("handles the US fall-back day", () => {
     const start = zonedStartOfDay({ year: 2026, month: 11, day: 1 }, NY);
     expect(start.toISOString()).toBe("2026-11-01T04:00:00.000Z");
+  });
+
+  it("starts the day at the transition where the clocks jump over midnight", () => {
+    // Santiago moves to DST at 24:00 on 2026-09-05, so 00:00 on the 6th never
+    // happens and the day begins at 01:00. Answering 23:00 on the 5th — which
+    // the arithmetic guess does — loses the last hour of the 5th from every
+    // query bounded by a day boundary.
+    const start = zonedStartOfDay({ year: 2026, month: 9, day: 6 }, "America/Santiago");
+    expect(start.toISOString()).toBe("2026-09-06T04:00:00.000Z");
+  });
+
+  it("starts the day at the transition when the jump is at midnight itself", () => {
+    // Beirut goes straight from 00:00 to 01:00 on 2026-03-29.
+    const start = zonedStartOfDay({ year: 2026, month: 3, day: 29 }, "Asia/Beirut");
+    expect(start.toISOString()).toBe("2026-03-28T22:00:00.000Z");
   });
 
   it("round-trips through startOfDayInTz", () => {
@@ -314,5 +330,18 @@ describe("yearsBetween", () => {
 
   it("counts the birthday on the day itself", () => {
     expect(yearsBetween({ year: 1990, month: 6, day: 15 }, { year: 2026, month: 6, day: 15 })).toBe(36);
+  });
+});
+
+describe("endOfDayInTz", () => {
+  it("keeps the final second of a day the clocks jump out of", () => {
+    const end = endOfDayInTz(new Date("2026-09-05T20:00:00Z"), "America/Santiago");
+    // 23:59:59.999 local on the 5th, one millisecond before the 6th begins.
+    expect(end.toISOString()).toBe("2026-09-06T03:59:59.999Z");
+  });
+
+  it("covers a whole ordinary day", () => {
+    const end = endOfDayInTz(new Date("2026-07-15T18:45:00Z"), NY);
+    expect(end.toISOString()).toBe("2026-07-16T03:59:59.999Z");
   });
 });
