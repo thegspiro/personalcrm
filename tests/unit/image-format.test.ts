@@ -8,6 +8,9 @@ import {
   PNG_TRANSPARENT,
   PNG_TRUNCATED,
   PNG_ZERO_WIDTH,
+  WEBP_ANIMATED,
+  WEBP_ANIMATED_EMPTY_FRAME,
+  WEBP_ANIMATED_NO_FRAME,
   WEBP_BAD_SIGNATURE,
   WEBP_EXTENDED,
   WEBP_EXTENDED_EMPTY,
@@ -24,6 +27,7 @@ describe("inspectImage", () => {
     expect(inspectImage(WEBP_MINIMAL)).toEqual({ ok: true, format: "webp" });
     expect(inspectImage(WEBP_LOSSY)).toEqual({ ok: true, format: "webp" });
     expect(inspectImage(WEBP_EXTENDED)).toEqual({ ok: true, format: "webp" });
+    expect(inspectImage(WEBP_ANIMATED)).toEqual({ ok: true, format: "webp" });
   });
 
   it("tells a file that is not an image from one that is not all of an image", () => {
@@ -71,6 +75,9 @@ describe("inspectImage", () => {
     // An extended header with nothing after it passed the first version of this check.
     expect(inspectImage(WEBP_EXTENDED_EMPTY)).toEqual({ ok: false, reason: "incomplete" });
     expect(inspectImage(WEBP_BAD_SIGNATURE)).toEqual({ ok: false, reason: "incomplete" });
+    // An animation frame has to hold a picture of its own; its header alone is not one.
+    expect(inspectImage(WEBP_ANIMATED_NO_FRAME)).toEqual({ ok: false, reason: "incomplete" });
+    expect(inspectImage(WEBP_ANIMATED_EMPTY_FRAME)).toEqual({ ok: false, reason: "incomplete" });
 
     const noStartCode = Uint8Array.from(WEBP_LOSSY);
     noStartCode[23] = 0x00;

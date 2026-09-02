@@ -115,6 +115,12 @@ function u24le(bytes: Uint8Array, at: number): number {
 /** The header each kind of WebP bitstream chunk must open with, dimensions included. */
 function webpChunkIsWhole(kind: string, bytes: Uint8Array, at: number, size: number): boolean {
   switch (kind) {
+    case "ANMF": {
+      // An animation frame: a 16-byte header with the frame's size, then the
+      // frame's own bitstream chunks, which have to hold a picture themselves.
+      if (size < 16 || !plausible(u24le(bytes, at + 6) + 1, u24le(bytes, at + 9) + 1)) return false;
+      return webpChunksHoldImage(bytes, at + 16, at + size) === true;
+    }
     case "VP8 ":
       // A lossy key frame: three-byte frame tag, the start code, then 14-bit dimensions.
       return size >= 10 && bytes[at + 3] === 0x9d && bytes[at + 4] === 0x01 && bytes[at + 5] === 0x2a &&
@@ -134,34 +140,37 @@ function webpChunkIsWhole(kind: string, bytes: Uint8Array, at: number, size: num
 }
 
 /**
- * A RIFF whose declared size is the file's, whose chunks (each padded to an
- * even length) consume it exactly, whose first chunk is one of the three
- * WebP bitstream kinds with a header that parses, and which carries image
- * data somewhere: an extended file may open with VP8X and put the picture in
- * a later chunk, or in animation frames.
+ * Walks the chunks in `bytes[start, end)` — each padded to an even length,
+ * and together consuming the range exactly — checking every bitstream chunk's
+ * header. Returns whether a picture was found: a lossy or lossless bitstream,
+ * or an animation frame that holds one.
  */
-function webpIsWhole(bytes: Uint8Array): boolean {
-  if (bytes.length < 20 || u32le(bytes, 4) !== bytes.length - 8) return false;
-  let at = 12;
-  let first = true;
-  let extended = false;
+function webpChunksHoldImage(bytes: Uint8Array, start: number, end: number): boolean | null {
+  let at = start;
   let sawImage = false;
-  while (at + 8 <= bytes.length) {
+  while (at + 8 <= end) {
     const kind = ascii(bytes, at, at + 4);
     const size = u32le(bytes, at + 4);
     const next = at + 8 + size + (size & 1);
-    if (next > bytes.length) return false;
-    if (first) {
-      if (kind !== "VP8 " && kind !== "VP8L" && kind !== "VP8X") return false;
-      extended = kind === "VP8X";
-      first = false;
-    }
-    if (!webpChunkIsWhole(kind, bytes, at + 8, size)) return false;
+    if (next > end) return null;
+    if (!webpChunkIsWhole(kind, bytes, at + 8, size)) return null;
     if (kind === "VP8 " || kind === "VP8L" || kind === "ANMF") sawImage = true;
     at = next;
   }
-  if (at !== bytes.length || first) return false;
-  return extended ? sawImage : true;
+  return at === end ? sawImage : null;
+}
+
+/**
+ * A RIFF whose declared size is the file's, whose chunks consume it exactly,
+ * whose first chunk is one of the three WebP bitstream kinds with a header
+ * that parses, and which carries a picture somewhere: an extended file opens
+ * with VP8X and puts the picture in a later chunk, or in animation frames.
+ */
+function webpIsWhole(bytes: Uint8Array): boolean {
+  if (bytes.length < 20 || u32le(bytes, 4) !== bytes.length - 8) return false;
+  const first = ascii(bytes, 12, 16);
+  if (first !== "VP8 " && first !== "VP8L" && first !== "VP8X") return false;
+  return webpChunksHoldImage(bytes, 12, bytes.length) === true;
 }
 
 export function inspectImage(bytes: Uint8Array): ImageInspection {

@@ -56,6 +56,26 @@ export const WEBP_EXTENDED = riff(["VP8X", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]], ["VP
 /** Size-consistent, correctly named, and holding no picture at all: what the first check accepted. */
 export const WEBP_EXTENDED_EMPTY = riff(["VP8X", []]);
 
+/** Sixteen bytes of animation-frame header for a 1×1 frame at the origin. */
+const ANMF_HEADER = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0, 0];
+
+/** An animated WebP: the extended header, then one frame holding a lossless picture. */
+export const WEBP_ANIMATED = riff(
+  ["VP8X", [0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
+  ["ANIM", [0, 0, 0, 0, 0, 0]],
+  ["ANMF", [...ANMF_HEADER, ...Buffer.from("VP8L"), 5, 0, 0, 0, ...VP8L_1x1, 0]],
+);
+
+/** An animation frame with no picture in it: a frame header alone is not a frame. */
+export const WEBP_ANIMATED_EMPTY_FRAME = riff(
+  ["VP8X", [0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
+  ["ANIM", [0, 0, 0, 0, 0, 0]],
+  ["ANMF", ANMF_HEADER],
+);
+
+/** What the second version of the check accepted: a frame chunk with nothing in it at all. */
+export const WEBP_ANIMATED_NO_FRAME = riff(["VP8X", [0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0]], ["ANMF", []]);
+
 /** A lossless chunk whose signature byte is wrong. */
 export const WEBP_BAD_SIGNATURE = riff(["VP8L", [0x2e, 0x00, 0x00, 0x00, 0x00]]);
 
