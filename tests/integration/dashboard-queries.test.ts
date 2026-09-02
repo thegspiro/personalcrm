@@ -54,7 +54,7 @@ describe.skipIf(!hasTestDatabase)("cadence query day boundary", () => {
     const [dashboard, stats, people] = await Promise.all([
       getOverdueContacts(ownerId, TZ),
       getStats(ownerId, TZ),
-      listContacts(ownerId, { overdueOnly: true, sort: "overdue" }, TZ),
+      listContacts(ownerId, { dueStatus: "actionable", sort: "overdue" }, TZ),
     ]);
 
     // The widget deliberately reaches past today into the due-soon window, so

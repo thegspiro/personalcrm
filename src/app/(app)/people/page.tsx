@@ -9,13 +9,14 @@ import { ListCapNotice } from "@/components/ui/list-cap-notice";
 import { getUserContext } from "@/server/user/context";
 import { offlineCacheable } from "@/server/privacy/offline";
 import { CacheThisPage } from "@/components/offline/offline";
-import { listContacts, type ContactSort } from "@/server/queries/contacts";
+import { listContacts, type ContactDueStatus, type ContactSort } from "@/server/queries/contacts";
 import { listTerms } from "@/server/taxonomy/queries";
 
 export const metadata: Metadata = { title: "People" };
 export const dynamic = "force-dynamic";
 
 const SORTS = new Set<ContactSort>(["name", "recent", "overdue", "added"]);
+const DUE_STATUSES = new Set<ContactDueStatus>(["actionable", "soon"]);
 
 export default async function PeoplePage({
   searchParams,
@@ -33,6 +34,11 @@ export default async function PeoplePage({
 
   const sortParam = first("sort");
   const sort = sortParam && SORTS.has(sortParam as ContactSort) ? (sortParam as ContactSort) : "name";
+  const dueParam = first("due");
+  const dueStatus =
+    dueParam && DUE_STATUSES.has(dueParam as ContactDueStatus)
+      ? (dueParam as ContactDueStatus)
+      : undefined;
 
   const [categories, { items, total }] = await Promise.all([
     listTerms(user.id, "CONTACT_CATEGORY"),
@@ -41,13 +47,13 @@ export default async function PeoplePage({
       categoryId: first("category"),
       scope: first("scope") === "archived" ? "archived" : "active",
       favoritesOnly: first("favorites") === "1",
-      overdueOnly: sort === "overdue",
+      dueStatus,
       sort,
     }, timezone),
   ]);
 
   const isFiltered = Boolean(
-    first("q") || first("category") || first("scope") || first("favorites"),
+    first("q") || first("category") || first("scope") || first("favorites") || dueStatus,
   );
 
   return (

@@ -88,7 +88,7 @@ export function OverdueWidget({ contacts }: { contacts: OverdueContact[] }) {
   );
 
   return (
-    <WidgetShell title="Time to reach out" icon="BellRing" href="/people?sort=overdue" testId="widget-overdue">
+    <WidgetShell title="Time to reach out" icon="BellRing" href="/people?due=soon&sort=overdue" testId="widget-overdue">
       {contacts.length === 0 ? (
         <Empty>Nobody is due now or soon. Nice.</Empty>
       ) : (
