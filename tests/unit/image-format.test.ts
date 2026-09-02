@@ -5,8 +5,11 @@ import {
   JPEG_MINIMAL,
   JPEG_NO_SCAN,
   JPEG_TRUNCATED,
+  PNG_JUNK_DATA,
   PNG_NO_DATA,
   PNG_RED,
+  PNG_SHORT_STREAM,
+  PNG_SPLIT_DATA,
   PNG_SIGNATURE_ONLY,
   PNG_TRANSPARENT,
   PNG_TRUNCATED,
@@ -48,6 +51,15 @@ describe("inspectImage", () => {
 
   it("refuses a PNG with a header and a terminator but no image data", () => {
     expect(inspectImage(PNG_NO_DATA)).toEqual({ ok: false, reason: "incomplete" });
+  });
+
+  it("requires a PNG's data to inflate to exactly the picture its header describes", () => {
+    // A byte of filler is a well-formed chunk and not a zlib stream.
+    expect(inspectImage(PNG_JUNK_DATA)).toEqual({ ok: false, reason: "incomplete" });
+    // A real stream, but a scanline short.
+    expect(inspectImage(PNG_SHORT_STREAM)).toEqual({ ok: false, reason: "incomplete" });
+    // The stream may be split across chunks; decoders join them, so does this.
+    expect(inspectImage(PNG_SPLIT_DATA)).toEqual({ ok: true, format: "png" });
   });
 
   it("refuses trailing bytes after the end of a PNG", () => {

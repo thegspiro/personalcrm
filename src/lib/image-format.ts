@@ -10,6 +10,8 @@
  * fails is certainly not a complete one.
  */
 
+import { inflateSync } from "node:zlib";
+
 export type ImageFormat = "jpg" | "png" | "webp";
 
 export type ImageInspection =
@@ -19,6 +21,9 @@ export type ImageInspection =
 
 /** No avatar needs more; a header asking for more is a damaged file, not a large one. */
 export const MAX_IMAGE_DIMENSION = 16_384;
+
+/** The most a PNG's pixel data may inflate to: 4096×4096 at four bytes a pixel. */
+export const MAX_PNG_RAW_BYTES = 64 * 1024 * 1024;
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -50,25 +55,69 @@ function plausible(width: number, height: number): boolean {
   return width > 0 && height > 0 && width <= MAX_IMAGE_DIMENSION && height <= MAX_IMAGE_DIMENSION;
 }
 
-/** Chunks of length, type, data and CRC; IHDR first, some IDAT, IEND last and final. */
+const PNG_CHANNELS: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
+const PNG_DEPTHS: Record<number, number[]> = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };
+/** Adam7: the origin and step of each interlace pass. */
+const ADAM7 = [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4], [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]];
+
+/**
+ * How many bytes the pixel data must inflate to: one filter byte and the
+ * packed samples per scanline, over every scanline — or, interlaced, over
+ * every scanline of each of the seven passes. Null for a header that
+ * describes no PNG at all.
+ */
+function pngRawSize(width: number, height: number, depth: number, colorType: number, interlace: number): number | null {
+  const channels = PNG_CHANNELS[colorType];
+  if (channels === undefined || !PNG_DEPTHS[colorType].includes(depth)) return null;
+  const bitsPerPixel = channels * depth;
+  const rowBytes = (w: number) => Math.ceil((w * bitsPerPixel) / 8) + 1;
+  if (interlace === 0) return height * rowBytes(width);
+  if (interlace !== 1) return null;
+  let total = 0;
+  for (const [x, y, xStep, yStep] of ADAM7) {
+    const passWidth = width > x ? Math.ceil((width - x) / xStep) : 0;
+    const passHeight = height > y ? Math.ceil((height - y) / yStep) : 0;
+    if (passWidth > 0 && passHeight > 0) total += passHeight * rowBytes(passWidth);
+  }
+  return total;
+}
+
+/**
+ * Chunks of length, type, data and CRC; IHDR first, IEND last and final, and
+ * between them IDAT chunks whose concatenated payload is a zlib stream that
+ * inflates to exactly the picture the header describes. That is the one
+ * place this file goes beyond structure: a byte or two of filler is a
+ * well-formed IDAT chunk, and only inflating it tells it from a picture.
+ * The output is capped, so a stream that claims more than an avatar could
+ * hold is refused rather than unpacked.
+ */
 function pngIsWhole(bytes: Uint8Array): boolean {
   let at = PNG_SIGNATURE.length;
-  let sawHeader = false;
-  let sawData = false;
+  let rawSize: number | null = null;
+  const data: Uint8Array[] = [];
   while (at + 12 <= bytes.length) {
     const length = u32be(bytes, at);
     const type = ascii(bytes, at + 4, at + 8);
     const end = at + 12 + length;
     if (end > bytes.length) return false;
-    if (!sawHeader) {
+    if (rawSize === null) {
       if (type !== "IHDR" || length !== 13) return false;
-      if (!plausible(u32be(bytes, at + 8), u32be(bytes, at + 12))) return false;
-      sawHeader = true;
+      const width = u32be(bytes, at + 8);
+      const height = u32be(bytes, at + 12);
+      // Bit depth, colour type, then compression and filter methods, which
+      // have only ever had one value each, then the interlace method.
+      if (!plausible(width, height) || bytes[at + 18] !== 0 || bytes[at + 19] !== 0) return false;
+      rawSize = pngRawSize(width, height, bytes[at + 16], bytes[at + 17], bytes[at + 20]);
+      if (rawSize === null || rawSize > MAX_PNG_RAW_BYTES) return false;
     } else if (type === "IDAT") {
-      sawData = length > 0 || sawData;
+      data.push(bytes.subarray(at + 8, at + 8 + length));
     } else if (type === "IEND") {
-      // A header and a terminator with no pixels between them is not a picture.
-      return sawData && length === 0 && end === bytes.length;
+      if (length !== 0 || end !== bytes.length || data.length === 0) return false;
+      try {
+        return inflateSync(Buffer.concat(data), { maxOutputLength: rawSize }).length === rawSize;
+      } catch {
+        return false;
+      }
     }
     at = end;
   }
