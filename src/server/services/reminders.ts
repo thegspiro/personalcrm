@@ -71,7 +71,7 @@ type ScheduledUser = UserSchedule & { preference: NonNullable<UserSchedule["pref
 /** The owner's clock, as every policy sees it. */
 type Schedule = { timezone: string; locked: boolean; today: PlainDate };
 
-function scheduleFor(user: ScheduledUser, now: Date): Schedule {
+function scheduleFor(user: Pick<ScheduledUser, "preference">, now: Date): Schedule {
   const timezone = user.preference.timezone || DEFAULT_TIMEZONE;
   return {
     timezone,
@@ -113,7 +113,7 @@ const CONTACT_NAME = { select: { firstName: true, lastName: true } } as const;
  * instant `nextTouchAt` happens to hold, which for someone last seen in the
  * evening would keep the reminder until that evening comes round.
  */
-function cadenceWhere(user: ScheduledUser, schedule: Schedule, now: Date) {
+function cadenceWhere(user: Pick<ScheduledUser, "id">, schedule: Schedule, now: Date) {
   return {
     ownerId: user.id,
     ...visibleContact(schedule.locked),
@@ -121,7 +121,7 @@ function cadenceWhere(user: ScheduledUser, schedule: Schedule, now: Date) {
   };
 }
 
-function taskWhere(user: ScheduledUser, schedule: Schedule) {
+function taskWhere(user: Pick<ScheduledUser, "id">, schedule: Schedule) {
   return {
     ownerId: user.id,
     completedAt: null,
@@ -217,7 +217,7 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
  */
 async function currentMessage(
   db: Db,
-  user: ScheduledUser,
+  user: Pick<ScheduledUser, "id" | "preference">,
   log: {
     entityType: ReminderEntity;
     entityId: string;
@@ -396,17 +396,13 @@ export async function processReminderDeliveries(
   let sent = 0;
   let failed = 0;
 
+  const PREFERENCE = {
+    select: { timezone: true, privacyLockEnabled: true, digestEnabled: true, digestHour: true },
+  } as const;
   const users = await db.user.findMany({
     where: { isActive: true },
-    select: {
-      id: true,
-      preference: {
-        select: { timezone: true, privacyLockEnabled: true, digestEnabled: true, digestHour: true },
-      },
-      notificationChannels: { where: { isEnabled: true } },
-    },
+    select: { id: true, preference: PREFERENCE, notificationChannels: { where: { isEnabled: true } } },
   });
-  const usersById = new Map(users.map((user) => [user.id, user]));
 
   for (const user of users) {
     if (!hasPreferences(user) || user.notificationChannels.length === 0) continue;
@@ -460,11 +456,19 @@ export async function processReminderDeliveries(
   });
   for (const log of retries) {
     if (!log.channel) continue;
-    const user = usersById.get(log.ownerId);
+    // Read the owner afresh rather than from the pass's opening snapshot:
+    // the candidate loops above can take minutes across many channels, and
+    // a lock switched on in that time has to bind the retry that follows.
+    const owner = await db.user.findUnique({
+      where: { id: log.ownerId, isActive: true },
+      select: { id: true, preference: PREFERENCE },
+    });
     // An owner with no preference row is left alone, row included; one who
     // is no longer active has nothing owed.
-    if (user && !hasPreferences(user)) continue;
-    const message = user ? await currentMessage(db, user, log, now) : null;
+    if (owner && owner.preference === null) continue;
+    const message = owner?.preference
+      ? await currentMessage(db, { id: owner.id, preference: owner.preference }, log, now)
+      : null;
     if (message === NOT_YET) continue;
     if (!message) {
       // Policy, state or privacy changes cancel queued delivery rather than

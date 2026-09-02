@@ -465,4 +465,33 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(await prisma.reminderLog.count()).toBe(1);
     expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true, attemptCount: 2 });
   });
+
+  it("honours a lock switched on during the pass, before a retry is sent", async () => {
+    const user = await createTestUser();
+    await prisma.user.update({ where: { id: user.id }, data: { privacyPinHash: "pin" } });
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", privacyLockEnabled: false, digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Secret", isPrivate: true } });
+    await prisma.task.create({ data: { ownerId: user.id, contactId: contact.id, title: "Private errand", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async (): Promise<void> => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+
+    // The lock goes on after the pass has read its owners and before it
+    // reaches the retries — which is where the retry query is the seam.
+    const findMany = prisma.reminderLog.findMany.bind(prisma.reminderLog);
+    const lockingMidPass = withLedger({
+      findMany: async (args: Parameters<typeof findMany>[0]) => {
+        if (args?.where && "ok" in args.where) {
+          await prisma.userPreference.update({ where: { userId: user.id }, data: { privacyLockEnabled: true } });
+        }
+        return findMany(args);
+      },
+    });
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: lockingMidPass, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("cancelled") });
+  });
 });
