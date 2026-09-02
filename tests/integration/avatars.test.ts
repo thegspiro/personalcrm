@@ -1,8 +1,9 @@
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
+import { PNG_RED, PNG_TRANSPARENT } from "../fixtures/images";
 
 const state = vi.hoisted(() => ({ ownerId: "", enabled: false, unlocked: true }));
 
@@ -17,7 +18,7 @@ vi.mock("@/server/privacy/lock", () => ({
 }));
 
 const { deleteContact, updateContact } = await import("@/server/actions/contacts");
-const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
+const PNG = PNG_TRANSPARENT;
 
 function edit(id: string, avatar?: File, remove = false): FormData {
   const data = new FormData();
@@ -69,14 +70,26 @@ describe.skipIf(!hasTestDatabase)("avatar actions", () => {
     const first = await prisma.contact.findUniqueOrThrow({ where: { id: contactId } });
     expect(await readdir(directory)).toHaveLength(1);
 
-    expect((await updateContact(edit(contactId, new File([Uint8Array.from([...PNG, 2])], "second.png")))).ok).toBe(true);
+    expect((await updateContact(edit(contactId, new File([PNG_RED], "second.png")))).ok).toBe(true);
     const second = await prisma.contact.findUniqueOrThrow({ where: { id: contactId } });
     expect(second.avatarPath).not.toBe(first.avatarPath);
-    expect(await readdir(directory)).toHaveLength(1);
+    const [onlyFile] = await readdir(directory);
+    expect(new Uint8Array(await readFile(join(directory, onlyFile)))).toEqual(PNG_RED);
 
     expect((await updateContact(edit(contactId, undefined, true))).ok).toBe(true);
     expect((await prisma.contact.findUniqueOrThrow({ where: { id: contactId } })).avatarPath).toBeNull();
     expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("keeps the current avatar when the replacement is not a whole image", async () => {
+    expect((await updateContact(edit(contactId, new File([PNG], "first.png")))).ok).toBe(true);
+    const before = await prisma.contact.findUniqueOrThrow({ where: { id: contactId } });
+
+    const result = await updateContact(edit(contactId, new File([PNG.slice(0, 20)], "broken.png")));
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/incomplete or damaged/);
+    expect((await prisma.contact.findUniqueOrThrow({ where: { id: contactId } })).avatarPath).toBe(before.avatarPath);
+    expect(await readdir(directory)).toHaveLength(1);
   });
 
   it("cleans the avatar after deleting its contact", async () => {

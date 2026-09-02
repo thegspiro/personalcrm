@@ -75,7 +75,7 @@ DATABASE_URL=mysql://user:password@dbhost:3306/personalcrm
 | Path | Contents |
 | --- | --- |
 | `db/` | MariaDB data directory |
-| `uploads/` | Avatars and photos — nothing writes here yet |
+| `uploads/` | Contact avatars — back it up with the database |
 | `backups/` | Reserved for database dumps — nothing writes here yet, see [backing up](docs/backup.md) |
 | `logs/` | MariaDB error log |
 | `secrets.json` | Generated on first boot — session signing key and database password |

@@ -81,6 +81,9 @@ export async function createContact(form: FormData): Promise<ActionResult<{ id: 
       storedAvatar = await storeAvatar(avatar);
     } catch (error) {
       if (error instanceof AvatarValidationError) return fail(error.message);
+      // A misconfigured UPLOADS_DIR or a full volume: the operator's to fix,
+      // so it is logged where they look rather than shown where they don't.
+      console.error("Unable to store an avatar", error);
       return fail("The avatar could not be stored.");
     }
   }
@@ -168,6 +171,9 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
       storedAvatar = await storeAvatar(avatar);
     } catch (error) {
       if (error instanceof AvatarValidationError) return fail(error.message);
+      // A misconfigured UPLOADS_DIR or a full volume: the operator's to fix,
+      // so it is logged where they look rather than shown where they don't.
+      console.error("Unable to store an avatar", error);
       return fail("The avatar could not be stored.");
     }
   }

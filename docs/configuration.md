@@ -16,7 +16,7 @@ Everything the app reads from its environment, and everything it keeps on disk.
 | `PUID` / `PGID` | `99` / `100` | No | Unraid's `nobody:users`. `/config` is chowned to this |
 | `PORT` / `HOSTNAME` | `3000` / `0.0.0.0` | No | Set in the image |
 | `APP_VERSION` | `dev` | No | Reported by `/api/health` |
-| `UPLOADS_DIR` | `/config/uploads` | No | Server-only avatar storage. For a bare install, set this to a persistent directory writable by the app; it must not be inside `public/` |
+| `UPLOADS_DIR` | `/config/uploads` | No | Server-only avatar storage. For a bare install, set this to a persistent directory writable by the app. A path inside `public/` is refused — everything there is served as a static asset to anyone who knows the name — so an upload fails and is logged rather than published |
 
 ### Optional assisted reading
 

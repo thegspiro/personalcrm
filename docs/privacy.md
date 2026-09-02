@@ -365,8 +365,13 @@ URL requires a session, an owner-scoped contact reference, and visibility under
 the live privacy lock before the handler reads from `UPLOADS_DIR`. Responses
 are `private, no-store`, and the service worker never caches API responses.
 
-JPEG, PNG, and WebP uploads are signature-checked and limited to 2 MB. Client
-filenames, extensions, and MIME headers never become filesystem paths.
+JPEG, PNG, and WebP uploads are limited to 2 MB and checked for being a whole
+file of the format their bytes claim — header, plausible dimensions, and the
+terminator at the very end — so a truncated upload is refused rather than
+published in place of the avatar it was meant to replace. Nothing is decoded.
+Client filenames, extensions, and MIME headers never become filesystem paths,
+and `UPLOADS_DIR` may not point inside `public/`, where the route's checks
+would not apply.
 Replacement publishes validated new bytes and commits their generated path
 before obsolete bytes are removed; removal and contact deletion clear/delete
 the database row before unlinking. An I/O failure may therefore leave harmless
