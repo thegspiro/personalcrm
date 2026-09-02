@@ -636,27 +636,56 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("channel") });
   });
 
-  it("cancels a queued retry whose channel is switched off, rather than holding it until the channel returns", async () => {
+  it("cancels a queued retry whose channel is switched off, and sends it again only if still due when the channel returns", async () => {
     const user = await createTestUser();
     await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
-    const channel = await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" }, isEnabled: false } });
-    const task = await prisma.task.create({ data: { ownerId: user.id, title: "Return the book", dueDate: new Date("2026-09-02T00:00:00Z") } });
-    await prisma.reminderLog.create({ data: {
-      ownerId: user.id, entityType: "TASK", entityId: task.id, schedulingPolicy: "INCOMPLETE_TASK_DUE",
-      dedupKey: "failed-before-the-channel-was-switched-off", scheduledFor: new Date("2026-09-02T00:00:00Z"), offsetDays: 0,
-      channelId: channel.id, attemptCount: 1, nextAttemptAt: new Date("2026-09-02T08:00:00Z"), error: "offline",
-    } });
-    const send = vi.fn(async () => undefined);
+    const channel = await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Return the book", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async (): Promise<void> => undefined);
 
-    // Off before the pass: the row must still be selected so it can be cancelled.
+    // A real row with the scheduler's own key: the first attempt fails.
+    send.mockRejectedValueOnce(new Error("offline"));
     await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
-    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, attemptCount: 1, nextAttemptAt: new Date("2026-09-02T09:01:00Z") });
+
+    // Switched off before the retry is due: the row is cancelled, not held.
+    await prisma.notificationChannel.update({ where: { id: channel.id }, data: { isEnabled: false } });
+    await processImportantDateReminders(new Date("2026-09-02T09:05:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
     expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("channel") });
 
-    // Switching the channel back on does not revive it.
+    // Switched on again while the task is still due: a candidate once more,
+    // so the same row is re-armed and sent — as it would be had the first
+    // attempt never happened — and no second row is written for it.
     await prisma.notificationChannel.update({ where: { id: channel.id }, data: { isEnabled: true } });
     await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
-    expect(send).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(await prisma.reminderLog.findMany()).toHaveLength(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true, nextAttemptAt: null, error: null });
+
+    // And once only.
+    await processImportantDateReminders(new Date("2026-09-02T11:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves a channel-cancelled row cancelled when the channel returns after its reminder stopped being due", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    const channel = await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const task = await prisma.task.create({ data: { ownerId: user.id, title: "Return the book", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async (): Promise<void> => undefined);
+    send.mockRejectedValueOnce(new Error("offline"));
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    await prisma.notificationChannel.update({ where: { id: channel.id }, data: { isEnabled: false } });
+    await processImportantDateReminders(new Date("2026-09-02T09:05:00Z"), { db: prisma, send });
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("channel") });
+
+    // The task is done before the channel comes back: nothing is owed.
+    await prisma.task.update({ where: { id: task.id }, data: { completedAt: new Date("2026-09-02T09:30:00Z") } });
+    await prisma.notificationChannel.update({ where: { id: channel.id }, data: { isEnabled: true } });
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null });
   });
 
   it("schedules the retry after a failure from the clock at the failure", async () => {

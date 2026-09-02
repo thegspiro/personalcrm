@@ -531,8 +531,11 @@ export async function processReminderDeliveries(
     },
   });
   // Not filtered by the channel's state: a retry whose channel is off must be
-  // selected so the check after the claim can cancel it. Left in the queue,
-  // it would go out the hour the channel was switched back on.
+  // selected so the check after the claim can cancel it, rather than being
+  // re-read every hour for nothing. Cancelled, it is treated like any other
+  // cancelled row — put back on the retry path only if its reminder is a
+  // candidate again on that channel, which is what the channel's return
+  // makes true for whatever is still due, and for nothing else.
   for (const log of retries) {
     if (!log.channelId) continue;
     const owner = await currentOwner(db, log.ownerId);
