@@ -65,8 +65,8 @@ export const WIDGET_REGISTRY: Record<WidgetId, WidgetDefinition> = {
   },
   "open-tasks": {
     id: "open-tasks",
-    title: "Follow-ups",
-    description: "Open tasks, soonest due first.",
+    title: "Things to do",
+    description: "Manual tasks, soonest due first.",
     icon: "CircleCheck",
     defaultEnabled: true,
     defaultSettings: { limit: 8 },

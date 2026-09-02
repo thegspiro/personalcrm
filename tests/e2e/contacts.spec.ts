@@ -155,7 +155,7 @@ test("record a fact and a follow-up", async ({ page }) => {
   await facts.getByRole("button", { name: "Add", exact: true }).click();
   await expect(facts.getByText("Hates coriander with a passion")).toBeVisible();
 
-  const tasks = page.locator("section").filter({ hasText: "Follow-ups" }).first();
+  const tasks = page.locator("section").filter({ hasText: "Tasks" }).first();
   await tasks.getByRole("button", { name: /Add/ }).click();
   await tasks.getByLabel("What do you need to do?").fill("Send the Denver recommendations");
   await tasks.getByRole("button", { name: "Add", exact: true }).click();

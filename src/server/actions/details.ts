@@ -613,7 +613,7 @@ export async function deletePlan(id: string): Promise<ActionResult> {
 export async function createTask(form: FormData): Promise<ActionResult<{ id: string }>> {
   const { ownerId } = await owner();
   const title = str(form, "title");
-  if (!title) return fail("Give the follow-up a name.");
+  if (!title) return fail("Give the task a name.");
   const contactId = str(form, "contactId") ?? null;
   if (contactId && !(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
 
@@ -634,7 +634,7 @@ export async function createTask(form: FormData): Promise<ActionResult<{ id: str
 }
 
 /**
- * Correct a follow-up.
+ * Correct a task.
  *
  * The due date is read straight back out of the form, so clearing it in the
  * picker clears it on the row — an edit that could only ever move a date
@@ -645,7 +645,7 @@ export async function updateTask(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
   const id = str(form, "id");
   const title = str(form, "title");
-  if (!id || !title) return fail("Give the follow-up a name.");
+  if (!id || !title) return fail("Give the task a name.");
 
   const existing = await prisma.task.findFirst({
     where: { id, ownerId },

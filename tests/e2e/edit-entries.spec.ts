@@ -62,13 +62,13 @@ test("a follow-up keeps its due date through an edit", async ({ page }) => {
   await ensureSignedIn(page);
   await page.goto(personUrl);
 
-  const tasks = section(page, "Follow-ups");
-  await tasks.getByRole("button", { name: "Add a follow-up" }).click();
+  const tasks = section(page, "Tasks");
+  await tasks.getByRole("button", { name: "Add a task" }).click();
   await tasks.getByLabel("What do you need to do?").fill("Send the bakery list");
   await tasks.getByRole("button", { name: "Add", exact: true }).click();
   await expect(tasks.getByText("Send the bakery list")).toBeVisible();
 
-  await tasks.getByRole("button", { name: "Edit follow-up" }).first().click();
+  await tasks.getByRole("button", { name: "Edit task" }).first().click();
   await tasks.getByLabel("What do you need to do?").fill("Send the bakery shortlist");
   await tasks.getByLabel("Priority").selectOption("HIGH");
   await tasks.getByRole("button", { name: "Save", exact: true }).click();
@@ -146,7 +146,7 @@ test("a follow-up can also be fixed from the list page it shares with everyone",
   await page.goto("/tasks");
 
   const task = page.locator("li").filter({ hasText: "Send the bakery shortlist" }).first();
-  await task.getByRole("button", { name: "Edit follow-up" }).click();
+  await task.getByRole("button", { name: "Edit task" }).click();
   await page.getByLabel("What do you need to do?").fill("Send the bakery shortlist by Friday");
   await page.getByRole("button", { name: "Save", exact: true }).click();
 

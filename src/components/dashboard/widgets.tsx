@@ -50,7 +50,7 @@ function Empty({ children }: { children: React.ReactNode }) {
 
 export function OverdueWidget({ contacts }: { contacts: OverdueContact[] }) {
   return (
-    <WidgetShell title="Time to reach out" icon="BellRing" href="/people?sort=overdue" testId="widget-overdue">
+    <WidgetShell title="People to contact" icon="BellRing" href="/tasks#people-to-contact" hrefLabel="All follow-ups" testId="widget-overdue">
       {contacts.length === 0 ? (
         <Empty>Nobody&apos;s overdue. Nice.</Empty>
       ) : (
@@ -193,7 +193,7 @@ export interface TaskRow {
 
 export function TasksWidget({ tasks }: { tasks: TaskRow[] }) {
   return (
-    <WidgetShell title="Follow-ups" icon="CircleCheck" href="/tasks">
+    <WidgetShell title="Things to do" icon="CircleCheck" href="/tasks#things-to-do" hrefLabel="All follow-ups">
       {tasks.length === 0 ? (
         <Empty>Nothing outstanding.</Empty>
       ) : (
@@ -258,7 +258,7 @@ export function StatsWidget({ stats }: { stats: DashboardStats }) {
     { label: "People", value: stats.people },
     { label: "Logged this month", value: stats.interactionsThisMonth },
     { label: "Overdue", value: stats.overdue },
-    { label: "Open follow-ups", value: stats.openTasks },
+    { label: "Open tasks", value: stats.openTasks },
   ];
 
   return (
