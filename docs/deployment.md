@@ -81,7 +81,9 @@ keeps the secret with the stack that owns the database.
 ## What happens on first boot
 
 ```
-init-perms  →  init-preflight  →  init-mariadb  →  svc-mariadb  →  init-db-ready  →  init-migrate  →  svc-app
+init-perms → init-preflight → init-mariadb → svc-mariadb → init-db-ready → init-migrate
+                                                                        ├→ svc-app
+                                                                        └→ svc-backup
 ```
 
 1. `/config/{db,uploads,backups,logs,cache}` are created and chowned to
@@ -94,9 +96,11 @@ init-perms  →  init-preflight  →  init-mariadb  →  svc-mariadb  →  init-
    password and `authSecret`.
 4. MariaDB initialises its data directory under `/config/db`.
 5. `prisma migrate deploy` applies every pending migration.
-6. The app starts; on its own boot it re-provisions taxonomy defaults for every
-   account, purges expired sessions, and starts the hourly reminder scheduler.
-7. You open the WebUI, create the first account, and the welcome flow at `/welcome` takes it from there.
+6. The app and backup scheduler start. The scheduler waits until `BACKUP_TIME`
+   (02:00 by default, in `TZ`) before its first run; it never delays app startup.
+7. On its own boot the app re-provisions taxonomy defaults for every account,
+   purges expired sessions, and starts the hourly reminder scheduler.
+8. You open the WebUI, create the first account, and the welcome flow at `/welcome` takes it from there.
 
 The recursive `chown` of `/config` only runs when the top-level owner is
 actually wrong — it is slow once `db/` is large.
@@ -135,23 +139,20 @@ restart the container rather than leave it half-alive.
 
 ## Backups
 
-**Back up `/config` yourself.** The `backups/` directory is created at boot but
-nothing writes to it — the nightly dump described in the README is not
-implemented yet ([Known gaps](README.md#known-gaps)).
+`svc-backup` makes a gzip-compressed, transactionally consistent SQL dump each
+day at `BACKUP_TIME` (default `02:00` in `TZ`). It publishes through a temporary
+file, prevents concurrent runs, requires 512 MiB free by default, and deletes
+files older than `BACKUP_RETENTION_DAYS` (default 30) only after a successful
+run. It starts after `init-migrate`, alongside the app, and writes as
+`PUID:PGID`. Failures appear in container logs as `[backup] ERROR`; an incomplete
+backup is removed and older completed backups remain.
 
-A consistent copy of a running instance:
-
-```bash
-docker exec personalcrm mariadb-dump \
-  --single-transaction --routines --databases personalcrm \
-  > personalcrm-$(date +%F).sql
-```
-
-Then copy `uploads/` and `secrets.json` alongside it. Restoring the SQL without
-`secrets.json` leaves you locked out of your own database.
-
-For the external-database deployment, back it up however you back up that
-server, and keep your `AUTH_SECRET` with it.
+These dumps are **not encrypted** and do not include `uploads/` or
+`secrets.json`. Restrict and encrypt the host destination, and continue backing
+up all of `/config`. For external databases the same service uses
+`DATABASE_URL`; credentials are passed in a temporary mode-`0600` option file,
+not arguments or logs. See [backup.md](backup.md) for manual backup, exact
+retention semantics, and a restore procedure.
 
 ## Logs
 

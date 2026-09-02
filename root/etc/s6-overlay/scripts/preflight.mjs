@@ -106,6 +106,20 @@ export function checkEnvironment(env, options = {}) {
     }
   }
 
+  // --- BACKUPS -------------------------------------------------------------
+  const backupTime = env.BACKUP_TIME?.trim();
+  if (backupTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(backupTime)) {
+    errors.push(`BACKUP_TIME="${backupTime}" is not a 24-hour HH:MM time.`);
+  }
+  const retentionDays = env.BACKUP_RETENTION_DAYS?.trim();
+  if (retentionDays && !/^[1-9]\d*$/.test(retentionDays)) {
+    errors.push(`BACKUP_RETENTION_DAYS="${retentionDays}" is not a positive integer.`);
+  }
+  const minimumFree = env.BACKUP_MIN_FREE_MB?.trim();
+  if (minimumFree && !/^\d+$/.test(minimumFree)) {
+    errors.push(`BACKUP_MIN_FREE_MB="${minimumFree}" is not a non-negative integer.`);
+  }
+
   // --- PORT ----------------------------------------------------------------
   const port = env.PORT?.trim();
   if (port && !/^\d+$/.test(port)) {

@@ -691,6 +691,6 @@ writes yet. Documented here so nobody assumes the feature works:
 | `UserPreference.digestHour`, `digestEnabled` | Stored, not acted on |
 | `Contact.avatarPath` | Read and rendered everywhere, but nothing uploads an image to set it |
 
-`/config/backups` is likewise created at boot but nothing writes to it — the
-nightly dump described in the README is not implemented. Back up `/config`
-yourself.
+`/config/backups` receives daily consistent database dumps from the container.
+They are not encrypted and do not contain uploads or `secrets.json`, so back up
+all of `/config` separately.
