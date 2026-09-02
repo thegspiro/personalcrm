@@ -4,7 +4,7 @@ import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { SectionCard, SectionEmpty, SectionRow } from "../section-card";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import {
   createAddress,
   deleteAddress,
@@ -132,7 +132,7 @@ function addressLines(address: AddressItem): string[] {
 
 function AddressRow({ address }: { address: AddressItem }) {
   const run = useAction();
-  const add = useAddAction();
+  const edit = useEditAction();
 
   return (
     <SectionRow
@@ -141,7 +141,7 @@ function AddressRow({ address }: { address: AddressItem }) {
       editLabel={`Edit ${address.label ?? "address"}`}
       editForm={(close) => (
         <form
-          action={add(updateAddress, close, "Saved")}
+          action={edit(updateAddress, close, "Saved")}
           className="grid gap-2.5"
         >
           <input type="hidden" name="id" value={address.id} />

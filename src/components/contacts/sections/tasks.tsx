@@ -6,7 +6,7 @@ import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { DateField } from "@/components/form/date-field";
 import { SectionCard, SectionEmpty, SectionRow } from "../section-card";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { formatPartialDate } from "@/lib/date-precision";
 import { plainDateKey, type PlainDate } from "@/lib/dates";
 import { createTask, deleteTask, setTaskDone, updateTask } from "@/server/actions/details";
@@ -63,6 +63,7 @@ export function TaskFields({ formId, task }: { formId: string; task?: TaskItem }
 export function TasksSection({ contactId, tasks }: { contactId: string; tasks: TaskItem[] }) {
   const run = useAction();
   const add = useAddAction();
+  const edit = useEditAction();
   const open = tasks.filter((task) => !task.completedAt);
 
   return (
@@ -90,7 +91,7 @@ export function TasksSection({ contactId, tasks }: { contactId: string; tasks: T
             deleteLabel="Delete task"
             editLabel="Edit task"
             editForm={(close) => (
-              <form action={add(updateTask, close, "Saved")} className="grid gap-2.5">
+              <form action={edit(updateTask, close, "Saved")} className="grid gap-2.5">
                 <input type="hidden" name="id" value={task.id} />
                 <TaskFields formId={`task-${task.id}`} task={task} />
                 <SubmitButton size="sm">Save</SubmitButton>

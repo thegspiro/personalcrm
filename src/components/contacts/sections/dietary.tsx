@@ -7,7 +7,7 @@ import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { SectionCard, SectionEmpty, SectionRow } from "../section-card";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import {
   ALLERGY_CATEGORIES,
   ALLERGY_CATEGORY_LABELS,
@@ -123,11 +123,11 @@ function NeedFields({ formId, need, allergy }: { formId: string; need?: DietaryI
 
 function NeedRow({ need, allergy }: { need: DietaryItem; allergy: boolean }) {
   const run = useAction();
-  const add = useAddAction();
+  const edit = useEditAction();
   return <SectionRow className={allergy || mustAvoid(need.kind) ? "border-destructive/40 bg-destructive/5" : undefined}
     onDelete={() => void run(() => deleteDietaryNeed(need.id), "Removed")}
     deleteLabel={`Remove ${allergy ? "allergy" : "dietary need"}`} editLabel={`Edit ${allergy ? "allergy" : "dietary need"}`}
-    editForm={(close) => <form action={add(updateDietaryNeed, close, "Saved")} className="grid gap-2.5">
+    editForm={(close) => <form action={edit(updateDietaryNeed, close, "Saved")} className="grid gap-2.5">
       <input type="hidden" name="id" value={need.id} /><NeedFields formId={`need-${need.id}`} need={need} allergy={allergy} /><SubmitButton size="sm">Save</SubmitButton>
     </form>}>
     <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium">{need.label}</span>

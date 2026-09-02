@@ -104,3 +104,26 @@ export function useAddAction() {
     [run],
   );
 }
+
+/**
+ * Wraps an update action so a successful submit closes the editor — but only
+ * once the refreshed row has rendered. An editor sits over the row it edits,
+ * and that row carries the record as it was until the refresh lands; closing
+ * onto it and reopening in that window showed, and could save back, the
+ * version before the edit. The form stays pending for the wait, so it cannot
+ * be submitted twice either.
+ */
+export function useEditAction() {
+  const run = useAction();
+  return React.useCallback(
+    (
+      action: (form: FormData) => Promise<ActionResult<unknown>>,
+      close: () => void,
+      message?: string,
+    ) =>
+      async (form: FormData) => {
+        await run(() => action(form), message, close);
+      },
+    [run],
+  );
+}

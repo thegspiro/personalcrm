@@ -8,7 +8,7 @@ import { SubmitButton } from "@/components/form/submit-button";
 import { DateField } from "@/components/form/date-field";
 import { TermSelect, type TermOption } from "@/components/form/term-select";
 import { SectionCard, SectionEmpty, SectionRow } from "../section-card";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { formatMoney } from "@/lib/format";
 import { plainDateKey, type PlainDate } from "@/lib/dates";
 import { createGift, deleteGift, updateGift } from "@/server/actions/details";
@@ -152,6 +152,7 @@ export function GiftsSection({
 }) {
   const run = useAction();
   const add = useAddAction();
+  const edit = useEditAction();
 
   return (
     <SectionCard
@@ -179,7 +180,7 @@ export function GiftsSection({
             deleteLabel="Delete gift"
             editLabel="Edit gift"
             editForm={(close) => (
-              <form action={add(updateGift, close, "Saved")} className="grid gap-2.5">
+              <form action={edit(updateGift, close, "Saved")} className="grid gap-2.5">
                 <input type="hidden" name="id" value={gift.id} />
                 <GiftFields formId={`gift-${gift.id}`} occasions={occasions} gift={gift} />
                 <SubmitButton size="sm">Save</SubmitButton>
