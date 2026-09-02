@@ -21,6 +21,10 @@ vi.mock("@/server/db/client", async () => {
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 
+vi.mock("node:dns/promises", () => ({
+  lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+}));
+
 vi.mock("@/server/user/context", () => ({
   getUserContext: async () => ({
     user: { id: state.ownerId, role: state.role },
@@ -337,17 +341,15 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     });
 
     const calls: Array<Record<string, string>> = [];
-    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-      const headers = new Headers(init?.headers);
-      calls.push(Object.fromEntries(headers.entries()));
-      return new Response("{}", { status: 200 });
+    const http = vi.fn(async (input: { headers: Record<string, string> }) => {
+      calls.push(input.headers);
+      return { status: 200 };
     });
-    vi.stubGlobal("fetch", fetchMock);
-    try {
-      await deliverToChannel(channel, "subject", "body");
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    await deliverToChannel(channel, "subject", "body", {
+      resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+      isAdministrator: async () => true,
+      http,
+    });
 
     // Gotify rejects a bearer token, so sharing ntfy's scheme meant the channel
     // was offered and never delivered.
@@ -408,21 +410,15 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     });
 
     const seen: string[] = [];
-    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      seen.push(String(url));
-      // What an endpoint the member controls can answer with.
-      expect(init?.redirect).toBe("manual");
-      return new Response(null, {
-        status: 307,
-        headers: { location: "http://127.0.0.1:8080/internal" },
-      });
+    const http = vi.fn(async (input: { url: URL }) => {
+      seen.push(String(input.url));
+      return { status: 307 };
     });
-    vi.stubGlobal("fetch", fetchMock);
-    try {
-      await expect(deliverToChannel(channel, "subject", "body")).rejects.toThrow(/redirect/i);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    await expect(deliverToChannel(channel, "subject", "body", {
+      resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+      isAdministrator: async () => false,
+      http,
+    })).rejects.toThrow(/redirect/i);
 
     // Only the configured address was contacted; the redirect was not taken.
     expect(seen).toEqual(["https://public.example/hook"]);

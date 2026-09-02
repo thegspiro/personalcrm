@@ -7,16 +7,15 @@ import { type ActionResult, fail, isAdmin, ok, owner, str } from "./helpers";
 import {
   CHANNEL_FIELDS,
   CHANNEL_LABELS,
-  isPrivateHostname,
-  targetsPrivateHost,
   isChannelKind,
   TEST_NOTIFICATION_BODY,
   TEST_NOTIFICATION_SUBJECT,
   validateChannelConfig,
   type ChannelKind,
 } from "@/lib/notification-channels";
-import { configOf, mergeChannelSecrets } from "@/server/notifications/config";
+import { configOf, mergeChannelSecrets, resolveChannelSecrets } from "@/server/notifications/config";
 import { deliverToChannel } from "@/server/services/notify";
+import { validateDestination } from "@/server/services/notification-destination";
 
 /**
  * Where a reminder is allowed to go.
@@ -103,16 +102,13 @@ function credentialsComplete(config: Record<string, unknown>): boolean {
  * host's own network. A single-account install is unaffected — the only
  * account is the administrator.
  */
-async function privateTargetAllowed(input: Record<string, string | undefined>): Promise<boolean> {
-  // Both shapes a destination takes: a URL for the HTTP kinds, and a bare
-  // hostname for SMTP. Checking only the URL left the boundary with a hole
-  // exactly the size of an email channel — `host` plus any port, which
-  // nodemailer then opens from the server.
-  const url = input.url?.trim();
-  const host = input.host?.trim();
-  const inward = (url && targetsPrivateHost(url)) || (host && isPrivateHostname(host));
-  if (!inward) return true;
-  return isAdmin();
+async function destinationError(hostname: string): Promise<string | null> {
+  try {
+    await validateDestination(hostname, await isAdmin());
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : "The destination hostname could not be resolved.";
+  }
 }
 
 function kindFrom(form: FormData): ChannelKind | null {
@@ -136,13 +132,6 @@ export async function createChannel(form: FormData): Promise<ActionResult<{ id: 
   const validated = validateChannelConfig(kind, input);
   if (!validated.ok) return fieldErrors(validated.errors);
 
-  if (!(await privateTargetAllowed(input))) {
-    return fieldErrors({
-      [kind === "EMAIL" ? "host" : "url"]:
-        "Only an administrator can point a channel at an address on this network.",
-    });
-  }
-
   const config = mergeChannelSecrets(kind, validated.config, input, {});
   if (kind === "EMAIL" && !credentialsComplete(config)) {
     return fieldErrors({ pass: "Give a username and a password, or neither." });
@@ -152,6 +141,15 @@ export async function createChannel(form: FormData): Promise<ActionResult<{ id: 
     return fieldErrors({
       [missing]: missing === "url" ? "A URL is required." : "This channel needs a token.",
     });
+  }
+  const resolvedConfig = resolveChannelSecrets({ kind, config });
+  if (!resolvedConfig.ok) return fieldErrors({ [resolvedConfig.field]: "That credential could not be read." });
+  const destination = kind === "EMAIL"
+    ? resolvedConfig.config.host
+    : typeof resolvedConfig.config.url === "string" ? new URL(resolvedConfig.config.url).hostname : undefined;
+  if (typeof destination === "string") {
+    const error = await destinationError(destination);
+    if (error) return fieldErrors({ [kind === "EMAIL" ? "host" : "url"]: error });
   }
 
   const created = await prisma.notificationChannel.create({
@@ -183,13 +181,6 @@ export async function updateChannel(form: FormData): Promise<ActionResult> {
   const validated = validateChannelConfig(kind, input);
   if (!validated.ok) return fieldErrors(validated.errors);
 
-  if (!(await privateTargetAllowed(input))) {
-    return fieldErrors({
-      [kind === "EMAIL" ? "host" : "url"]:
-        "Only an administrator can point a channel at an address on this network.",
-    });
-  }
-
   const config = mergeChannelSecrets(kind, validated.config, input, configOf(existing));
   if (kind === "EMAIL" && !credentialsComplete(config)) {
     return fieldErrors({ pass: "Give a username and a password, or neither." });
@@ -199,6 +190,15 @@ export async function updateChannel(form: FormData): Promise<ActionResult> {
     return fieldErrors({
       [missing]: missing === "url" ? "A URL is required." : "This channel needs a token.",
     });
+  }
+  const resolvedConfig = resolveChannelSecrets({ kind, config });
+  if (!resolvedConfig.ok) return fieldErrors({ [resolvedConfig.field]: "That credential could not be read." });
+  const destination = kind === "EMAIL"
+    ? resolvedConfig.config.host
+    : typeof resolvedConfig.config.url === "string" ? new URL(resolvedConfig.config.url).hostname : undefined;
+  if (typeof destination === "string") {
+    const error = await destinationError(destination);
+    if (error) return fieldErrors({ [kind === "EMAIL" ? "host" : "url"]: error });
   }
 
   await prisma.notificationChannel.update({ where: { id }, data: { name, config } });
