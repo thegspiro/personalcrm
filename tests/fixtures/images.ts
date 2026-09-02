@@ -86,6 +86,20 @@ export const PNG_TRUNCATED = PNG_TRANSPARENT.slice(0, PNG_TRANSPARENT.length - 4
 
 export const JPEG_TRUNCATED = JPEG_MINIMAL.slice(0, JPEG_MINIMAL.length - 2);
 
+/** A frame with no components, a scan with none, and no scan data: markers in the right order, no picture. */
+export const JPEG_NO_SCAN = Uint8Array.from([
+  0xff, 0xd8,
+  0xff, 0xc0, 0x00, 0x07, 0x08, 0x00, 0x01, 0x00, 0x01,
+  0xff, 0xda, 0x00, 0x02,
+  0xff, 0xd9,
+]);
+
+/** A whole frame and scan header, but the end of image follows straight after: no scan data. */
+export const JPEG_EMPTY_SCAN = Uint8Array.from([
+  ...JPEG_MINIMAL.slice(0, JPEG_MINIMAL.length - 3),
+  0xff, 0xd9,
+]);
+
 /** The size field claims more bytes than the file holds. */
 export const WEBP_TRUNCATED = WEBP_MINIMAL.slice(0, WEBP_MINIMAL.length - 2);
 

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { inspectImage, MAX_IMAGE_DIMENSION } from "@/lib/image-format";
 import {
+  JPEG_EMPTY_SCAN,
   JPEG_MINIMAL,
+  JPEG_NO_SCAN,
   JPEG_TRUNCATED,
   PNG_NO_DATA,
   PNG_RED,
@@ -68,6 +70,13 @@ describe("inspectImage", () => {
   it("requires a JPEG frame header before the scan", () => {
     const noFrame = Uint8Array.from([0xff, 0xd8, ...JPEG_MINIMAL.slice(15)]);
     expect(inspectImage(noFrame)).toEqual({ ok: false, reason: "incomplete" });
+  });
+
+  it("requires a JPEG to name its components and carry scan data", () => {
+    // Markers in the right order with nothing in them used to pass on the
+    // strength of the frame having been seen and the file ending on EOI.
+    expect(inspectImage(JPEG_NO_SCAN)).toEqual({ ok: false, reason: "incomplete" });
+    expect(inspectImage(JPEG_EMPTY_SCAN)).toEqual({ ok: false, reason: "incomplete" });
   });
 
   it("requires the WebP size field to match the file", () => {

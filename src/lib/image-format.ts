@@ -77,8 +77,9 @@ function pngIsWhole(bytes: Uint8Array): boolean {
 
 /**
  * Marker segments up to the start of scan, then entropy-coded data that has
- * to end on the end-of-image marker. A frame header with real dimensions must
- * come before the scan.
+ * to end on the end-of-image marker. A frame header with real dimensions and
+ * at least one component must come before the scan, the scan header must
+ * name its components, and there must be some scan data before the end.
  */
 function jpegIsWhole(bytes: Uint8Array): boolean {
   let at = 2;
@@ -100,12 +101,20 @@ function jpegIsWhole(bytes: Uint8Array): boolean {
     if (length < 2 || at + 2 + length > bytes.length) return false;
     const isFrame = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
     if (isFrame) {
-      // Length, precision, then height and width.
-      if (length < 7 || !plausible(u16be(bytes, at + 7), u16be(bytes, at + 5))) return false;
+      // Length, precision, height, width, then a component count and three bytes per component.
+      if (length < 9 || !plausible(u16be(bytes, at + 7), u16be(bytes, at + 5))) return false;
+      const components = bytes[at + 9];
+      if (components < 1 || length !== 8 + 3 * components) return false;
       sawFrame = true;
     }
     if (marker === 0xda) {
-      return sawFrame && bytes[bytes.length - 2] === 0xff && bytes[bytes.length - 1] === 0xd9;
+      // Length, a component count and two bytes per component, then three
+      // bytes of spectral selection; entropy-coded data follows until EOI.
+      const components = bytes[at + 4];
+      if (components < 1 || components > 4 || length !== 6 + 2 * components) return false;
+      const dataStart = at + 2 + length;
+      return sawFrame && dataStart < bytes.length - 2 &&
+        bytes[bytes.length - 2] === 0xff && bytes[bytes.length - 1] === 0xd9;
     }
     at += 2 + length;
   }
