@@ -125,7 +125,16 @@ export default async function SettingsPage() {
             layout={normalizeDashboardLayout(layoutRow?.widgets)}
           />
         }
-        notifications={<NotificationSettings channels={channels} />}
+        notifications={
+          <NotificationSettings
+            channels={channels}
+            digest={{
+              enabled: prefs.digestEnabled,
+              hour: prefs.digestHour,
+              timezone: prefs.timezone,
+            }}
+          />
+        }
         quickadd={
           <AiSettings
             enabled={ai.enabled}

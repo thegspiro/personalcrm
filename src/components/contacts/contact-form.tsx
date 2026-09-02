@@ -43,6 +43,7 @@ export interface ContactFormValues {
   cadenceDays: number | null;
   isFavorite: boolean;
   isRomantic: boolean;
+  avatarPath: string | null;
 }
 
 export function ContactForm({
@@ -85,6 +86,42 @@ export function ContactForm({
           {state.error}
         </p>
       ) : null}
+
+      <Card>
+        <CardContent className="grid gap-3.5 pt-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Photo
+          </p>
+          {contact?.avatarPath ? (
+            // This URL is an authenticated, privacy-filtered endpoint rather
+            // than a directly served file under public/.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={contact.avatarPath}
+              alt="Current avatar"
+              className="size-20 rounded-full object-cover"
+            />
+          ) : null}
+          <Field
+            label={contact?.avatarPath ? "Replace avatar" : "Avatar"}
+            htmlFor="avatar"
+            hint="JPEG, PNG, or WebP; up to 2 MB."
+          >
+            <Input
+              id="avatar"
+              name="avatar"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+            />
+          </Field>
+          {contact?.avatarPath ? (
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" name="removeAvatar" value="true" />
+              Remove the current avatar
+            </label>
+          ) : null}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardContent className="grid gap-3.5 pt-4">

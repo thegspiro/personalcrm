@@ -494,6 +494,8 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
         ownerId,
         entityType: "IMPORTANT_DATE",
         entityId: date.id,
+        schedulingPolicy: "IMPORTANT_DATE_OFFSET",
+        dedupKey: "deleted-channel-ledger-fixture",
         scheduledFor: new Date("2026-09-14"),
         offsetDays: 0,
         channelId: id,

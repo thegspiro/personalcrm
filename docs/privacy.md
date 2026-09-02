@@ -296,16 +296,23 @@ machine until you say where it should go.
 More than most people assume, so it is written out here rather than left to be
 discovered:
 
-| Field | Example |
-| --- | --- |
-| The date's label | `Anniversary` |
-| The contact's first and last name | `Dana Whitfield` |
-| The occurrence date | `2026-09-14` |
-| How far out it is | `in 7 days` |
+| Reminder | Field | Example |
+| --- | --- | --- |
+| Important date | The date's label | `Anniversary` |
+| | The contact's first and last name | `Dana Whitfield` |
+| | The occurrence date | `2026-09-14` |
+| | How far out it is | `in 7 days` |
+| Cadence | The contact's first and last name | `Dana Whitfield` |
+| | The date the cadence fell due | `2026-09-01` |
+| Task | The task's title | `Book the dentist` |
+| | The contact's name, if the task is for someone | `Dana Whitfield` |
+| | The due date | `2026-09-02` |
+| Daily digest | How many cadences and tasks are due — counts only, no names | `2 cadence reminders and 1 due task` |
 
 That goes to whatever host the channel names, on the hour, with no preview and
-no confirmation step. A retry after a failure sends a shorter body carrying the
-scheduled date only.
+no confirmation step. A retry after a failure re-reads the record and sends
+the same fields again, worded for the day it goes out — it is not a shorter
+message, and it never carries anything the first attempt would not have.
 
 **Email is different in kind from the rest.** An ntfy, Gotify or webhook URL can
 point at a box on your own network, and then nothing leaves it. SMTP goes
@@ -357,6 +364,26 @@ With the lock switched **off**, `isPrivate` is a display preference rather than
 an access gate, and those contacts are included like anyone else. That follows
 from what the lock is (see above), but it is worth saying plainly: turning the
 lock off turns off this filter too.
+
+### Avatar files
+
+Avatar bytes never live under `public/`. The generated `/api/avatars/<name>`
+URL requires a session, an owner-scoped contact reference, and visibility under
+the live privacy lock before the handler reads from `UPLOADS_DIR`. Responses
+are `private, no-store`, and the service worker never caches API responses.
+
+JPEG, PNG, and WebP uploads are limited to 2 MB and checked for being a whole
+file of the format their bytes claim — header, plausible dimensions, and the
+terminator at the very end — so a truncated upload is refused rather than
+published in place of the avatar it was meant to replace. Nothing is decoded.
+Client filenames, extensions, and MIME headers never become filesystem paths,
+and `UPLOADS_DIR` may not point inside `public/`, where the route's checks
+would not apply — judged after following symlinks on both sides, so a link
+cannot smuggle the directory in under another name.
+Replacement publishes validated new bytes and commits their generated path
+before obsolete bytes are removed; removal and contact deletion clear/delete
+the database row before unlinking. An I/O failure may therefore leave harmless
+unreferenced bytes, but not a contact path broken by the operation.
 
 ## Optional address lookup
 

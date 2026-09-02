@@ -83,8 +83,8 @@ One row per user, PK is `userId`.
 | `timezone` | `varchar(64)` | `America/New_York` | **Every** date calculation anchors here, never to `process.env.TZ` |
 | `weekStartsOn` | `int` | `0` | |
 | `defaultCadenceDays` | `int?` | — | Fallback keep-in-touch cadence |
-| `digestHour` | `int` | `8` | Reserved for the digest (see [Not yet wired](#not-yet-wired)) |
-| `digestEnabled` | `bool` | `true` | Same |
+| `digestHour` | `int` | `8` | Local hour after which the hourly scheduler sends that day's digest |
+| `digestEnabled` | `bool` | `true` | Enables one daily digest per configured channel |
 | `privacyLockEnabled` | `bool` | `false` | The lock switch |
 | `hideDating` | `bool` | `false` | Removes the dating module from nav and dashboard entirely |
 | `blurPrivateNotes` | `bool` | `true` | Shoulder-surfing layer *after* the lock is open |
@@ -163,7 +163,7 @@ The centre of the model.
 | `firstName` | `varchar(120)` | The only required name field |
 | `lastName` / `nickname` | `varchar(120)?` | |
 | `pronouns` | `varchar(48)?` | |
-| `avatarPath` | `varchar(255)?` | Rendered when set. No upload path writes it yet — see [Not yet wired](#not-yet-wired) |
+| `avatarPath` | `varchar(255)?` | Authenticated `/api/avatars/<server-name>` URL. The bytes live in `UPLOADS_DIR`, outside the public tree; ownership and the live privacy lock are checked on every read and write |
 | `categoryId` | `cuid?` | → `TaxonomyTerm` (`CONTACT_CATEGORY`), `SET NULL` |
 | `birthDate` | `date?` | |
 | `birthDatePrecision` | `DatePrecision` | `MONTH_DAY` covers the birthday whose year nobody remembers |
@@ -592,15 +592,48 @@ still leaves, just without its credential. The failure lands in
 
 ### `ReminderLog`
 
-The dedupe/retry ledger, so a restart never re-sends a reminder. Unique on
-`(ownerId, entityType, entityId, scheduledFor, offsetDays, channelId)` with
-`entityType` a `ReminderEntity` (`IMPORTANT_DATE` | `CADENCE` | `TASK` |
-`DIGEST`). Records `attemptCount`, `nextAttemptAt`, `ok`, and `error`; failed
-sends retry with exponential delay up to five attempts.
+The dedupe/retry ledger, so a restart never loses a reminder: a row is
+written with its first retry deadline already set, before the send, so a
+process that dies between the two leaves a row the next pass retries rather
+than one the unique key silently buries. Delivery is therefore at-least-once,
+not at-most-once. The one ambiguous case is a process that dies after the
+channel accepted the message and before the row could say so; that reminder
+is sent again. No channel offers idempotent acceptance, so the choice is
+between an occasional duplicate and an occasional silence, and for the one
+thing this app exists to do the duplicate is the right side to err on. Every row records
+the explicit `schedulingPolicy` that produced it and a SHA-256 `dedupKey`, unique
+per owner, derived from the entity, policy, occurrence, offset, and channel. The
+older composite delivery unique key remains as additional protection, and the
+scheduler reads the keys it already holds before inserting rather than
+treating a refused insert as the normal case. A retry is claimed with one
+conditional update before it is sent, for a lease longer than any delivery
+can take and stamped from the clock at the moment of the claim rather than
+the start of the pass, so two overlapping processes cannot both deliver it.
+Nothing is sent before its occurrence has arrived in the owner's timezone as
+it is at the moment of sending: a candidate read just after midnight in one
+zone waits if the owner has since moved to one where the day has not begun. A row
+cancelled while its reminder was ineligible is put back on the retry path if
+its reminder becomes a candidate again — a task reopened, a person made
+visible — rather than being skipped for ever under its key. `entityType`
+is a `ReminderEntity` (`IMPORTANT_DATE` | `CADENCE` | `TASK` | `DIGEST`). Failed
+sends retry with exponential delay up to five attempts. Before retrying, the
+engine re-reads the row's own entity under the same owner, archive and privacy
+rules it was created under — not today's candidate list, which a send that
+failed on the last pass of one day would never appear in on the first pass of
+the next. Completion, a corrected date, an interaction that moved a cadence on,
+archival, locking private content or a policy change cancels the retry; a
+retry that goes out is worded for the day it goes out on. A digest is the
+exception: within its day it is retried with its counts read afresh — and
+waits if its hour has since been moved later — and once its day has ended it
+is dropped rather than sent stale.
 
-Only `IMPORTANT_DATE` is ever written. `CADENCE`, `TASK` and `DIGEST` are
-reserved for reminder types that are not scheduled yet — see
-[known gaps](README.md#known-gaps).
+Cadence rows use `Contact.nextTouchAt` falling on or before the end of the
+owner's local day — the same reading as the overdue count and the People
+filter — task rows use an incomplete task's due date, and digest rows use the
+user's local calendar date. Digest scheduling uses `UserPreference.timezone`,
+`digestHour`, and `digestEnabled`, all three editable under Settings →
+Reminders; a late hourly pass catches up once, including after a skipped
+spring-forward hour, while the daily key suppresses a repeated fall-back hour.
 
 `channelId` is `SET NULL`, so deleting a channel keeps the record of what was
 already sent and cannot start it re-sending.
@@ -644,7 +677,7 @@ nobody gave.
 | Deleting… | Takes with it | Leaves behind |
 | --- | --- | --- |
 | A `User` | Everything they own, by cascade | — |
-| A `Contact` | Methods, addresses, tags, facts, dates, life events, gifts, debts, dietary needs, flags, ideas, plans, tasks, household memberships, relationships (both halves), participations, romantic profile, date entries | `CustomFieldValue` rows — **swept explicitly** by the action |
+| A `Contact` | Methods, addresses, tags, facts, dates, life events, gifts, debts, dietary needs, flags, ideas, plans, tasks, household memberships, relationships (both halves), participations, romantic profile, date entries, and its avatar file | `CustomFieldValue` rows — **swept explicitly** by the action |
 | An `Interaction` | Participants, its `DateEntry` | `Fact.sourceInteractionId`, `Idea.usedInInteractionId` and `Plan.usedInInteractionId` set to null |
 | A `TaxonomyTerm` | `Relationship` rows of that type (cascade) — which is why deleting a term still in use is blocked; other references are `SET NULL` | The records themselves |
 | A `Session` | Nothing | The unlock state dies with it |
@@ -675,6 +708,7 @@ the `init-migrate` s6 oneshot).
 | `20260831205130_add_location_osm_reference` | Additive nullable `Location.osmType` and `osmId`, so a place can be tied to a real OpenStreetMap object |
 | `20260901120000_add_login_attempt_throttle` | Added `LoginAttempt`, a durable store for sign-in backoff counters. Superseded three commits later — see below |
 | `20260901191500_drop_login_attempt_table` | Drops it again. Both halves of its key came from whoever was knocking, which made it a store an attacker chose the size of; bounding it meant dropping records, and dropping records meant the throttle could be switched off by filling it. Sign-in throttling now lives in the process serving the request, in a structure of fixed size. The table held only ephemeral counters, so nothing is lost but whatever backoff was in flight at the upgrade |
+| `20260902120000_add_reminder_policy_and_dedup_key` | Adds and backfills an explicit scheduling policy and SHA-256 durable deduplication key for every existing reminder ledger row before making the key required and unique per owner. **Hand-edited**: the backfill computes the very key the application does — byte for byte, so pre-upgrade rows are found by the scheduler's lookup rather than blocking their reminders for ever — the policy column's default exists only for the backfill and is dropped afterwards, and rows whose channel was since deleted fold in their own id, because the delivery key they derive from lets any number of `NULL` channels coexist |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).
@@ -683,13 +717,9 @@ shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).
 
 ## Not yet wired
 
-Tables that exist and are migrated, but that no application code reads or
-writes yet. Documented here so nobody assumes the feature works:
-
-| Table / column | State |
-| --- | --- |
-| `UserPreference.digestHour`, `digestEnabled` | Stored, not acted on |
-| `Contact.avatarPath` | Read and rendered everywhere, but nothing uploads an image to set it |
+Every table and column in the schema is now read and written by application
+code. `UserPreference.digestHour`/`digestEnabled` drive the daily digest and
+`Contact.avatarPath` is set by the avatar upload, both as of the same release.
 
 `/config/backups` is likewise created at boot but nothing writes to it — the
 nightly dump described in the README is not implemented. Back up `/config`

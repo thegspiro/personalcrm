@@ -1150,25 +1150,30 @@ enum ReminderEntity {
 
 /// Dedupe ledger so a restart never re-sends a reminder.
 model ReminderLog {
-  id            String         @id @default(cuid())
-  ownerId       String
-  entityType    ReminderEntity
-  entityId      String         @db.VarChar(64)
+  id               String         @id @default(cuid())
+  ownerId          String
+  entityType       ReminderEntity
+  entityId         String         @db.VarChar(64)
+  /// Explicit rule which produced this delivery; retries re-evaluate that rule.
+  schedulingPolicy String         @db.VarChar(32)
+  /// Immutable, channel-specific occurrence key used for restart-safe deduplication.
+  dedupKey         String         @db.VarChar(64)
   /// The occurrence, not the processing instant. Together with offset/channel it is the idempotency key.
-  scheduledFor  DateTime       @db.Date
-  offsetDays    Int            @default(0)
-  sentAt        DateTime?
-  channelId     String?
-  ok            Boolean        @default(false)
-  attemptCount  Int            @default(0)
-  nextAttemptAt DateTime?
-  error         String?        @db.Text
+  scheduledFor     DateTime       @db.Date
+  offsetDays       Int            @default(0)
+  sentAt           DateTime?
+  channelId        String?
+  ok               Boolean        @default(false)
+  attemptCount     Int            @default(0)
+  nextAttemptAt    DateTime?
+  error            String?        @db.Text
 
   owner   User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   channel NotificationChannel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
 
   // Keep the physical name below MariaDB's 64-character identifier limit.
   @@unique([ownerId, entityType, entityId, scheduledFor, offsetDays, channelId], map: "ReminderLog_delivery_key")
+  @@unique([ownerId, dedupKey], map: "ReminderLog_dedup_key")
   @@index([ownerId, sentAt])
   @@index([channelId])
 }

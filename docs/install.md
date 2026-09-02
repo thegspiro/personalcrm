@@ -68,7 +68,7 @@ migrations run at every container start.
 | Path | Contents |
 | --- | --- |
 | `db/` | MariaDB data directory |
-| `uploads/` | Reserved for avatars and photos — nothing writes here yet |
+| `uploads/` | Contact avatars. Keep this persistent and back it up with the database |
 | `backups/` | Reserved for database dumps — nothing writes here yet, see [backup.md](backup.md) |
 | `logs/` | MariaDB error log |
 | `cache/` | Next.js cache — safe to delete |

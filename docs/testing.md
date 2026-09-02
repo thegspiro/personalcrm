@@ -31,7 +31,8 @@ does not own. That is what makes these fast and worth writing.
 | `taxonomy-seeds.test.ts` | The seeded default terms |
 | `ai-providers.test.ts` | Forgiving response parsing across provider dialects |
 | `birthdays.test.ts`, `life-events.test.ts` | Recurring-date projection; milestone ranges over partial dates |
-| `reminders.test.ts` | Reminder offsets, and which occurrence is due today |
+| `reminders.test.ts` | Reminder offsets, timezone boundaries, DST transitions, digest hours, durable deduplication keys, and the wording of a reminder sent late |
+| `image-format.test.ts`, `avatars.test.ts` | Telling a whole JPEG, PNG or WebP from a truncated one without decoding it; avatar storage, its refusal of `public/`, and that a failed write leaves nothing behind |
 | `notification-channels.test.ts` | Per-kind channel validation, and that the test message interpolates nothing |
 | `secrets.test.ts` | At-rest encryption, and that the two HKDF purpose strings stay pinned |
 | `contact-methods.test.ts` | Turning a stored number or handle into a link worth offering |
@@ -83,9 +84,20 @@ the schema do, not things a mock can:
   never reaches the browser, that a blank field keeps the stored one, and that
   a secret which will not decrypt refuses to send rather than going out without
   it.
-- `reminders.test.ts` — the delivery ledger: one send per occurrence, retries
-  that do not duplicate a row, and both the encrypted and the legacy plaintext
-  channel shapes reaching the network with their credential attached.
+- `reminders.test.ts` — all four delivery policies; that a cadence due later
+  in the local day is due; retries that outlive the day they were owed on, and
+  cancellation after task, date or privacy changes; that a digest is retried
+  within its day with fresh counts, waits for an hour moved later, and is
+  dropped after its day; that a process dying between the ledger insert and
+  the send loses nothing; that what is already ledgered is not written again;
+  owner isolation;
+  multiple channels; and both encrypted and legacy plaintext channel shapes
+  reaching the network with credentials.
+- `avatars.test.ts`, `avatar-route.test.ts` — that an upload is refused before
+  a byte is written for another owner's contact or a locked private one, that
+  replacement and removal leave exactly the referenced file behind, and that
+  the avatar route's single visibility query answers every branch of the lock
+  the way `getPrivacyState` does.
 - `privacy-actions.test.ts`, `privacy-pin.test.ts` — disabling the lock, and
   the shared backoff that separate sessions cannot race around.
 - `reciprocity.test.ts` — the reaching-out ratio against real interaction rows.

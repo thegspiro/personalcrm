@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
-import { type ActionResult, fail, num, ok, owner, str } from "./helpers";
+import { type ActionResult, bool, fail, fieldError, num, ok, owner, str } from "./helpers";
 import { ACCENTS } from "@/components/providers/theme-provider";
 
 /** How the app looks and what it assumes, beyond the privacy settings. */
@@ -68,5 +68,31 @@ export async function updateDefaults(form: FormData): Promise<ActionResult> {
   });
 
   revalidatePath("/", "layout");
+  return ok();
+}
+
+/**
+ * The daily digest: one message a day to every channel, once the owner's
+ * local clock passes the chosen hour.
+ *
+ * Its own action rather than a field on the defaults form because it is the
+ * one preference that makes the app *send* something unprompted — the hour
+ * has to be validated, and the switch has to be reachable from the page that
+ * says where reminders go, which is where anyone looking to stop them looks.
+ */
+export async function updateDigest(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+
+  const hour = num(form, "digestHour");
+  if (hour === undefined || !Number.isInteger(hour) || hour < 0 || hour > 23) {
+    return fieldError("digestHour", "Pick an hour of the day.");
+  }
+
+  await prisma.userPreference.update({
+    where: { userId: ownerId },
+    data: { digestEnabled: bool(form, "digestEnabled"), digestHour: hour },
+  });
+
+  revalidatePath("/settings");
   return ok();
 }

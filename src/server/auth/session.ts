@@ -11,7 +11,8 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 /** Refresh the expiry when the session is more than a quarter used up. */
 const REFRESH_THRESHOLD_MS = SESSION_TTL_MS * 0.75;
 
-function hashToken(token: string): string {
+/** How a session row is keyed: the cookie holds the token, the database its hash. */
+export function hashSessionToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
@@ -29,7 +30,7 @@ export async function createSession(
   await prisma.session.create({
     data: {
       userId,
-      tokenHash: hashToken(token),
+      tokenHash: hashSessionToken(token),
       expiresAt,
       userAgent: meta?.userAgent?.slice(0, 255) ?? null,
       ip: meta?.ip?.slice(0, 64) ?? null,
@@ -50,7 +51,7 @@ export async function destroySession(): Promise<void> {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
   if (token) {
-    await prisma.session.deleteMany({ where: { tokenHash: hashToken(token) } });
+    await prisma.session.deleteMany({ where: { tokenHash: hashSessionToken(token) } });
   }
   jar.delete(SESSION_COOKIE);
 }
@@ -65,7 +66,7 @@ export const getCurrentUser = cache(async (): Promise<User | null> => {
   if (!token) return null;
 
   const session = await prisma.session.findUnique({
-    where: { tokenHash: hashToken(token) },
+    where: { tokenHash: hashSessionToken(token) },
     include: { user: true },
   });
   if (!session) return null;

@@ -34,7 +34,8 @@ packaged as one container with the database built in.
   permissions → database → migrations → app. Set `DATABASE_URL` and the bundled
   server never starts. Everything persistent is in `/config`.
 - **No API layer.** Pages are server components querying Prisma directly;
-  mutations are server actions. `GET /api/health` is the only route handler.
+  mutations are server actions. The only route handlers are `GET /api/health`
+  and the authenticated avatar read at `GET /api/avatars/[filename]`.
 - **Every "type" is data.** Interaction types, fact categories, relationship
   types, dating stages, plan categories — all `TaxonomyTerm` rows you can
   rename, recolour, reorder or add to. Enums are reserved for states the code
@@ -70,9 +71,7 @@ Documented so nobody assumes a feature works:
 
 | Gap | State |
 | --- | --- |
-| **Cadence, task and digest reminders** | Important dates are delivered, hourly, through the channels you add under Settings → Reminders. The other three `ReminderEntity` values are never written: nothing nudges you about an overdue cadence, a due task, or a daily digest, and `digestHour`/`digestEnabled` are stored only |
 | **Nightly backups** | `/config/backups` is created at boot and nothing writes to it — see [backup.md](backup.md) |
-| **Avatar upload** | `Contact.avatarPath` is read and rendered throughout, but no upload path writes it and nothing writes to `/config/uploads` |
 | **Account management** | Your name is set once in the welcome wizard and never again. There is no change-password, no email edit, no password reset and no session list — so a session you want to end early can only be ended by deleting its row |
 | **Sign-in throttling degrades at capacity** | The limiter holds a fixed number of counters, so at capacity admitting one means discarding another, and a determined flood can aim that at a particular counter to reset it. It costs tens of thousands of requests to buy back a handful of guesses — far more than the forwarded-address bypass below, which costs one — and tightening the eviction rule instead starts refusing pairs nobody has seen. Written up in [privacy.md](privacy.md#sign-in-throttling) |
 | **Sign-in throttling trusts the forwarded address, and is per process** | Repeated wrong passwords back off per address-and-client pair, but the client half is whatever the request presents as `X-Forwarded-For` and nothing verifies it. Counters live in the process, so they reset when the container restarts and each replica keeps its own. It stops one client grinding a password list; it does not stop one that varies the header, and volumetric defence belongs at the proxy. See [privacy.md](privacy.md#sign-in-throttling) |

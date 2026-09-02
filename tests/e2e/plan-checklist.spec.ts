@@ -35,6 +35,11 @@ test("a plan checklist can be created, edited, checked and deleted without mobil
   await plans.getByLabel("Delete checklist item 5").click();
   await plans.getByRole("button", { name: "Save", exact: true }).click();
 
+  // The editor closes only once the refreshed row has rendered, so waiting
+  // for it to close is waiting for the save to be reflected. Reopening it
+  // straight away used to show — and could save back — the checklist as it
+  // was before the edit; this reopen is what guards that.
+  await expect(plans.getByLabel("What do you want to do?")).toBeHidden();
   row = plans.locator("[tabindex='-1']").filter({ hasText: title }).first();
   await row.getByRole("button", { name: "Edit plan" }).click();
   await expect(plans.locator('input[value="Pack a picnic blanket"]')).toHaveCount(0);

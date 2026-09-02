@@ -88,7 +88,8 @@ src/server/actions/    server actions — the entire write surface
 src/server/services/   multi-step writes shared by several actions (take a Tx client)
 src/server/privacy/    the lock: state, where-fragments, offline eligibility
 src/app/(app)|(auth)|(onboarding)
-                       routes;  src/app/api/health is the ONLY route handler
+                       routes;  src/app/api/ has two route handlers: health
+                       and the authenticated avatar read
 ```
 
 There is no REST API and no client data store. Pages are server components
@@ -202,13 +203,12 @@ a `main` that already carried the instruction.
 
 ## Not implemented (do not assume otherwise)
 
-Important-date reminders are delivered by the hourly scheduler through the
-channels configured under Settings → Reminders. Cadence, task, and digest
-notifications are not implemented, so `ReminderEntity.CADENCE`, `.TASK` and
-`.DIGEST` are never written and `digestHour`/`digestEnabled` are stored only.
+Important-date, overdue cadence, due-task, and timezone-aware daily digest
+reminders are delivered by the hourly scheduler through the channels configured
+under Settings → Reminders. Each delivery has a durable policy-specific key and
+retries re-check current owner, state, policy, and privacy before sending.
 `UserPreference.weekStartsOn` is likewise reserved and read by nothing. Nothing
-writes to `/config/backups` or `/config/uploads` (`Contact.avatarPath` is
-rendered but never set). Tags exist in the schema with no UI. There is no
+writes to `/config/backups`. Tags exist in the schema with no UI. There is no
 account management after the welcome wizard. Full list in
 [docs/README.md](docs/README.md#known-gaps).
 
