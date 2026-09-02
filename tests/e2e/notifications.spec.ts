@@ -15,7 +15,14 @@ const STAMP = `${process.env.E2E_RUN_ID ?? "local"}-${Date.now().toString(36)}`;
 async function openReminderSettings(page: import("@playwright/test").Page) {
   await page.goto("/settings");
   await page.getByRole("tab", { name: "Reminders" }).click();
-  await expect(page.getByText("Reminders about important dates")).toBeVisible();
+  await expect(page.getByText("Reminders and daily digest")).toBeVisible();
+}
+
+/** The digest form, and not the intro section whose heading also says "daily digest". */
+function digestSection(page: import("@playwright/test").Page) {
+  return page
+    .locator("section")
+    .filter({ has: page.getByRole("heading", { name: "Daily digest", exact: true }) });
 }
 
 test("add a channel, edit it, switch it off and delete it", async ({ page }) => {
@@ -103,4 +110,30 @@ test("a channel is refused rather than saved in a shape the sender rejects", asy
   // And nothing was stored. Saving it would produce a channel that throws
   // inside the sender an hour later, in a cron job nobody is watching.
   await expect(page.locator("section").filter({ hasText: "smtp.example.com" })).toHaveCount(0);
+});
+
+test("the daily digest can be switched off and given an hour", async ({ page }) => {
+  await ensureSignedIn(page);
+  await openReminderSettings(page);
+
+  // Default-on for every existing account, so the control that stops it has
+  // to exist and has to survive a reload — otherwise the only way to silence
+  // a daily message would be to delete every channel.
+  const digest = digestSection(page);
+  await digest.getByLabel("Send a daily digest").uncheck();
+  await digest.getByLabel("Send it after").selectOption("18");
+  await digest.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+
+  await openReminderSettings(page);
+  await expect(digest.getByLabel("Send a daily digest")).not.toBeChecked();
+  await expect(digest.getByLabel("Send it after")).toHaveValue("18");
+
+  // Back to the defaults, so the other project finds what a fresh account has.
+  await digest.getByLabel("Send a daily digest").check();
+  await digest.getByLabel("Send it after").selectOption("8");
+  await digest.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+  await openReminderSettings(page);
+  await expect(digest.getByLabel("Send a daily digest")).toBeChecked();
 });

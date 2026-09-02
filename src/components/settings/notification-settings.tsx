@@ -27,6 +27,23 @@ import {
   setChannelEnabled,
   updateChannel,
 } from "@/server/actions/notifications";
+import { updateDigest } from "@/server/actions/settings";
+
+export interface DigestPreference {
+  enabled: boolean;
+  /** Local hour, 0–23, after which the hourly check sends that day's digest. */
+  hour: number;
+  timezone: string;
+}
+
+const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+
+/** "8 AM", in nobody's timezone: the hour is the owner's own. */
+function hourLabel(hour: number): string {
+  return new Intl.DateTimeFormat("en-US", { hour: "numeric", timeZone: "UTC" }).format(
+    new Date(Date.UTC(2026, 0, 1, hour)),
+  );
+}
 
 /**
  * Where reminders are allowed to go.
@@ -71,7 +88,13 @@ function useChannelForm() {
   return { errors, submit };
 }
 
-export function NotificationSettings({ channels }: { channels: RedactedChannel[] }) {
+export function NotificationSettings({
+  channels,
+  digest,
+}: {
+  channels: RedactedChannel[];
+  digest: DigestPreference;
+}) {
   const { errors, submit } = useChannelForm();
   const [adding, setAdding] = React.useState<ChannelKind | null>(null);
 
@@ -99,6 +122,8 @@ export function NotificationSettings({ channels }: { channels: RedactedChannel[]
           </p>
         ) : null}
       </section>
+
+      <DigestSettings digest={digest} />
 
       {channels.map((channel) => (
         <ChannelCard key={channel.id} channel={channel} />
@@ -151,6 +176,60 @@ export function NotificationSettings({ channels }: { channels: RedactedChannel[]
         ) : null}
       </section>
     </div>
+  );
+}
+
+/**
+ * The one reminder that goes out on the app's initiative rather than a
+ * record's. It defaults to on, so the switch to stop it lives here, next to
+ * the channels it would otherwise reach, rather than on a preferences page
+ * nobody hunting for the source of a daily message would think to open.
+ */
+function DigestSettings({ digest }: { digest: DigestPreference }) {
+  const { errors, submit } = useChannelForm();
+
+  return (
+    <section className="rounded-xl border border-border bg-card p-4">
+      <h3 className="text-sm font-semibold">Daily digest</h3>
+      <p className="mt-1 text-xs text-muted-foreground">
+        One message a day to every channel, counting the people you are due to reach out to
+        and the tasks that have fallen due. The individual reminders above are sent either way.
+      </p>
+      <form action={submit(updateDigest, () => {}, "Saved")} className="mt-3 grid gap-2.5">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            name="digestEnabled"
+            value="true"
+            defaultChecked={digest.enabled}
+            className="size-4"
+          />
+          Send a daily digest
+        </label>
+        <Field
+          label="Send it after"
+          htmlFor="digestHour"
+          hint={`In ${digest.timezone}, on the first hourly check past this time.`}
+          error={errors.digestHour}
+        >
+          <select
+            id="digestHour"
+            name="digestHour"
+            defaultValue={String(digest.hour)}
+            className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+          >
+            {HOURS.map((hour) => (
+              <option key={hour} value={hour}>
+                {hourLabel(hour)}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <SubmitButton size="sm" className="justify-self-start">
+          Save
+        </SubmitButton>
+      </form>
+    </section>
   );
 }
 

@@ -7,6 +7,9 @@
   configured channel now receives the reminders enabled for its owner, without
   including archived or locked-private people. A cadence counts as due for the
   whole of its local day, the way the overdue list already reads it.
+- **Daily digest controls.** Settings → Reminders gains a switch for the digest
+  and the local hour after which it is sent, so the one message the app sends
+  on its own initiative can be stopped without deleting every channel.
 
 #### Changed
 - **Reminder retries now re-check current state and privacy.** Completed tasks,
