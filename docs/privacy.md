@@ -449,6 +449,31 @@ so a deployment running several allows that many times the attempts before
 backoff bites; the intended shape is one container, and volumetric defence
 belongs at the proxy in front of it either way.
 
+**What capacity costs, when it is reached.** A limiter of fixed size has to
+discard something to admit something, and whatever it discards can be aimed at.
+Both of these are real:
+
+- An un-penalised counter is dropped when the un-penalised map is full, and a
+  counter at four failures still says four guesses have been spent. Pushing a
+  particular one out takes roughly `MAX_FRESH_PAIRS` distinct junk pairs — tens
+  of thousands of requests — and buys back at most four guesses.
+- A penalised counter quiet for longer than the longest wait the schedule can
+  produce may be dropped to admit a newly penalised one. Doing that on purpose
+  means filling every protected slot, five failures apiece, and waiting out the
+  target's backoff first.
+
+Neither is closed by tightening the rule, and the attempts to do so are
+instructive: evict less and capacity fills with counters nothing may drop, so
+pairs nobody has ever seen start being refused — the same denial arriving from
+the other direction. The honest statement is that per-key throttling degrades
+under flood, and that the volume required to make it degrade is itself the
+thing a reverse proxy is for.
+
+It is also worth putting these next to the cheaper bypass below. Resetting a
+counter through eviction costs four or five figures of requests. Varying the
+forwarded client address costs one. Closing the eviction path would not change
+what an attacker who can do the second would actually do.
+
 **What it does not do.** The client half of the key is whatever the request
 presents as `X-Forwarded-For` (falling back to `X-Real-IP`, then to no address
 at all, which is counted as one group). Nothing verifies it. Someone who can
