@@ -29,17 +29,12 @@ export type ImageInspection =
 /** No avatar needs more; a header asking for more is a damaged file, not a large one. */
 export const MAX_IMAGE_DIMENSION = 16_384;
 
-/** The largest square a PNG avatar may be: what the raw-size cap below is sized to. */
-export const MAX_PNG_SIDE = 2048;
-
 /**
- * The most a PNG's pixel data may inflate to: a 2048-square picture at four
- * bytes a pixel, filter bytes included — sized from the same arithmetic the
- * check uses, so the largest image it means to allow is allowed. Small on
- * purpose: inflating happens off the event loop but still in memory, and an
- * avatar is drawn at eighty pixels.
+ * The largest a PNG avatar may be on either side. Small on purpose: a PNG is
+ * inflated before it is believed, off the event loop but still in memory,
+ * and an avatar is drawn at eighty pixels.
  */
-export const MAX_PNG_RAW_BYTES = MAX_PNG_SIDE * (MAX_PNG_SIDE * 4 + 1);
+export const MAX_PNG_SIDE = 2048;
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -99,6 +94,16 @@ function pngRawSize(width: number, height: number, depth: number, colorType: num
 }
 
 /**
+ * The most a PNG within the side limit can inflate to: that square in the
+ * heaviest encoding accepted — sixteen-bit RGBA, interlaced, whose seven
+ * passes each carry their own filter bytes — sized by the same arithmetic
+ * the check uses, so every picture within the limit is within the cap.
+ */
+const largestAccepted = pngRawSize(MAX_PNG_SIDE, MAX_PNG_SIDE, 16, 6, 1);
+if (largestAccepted === null) throw new Error("The PNG raw-size cap could not be computed.");
+export const MAX_PNG_RAW_BYTES: number = largestAccepted;
+
+/**
  * Chunks of length, type, data and CRC; IHDR first, IEND last and final, and
  * between them IDAT chunks whose concatenated payload is a zlib stream that
  * inflates to exactly the picture the header describes. That is the one
@@ -128,6 +133,9 @@ async function pngIsWhole(bytes: Uint8Array): Promise<ImageInspection> {
       if (!plausible(width, height) || bytes[at + 18] !== 0 || bytes[at + 19] !== 0) return incomplete;
       rawSize = pngRawSize(width, height, bytes[at + 16], bytes[at + 17], bytes[at + 20]);
       if (rawSize === null) return incomplete;
+      // The side limit is the rule the upload error states; the raw cap is
+      // what that limit can come to and is the bound the inflate is given.
+      if (width > MAX_PNG_SIDE || height > MAX_PNG_SIDE) return { ok: false, reason: "oversized" };
       if (rawSize > MAX_PNG_RAW_BYTES) return { ok: false, reason: "oversized" };
     } else if (type === "IDAT") {
       data.push(bytes.subarray(at + 8, at + 8 + length));

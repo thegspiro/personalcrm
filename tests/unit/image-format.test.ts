@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inspectImage, MAX_IMAGE_DIMENSION, MAX_PNG_SIDE } from "@/lib/image-format";
+import { inspectImage, MAX_IMAGE_DIMENSION, MAX_PNG_RAW_BYTES, MAX_PNG_SIDE } from "@/lib/image-format";
 import {
   JPEG_EMPTY_SCAN,
   JPEG_MINIMAL,
@@ -74,6 +74,17 @@ describe("inspectImage", () => {
     largest.set([(MAX_PNG_SIDE >>> 24) & 0xff, (MAX_PNG_SIDE >>> 16) & 0xff, (MAX_PNG_SIDE >>> 8) & 0xff, MAX_PNG_SIDE & 0xff], 16);
     largest.set([(MAX_PNG_SIDE >>> 24) & 0xff, (MAX_PNG_SIDE >>> 16) & 0xff, (MAX_PNG_SIDE >>> 8) & 0xff, MAX_PNG_SIDE & 0xff], 20);
     expect(await inspectImage(largest)).toEqual({ ok: false, reason: "incomplete" });
+    // In its heaviest accepted encoding too: sixteen-bit RGBA, interlaced,
+    // is twice the bytes and more filter bytes, and still within the limit.
+    const heaviest = Uint8Array.from(largest);
+    heaviest.set([16, 6, 0, 0, 1], 24);
+    expect(await inspectImage(heaviest)).toEqual({ ok: false, reason: "incomplete" });
+    expect(MAX_PNG_RAW_BYTES).toBeGreaterThanOrEqual(MAX_PNG_SIDE * (MAX_PNG_SIDE * 8 + 1));
+    // One pixel over the side limit is refused however light its encoding.
+    const wide = Uint8Array.from(PNG_TRANSPARENT);
+    const over = MAX_PNG_SIDE + 1;
+    wide.set([(over >>> 24) & 0xff, (over >>> 16) & 0xff, (over >>> 8) & 0xff, over & 0xff], 16);
+    expect(await inspectImage(wide)).toEqual({ ok: false, reason: "oversized" });
   });
 
   it("refuses trailing bytes after the end of a PNG", async () => {
