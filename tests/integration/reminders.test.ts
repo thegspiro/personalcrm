@@ -494,4 +494,33 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("cancelled") });
   });
+
+  it("honours a lock switched on during the pass, before a first send", async () => {
+    const user = await createTestUser();
+    await prisma.user.update({ where: { id: user.id }, data: { privacyPinHash: "pin" } });
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", privacyLockEnabled: false, digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Secret", isPrivate: true } });
+    await prisma.task.create({ data: { ownerId: user.id, contactId: contact.id, title: "Private errand", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async () => undefined);
+
+    // The candidate was read with the lock off; the lock goes on as its
+    // ledger row is written, which is the last moment before the send.
+    const create = prisma.reminderLog.create.bind(prisma.reminderLog);
+    const lockingBeforeSend = withLedger({
+      create: async (args: Parameters<typeof create>[0]) => {
+        await prisma.userPreference.update({ where: { userId: user.id }, data: { privacyLockEnabled: true } });
+        return create(args);
+      },
+    });
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: lockingBeforeSend, send });
+    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, attemptCount: 0, nextAttemptAt: null, error: expect.stringContaining("cancelled") });
+
+    // And once the lock is off again, the same row is re-armed and sent.
+    await prisma.userPreference.update({ where: { userId: user.id }, data: { privacyLockEnabled: false } });
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.count()).toBe(1);
+  });
 });

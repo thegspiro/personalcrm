@@ -323,6 +323,22 @@ function dedupKeyFor(user: ScheduledUser, candidate: Candidate, channel: Channel
   });
 }
 
+const PREFERENCE = {
+  select: { timezone: true, privacyLockEnabled: true, digestEnabled: true, digestHour: true },
+} as const;
+
+/**
+ * The owner as they are right now, not as they were when the pass began.
+ * A pass can take minutes across many owners and channels, and a lock
+ * switched on in that time has to bind every send that follows it.
+ */
+function currentOwner(db: Db, ownerId: string) {
+  return db.user.findUnique({
+    where: { id: ownerId, isActive: true },
+    select: { id: true, preference: PREFERENCE },
+  });
+}
+
 /**
  * Creates one durable ledger row per candidate and channel before delivery.
  * A concurrent scheduler loses the unique-key race and therefore cannot send
@@ -334,6 +350,12 @@ function dedupKeyFor(user: ScheduledUser, candidate: Candidate, channel: Channel
  * key would then stop the reminder being created ever again — lost in
  * exactly the restart the ledger exists to survive. Seeded, the same row is
  * picked up by the next retry pass, revalidated, and sent.
+ *
+ * What is sent is not the candidate as it was read at the top of the pass
+ * but the reminder as it stands once the row is held: the owner and the
+ * record are read again, under the same rules a retry is judged by. A lock
+ * switched on, a task completed or a date corrected between the candidate
+ * query and this send cancels the row rather than being sent past.
  */
 async function createAndDeliver(
   db: Db,
@@ -363,8 +385,21 @@ async function createAndDeliver(
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return null;
     throw error;
   }
+
+  const owner = await currentOwner(db, user.id);
+  const message = owner?.preference
+    ? await currentMessage(db, { id: owner.id, preference: owner.preference }, log, now)
+    : null;
+  if (message === NOT_YET) return null;
+  if (!message) {
+    await db.reminderLog.update({
+      where: { id: log.id },
+      data: { nextAttemptAt: null, error: "Delivery cancelled by current state, policy, or privacy." },
+    });
+    return null;
+  }
   try {
-    await send(channel, candidate.subject, candidate.body);
+    await send(channel, message.subject, message.body);
     await db.reminderLog.update({
       where: { id: log.id },
       data: { ok: true, sentAt: now, attemptCount: 1, nextAttemptAt: null },
@@ -396,9 +431,6 @@ export async function processReminderDeliveries(
   let sent = 0;
   let failed = 0;
 
-  const PREFERENCE = {
-    select: { timezone: true, privacyLockEnabled: true, digestEnabled: true, digestHour: true },
-  } as const;
   const users = await db.user.findMany({
     where: { isActive: true },
     select: { id: true, preference: PREFERENCE, notificationChannels: { where: { isEnabled: true } } },
@@ -456,13 +488,7 @@ export async function processReminderDeliveries(
   });
   for (const log of retries) {
     if (!log.channel) continue;
-    // Read the owner afresh rather than from the pass's opening snapshot:
-    // the candidate loops above can take minutes across many channels, and
-    // a lock switched on in that time has to bind the retry that follows.
-    const owner = await db.user.findUnique({
-      where: { id: log.ownerId, isActive: true },
-      select: { id: true, preference: PREFERENCE },
-    });
+    const owner = await currentOwner(db, log.ownerId);
     // An owner with no preference row is left alone, row included; one who
     // is no longer active has nothing owed.
     if (owner && owner.preference === null) continue;
