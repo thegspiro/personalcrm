@@ -547,11 +547,6 @@ export async function processReminderDeliveries(
       await cancel(db, log.id, CANCELLED);
       continue;
     }
-    const live = await currentChannel(db, log.ownerId, log.channelId);
-    if (!live) {
-      await cancel(db, log.id, NO_CHANNEL);
-      continue;
-    }
     // Two processes can overlap — a rolling restart, or two replicas on one
     // external database — and both will have selected this row. The unique
     // key only guards the first delivery, so the retry is claimed the same
@@ -563,6 +558,13 @@ export async function processReminderDeliveries(
       data: { nextAttemptAt: new Date(clock().getTime() + CLAIM_LEASE_MS) },
     });
     if (claimed.count === 0) continue;
+    // Read after the claim, not before it: the row is ours now, and the
+    // channel must be the owner's and switched on at the moment of sending.
+    const live = await currentChannel(db, log.ownerId, log.channelId);
+    if (!live) {
+      await cancel(db, log.id, NO_CHANNEL);
+      continue;
+    }
     try {
       await send(live, message.subject, message.body);
       await db.reminderLog.update({
