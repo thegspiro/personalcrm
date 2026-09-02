@@ -296,16 +296,23 @@ machine until you say where it should go.
 More than most people assume, so it is written out here rather than left to be
 discovered:
 
-| Field | Example |
-| --- | --- |
-| The date's label | `Anniversary` |
-| The contact's first and last name | `Dana Whitfield` |
-| The occurrence date | `2026-09-14` |
-| How far out it is | `in 7 days` |
+| Reminder | Field | Example |
+| --- | --- | --- |
+| Important date | The date's label | `Anniversary` |
+| | The contact's first and last name | `Dana Whitfield` |
+| | The occurrence date | `2026-09-14` |
+| | How far out it is | `in 7 days` |
+| Cadence | The contact's first and last name | `Dana Whitfield` |
+| | The date the cadence fell due | `2026-09-01` |
+| Task | The task's title | `Book the dentist` |
+| | The contact's name, if the task is for someone | `Dana Whitfield` |
+| | The due date | `2026-09-02` |
+| Daily digest | How many cadences and tasks are due — counts only, no names | `2 cadence reminders and 1 due task` |
 
 That goes to whatever host the channel names, on the hour, with no preview and
-no confirmation step. A retry after a failure sends a shorter body carrying the
-scheduled date only.
+no confirmation step. A retry after a failure re-reads the record and sends
+the same fields again, worded for the day it goes out — it is not a shorter
+message, and it never carries anything the first attempt would not have.
 
 **Email is different in kind from the rest.** An ntfy, Gotify or webhook URL can
 point at a box on your own network, and then nothing leaves it. SMTP goes

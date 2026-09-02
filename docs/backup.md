@@ -47,7 +47,13 @@ docker exec personalcrm bash -c \
      personalcrm' > personalcrm-$(date +%F).sql
 ```
 
-`--single-transaction` is what makes this consistent without locking.
+`--single-transaction` is what makes this consistent without locking — for the
+database. The copy of `uploads/` is a separate step, and nothing holds avatars
+still between the two: a photo replaced or removed in that gap is referenced
+by one and absent from the other. What that costs on restore is exactly one
+thing: that person shows their initials instead of a photo, and uploading one
+again fixes it. Nothing else is affected. If you want the avatars exact as
+well, take the stopped-container backup above.
 
 On an external database, take the dump with your own tooling — `/config` then
 holds only `uploads/` and `secrets.json`.
@@ -62,9 +68,11 @@ Onto a fresh container:
    from an older version, so a restore and an upgrade can happen together.
 
 Do not restore only the SQL when contacts have avatars: those rows would point
-at missing files. Restore `uploads/` from the same backup generation as the
-database. Conversely, extra unreferenced files are harmless and may be removed
-after the matching database has been restored.
+at missing files. Restore `uploads/` from the same backup as the database. A
+row that points at a file the copy does not hold is not an error — the person
+shows their initials until a photo is uploaded again — and extra unreferenced
+files are harmless and may be removed after the matching database has been
+restored.
 
 Restoring a `.sql` dump instead:
 
