@@ -41,8 +41,9 @@ export default async function PeoplePage({
       categoryId: first("category"),
       scope: first("scope") === "archived" ? "archived" : "active",
       favoritesOnly: first("favorites") === "1",
+      overdueOnly: sort === "overdue",
       sort,
-    }),
+    }, timezone),
   ]);
 
   const isFiltered = Boolean(
