@@ -31,7 +31,7 @@ does not own. That is what makes these fast and worth writing.
 | `taxonomy-seeds.test.ts` | The seeded default terms |
 | `ai-providers.test.ts` | Forgiving response parsing across provider dialects |
 | `birthdays.test.ts`, `life-events.test.ts` | Recurring-date projection; milestone ranges over partial dates |
-| `reminders.test.ts` | Reminder offsets, and which occurrence is due today |
+| `reminders.test.ts` | Reminder offsets, timezone boundaries, DST transitions, digest hours, and durable deduplication keys |
 | `notification-channels.test.ts` | Per-kind channel validation, and that the test message interpolates nothing |
 | `secrets.test.ts` | At-rest encryption, and that the two HKDF purpose strings stay pinned |
 | `contact-methods.test.ts` | Turning a stored number or handle into a link worth offering |
@@ -83,9 +83,9 @@ the schema do, not things a mock can:
   never reaches the browser, that a blank field keeps the stored one, and that
   a secret which will not decrypt refuses to send rather than going out without
   it.
-- `reminders.test.ts` — the delivery ledger: one send per occurrence, retries
-  that do not duplicate a row, and both the encrypted and the legacy plaintext
-  channel shapes reaching the network with their credential attached.
+- `reminders.test.ts` — all four delivery policies; retries and cancellation after
+  task/privacy changes; owner isolation; multiple channels; and both encrypted
+  and legacy plaintext channel shapes reaching the network with credentials.
 - `privacy-actions.test.ts`, `privacy-pin.test.ts` — disabling the lock, and
   the shared backoff that separate sessions cannot race around.
 - `reciprocity.test.ts` — the reaching-out ratio against real interaction rows.

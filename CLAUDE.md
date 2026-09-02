@@ -202,10 +202,10 @@ a `main` that already carried the instruction.
 
 ## Not implemented (do not assume otherwise)
 
-Important-date reminders are delivered by the hourly scheduler through the
-channels configured under Settings → Reminders. Cadence, task, and digest
-notifications are not implemented, so `ReminderEntity.CADENCE`, `.TASK` and
-`.DIGEST` are never written and `digestHour`/`digestEnabled` are stored only.
+Important-date, overdue cadence, due-task, and timezone-aware daily digest
+reminders are delivered by the hourly scheduler through the channels configured
+under Settings → Reminders. Each delivery has a durable policy-specific key and
+retries re-check current owner, state, policy, and privacy before sending.
 `UserPreference.weekStartsOn` is likewise reserved and read by nothing. Nothing
 writes to `/config/backups` or `/config/uploads` (`Contact.avatarPath` is
 rendered but never set). Tags exist in the schema with no UI. There is no
