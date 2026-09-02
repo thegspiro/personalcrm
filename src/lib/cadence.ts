@@ -50,8 +50,8 @@ export function daysUntilTouch(
 /**
  * How a due date reads in a list: "3d overdue", "today", "in 4 days".
  *
- * Shared by the dashboard widget and the follow-up hub, which show the same
- * people. Two copies of this drifted apart once already.
+ * Shared by the dashboard widget and the follow-up hub, which list the same
+ * people and must not disagree about how a due date reads.
  */
 export function dueLabel(daysUntilDue: number): string {
   if (daysUntilDue < 0) return `${-daysUntilDue}d overdue`;
