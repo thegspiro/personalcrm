@@ -528,9 +528,11 @@ export async function processReminderDeliveries(
       channelId: { not: null },
       attemptCount: { lt: MAX_ATTEMPTS },
       nextAttemptAt: { lte: now },
-      channel: { isEnabled: true },
     },
   });
+  // Not filtered by the channel's state: a retry whose channel is off must be
+  // selected so the check after the claim can cancel it. Left in the queue,
+  // it would go out the hour the channel was switched back on.
   for (const log of retries) {
     if (!log.channelId) continue;
     const owner = await currentOwner(db, log.ownerId);

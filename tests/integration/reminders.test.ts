@@ -636,6 +636,29 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("channel") });
   });
 
+  it("cancels a queued retry whose channel is switched off, rather than holding it until the channel returns", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    const channel = await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" }, isEnabled: false } });
+    const task = await prisma.task.create({ data: { ownerId: user.id, title: "Return the book", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    await prisma.reminderLog.create({ data: {
+      ownerId: user.id, entityType: "TASK", entityId: task.id, schedulingPolicy: "INCOMPLETE_TASK_DUE",
+      dedupKey: "failed-before-the-channel-was-switched-off", scheduledFor: new Date("2026-09-02T00:00:00Z"), offsetDays: 0,
+      channelId: channel.id, attemptCount: 1, nextAttemptAt: new Date("2026-09-02T08:00:00Z"), error: "offline",
+    } });
+    const send = vi.fn(async () => undefined);
+
+    // Off before the pass: the row must still be selected so it can be cancelled.
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("channel") });
+
+    // Switching the channel back on does not revive it.
+    await prisma.notificationChannel.update({ where: { id: channel.id }, data: { isEnabled: true } });
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("schedules the retry after a failure from the clock at the failure", async () => {
     const user = await createTestUser();
     await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
