@@ -207,8 +207,7 @@ reminders are delivered by the hourly scheduler through the channels configured
 under Settings → Reminders. Each delivery has a durable policy-specific key and
 retries re-check current owner, state, policy, and privacy before sending.
 `UserPreference.weekStartsOn` is likewise reserved and read by nothing. Nothing
-writes to `/config/backups` or `/config/uploads` (`Contact.avatarPath` is
-rendered but never set). Tags exist in the schema with no UI. There is no
+writes to `/config/backups`. Tags exist in the schema with no UI. There is no
 account management after the welcome wizard. Full list in
 [docs/README.md](docs/README.md#known-gaps).
 

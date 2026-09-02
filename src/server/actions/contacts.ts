@@ -10,6 +10,11 @@ import {
   saveCustomFieldValuesOrThrow,
 } from "@/server/services/custom-field-values";
 import { snoozeUntil as snoozeDate } from "@/lib/cadence";
+import {
+  AvatarValidationError,
+  removeAvatarFile,
+  storeAvatar,
+} from "@/server/services/avatars";
 import { contactPrivacyWhere, privacyScope } from "@/server/privacy/filter";
 import {
   type ActionResult,
@@ -69,6 +74,17 @@ export async function createContact(form: FormData): Promise<ActionResult<{ id: 
   const met = partialDate(form, "metOn");
   const cadenceDays = num(form, "cadenceDays");
 
+  const avatar = form.get("avatar");
+  let storedAvatar: Awaited<ReturnType<typeof storeAvatar>> | null = null;
+  if (avatar instanceof File && avatar.size > 0) {
+    try {
+      storedAvatar = await storeAvatar(avatar);
+    } catch (error) {
+      if (error instanceof AvatarValidationError) return fail(error.message);
+      return fail("The avatar could not be stored.");
+    }
+  }
+
   // Wrapped so an invalid custom field aborts the whole create: a contact that
   // saves while one of its fields silently doesn't is worse than a failure.
   let contact: { id: string };
@@ -98,6 +114,7 @@ export async function createContact(form: FormData): Promise<ActionResult<{ id: 
         cadenceDays: cadenceDays && cadenceDays > 0 ? Math.round(cadenceDays) : null,
         isFavorite: bool(form, "isFavorite"),
         isRomantic: bool(form, "isRomantic"),
+        avatarPath: storedAvatar?.publicPath ?? null,
       },
     });
 
@@ -108,6 +125,7 @@ export async function createContact(form: FormData): Promise<ActionResult<{ id: 
     return created;
     });
   } catch (error) {
+    await removeAvatarFile(storedAvatar?.publicPath ?? null).catch(() => {});
     const failure = customFieldFailure(error);
     if (failure) return failure;
     throw error;
@@ -121,7 +139,12 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
   const id = str(form, "id");
   if (!id) return fail("Missing contact.");
-  if (!(await assertOwnedContact(ownerId, id))) return fail("Contact not found.");
+  const scope = await privacyScope();
+  const existing = await prisma.contact.findFirst({
+    where: { id, ownerId, ...contactPrivacyWhere(scope) },
+    select: { id: true, avatarPath: true },
+  });
+  if (!existing) return fail("Contact not found.");
 
   const parsed = nameSchema.safeParse({
     firstName: str(form, "firstName"),
@@ -136,6 +159,18 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
   const birth = partialDate(form, "birthDate");
   const met = partialDate(form, "metOn");
   const cadenceDays = num(form, "cadenceDays");
+
+  const avatar = form.get("avatar");
+  const removeAvatar = bool(form, "removeAvatar");
+  let storedAvatar: Awaited<ReturnType<typeof storeAvatar>> | null = null;
+  if (avatar instanceof File && avatar.size > 0) {
+    try {
+      storedAvatar = await storeAvatar(avatar);
+    } catch (error) {
+      if (error instanceof AvatarValidationError) return fail(error.message);
+      return fail("The avatar could not be stored.");
+    }
+  }
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -163,6 +198,7 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
         cadenceDays: cadenceDays && cadenceDays > 0 ? Math.round(cadenceDays) : null,
         isFavorite: bool(form, "isFavorite"),
         isRomantic: bool(form, "isRomantic"),
+        ...(storedAvatar ? { avatarPath: storedAvatar.publicPath } : removeAvatar ? { avatarPath: null } : {}),
       },
     });
 
@@ -171,9 +207,19 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
     await recomputeContactActivity(tx, [id]);
     });
   } catch (error) {
+    await removeAvatarFile(storedAvatar?.publicPath ?? null).catch(() => {});
     const failure = customFieldFailure(error);
     if (failure) return failure;
     throw error;
+  }
+
+  if (storedAvatar || removeAvatar) {
+    // The database points only at a fully published new file (or null) before
+    // obsolete bytes are removed. A cleanup failure can therefore leave an
+    // unreferenced file, but never a broken Contact.avatarPath.
+    await removeAvatarFile(existing.avatarPath).catch((error) => {
+      console.error("Unable to remove obsolete avatar", error);
+    });
   }
 
   revalidateContact(id);
@@ -249,7 +295,12 @@ export async function snoozeContact(id: string, days: number): Promise<ActionRes
 
 export async function deleteContact(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
-  if (!(await assertOwnedContact(ownerId, id))) return fail("Contact not found.");
+  const scope = await privacyScope();
+  const contact = await prisma.contact.findFirst({
+    where: { id, ownerId, ...contactPrivacyWhere(scope) },
+    select: { avatarPath: true },
+  });
+  if (!contact) return fail("Contact not found.");
 
   await prisma.$transaction(async (tx) => {
     // Custom field values key off a plain entityId with no foreign key, so
@@ -271,6 +322,12 @@ export async function deleteContact(id: string): Promise<ActionResult> {
     await tx.contact.delete({ where: { id } });
   });
 
+  // Delete the row first: if unlink fails the only consequence is an orphan,
+  // never a database path to a file that no longer exists.
+  await removeAvatarFile(contact.avatarPath).catch((error) => {
+    console.error("Unable to remove deleted contact avatar", error);
+  });
+
   revalidateContact(id);
   return ok();
 }
@@ -278,4 +335,3 @@ export async function deleteContact(id: string): Promise<ActionResult> {
 export async function setContactArchived(id: string, archived: boolean): Promise<ActionResult> {
   return patchContact(id, { isArchived: archived });
 }
-
