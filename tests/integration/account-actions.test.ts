@@ -7,9 +7,26 @@ const state = vi.hoisted(() => ({
   secured: false,
   securingFails: false,
   cookieRotated: false,
+  // Fires once immediately before the next write, then clears itself. The
+  // window a racing password change lands in is between confirming the old
+  // password and writing the new one, and no dependency of the action is
+  // consulted inside it.
+  beforeWrite: null as null | (() => Promise<void>),
 }));
+const WRITES = ["create", "createMany", "update", "updateMany", "upsert", "delete", "deleteMany"];
 vi.mock("@/server/db/client", async () => ({
-  prisma: (await import("./db")).prisma,
+  prisma: (await import("./db")).prisma.$extends({
+    query: {
+      async $allOperations({ operation, args, query }) {
+        const interleaved = state.beforeWrite;
+        if (interleaved && WRITES.includes(operation)) {
+          state.beforeWrite = null;
+          await interleaved();
+        }
+        return query(args);
+      },
+    },
+  }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("next/headers", () => ({
@@ -56,6 +73,7 @@ describe.skipIf(!hasTestDatabase)("account actions", () => {
     state.secured = false;
     state.securingFails = false;
     state.cookieRotated = false;
+    state.beforeWrite = null;
     resetLoginAttempts();
     await prisma.user.update({
       where: { id: user.id },
@@ -254,5 +272,42 @@ describe.skipIf(!hasTestDatabase)("account actions", () => {
     expect(
       (await prisma.user.findUniqueOrThrow({ where: { id: state.ownerId } })).email,
     ).not.toBe(long);
+  });
+
+  it("changes nothing when the password moved after the confirmation", async () => {
+    // Two changes racing both confirm the old password before either
+    // transaction opens, and the window is a whole bcrypt comparison wide.
+    // Written unconditionally, the second overwrote the first — and its
+    // session sweep saw the first request's freshly re-keyed row as *another*
+    // session and deleted it, while its own stale cookie matched nothing left
+    // to re-key. Two tabs, and the owner is signed out of an account both
+    // requests reported as updated.
+    const winner = await hashPassword("SomebodyElse3!");
+    state.beforeWrite = async () => {
+      await prisma.user.update({
+        where: { id: state.ownerId },
+        data: { passwordHash: winner },
+      });
+    };
+
+    const result = await changePassword(
+      form({
+        currentPassword: "OldPassword1!",
+        newPassword: "NewPassword2!",
+        confirmPassword: "NewPassword2!",
+      }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.fieldErrors?.currentPassword).toBe(
+      "Current password is incorrect.",
+    );
+    // The winner's password stands, and the loser wrote nothing — neither the
+    // password nor the sessions, which is what kept the winner signed in.
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { id: state.ownerId },
+    });
+    expect(user.passwordHash).toBe(winner);
+    expect(state.secured).toBe(false);
+    expect(state.cookieRotated).toBe(false);
   });
 });

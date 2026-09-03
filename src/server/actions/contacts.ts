@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import { recomputeContactActivity } from "@/server/services/contact-activity";
 import {
@@ -56,6 +56,22 @@ async function replaceTags(
   tagIds: string[],
 ) {
   const unique = [...new Set(tagIds)];
+  if (unique.length) {
+    // Held for the rest of the transaction before they are counted, because
+    // counting alone left a gap: another tab deleting a submitted tag between
+    // the count and the insert met the foreign key as a P2003, which nothing
+    // here translates — so an ordinary tag deletion elsewhere turned a whole
+    // contact save into a server error and rolled it back, rather than the
+    // field error an unusable tag is supposed to produce. Owner-scoped, so a
+    // tag belonging to another account is simply not returned; the visibility
+    // question is then asked of rows that cannot move.
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM Tag
+      WHERE ownerId = ${ownerId} AND id IN (${Prisma.join(unique)})
+      FOR UPDATE
+    `;
+    if (locked.length !== unique.length) throw new InvalidTagError();
+  }
   const usable = unique.length
     ? await tx.tag.count({
         where: { id: { in: unique }, ...tagVisibleWhere(ownerId, scope) },

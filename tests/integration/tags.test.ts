@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Prisma } from "@prisma/client";
 import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
 
 const state = vi.hoisted(() => ({
@@ -562,5 +563,162 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     const result = await setContactTag(contact.id, tag.id, true);
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.error).toBe("Contact or tag not found.");
+  });
+});
+
+/**
+ * Hold a write open and uncommitted until the returned release is called.
+ *
+ * The interleavings below are not sleep-timed races. An uncommitted write is
+ * invisible to a plain read but its row locks are real, so it puts the action
+ * under test in exactly the state a concurrent tab would: the read it takes
+ * before the transaction sees nothing, and the moment it wants a lock on the
+ * same row it waits. Releasing then decides the order deterministically.
+ */
+async function holdUncommitted(
+  write: (tx: Prisma.TransactionClient) => Promise<unknown>,
+): Promise<{ release: () => void; settled: Promise<unknown> }> {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let written!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    written = resolve;
+  });
+  const settled = prisma.$transaction(
+    async (tx) => {
+      await write(tx);
+      written();
+      await held;
+    },
+    { timeout: 20_000 },
+  );
+  await ready;
+  return { release, settled };
+}
+
+/** Let the action reach the lock it is about to wait on, then let go. */
+async function releaseAfterItBlocks(release: () => void): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  release();
+}
+
+describe.skipIf(!hasTestDatabase)("tag writes against a concurrent tab", () => {
+  beforeEach(async () => {
+    await reset();
+    state.duringPrivacyRead = null;
+    state.beforeWrite = null;
+  });
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it("refuses a locked merge for a private assignment made after it started", async () => {
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = true;
+    state.unlocked = false;
+    const hidden = await prisma.contact.create({
+      data: { ownerId: owner.id, firstName: "Wren", isPrivate: true },
+    });
+    const source = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Choir", slug: "choir" },
+    });
+    const destination = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Music", slug: "music" },
+    });
+
+    // An unlocked tab puts the source tag on someone private, in the window
+    // between this session's privacy question and its transaction.
+    let held: Awaited<ReturnType<typeof holdUncommitted>>;
+    state.duringPrivacyRead = async () => {
+      held = await holdUncommitted((tx) =>
+        tx.contactTag.create({
+          data: { contactId: hidden.id, tagId: source.id },
+        }),
+      );
+    };
+
+    const merging = mergeTag(source.id, destination.id);
+    await releaseAfterItBlocks(() => held.release());
+    await held!.settled;
+    const result = await merging;
+
+    // Asked before the transaction, the question was about a moment that had
+    // already passed: the count saw nothing, the merge went ahead, and the
+    // cascade took the private assignment with the source tag — a locked
+    // session destroying a record it cannot see.
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toMatch(/Unlock to merge/);
+    expect(await prisma.tag.count({ where: { id: source.id } })).toBe(1);
+    expect(
+      await prisma.contactTag.count({
+        where: { contactId: hidden.id, tagId: source.id },
+      }),
+    ).toBe(1);
+  });
+
+  it("refuses a locked delete for a private assignment made after it started", async () => {
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = true;
+    state.unlocked = false;
+    const hidden = await prisma.contact.create({
+      data: { ownerId: owner.id, firstName: "Wren", isPrivate: true },
+    });
+    const tag = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Choir", slug: "choir" },
+    });
+
+    let held: Awaited<ReturnType<typeof holdUncommitted>>;
+    state.duringPrivacyRead = async () => {
+      held = await holdUncommitted((tx) =>
+        tx.contactTag.create({ data: { contactId: hidden.id, tagId: tag.id } }),
+      );
+    };
+
+    const deleting = deleteTag(tag.id);
+    await releaseAfterItBlocks(() => held.release());
+    await held!.settled;
+    const result = await deleting;
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toMatch(/Unlock to delete/);
+    expect(await prisma.tag.count({ where: { id: tag.id } })).toBe(1);
+  });
+
+  it("reports an unavailable tag rather than failing the whole contact save", async () => {
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = false;
+    state.unlocked = true;
+    const tag = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Cycling", slug: "cycling" },
+    });
+
+    // Another tab deletes the tag while the save is in flight.
+    let held: Awaited<ReturnType<typeof holdUncommitted>>;
+    state.duringPrivacyRead = async () => {
+      held = await holdUncommitted((tx) =>
+        tx.tag.delete({ where: { id: tag.id } }),
+      );
+    };
+
+    const form = new FormData();
+    form.set("firstName", "Ash");
+    form.append("tagIds", tag.id);
+    const saving = createContact(form);
+    await releaseAfterItBlocks(() => held.release());
+    await held!.settled;
+
+    // Counting alone left the insert to meet the foreign key as a P2003, which
+    // nothing translates: an ordinary tag deletion elsewhere turned the whole
+    // contact save into a server error.
+    const result = await saving;
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toBe(
+      "One or more tags are unavailable.",
+    );
   });
 });

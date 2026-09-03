@@ -90,7 +90,9 @@ export async function updateDisplayName(form: FormData): Promise<ActionResult> {
  * A correct password clears the count.
  */
 type Reauthentication =
-  | { ok: true }
+  // The hash that was verified, so a caller changing the password can make its
+  // update conditional on the row still carrying it.
+  | { ok: true; passwordHash: string }
   | { ok: false; result: ActionResult };
 
 async function confirmPassword(
@@ -122,7 +124,7 @@ async function confirmPassword(
   }
   if (!(await verifyPassword(password, user.passwordHash))) return refused;
   clearLoginAttempts(user.email, address);
-  return { ok: true };
+  return { ok: true, passwordHash: user.passwordHash };
 }
 
 export async function updateEmail(form: FormData): Promise<ActionResult> {
@@ -172,10 +174,28 @@ export async function changePassword(form: FormData): Promise<ActionResult> {
   // committed, every other session still signed in and this one still
   // unlocked — with the action reporting failure and the old password no
   // longer able to retry.
+  // Conditional on the row still carrying the hash that was just confirmed,
+  // which makes this a compare-and-swap rather than a blind write.
+  //
+  // Two changes racing both confirmed the old password before either
+  // transaction opened — the window is a whole bcrypt comparison wide, so it
+  // is not a narrow one. Both then wrote unconditionally, and the second
+  // request's session sweep saw the first request's freshly re-keyed row as
+  // *another* session and deleted it, while its own stale cookie matched
+  // nothing left to re-key. Two tabs, and the owner was signed out of an
+  // account both requests had just told them was updated. The loser now
+  // changes nothing and is told the current password is wrong, which by then
+  // it is.
   const applyRotatedCookie = await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: ownerId }, data: { passwordHash } });
+    const { count } = await tx.user.updateMany({
+      where: { id: ownerId, passwordHash: confirmed.passwordHash },
+      data: { passwordHash },
+    });
+    if (!count) return null;
     return secureSessionsAfterPasswordChange(ownerId, tx);
   });
+  if (!applyRotatedCookie)
+    return fieldError("currentPassword", "Current password is incorrect.");
   // After the commit, never inside it. The re-keyed token only exists once the
   // transaction holding it lands, and a rollback that had already rewritten
   // the cookie would sign this browser out of an unchanged account.

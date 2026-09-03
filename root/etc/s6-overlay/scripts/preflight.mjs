@@ -71,10 +71,18 @@ export function checkEnvironment(env, options = {}) {
   const warnings = [];
 
   // --- TZ ------------------------------------------------------------------
-  const tz = env.TZ?.trim();
-  if (tz && !isValidTimezone(tz)) {
+  // Not trimmed, because nothing downstream trims it either. glibc looks the
+  // value up as given, so `TZ=" America/New_York "` matches no zone and every
+  // service falls back to UTC — the backup scheduler included, which then runs
+  // hours away from the hour the operator set, silently. Validating the trimmed
+  // value said the zone was fine and left that unsaid. This stays a warning
+  // rather than an error, as an outright unknown zone does: the fallback is
+  // real but the app works, and TZ is only the default for accounts that have
+  // not set their own.
+  const tz = setting(env, "TZ", { trimmed: false });
+  if (tz.configured && !isValidTimezone(tz.value)) {
     warnings.push(
-      `TZ="${tz}" is not a timezone this system knows. Falling back to UTC for anything ` +
+      `TZ="${tz.raw}" is not a timezone this system knows. Falling back to UTC for anything ` +
         `not set per-account. Use a zone name like America/New_York.`,
     );
   }

@@ -99,6 +99,18 @@ describe("checkEnvironment", () => {
     }
   });
 
+  it("warns about a padded TZ, which glibc does not match either", () => {
+    // Validating the trimmed value called the zone fine while every service
+    // saw the padded one and fell back to UTC — including the backup
+    // scheduler, whose daily run then happened hours from the configured hour
+    // with nothing said about it.
+    const { warnings, errors } = check({ ...ok, TZ: " America/New_York " });
+    expect(warnings.join(" ")).toMatch(/is not a timezone this system knows/);
+    // Still only a warning: the fallback is real, but the app works, and TZ is
+    // just the default for accounts that have not set their own.
+    expect(errors).toEqual([]);
+  });
+
   it("rejects settings that are set but blank, which no consumer treats as unset", () => {
     // A trim-then-truthiness guard read these as absent and validated nothing,
     // while the shell's `:-` default fires on empty and never on blank: the

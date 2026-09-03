@@ -60,7 +60,10 @@ current password, and relies on the database uniqueness constraint. Password
 changes reuse the signup strength and bcrypt helpers, preserve the current
 session, revoke every other session, and clear `privacyUnlockedAt` on the
 preserved session — which is also re-keyed, so copies of its cookie stop
-resolving. `secureSessionsAfterPasswordChange` returns the callback that writes
+resolving. The write is conditional on the row still carrying the hash that was
+just confirmed, so of two changes racing only one applies: written blindly, the
+loser's session sweep ended the winner's newly issued session and left the
+account with none. `secureSessionsAfterPasswordChange` returns the callback that writes
 the new cookie, and `changePassword` invokes it after the transaction commits;
 writing it inside would leave the browser holding a token a rollback removed. Individual and bulk revocation predicates include `userId`
 and explicitly exclude the current token hash.

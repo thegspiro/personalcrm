@@ -5,7 +5,11 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { normalizeTagSlug } from "@/lib/tags";
 import { prisma } from "@/server/db/client";
-import { contactPrivacyWhere, privacyScope } from "@/server/privacy/filter";
+import {
+  contactPrivacyWhere,
+  privacyScope,
+  type PrivacyScope,
+} from "@/server/privacy/filter";
 import { tagVisibleWhere } from "@/server/queries/tags";
 import { fail, invalid, ok, owner, str, type ActionResult } from "./helpers";
 
@@ -166,7 +170,35 @@ export async function renameTag(form: FormData): Promise<ActionResult> {
   return ok();
 }
 
-/** Move every assignment to the destination, deduplicate, then remove the source. */
+/**
+ * Hold this account's named tags for the rest of the transaction.
+ *
+ * `FOR UPDATE` is a current read rather than a snapshot one, so it sees a
+ * delete that committed after the transaction began, and the exclusive lock it
+ * leaves means no other session can delete one of these rows — or assign it to
+ * anybody, since inserting a `ContactTag` takes a shared lock on the tag it
+ * references — until this transaction ends. Everything after it in the same
+ * transaction is therefore reasoning about rows that cannot move underneath
+ * it, which is what neither an earlier count nor a repeated one inside can
+ * offer.
+ *
+ * Owner-scoped, so a tag belonging to another account is simply not returned
+ * and the caller answers "not found" without having read anything of theirs.
+ */
+async function lockTags(
+  tx: Prisma.TransactionClient,
+  ownerId: string,
+  tagIds: string[],
+): Promise<number> {
+  if (!tagIds.length) return 0;
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM Tag
+    WHERE ownerId = ${ownerId} AND id IN (${Prisma.join(tagIds)})
+    FOR UPDATE
+  `;
+  return rows.length;
+}
+
 /**
  * Whether a tag is on anyone the closed lock is hiding.
  *
@@ -175,18 +207,30 @@ export async function renameTag(form: FormData): Promise<ActionResult> {
  * deleting it from that session would move or destroy the private
  * association too — a change to a record the session cannot see, made by a
  * session that cannot see it. Both refuse instead.
+ *
+ * Asked inside the transaction and after `lockTags`, never before it. Asked
+ * first, it answered about a moment that had already passed: an unlocked
+ * session in another tab could put the tag on a private person in the gap, and
+ * the merge would then carry that association to the destination and delete
+ * the original — a locked session mutating a record it cannot see, which is
+ * the one thing this check exists to prevent. Behind the lock no such
+ * assignment can be committed, so the answer holds until the transaction ends.
+ *
+ * The scope is read by the caller, before the transaction opens, because it
+ * reads the request's cookies and refreshes the unlock.
  */
 async function touchesHiddenContacts(
+  tx: Prisma.TransactionClient,
   ownerId: string,
+  scope: PrivacyScope,
   tagIds: string[],
 ): Promise<boolean> {
-  const scope = await privacyScope();
   if (scope.unlocked) return false;
   // Owner-scoped on both sides. Unscoped, submitting another account's tag id
   // answered from their rows: the unlock message when their tag was on one of
   // their private contacts, "Tag not found" otherwise — a difference that is
   // itself a fact about an account this one cannot see.
-  const hidden = await prisma.contactTag.count({
+  const hidden = await tx.contactTag.count({
     where: {
       tagId: { in: tagIds },
       tag: { ownerId },
@@ -196,6 +240,16 @@ async function touchesHiddenContacts(
   return hidden > 0;
 }
 
+/** What a locked-namespace write settled on, so the caller can phrase it. */
+type TagWriteOutcome = "done" | "missing" | "hidden";
+
+function phrase(outcome: TagWriteOutcome, hidden: string): ActionResult {
+  if (outcome === "missing") return fail(NOT_FOUND);
+  if (outcome === "hidden") return fail(hidden);
+  return ok();
+}
+
+/** Move every assignment to the destination, deduplicate, then remove the source. */
 export async function mergeTag(
   sourceId: string,
   destinationId: string,
@@ -203,38 +257,26 @@ export async function mergeTag(
   const { ownerId } = await owner();
   if (sourceId === destinationId)
     return fail("Choose a different destination tag.");
-  const tags = await prisma.tag.count({
-    where: { ownerId, id: { in: [sourceId, destinationId] } },
-  });
-  if (tags !== 2) return fail(NOT_FOUND);
-  if (await touchesHiddenContacts(ownerId, [sourceId, destinationId]))
-    return fail("Unlock to merge a tag that is on someone private.");
-  const merged = await prisma.$transaction(async (tx) => {
-    // Both rows are locked, not merely counted again, and the count above is
-    // no substitute: it ran before the transaction opened, and a repeatable
-    // read would answer from a snapshot even if it ran inside.
+  const scope = await privacyScope();
+  const merged = await prisma.$transaction<TagWriteOutcome>(async (tx) => {
+    // Both rows are held before anything is decided about them.
     //
-    // Another tab deleting the destination in that window did not fail
-    // loudly. `createMany` with `skipDuplicates` is `INSERT IGNORE` on
-    // MariaDB, and `INSERT IGNORE` demotes a foreign-key violation to a
+    // Deleting the destination in the gap a pre-transaction check leaves did
+    // not fail loudly: `createMany` with `skipDuplicates` is `INSERT IGNORE`
+    // on MariaDB, and `INSERT IGNORE` demotes a foreign-key violation to a
     // warning and drops the row — so every assignment was silently discarded
     // and the source tag then deleted on top, taking the tag off people who
-    // had it and reporting success. Deleting the *source* in that window was
-    // merely noisy: `delete` raised P2025, which escaped as a server error
-    // rather than the sentence a tag that is no longer there deserves.
+    // had it and reporting success. Deleting the *source* was merely noisy:
+    // `delete` raised P2025, which escaped as a server error rather than the
+    // sentence a tag that is no longer there deserves.
     //
-    // `FOR UPDATE` is a current read rather than a snapshot one, so it sees a
-    // delete that committed after this transaction began, and it holds both
-    // rows until the merge commits, so one cannot commit during it. InnoDB
-    // takes the locks in index order, which is the primary key here and so
-    // the same order whichever tag is the source — two merges of the same
+    // InnoDB takes the locks in index order, which is the primary key here and
+    // so the same order whichever tag is the source — two merges of the same
     // pair queue rather than deadlock.
-    const locked = await tx.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM Tag
-      WHERE ownerId = ${ownerId} AND id IN (${sourceId}, ${destinationId})
-      FOR UPDATE
-    `;
-    if (locked.length !== 2) return false;
+    if ((await lockTags(tx, ownerId, [sourceId, destinationId])) !== 2)
+      return "missing";
+    if (await touchesHiddenContacts(tx, ownerId, scope, [sourceId, destinationId]))
+      return "hidden";
     const assignments = await tx.contactTag.findMany({
       // Scoped by the contact's owner, not merely the tag's. The two are
       // independent foreign keys, so an import or a restore can join this
@@ -254,9 +296,10 @@ export async function mergeTag(
         skipDuplicates: true,
       });
     await tx.tag.delete({ where: { id: sourceId } });
-    return true;
+    return "done";
   });
-  if (!merged) return fail(NOT_FOUND);
+  if (merged !== "done")
+    return phrase(merged, "Unlock to merge a tag that is on someone private.");
   refresh();
   return ok();
 }
@@ -264,19 +307,25 @@ export async function mergeTag(
 /** Deleting a tag removes only its join rows; contacts themselves are preserved. */
 export async function deleteTag(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
-  // Ownership first, so a tag that is not this account's gets the same "not
-  // found" whatever is assigned to it. Probing before this answered from the
-  // other account's rows.
-  const tag = await prisma.tag.findFirst({
-    where: { id, ownerId },
-    select: { id: true },
+  if (!id) return fail(NOT_FOUND);
+  const scope = await privacyScope();
+  const deleted = await prisma.$transaction<TagWriteOutcome>(async (tx) => {
+    // The lock establishes ownership as well as holding the row, so a tag that
+    // is not this account's gets the same "not found" whatever is assigned to
+    // it — probing before an ownership check answered from the other account's
+    // rows. It also has to come before the privacy question rather than after,
+    // for the reason `touchesHiddenContacts` gives: asked outside the
+    // transaction, the answer is about a moment that has passed, and an
+    // unlocked tab can put this tag on a private person in the gap. The
+    // cascade would then take that association with it.
+    if ((await lockTags(tx, ownerId, [id])) !== 1) return "missing";
+    // The assignments go with it by cascade, private ones included.
+    if (await touchesHiddenContacts(tx, ownerId, scope, [id])) return "hidden";
+    await tx.tag.delete({ where: { id } });
+    return "done";
   });
-  if (!tag) return fail(NOT_FOUND);
-  // The assignments go with it by cascade, private ones included.
-  if (await touchesHiddenContacts(ownerId, [id]))
-    return fail("Unlock to delete a tag that is on someone private.");
-  const result = await prisma.tag.deleteMany({ where: { id, ownerId } });
-  if (!result.count) return fail(NOT_FOUND);
+  if (deleted !== "done")
+    return phrase(deleted, "Unlock to delete a tag that is on someone private.");
   refresh();
   return ok();
 }
