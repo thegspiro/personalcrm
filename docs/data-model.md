@@ -611,7 +611,17 @@ can take and stamped from the clock at the moment of the claim rather than
 the start of the pass, so two overlapping processes cannot both deliver it.
 Nothing is sent before its occurrence has arrived in the owner's timezone as
 it is at the moment of sending: a candidate read just after midnight in one
-zone waits if the owner has since moved to one where the day has not begun. A row
+zone waits if the owner has since moved to one where the day has not begun.
+The channel is read again at that moment too, and must still be this owner's
+and switched on — the ledger's owner and channel are independent keys, so a
+repaired row naming another account's channel is cancelled, never sent, and
+a queued retry whose channel has been switched off is cancelled rather than
+held for the channel's return. That cancellation is not final: a switched-off
+channel is one more way a reminder can be ineligible, and when the channel
+is switched on again anything still due on it is a candidate once more, so
+the row is put back on the retry path below like any other cancelled row and
+sent, worded for that day — exactly what would happen had the failed attempt
+never been made — and a reminder no longer due is left cancelled. A row
 cancelled while its reminder was ineligible is put back on the retry path if
 its reminder becomes a candidate again — a task reopened, a person made
 visible — rather than being skipped for ever under its key. `entityType`

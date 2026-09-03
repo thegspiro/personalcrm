@@ -82,8 +82,38 @@ export function useAction() {
  * Wraps an add action so a successful submit collapses the panel. Leaving it
  * open with the typed text still sitting there makes the next click look like
  * it did nothing.
+ *
+ * The panel closes as soon as the create returns, not once the refresh has
+ * landed. An add panel shows no row that could go stale, so there is nothing
+ * to wait for — and waiting would leave a filled-in form with a live button
+ * on screen for the length of the refresh, where a second click creates the
+ * same thing twice. Editors are the other way round, and go through the
+ * deferred close in useAction.
  */
 export function useAddAction() {
+  const run = useAction();
+  return React.useCallback(
+    (
+      action: (form: FormData) => Promise<ActionResult<unknown>>,
+      close: () => void,
+      message?: string,
+    ) =>
+      async (form: FormData) => {
+        if (await run(() => action(form), message)) close();
+      },
+    [run],
+  );
+}
+
+/**
+ * Wraps an update action so a successful submit closes the editor — but only
+ * once the refreshed row has rendered. An editor sits over the row it edits,
+ * and that row carries the record as it was until the refresh lands; closing
+ * onto it and reopening in that window showed, and could save back, the
+ * version before the edit. The form stays pending for the wait, so it cannot
+ * be submitted twice either.
+ */
+export function useEditAction() {
   const run = useAction();
   return React.useCallback(
     (

@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { SectionCard, SectionEmpty, SectionRow } from "../section-card";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { createIdea, deleteIdea, setIdeaStatus, updateIdea } from "@/server/actions/details";
 
 export interface IdeaItem {
@@ -17,6 +17,7 @@ export interface IdeaItem {
 export function IdeasSection({ contactId, ideas }: { contactId: string; ideas: IdeaItem[] }) {
   const run = useAction();
   const add = useAddAction();
+  const edit = useEditAction();
   const open = ideas.filter((idea) => idea.status === "OPEN");
 
   return (
@@ -51,7 +52,7 @@ export function IdeasSection({ contactId, ideas }: { contactId: string; ideas: I
             deleteLabel="Delete idea"
             editLabel="Edit idea"
             editForm={(close) => (
-              <form action={add(updateIdea, close, "Saved")} className="grid gap-2.5">
+              <form action={edit(updateIdea, close, "Saved")} className="grid gap-2.5">
                 <input type="hidden" name="id" value={idea.id} />
                 <Field label="What do you want to ask or mention?" htmlFor={`idea-${idea.id}`}>
                   <Textarea

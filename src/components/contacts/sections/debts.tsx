@@ -7,7 +7,7 @@ import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { DateField } from "@/components/form/date-field";
 import { SectionCard, SectionEmpty, SectionRow } from "../section-card";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { formatMoney } from "@/lib/format";
 import { summarizeDebts, type DebtDirection } from "@/lib/debts";
 import { plainDateKey, type PlainDate } from "@/lib/dates";
@@ -104,6 +104,7 @@ function DebtFields({ formId, debt }: { formId: string; debt?: DebtItem }) {
 export function DebtsSection({ contactId, debts }: { contactId: string; debts: DebtItem[] }) {
   const run = useAction();
   const add = useAddAction();
+  const edit = useEditAction();
   const [showSettled, setShowSettled] = React.useState(false);
 
   const summary = summarizeDebts(
@@ -172,7 +173,7 @@ export function DebtsSection({ contactId, debts }: { contactId: string; debts: D
             deleteLabel="Delete debt"
             editLabel="Edit debt"
             editForm={(close) => (
-              <form action={add(updateDebt, close, "Saved")} className="grid gap-2.5">
+              <form action={edit(updateDebt, close, "Saved")} className="grid gap-2.5">
                 <input type="hidden" name="id" value={debt.id} />
                 <DebtFields formId={`debt-${debt.id}`} debt={debt} />
                 <SubmitButton size="sm">Save</SubmitButton>
@@ -226,7 +227,7 @@ export function DebtsSection({ contactId, debts }: { contactId: string; debts: D
                   // Settled, not finished with: a debt squared up for the wrong
                   // amount is still the wrong amount in next year's total.
                   editForm={(close) => (
-                    <form action={add(updateDebt, close, "Saved")} className="grid gap-2.5">
+                    <form action={edit(updateDebt, close, "Saved")} className="grid gap-2.5">
                       <input type="hidden" name="id" value={debt.id} />
                       <DebtFields formId={`debt-${debt.id}`} debt={debt} />
                       <SubmitButton size="sm">Save</SubmitButton>

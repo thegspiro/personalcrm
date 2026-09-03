@@ -353,6 +353,25 @@ function currentOwner(db: Db, ownerId: string) {
 }
 
 /**
+ * The channel as it is right now: still this owner's, still switched on.
+ * A pass's opening snapshot can be minutes old by the time a send happens,
+ * and a channel switched off, deleted or re-pointed in that time must not
+ * be sent to. Ownership is checked too: the ledger's owner and channel are
+ * independent foreign keys, so a repaired or imported row can name another
+ * account's channel, and this owner's people must never go out through it.
+ */
+function currentChannel(db: Db, ownerId: string, channelId: string) {
+  return db.notificationChannel.findFirst({ where: { id: channelId, ownerId, isEnabled: true } });
+}
+
+async function cancel(db: Db, id: string, reason: string) {
+  await db.reminderLog.update({ where: { id }, data: { nextAttemptAt: null, error: reason } });
+}
+
+const CANCELLED = "Delivery cancelled by current state, policy, or privacy.";
+const NO_CHANNEL = "Delivery cancelled: the channel is no longer this owner's, or is switched off.";
+
+/**
  * Creates one durable ledger row per candidate and channel before delivery.
  * A concurrent scheduler loses the unique-key race and therefore cannot send
  * the same reminder twice. Returns null when the row already existed.
@@ -406,26 +425,30 @@ async function createAndDeliver(
     : null;
   if (message === NOT_YET) return null;
   if (!message) {
-    await db.reminderLog.update({
-      where: { id: log.id },
-      data: { nextAttemptAt: null, error: "Delivery cancelled by current state, policy, or privacy." },
-    });
+    await cancel(db, log.id, CANCELLED);
+    return null;
+  }
+  const live = await currentChannel(db, user.id, channel.id);
+  if (!live) {
+    await cancel(db, log.id, NO_CHANNEL);
     return null;
   }
   try {
-    await send(channel, message.subject, message.body);
+    await send(live, message.subject, message.body);
     await db.reminderLog.update({
       where: { id: log.id },
-      data: { ok: true, sentAt: now, attemptCount: 1, nextAttemptAt: null },
+      data: { ok: true, sentAt: clock(), attemptCount: 1, nextAttemptAt: null },
     });
     return true;
   } catch (error) {
+    // From the clock, like the lease: a deadline stamped from the pass's
+    // opening instant could already have passed, and with it the backoff.
     await db.reminderLog.update({
       where: { id: log.id },
       data: {
         attemptCount: 1,
         error: error instanceof Error ? error.message : "Delivery failed.",
-        nextAttemptAt: new Date(now.getTime() + FIRST_RETRY_MS),
+        nextAttemptAt: new Date(clock().getTime() + FIRST_RETRY_MS),
       },
     });
     return false;
@@ -505,12 +528,16 @@ export async function processReminderDeliveries(
       channelId: { not: null },
       attemptCount: { lt: MAX_ATTEMPTS },
       nextAttemptAt: { lte: now },
-      channel: { isEnabled: true },
     },
-    include: { channel: true },
   });
+  // Not filtered by the channel's state: a retry whose channel is off must be
+  // selected so the check after the claim can cancel it, rather than being
+  // re-read every hour for nothing. Cancelled, it is treated like any other
+  // cancelled row — put back on the retry path only if its reminder is a
+  // candidate again on that channel, which is what the channel's return
+  // makes true for whatever is still due, and for nothing else.
   for (const log of retries) {
-    if (!log.channel) continue;
+    if (!log.channelId) continue;
     const owner = await currentOwner(db, log.ownerId);
     // An owner with no preference row is left alone, row included; one who
     // is no longer active has nothing owed.
@@ -522,10 +549,7 @@ export async function processReminderDeliveries(
     if (!message) {
       // Policy, state or privacy changes cancel queued delivery rather than
       // leaking content that is no longer meant to go out.
-      await db.reminderLog.update({
-        where: { id: log.id },
-        data: { nextAttemptAt: null, error: "Delivery cancelled by current state, policy, or privacy." },
-      });
+      await cancel(db, log.id, CANCELLED);
       continue;
     }
     // Two processes can overlap — a rolling restart, or two replicas on one
@@ -539,11 +563,18 @@ export async function processReminderDeliveries(
       data: { nextAttemptAt: new Date(clock().getTime() + CLAIM_LEASE_MS) },
     });
     if (claimed.count === 0) continue;
+    // Read after the claim, not before it: the row is ours now, and the
+    // channel must be the owner's and switched on at the moment of sending.
+    const live = await currentChannel(db, log.ownerId, log.channelId);
+    if (!live) {
+      await cancel(db, log.id, NO_CHANNEL);
+      continue;
+    }
     try {
-      await send(log.channel, message.subject, message.body);
+      await send(live, message.subject, message.body);
       await db.reminderLog.update({
         where: { id: log.id },
-        data: { ok: true, sentAt: now, attemptCount: { increment: 1 }, nextAttemptAt: null, error: null },
+        data: { ok: true, sentAt: clock(), attemptCount: { increment: 1 }, nextAttemptAt: null, error: null },
       });
       sent += 1;
     } catch (error) {
@@ -553,7 +584,7 @@ export async function processReminderDeliveries(
         data: {
           attemptCount: attempt,
           error: error instanceof Error ? error.message : "Delivery failed.",
-          nextAttemptAt: attempt < MAX_ATTEMPTS ? new Date(now.getTime() + 60_000 * 2 ** (attempt - 1)) : null,
+          nextAttemptAt: attempt < MAX_ATTEMPTS ? new Date(clock().getTime() + FIRST_RETRY_MS * 2 ** (attempt - 1)) : null,
         },
       });
       failed += 1;

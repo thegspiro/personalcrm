@@ -7,7 +7,7 @@ import { SubmitButton } from "@/components/form/submit-button";
 import { TermChips, type TermOption } from "@/components/form/term-select";
 import { ContactPicker, type PickerContact } from "@/components/form/contact-picker";
 import { SectionCard, SectionEmpty, SectionRow } from "../section-card";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { createRelationship, deleteRelationship, updateRelationship } from "@/server/actions/details";
 
 export interface RelationshipItem {
@@ -30,6 +30,7 @@ export function RelationshipsSection({
 }) {
   const run = useAction();
   const add = useAddAction();
+  const edit = useEditAction();
 
   return (
     <SectionCard
@@ -66,7 +67,7 @@ export function RelationshipsSection({
               // Only the word for the link is editable. Pointing it at someone
               // else is not a correction, it is a different link — unlink and
               // link again, which is also what keeps the reciprocal honest.
-              <form action={add(updateRelationship, close, "Saved")} className="grid gap-2.5">
+              <form action={edit(updateRelationship, close, "Saved")} className="grid gap-2.5">
                 <input type="hidden" name="id" value={relationship.id} />
                 <p className="text-xs text-muted-foreground">
                   {displayName(relationship.other)} is…

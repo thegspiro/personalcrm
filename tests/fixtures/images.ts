@@ -5,6 +5,8 @@
  */
 
 /** A copy with its own ArrayBuffer, which is what the File constructor's type asks for. */
+import { deflateSync } from "node:zlib";
+
 function fromBase64(value: string): Uint8Array<ArrayBuffer> {
   return new Uint8Array(Buffer.from(value, "base64"));
 }
@@ -103,11 +105,41 @@ export const JPEG_EMPTY_SCAN = Uint8Array.from([
 /** The size field claims more bytes than the file holds. */
 export const WEBP_TRUNCATED = WEBP_MINIMAL.slice(0, WEBP_MINIMAL.length - 2);
 
+/** A PNG chunk: length, type, data, and a CRC the structural check does not read. */
+function pngChunk(type: string, data: number[]): number[] {
+  const length = data.length;
+  return [
+    (length >>> 24) & 0xff, (length >>> 16) & 0xff, (length >>> 8) & 0xff, length & 0xff,
+    ...Buffer.from(type), ...data, 0, 0, 0, 0,
+  ];
+}
+
+/** The real one-pixel PNG's signature and header, for building broken bodies onto. */
+const PNG_HEAD = Array.from(PNG_TRANSPARENT.slice(0, 33));
+
 /** A header and a terminator with nothing between them: every chunk valid, no picture. */
-export const PNG_NO_DATA = Uint8Array.from([
-  ...PNG_TRANSPARENT.slice(0, 33),
-  ...PNG_TRANSPARENT.slice(PNG_TRANSPARENT.length - 12),
+export const PNG_NO_DATA = Uint8Array.from([...PNG_HEAD, ...pngChunk("IEND", [])]);
+
+/** A data chunk holding one byte of filler: well-formed, but no zlib stream and no picture. */
+export const PNG_JUNK_DATA = Uint8Array.from([...PNG_HEAD, ...pngChunk("IDAT", [0x00]), ...pngChunk("IEND", [])]);
+
+/** A real zlib stream that inflates to fewer bytes than a 1×1 RGBA scanline needs. */
+export const PNG_SHORT_STREAM = Uint8Array.from([
+  ...PNG_HEAD,
+  ...pngChunk("IDAT", Array.from(deflateSync(Buffer.from([0, 0, 0, 0])))),
+  ...pngChunk("IEND", []),
 ]);
+
+/** The same picture with its data split across two chunks, which a decoder joins. */
+export const PNG_SPLIT_DATA = (() => {
+  const stream = Array.from(deflateSync(Buffer.from([0, 0, 0, 0, 0])));
+  return Uint8Array.from([
+    ...PNG_HEAD,
+    ...pngChunk("IDAT", stream.slice(0, 3)),
+    ...pngChunk("IDAT", stream.slice(3)),
+    ...pngChunk("IEND", []),
+  ]);
+})();
 
 /** A PNG whose header declares a width of zero. */
 export const PNG_ZERO_WIDTH = (() => {
