@@ -356,7 +356,7 @@ discovered:
 | Task | The task's title | `Book the dentist` |
 | | The contact's name, if the task is for someone | `Dana Whitfield` |
 | | The due date | `2026-09-02` |
-| Daily digest | How many cadences and tasks are due — counts only, no names | `2 cadence reminders and 1 due task` |
+| Daily digest | Counts of important dates, cadences, and tasks in dated sections for today/overdue, tomorrow, and the following day — no names or titles | `Tomorrow — 2026-09-03: 1 important date, 2 cadence reminders, and 1 task.` |
 
 That goes to whatever host the channel names, on the hour, with no preview and
 no confirmation step. A retry after a failure re-reads the record and sends

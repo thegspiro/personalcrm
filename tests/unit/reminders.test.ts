@@ -83,8 +83,23 @@ describe("reminder wording", () => {
       .toBe("Birthday for Sam Jones was 3 days ago (2026-08-30).");
   });
 
-  it("counts in the digest without mangling the singular", () => {
-    expect(digestMessage(1, 0).body).toBe("1 cadence reminder and 0 due tasks need attention today.");
-    expect(digestMessage(2, 1).body).toBe("2 cadence reminders and 1 due task need attention today.");
+  it("labels all three digest buckets with explicit dates and correct plurals", () => {
+    expect(digestMessage({
+      today: { date: today, importantDateCount: 1, cadenceCount: 1, taskCount: 0 },
+      tomorrow: { date: { year: 2026, month: 9, day: 3 }, importantDateCount: 2, cadenceCount: 0, taskCount: 1 },
+      followingDay: { date: { year: 2026, month: 9, day: 4 }, importantDateCount: 0, cadenceCount: 2, taskCount: 2 },
+    }).body).toBe([
+      "Today / overdue — 2026-09-02: 1 important date, 1 cadence reminder, and 0 tasks.",
+      "Tomorrow — 2026-09-03: 2 important dates, 0 cadence reminders, and 1 task.",
+      "Following day — 2026-09-04: 0 important dates, 2 cadence reminders, and 2 tasks.",
+    ].join("\n"));
+  });
+
+  it("renders empty buckets and crosses month and year boundaries", () => {
+    expect(digestMessage({
+      today: { date: { year: 2026, month: 12, day: 31 }, importantDateCount: 0, cadenceCount: 0, taskCount: 0 },
+      tomorrow: { date: { year: 2027, month: 1, day: 1 }, importantDateCount: 0, cadenceCount: 0, taskCount: 0 },
+      followingDay: { date: { year: 2027, month: 1, day: 2 }, importantDateCount: 0, cadenceCount: 0, taskCount: 0 },
+    }).body).toContain("Tomorrow — 2027-01-01: 0 important dates, 0 cadence reminders, and 0 tasks.");
   });
 });

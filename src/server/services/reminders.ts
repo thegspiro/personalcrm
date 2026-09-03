@@ -10,7 +10,9 @@ import {
   plainDateFromDb,
   plainDateKey,
   plainDateToDb,
+  projectDateOccurrences,
   todayInTz,
+  zonedStartOfDay,
   type PlainDate,
 } from "@/lib/dates";
 import { dueOccurrence, effectiveReminderDays, type ReminderPolicy } from "@/lib/reminders";
@@ -23,6 +25,7 @@ import {
   reminderDedupKey,
   taskMessage,
   type ReminderMessage,
+  type DigestMessageInput,
   type SchedulingPolicy,
 } from "@/lib/reminder-schedule";
 import { deliverToChannel } from "./notify";
@@ -141,6 +144,76 @@ function taskWhere(user: Pick<ScheduledUser, "id">, schedule: Schedule) {
   };
 }
 
+/**
+ * The digest has a wider view than any delivery policy. These reads are kept
+ * separate from standalone candidate discovery so seeing a future item here
+ * can never create (and therefore send) its individual reminder early.
+ */
+async function digestProjection(
+  db: Db,
+  user: Pick<ScheduledUser, "id" | "preference">,
+  schedule: Schedule,
+): Promise<DigestMessageInput> {
+  const tomorrow = addPlainDays(schedule.today, 1);
+  const followingDay = addPlainDays(schedule.today, 2);
+  const through = new Date(zonedStartOfDay(addPlainDays(schedule.today, 3), schedule.timezone).getTime() - 1);
+  const [dates, cadence, tasks] = await Promise.all([
+    db.importantDate.findMany({
+      where: { ownerId: user.id, contact: visibleContact(schedule.locked) },
+      select: { date: true, precision: true, recurrence: true },
+    }),
+    db.contact.findMany({
+      where: {
+        ownerId: user.id,
+        ...visibleContact(schedule.locked),
+        nextTouchAt: { lte: through },
+      },
+      select: { nextTouchAt: true },
+    }),
+    db.task.findMany({
+      where: {
+        ownerId: user.id,
+        completedAt: null,
+        dueDate: { lte: plainDateToDb(followingDay) },
+        ...taskContactWhere(user, schedule),
+      },
+      select: { dueDate: true },
+    }),
+  ]);
+
+  const buckets: DigestBucketMutable[] = [schedule.today, tomorrow, followingDay].map((date) => ({
+    date,
+    importantDateCount: 0,
+    cadenceCount: 0,
+    taskCount: 0,
+  }));
+  for (const contact of cadence) {
+    if (!contact.nextTouchAt) continue;
+    const distance = Math.max(0, diffPlainDays(schedule.today, calendarDateInTz(contact.nextTouchAt, schedule.timezone)));
+    if (distance <= 2) buckets[distance].cadenceCount += 1;
+  }
+  for (const task of tasks) {
+    if (!task.dueDate) continue;
+    const distance = Math.max(0, diffPlainDays(schedule.today, plainDateFromDb(task.dueDate)));
+    if (distance <= 2) buckets[distance].taskCount += 1;
+  }
+  for (const date of dates) {
+    for (const occurrence of projectDateOccurrences(
+      plainDateFromDb(date.date),
+      date.precision,
+      date.recurrence,
+      schedule.today,
+      { from: schedule.today, to: followingDay },
+    )) {
+      const distance = diffPlainDays(schedule.today, occurrence);
+      if (distance >= 0 && distance <= 2) buckets[distance].importantDateCount += 1;
+    }
+  }
+  return { today: buckets[0], tomorrow: buckets[1], followingDay: buckets[2] };
+}
+
+type DigestBucketMutable = DigestMessageInput["today"];
+
 async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promise<Candidate[]> {
   const schedule = scheduleFor(user, now);
   const candidates: Candidate[] = [];
@@ -202,6 +275,7 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
   }
 
   if (user.preference.digestEnabled && digestIsDue(now, schedule.timezone, user.preference.digestHour)) {
+    const digest = await digestProjection(db, user, schedule);
     candidates.push({
       entityType: "DIGEST",
       entityId: user.id,
@@ -209,7 +283,7 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
       occurrence: dailyOccurrence(now, schedule.timezone),
       scheduledFor: plainDateToDb(schedule.today),
       offsetDays: 0,
-      ...digestMessage(cadence.length, tasks.length),
+      ...digestMessage(digest),
     });
   }
   return candidates;
@@ -313,11 +387,7 @@ async function currentMessage(
       // candidate would wait for it; so does the retry, keeping its row and
       // its key rather than sending early or being cancelled outright.
       if (!digestIsDue(now, schedule.timezone, user.preference.digestHour)) return NOT_YET;
-      const [cadence, tasks] = await Promise.all([
-        db.contact.count({ where: cadenceWhere(user, schedule, now) }),
-        db.task.count({ where: taskWhere(user, schedule) }),
-      ]);
-      return digestMessage(cadence, tasks);
+      return digestMessage(await digestProjection(db, user, schedule));
     }
     default:
       return null;

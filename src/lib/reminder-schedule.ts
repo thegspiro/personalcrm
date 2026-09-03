@@ -8,6 +8,19 @@ export interface ReminderMessage {
   body: string;
 }
 
+export interface DigestBucket {
+  date: PlainDate;
+  importantDateCount: number;
+  cadenceCount: number;
+  taskCount: number;
+}
+
+export interface DigestMessageInput {
+  today: DigestBucket;
+  tomorrow: DigestBucket;
+  followingDay: DigestBucket;
+}
+
 export function localClock(instant: Date, timezone: string): PlainDate & { hour: number } {
   const date = calendarDateInTz(instant, timezone);
   const hour = Number(new Intl.DateTimeFormat("en-US", {
@@ -80,10 +93,16 @@ export function taskMessage(title: string, person: string | null, dueDay: PlainD
   };
 }
 
-export function digestMessage(cadenceCount: number, taskCount: number): ReminderMessage {
+export function digestMessage(input: DigestMessageInput): ReminderMessage {
   const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+  const line = (label: string, bucket: DigestBucket) =>
+    `${label} — ${plainDateKey(bucket.date)}: ${plural(bucket.importantDateCount, "important date")}, ${plural(bucket.cadenceCount, "cadence reminder")}, and ${plural(bucket.taskCount, "task")}.`;
   return {
     subject: "Your Personal CRM daily digest",
-    body: `${plural(cadenceCount, "cadence reminder")} and ${plural(taskCount, "due task")} need attention today.`,
+    body: [
+      line("Today / overdue", input.today),
+      line("Tomorrow", input.tomorrow),
+      line("Following day", input.followingDay),
+    ].join("\n"),
   };
 }

@@ -192,8 +192,9 @@ function DigestSettings({ digest }: { digest: DigestPreference }) {
     <section className="rounded-xl border border-border bg-card p-4">
       <h3 className="text-sm font-semibold">Daily digest</h3>
       <p className="mt-1 text-xs text-muted-foreground">
-        One message a day to every channel, counting the people you are due to reach out to
-        and the tasks that have fallen due. The individual reminders above are sent either way.
+        One message a day to every channel, with separate dated summaries for today and overdue,
+        tomorrow, and the following day. It counts important dates, keep-in-touch cadences, and
+        tasks; individual reminders still follow their own schedule.
       </p>
       <form action={submit(updateDigest, () => {}, "Saved")} className="mt-3 grid gap-2.5">
         <label className="flex items-center gap-2 text-sm">
