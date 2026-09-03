@@ -1,0 +1,3 @@
+#!/command/with-contenv bash
+set -euo pipefail
+exec s6-setuidgid abc /etc/s6-overlay/scripts/backup-scheduler

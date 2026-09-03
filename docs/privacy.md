@@ -25,6 +25,26 @@ Two design decisions carry the whole thing:
 never client state. A client cannot claim to be unlocked, and the unlock dies
 with the session rather than lingering after sign-out.
 
+Tag merges, deletions and assignments ask their privacy question *inside* the
+transaction, after `SELECT ... FOR UPDATE` on the tag rows. Asked before
+it, the answer described a moment that had already passed: an unlocked session
+elsewhere could add the private assignment in the gap, and the locked session
+would then move or destroy it. Assigning has the same shape from the other
+direction: a tag on nobody is visible while locked, and an unlocked session
+making it private-only in the gap turned the assignment into a disclosure.
+Contact saves hold their submitted tags the same way. A lock is what makes a
+privacy answer still true when it is acted on.
+
+A password change is also a privacy boundary: it revokes every other session,
+re-keys the current one, and clears `privacyUnlockedAt` on it. The current
+session is preserved so a successful credential change does not strand the
+person who made it — but preserved is not left alone: the row's `tokenHash` is
+replaced with a freshly generated token and the response sets the new cookie.
+Revoking the *other* rows would otherwise miss the case the change is usually
+made for, since a stolen cookie holds this session's token rather than a
+different one. Session settings expose device metadata and database IDs only; raw
+cookie tokens and their stored hashes never enter the page payload.
+
 An unlock lasts **15 minutes of inactivity** (`IDLE_TIMEOUT_MS`). “Activity” is
 successful use of protected content: opening dating views, reading
 private-capable records, or completing a guarded write. Ordinary public page
@@ -67,7 +87,26 @@ every account that never switched the lock on, which is unlocked by definition.
 > database.
 
 **Counts are filtered too.** A total that shifts when you unlock is itself a
-disclosure.
+disclosure. Tag queries apply the same contact scope: while locked, tags used only by private contacts are omitted and usage totals count visible contacts only.
+
+One predicate, `tagVisibleWhere`, expresses that, and the write paths ask it as
+well as the list. A tag on nobody stays listed while locked — it discloses
+nobody, and hiding it would leave a tag just created unusable until an unlock —
+but a tag that exists only on private people is neither listed nor assignable.
+The write check is not redundant with the list: a contact form rendered while
+unlocked keeps the ids it was given, and closing the lock in another tab does
+not empty that form. Adding a contact, editing one, and the per-contact toggle
+all refuse an id the current scope does not admit, and renaming asks the same
+predicate. Merging or deleting a tag is refused while locked whenever the tag
+is on someone private, since one moves the hidden assignment and the other
+destroys it — and that check is scoped by owner on both sides, so a tag
+belonging to another account answers "not found" whatever is assigned to it
+rather than distinguishing itself by the refusal it earns.
+
+Creating or renaming a tag is refused outright while locked, for the reason a
+place cannot be renamed: both answer "is this name already taken", and a name
+that is taken but matches nothing you can see belongs to a tag used only by
+private people. Assigning an existing tag changes no name and stays available.
 
 The Places directory derives its visits, people, rankings and last-visited
 dates only from interactions admitted by `interactionPrivacyWhere`. A place
@@ -80,6 +119,16 @@ a hidden place is neither offered back to you nor editable while locked, and
 "that place wasn't found" is the only answer either way, since a distinguishable
 error would itself confirm one exists. Typing its name still resolves to the
 existing row rather than creating a duplicate.
+
+Renaming a place is refused outright while locked — every rename, not only the
+ones that collide. Enforcing uniqueness necessarily answers "is this name
+already taken", and a name that is taken but matches nothing you can see is a
+place the lock is hiding, so the refusal itself was the signal. Changing a
+place's alternate names is refused for the same reason and in the same words:
+the alias claims are checked against the whole account, hidden places included,
+so guessing one asked exactly the question the rename guard exists to refuse.
+Only a *change* is held back; every other field stays editable while locked,
+and a save that resubmits the aliases it was rendered with goes through.
 
 The module is deliberately pure and free of request context so it can be tested
 directly against a database; [`filter.ts`](../src/server/privacy/filter.ts)
@@ -326,9 +375,12 @@ Gotify are meant to be run, and it is the case where nothing leaves the
 building at all.
 
 With one boundary: on an installation with more than one account, only an
-administrator may aim a channel at a **private, loopback or link-local
-address**. The server makes the request and reports what came back, so without
-that line any member could use it to probe the host's own network. A
+administrator may aim a channel at a **non-public address**. This includes
+private, loopback, link-local, multicast, unspecified, carrier-grade NAT and
+reserved IPv4 and IPv6 ranges. Every hostname is resolved in full; one
+non-public answer makes the whole destination non-public. The server makes the
+request and reports what came back, so without that line any member could use
+it to probe the host's own network. A
 single-account install never meets it — the only account is the administrator.
 
 That applies to an SMTP host as much as to a URL — an email channel names a
@@ -340,18 +392,28 @@ to a refused one would otherwise walk straight through the boundary, since the
 destination never passes back through it. A notification endpoint has no reason
 to redirect; configure the address it points at.
 
-**Literal addresses only, and that is a deliberate limit rather than an
-oversight.** A hostname that resolves to a private address is not caught. Doing
-so properly means resolving the name and then pinning the connection to the
-address that was checked — otherwise the answer can change between the check
-and the connection — in both the HTTP client and the mail transport. That is
-not implemented; see [known gaps](README.md#known-gaps).
+The check runs both when configuration is saved and immediately before every
+delivery. HTTP and SMTP connections are pinned to an address from that exact
+validated answer set while the original hostname remains in use for HTTP Host,
+TLS SNI and certificate verification. DNS therefore cannot change the address
+between the safety check and the connection. Redirects remain refused.
 
-So the boundary raises the cost of probing rather than making it impossible. It
-is worth having on those terms, and it is not worth mistaking for more. If the
-people with accounts on your installation are not people you trust with an
-outbound request from the server, `DISABLE_SIGNUP` is the control that actually
-answers that, and it is the recommended posture anyway.
+The two checks differ in one way: **saving asks DNS nothing.** An address typed
+in directly is still refused on the field, because telling its author that
+`10.0.0.5` is not allowed reveals only what they just wrote. A *hostname* is
+simply saved. Resolving one at save time and refusing it for pointing
+somewhere non-public answered a question the member could not otherwise ask —
+`nas.corp` and a spelling nobody has ever registered gave observably different
+answers, so the form became a way to enumerate internal DNS from an ordinary
+account, through the boundary's own error message.
+
+Nothing is lost by saying nothing there. The check before the send is the one
+that matters: the name is resolved, every answer inspected and the connection
+pinned to it, so a destination a member may not reach is never sent to. It
+merely takes until a delivery to say so, on the row — which is already where an
+unresolvable name reported. The **Send a test** button answers a member with
+one sentence whichever way it failed, for the same reason; an administrator,
+who is allowed a non-public destination anyway, is told what actually happened.
 
 ### Private contacts and the send
 
@@ -443,6 +505,15 @@ have no account behind them — necessary, because a throttle that only fired fo
 real accounts would answer the question the login error carefully refuses to:
 whether that address is one of ours. Both the refusal and the rejection read
 the same for an address that has never existed.
+
+**Confirming your current password is throttled by the same counter.**
+Changing the sign-in address or the password asks for the current one first,
+and that check is what stands between a stolen session and a theft made
+permanent — so it is gated exactly as the front door is, keyed the same way and
+reserved before the comparison rather than after it. A correct password clears
+the count. Ungated it took unlimited guesses, each costing a full password
+comparison, which also made it a way for one member of a shared instance to
+spend the machine.
 
 **It lives in the process, not in a table.** This started as a database table
 and five rounds of review took it apart, every time over the same tension.

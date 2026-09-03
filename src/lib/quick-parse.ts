@@ -53,6 +53,7 @@ export interface AmbiguousName {
 export interface ParseLocation {
   id: string;
   name: string;
+  locationAliases?: { value: string }[];
 }
 
 /**
@@ -92,11 +93,53 @@ export interface QuickParseResult {
 
 /** Words that join a sentence together and never name anything. */
 const STOPWORDS = new Set([
-  "a", "an", "and", "at", "for", "from", "in", "of", "on", "the", "to",
-  "with", "we", "i", "me", "my", "our", "us", "she", "he", "they", "her",
-  "him", "them", "his", "their", "had", "have", "has", "was", "were", "went",
-  "got", "did", "saw", "met", "about", "up", "out", "over", "into", "then",
-  "just", "also", "very", "really", "again",
+  "a",
+  "an",
+  "and",
+  "at",
+  "for",
+  "from",
+  "in",
+  "of",
+  "on",
+  "the",
+  "to",
+  "with",
+  "we",
+  "i",
+  "me",
+  "my",
+  "our",
+  "us",
+  "she",
+  "he",
+  "they",
+  "her",
+  "him",
+  "them",
+  "his",
+  "their",
+  "had",
+  "have",
+  "has",
+  "was",
+  "were",
+  "went",
+  "got",
+  "did",
+  "saw",
+  "met",
+  "about",
+  "up",
+  "out",
+  "over",
+  "into",
+  "then",
+  "just",
+  "also",
+  "very",
+  "really",
+  "again",
 ]);
 
 /**
@@ -135,10 +178,13 @@ export function quickParse(
   // May, June — and letting the date parser run first would swallow the person
   // and file the interaction against nobody. A name you have recorded always
   // wins over a date reading of the same word.
-  const { contacts, ambiguous, knownNeedles, remainder: withoutPeople, names } = extractPeople(
-    text,
-    context.contacts,
-  );
+  const {
+    contacts,
+    ambiguous,
+    knownNeedles,
+    remainder: withoutPeople,
+    names,
+  } = extractPeople(text, context.contacts);
   // Places before the type reader, or a venue called "The Coffee House" has
   // "coffee" torn out of its middle and stops matching.
   const known = matchKnownLocation(
@@ -204,20 +250,31 @@ function extractDate(
   // chrono works in the server's local zone, so ask it to reason relative to
   // the account's "now" and then read the answer back in the account's zone.
   const results = chrono.parse(text, now, { forwardDate: false });
-  if (results.length === 0) return { date: null, dateText: null, withoutDate: text };
+  if (results.length === 0)
+    return { date: null, dateText: null, withoutDate: text };
 
   // The longest match wins: "last Tuesday" beats "Tuesday".
-  const best = results.reduce((a, b) => (b.text.length > a.text.length ? b : a));
+  const best = results.reduce((a, b) =>
+    b.text.length > a.text.length ? b : a,
+  );
   const parsed = best.date();
   if (!Number.isFinite(parsed.getTime())) {
     return { date: null, dateText: null, withoutDate: text };
   }
 
-  const withoutDate = (text.slice(0, best.index) + " " + text.slice(best.index + best.text.length))
+  const withoutDate = (
+    text.slice(0, best.index) +
+    " " +
+    text.slice(best.index + best.text.length)
+  )
     .replace(/\s{2,}/g, " ")
     .trim();
 
-  return { date: calendarDateInTz(parsed, timeZone), dateText: best.text, withoutDate };
+  return {
+    date: calendarDateInTz(parsed, timeZone),
+    dateText: best.text,
+    withoutDate,
+  };
 }
 
 // --- interaction types -----------------------------------------------------
@@ -232,11 +289,18 @@ function extractType(
   const candidates = [...types].sort((a, b) => b.label.length - a.label.length);
 
   for (const type of candidates) {
-    for (const needle of [type.label.toLowerCase(), type.slug.replace(/-/g, " ")]) {
+    for (const needle of [
+      type.label.toLowerCase(),
+      type.slug.replace(/-/g, " "),
+    ]) {
       if (!needle) continue;
       const at = indexOfWord(lower, needle);
       if (at === -1) continue;
-      const withoutType = (text.slice(0, at) + " " + text.slice(at + needle.length))
+      const withoutType = (
+        text.slice(0, at) +
+        " " +
+        text.slice(at + needle.length)
+      )
         .replace(/\s{2,}/g, " ")
         .trim();
       return { type, withoutType };
@@ -254,7 +318,10 @@ function extractType(
  * boundary the scanner just created.
  */
 function indexOfWord(haystack: string, needle: string, from = 0): number {
-  const pattern = new RegExp(`(^|[^a-z0-9])${escapeRegExp(needle)}($|[^a-z0-9])`, "i");
+  const pattern = new RegExp(
+    `(^|[^a-z0-9])${escapeRegExp(needle)}($|[^a-z0-9])`,
+    "i",
+  );
   const match = pattern.exec(haystack.slice(from));
   if (!match) return -1;
   return from + match.index + (match[1] ? match[1].length : 0);
@@ -317,7 +384,8 @@ function possessiveAt(text: string, index: number): boolean {
 
 /** Put the possessive names back and drop the masks left by the rest. */
 function restoreNames(text: string, names: MaskedName[]): string {
-  return text
+  return (
+    text
     .replace(NAME_MASK_PATTERN, (_match, marker: string) => {
       const name = names[marker.charCodeAt(0) - NAME_MASK_FIRST];
       // A space, not an empty string: cutting "Sarah" out of "coffee with
@@ -328,7 +396,8 @@ function restoreNames(text: string, names: MaskedName[]): string {
     // would put the venue in the title as well.
     .replace(PLACE_MASK_PATTERN, " ")
     .replace(/\s{2,}/g, " ")
-    .trim();
+      .trim()
+  );
 }
 
 // --- places ----------------------------------------------------------------
@@ -342,6 +411,12 @@ function restoreNames(text: string, names: MaskedName[]): string {
  *
  * Only the first hit is taken — an interaction happens in one place.
  */
+/**
+ * Where an interaction stops being where it happened and starts being notes.
+ * The same boundary `splitTitleAndNotes` uses.
+ */
+const COMMENTARY_PATTERN = /,|\s[–—-]\s/;
+
 export function matchKnownLocation(
   text: string,
   locations: ParseLocation[],
@@ -354,34 +429,55 @@ export function matchKnownLocation(
   alsoTypeNames: Set<string> = new Set(),
 ): { place: MatchedLocation | null; withoutPlace: string } {
   // Longest first, so "The Coffee House" wins over a place called "Coffee".
-  const candidates = [...locations]
-    .filter((location) => location.name.trim())
-    .sort((a, b) => b.name.length - a.name.length);
+  const candidates = locations
+    .flatMap((location) =>
+      [location.name, ...(location.locationAliases ?? []).map((a) => a.value)]
+        .filter(
+          (name, index, names) => name.trim() && names.indexOf(name) === index,
+        )
+        .map((matchName) => ({ location, matchName })),
+    )
+    .sort((a, b) => b.matchName.length - a.matchName.length);
 
   // Only the part before the commentary is where an interaction happened.
   // Everything after the first comma or dash is notes — "Coffee with Sarah,
   // talked about Northside Cafe" happened wherever it happened, and reading a
   // venue out of the sentence about it also cut the note down to "talked
   // about". The same boundary `splitTitleAndNotes` uses.
-  const commentary = text.search(/,|\s[–—-]\s/);
+  const commentary = text.search(COMMENTARY_PATTERN);
   const searchable = commentary === -1 ? text : text.slice(0, commentary);
 
-  for (const location of candidates) {
-    const words = location.name.trim().split(/\s+/).map(escapeRegExp);
+  for (const { location, matchName } of candidates) {
+    const words = matchName.trim().split(/\s+/).map(escapeRegExp);
     if (!words.length) continue;
     // Words joined by `\s+` rather than a literal space: the typed line may
     // have doubled spaces where the stored name does not, and that is exactly
     // the difference `normalizeLocationName` folds away.
-    const pattern = new RegExp(`(?<![A-Za-z0-9])${words.join("\\s+")}(?![A-Za-z0-9])`, "i");
-    const found = pattern.exec(searchable);
+    const pattern = new RegExp(
+      `(?<![A-Za-z0-9])${words.join("\\s+")}(?![A-Za-z0-9])`,
+      "i",
+    );
+    // A name that carries the boundary inside itself — "Washington, D.C." —
+    // can never be found in `searchable`, which stops at the first comma, so
+    // quick add proposed a brand new place called "Washington" instead of the
+    // one the account already had. Those names are searched in the whole line
+    // and accepted only if they *start* before the boundary: the venue is
+    // still in the part before the notes, it merely spans a comma of its own.
+    // Every other name keeps the narrow search, so "talked about Northside
+    // Cafe" remains commentary rather than a venue.
+    const spansCommentary = COMMENTARY_PATTERN.test(matchName);
+    const found = pattern.exec(spansCommentary ? text : searchable);
     if (!found) continue;
+    if (spansCommentary && commentary !== -1 && found.index > commentary)
+      continue;
 
     const at = found.index;
     const matchedText = found[0];
     const preceding = searchable.slice(0, at);
     const hasVenueCue = /(?:\bat|@)\s*$/i.test(preceding);
     // Without a cue this name is more likely the type than the place.
-    if (!hasVenueCue && alsoTypeNames.has(matchedText.trim().toLowerCase())) continue;
+    if (!hasVenueCue && alsoTypeNames.has(matchedText.trim().toLowerCase()))
+      continue;
 
     // Swallow a preposition immediately before it, or the title keeps a
     // dangling "at" once the venue is gone. The boundary belongs to "at"
@@ -389,7 +485,11 @@ export function matchKnownLocation(
     // and the sign survived into the title as a one-character name.
     const before = text.slice(0, at).replace(/(?:\bat|@)\s*$/i, "");
 
-    const withoutPlace = (before + PLACE_MASK + text.slice(at + matchedText.length))
+    const withoutPlace = (
+      before +
+      PLACE_MASK +
+      text.slice(at + matchedText.length)
+    )
       .replace(/\s{2,}/g, " ")
       .trim();
 
@@ -408,9 +508,10 @@ export function matchKnownLocation(
  * Cafe" from "at home" and "at the office". A false negative costs you typing
  * the venue yourself; a false positive creates a junk place.
  */
-function prepositionalPlace(
-  text: string,
-): { place: MatchedLocation | null; withoutPlace: string } {
+function prepositionalPlace(text: string): {
+  place: MatchedLocation | null;
+  withoutPlace: string;
+} {
   // Every "at" in the line is tried, not just the first.
   //
   // Chrono removes a time phrase but leaves its preposition behind, so
@@ -420,7 +521,11 @@ function prepositionalPlace(
   // "Cafe" back in front of the user as people to create.
   const cues = text.matchAll(/(^|\s)(?:at\s+|@\s*)/gi);
   for (const cue of cues) {
-    const found = venueAfterCue(text, cue.index + cue[1].length, cue.index + cue[0].length);
+    const found = venueAfterCue(
+      text,
+      cue.index + cue[1].length,
+      cue.index + cue[0].length,
+    );
     if (found) return found;
   }
   return { place: null, withoutPlace: text };
@@ -450,9 +555,10 @@ function venueAfterCue(
   //
   // A mask at the very start still rejects, because that is the other shape:
   // "at Sarah's place" is somebody's home, not a venue.
-  const stops = [tail.search(ANY_MASK_PATTERN), tail.search(/\swith\s/i)].filter(
-    (index) => index !== -1,
-  );
+  const stops = [
+    tail.search(ANY_MASK_PATTERN),
+    tail.search(/\swith\s/i),
+  ].filter((index) => index !== -1);
   const cut = stops.length ? Math.min(...stops) : tail.length;
   // Trailing joining words are what led into the name we just stopped at.
   const phrase = tail
@@ -474,14 +580,20 @@ function venueAfterCue(
   const namesSomewhere = words.some((word) => {
     const bare = word.replace(/[^A-Za-z'\u2019-]/g, "");
     return (
-      bare.length >= 2 && bare[0] === bare[0].toUpperCase() && !STOPWORDS.has(bare.toLowerCase())
+      bare.length >= 2 &&
+      bare[0] === bare[0].toUpperCase() &&
+      !STOPWORDS.has(bare.toLowerCase())
     );
   });
   if (!namesSomewhere) return null;
 
   // Consume the preposition and everything up to where the venue stopped,
   // leaving the participant mask and any notes after a comma in place.
-  const withoutPlace = (text.slice(0, cueStart) + PLACE_MASK + text.slice(phraseStart + cut))
+  const withoutPlace = (
+    text.slice(0, cueStart) +
+    PLACE_MASK +
+    text.slice(phraseStart + cut)
+  )
     .replace(/\s{2,}/g, " ")
     .trim();
 
@@ -516,7 +628,10 @@ function extractPeople(
    * first one sorted. Longest needles are tried first so "John Whitfield"
    * resolves before the bare "John" ever gets a chance to be ambiguous.
    */
-  const byNeedle = new Map<string, { needle: string; contacts: ParseContact[] }>();
+  const byNeedle = new Map<
+    string,
+    { needle: string; contacts: ParseContact[] }
+  >();
   const offer = (contact: ParseContact, needle: string) => {
     const trimmed = needle.trim();
     if (!trimmed) return;
@@ -530,12 +645,17 @@ function extractPeople(
   };
 
   for (const contact of contacts) {
-    offer(contact, [contact.firstName, contact.lastName].filter(Boolean).join(" "));
+    offer(
+      contact,
+      [contact.firstName, contact.lastName].filter(Boolean).join(" "),
+    );
     if (contact.nickname) offer(contact, contact.nickname);
     offer(contact, contact.firstName);
   }
 
-  const ordered = [...byNeedle.values()].sort((a, b) => b.needle.length - a.needle.length);
+  const ordered = [...byNeedle.values()].sort(
+    (a, b) => b.needle.length - a.needle.length,
+  );
 
   for (const entry of ordered) {
     // Looped, not matched once: "dinner with John and John" is two people, and
@@ -545,13 +665,19 @@ function extractPeople(
     // itself for ever.
     let cursor = 0;
     for (;;) {
-      const at = indexOfWord(remainder.toLowerCase(), entry.needle.toLowerCase(), cursor);
+      const at = indexOfWord(
+        remainder.toLowerCase(),
+        entry.needle.toLowerCase(),
+        cursor,
+      );
       if (at === -1) break;
 
       // Anyone already pinned down by a longer, more specific name is out of
       // the running — in "John Whitfield and John", the bare one is the other
       // John by elimination.
-      const remaining = entry.contacts.filter((contact) => !taken.has(contact.id));
+      const remaining = entry.contacts.filter(
+        (contact) => !taken.has(contact.id),
+      );
       if (remaining.length === 0) break;
 
       const end = at + entry.needle.length;
@@ -559,7 +685,10 @@ function extractPeople(
 
       if (names.length >= NAME_MASK_LIMIT) break;
       const mask = maskFor(names.length);
-      names.push({ text: matchedText, possessive: possessiveAt(remainder, end) });
+      names.push({
+        text: matchedText,
+        possessive: possessiveAt(remainder, end),
+      });
       remainder = remainder.slice(0, at) + mask + remainder.slice(end);
       cursor = at + mask.length;
 
@@ -598,7 +727,10 @@ function extractPeople(
  * offered "Boston", and "coffee with Sarah at Northside Cafe" offered both
  * "Northside" and "Cafe" — pre-ticked, so confirming the line created them.
  */
-function unknownNamesIn(remainder: string, knownNeedles: Set<string>): string[] {
+function unknownNamesIn(
+  remainder: string,
+  knownNeedles: Set<string>,
+): string[] {
   const unknownNames: string[] = [];
   const words = remainder.split(/\s+/);
   for (const [index, word] of words.entries()) {
@@ -686,6 +818,9 @@ export function touchesPrivateContact(result: QuickParseResult): boolean {
 }
 
 /** The parsed date as a form value, or today's when the line had no date. */
-export function parsedDateKey(result: QuickParseResult, today: PlainDate): string {
+export function parsedDateKey(
+  result: QuickParseResult,
+  today: PlainDate,
+): string {
   return plainDateKey(result.date ?? today);
 }

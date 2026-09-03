@@ -51,6 +51,26 @@ enforces rather than documents:
 | `signupAction` | Refused when `DISABLE_SIGNUP=true` |
 | `logoutAction` | Deletes the session row and clears the cookie |
 
+### Account — `actions/account.ts`
+
+All mutations derive the account from the authenticated session; no caller may
+choose an owner. `updateDisplayName` changes the navigation/profile label.
+`updateEmail` uses registration's trim-and-lowercase normalization, requires the
+current password, and relies on the database uniqueness constraint; like
+`changePassword` its write is conditional on the row still carrying the hash it
+confirmed, so a request in flight on a session a password change has just
+revoked cannot still move the sign-in address. Password
+changes reuse the signup strength and bcrypt helpers, preserve the current
+session, revoke every other session, and clear `privacyUnlockedAt` on the
+preserved session — which is also re-keyed, so copies of its cookie stop
+resolving. The write is conditional on the row still carrying the hash that was
+just confirmed, so of two changes racing only one applies: written blindly, the
+loser's session sweep ended the winner's newly issued session and left the
+account with none. `secureSessionsAfterPasswordChange` returns the callback that writes
+the new cookie, and `changePassword` invokes it after the transaction commits;
+writing it inside would leave the browser holding a token a rollback removed. Individual and bulk revocation predicates include `userId`
+and explicitly exclude the current token hash.
+
 ### Contacts — `actions/contacts.ts`
 
 `createContact`, `updateContact`, `updateContactBirthday`, `patchContact`,
@@ -228,8 +248,38 @@ same sentence.
 A rename onto a name already in use is **refused**, never merged: two real venues
 can be spelled alike, and folding one into the other would take a history with it.
 
+While the lock is closed, both a rename and a change to a place's alternate
+names are refused outright — every one, not only the ones that collide. Asking
+whether a name is taken is asking whether a hidden place answers to it, and the
+refusal itself was the answer. `updateLocation` compares the submitted aliases
+with the stored ones so only a *change* is held back: every other field stays
+editable, and a save that resubmits the aliases it was rendered with goes
+through.
+
 Every place a lookup can be reached from is behind an explicit button. See
 [privacy.md](privacy.md) for what is sent.
+
+### Tags — `actions/tags.ts`
+
+| Action | Notes |
+| --- | --- |
+| `createTag` | Name plus a `normalizeTagSlug` key, unique per owner. The key keeps letters and numbers in any script, so a name with no ASCII spelling is not refused as empty. Refused while locked — see below |
+| `renameTag` | Recomputes the key; a rename onto an existing one is refused rather than merged. Refused while locked, and the tag itself must be one `tagVisibleWhere` admits |
+| `mergeTag` | Moves the source's assignments onto the destination and deletes the source. Refused while locked if either tag is on someone private — the move would carry the hidden assignment |
+| `deleteTag` | Removes the tag; assignments go by cascade, contacts are untouched. Refused while locked on the same condition, since the cascade destroys the hidden assignment |
+| `setContactTag` | Assigns or unassigns one tag on one contact |
+
+Creating and renaming are refused while the lock is closed, because both answer
+"is this name taken" and a taken name you cannot see belongs to a tag used only
+by private people — the same reasoning that holds back a place rename.
+Assigning an existing tag changes no name and is unaffected.
+
+Every one of these scopes by `ownerId`, and each that names a tag by id asks
+`tagVisibleWhere` rather than ownership alone — as do `createContact` and
+`updateContact` when they replace a contact's tags. A form rendered while
+unlocked keeps the ids it listed, and closing the lock in another tab does not
+empty it, so the write is the only place that check can be made. See
+[privacy.md](privacy.md) for what the predicate admits.
 
 ### Customization
 

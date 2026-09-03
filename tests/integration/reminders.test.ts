@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { processImportantDateReminders } from "@/server/services/reminders";
+import { deliverToChannel } from "@/server/services/notify";
 import { encryptSecret } from "@/server/crypto/secrets";
 import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
 
@@ -93,18 +94,22 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
       reminderDaysBefore: [0],
     } });
 
+    // The socket is the only thing replaced. Everything the credential passes
+    // through on its way to the wire — decryption, the header the kind
+    // chooses, the body — is the real sender's.
     const calls: Array<{ url: string; auth: string | undefined }> = [];
-    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      const headers = new Headers(init?.headers);
-      calls.push({ url: String(url), auth: headers.get("authorization") ?? undefined });
-      return new Response("{}", { status: 200 });
+    await processImportantDateReminders(new Date("2026-08-29T12:00:00Z"), {
+      db: prisma,
+      send: (channel, subject, body) =>
+        deliverToChannel(channel, subject, body, {
+          resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+          isAdministrator: async () => true,
+          http: async ({ url, headers }) => {
+            calls.push({ url: url.toString(), auth: headers.authorization });
+            return { status: 200 };
+          },
+        }),
     });
-    vi.stubGlobal("fetch", fetchMock);
-    try {
-      await processImportantDateReminders(new Date("2026-08-29T12:00:00Z"), { db: prisma });
-    } finally {
-      vi.unstubAllGlobals();
-    }
 
     expect(calls).toHaveLength(2);
     // Both carry their credential; neither goes out bare.

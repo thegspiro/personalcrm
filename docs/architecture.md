@@ -175,18 +175,19 @@ well as a runtime one.
 s6-overlay orders a chain of oneshots before the app is allowed to serve:
 
 ```
-init-perms  →  init-preflight  →  init-mariadb  →  svc-mariadb  →  init-db-ready  →  init-migrate  →  svc-app
+init-perms → init-preflight → init-mariadb → svc-mariadb → init-db-ready → init-migrate → svc-app + svc-backup
 ```
 
 | Step | Does |
 | --- | --- |
 | `init-perms` | Creates the `abc` user from `PUID`/`PGID`, makes `/config` writable, creates `db/ uploads/ backups/ logs/ cache/`. Only chowns recursively when the top-level owner is actually wrong. First, because preflight's writability check needs the directory to exist and be owned correctly |
-| `init-preflight` | Validates what the operator supplied — `APP_URL`, a writable `/config` — before any service starts. Ordered ahead of the database deliberately: a wrong value is far easier to read here than as a failure three services later |
+| `init-preflight` | Validates what the operator supplied — `APP_URL`, a writable `/config` — before any service starts. Ordered ahead of the database deliberately: a wrong value is far easier to read here than as a failure three services later. It validates each setting as its consumer will see it: `configured` means the raw value is non-empty, which is what the shell's `:-` default and `-n` test, rather than what a trim would say |
 | `init-mariadb` | Generates `/config/secrets.json` (0600) on first boot with a random DB password and `authSecret`, initialises the data directory, publishes `DATABASE_URL` and `AUTH_SECRET` into the supervision tree. Skipped entirely when `DATABASE_URL` is set |
 | `svc-mariadb` | The bundled server (longrun) |
 | `init-db-ready` | Waits for the socket |
 | `init-migrate` | `prisma migrate deploy` |
 | `svc-app` | `node server.js` (Next standalone) |
+| `svc-backup` | Daily consistent `mariadb-dump`, starting only after migrations; atomic publication, overlap lock, disk guard, and retention |
 
 Because the secrets file is generated once and reused, sessions and the database
 survive an image replacement — upgrading is `docker pull` and restart.

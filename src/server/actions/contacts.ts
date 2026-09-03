@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import { recomputeContactActivity } from "@/server/services/contact-activity";
 import {
@@ -15,7 +16,12 @@ import {
   removeAvatarFile,
   storeAvatar,
 } from "@/server/services/avatars";
-import { contactPrivacyWhere, privacyScope } from "@/server/privacy/filter";
+import {
+  contactPrivacyWhere,
+  privacyScope,
+  type PrivacyScope,
+} from "@/server/privacy/filter";
+import { tagVisibleWhere } from "@/server/queries/tags";
 import {
   type ActionResult,
   bool,
@@ -26,7 +32,81 @@ import {
   owner,
   partialDate,
   str,
+  strList,
 } from "./helpers";
+
+/**
+ * Replace a contact's tags with the submitted set.
+ *
+ * Scoped by what the lock currently shows, not by ownership alone. A contact
+ * form loaded while unlocked keeps the ids of every tag it listed, and closing
+ * the lock in another tab does not empty that form: submitting it then carried
+ * a tag that exists only on private people onto a visible contact — writing a
+ * private-derived association from a locked session, and publishing the hidden
+ * tag's name, since one visible use is what puts it back in `listTags`.
+ *
+ * The scope is read by the caller rather than here, so the cookie read happens
+ * before the transaction opens rather than inside it.
+ */
+async function replaceTags(
+  tx: Prisma.TransactionClient,
+  ownerId: string,
+  scope: PrivacyScope,
+  contactId: string,
+  tagIds: string[],
+) {
+  const usable = tagIds.length
+    ? await tx.tag.count({
+        where: { id: { in: tagIds }, ...tagVisibleWhere(ownerId, scope) },
+      })
+    : 0;
+  if (usable !== tagIds.length) throw new InvalidTagError();
+  await tx.contactTag.deleteMany({ where: { contactId } });
+  if (tagIds.length)
+    await tx.contactTag.createMany({
+      data: tagIds.map((tagId) => ({ contactId, tagId })),
+    });
+}
+
+/**
+ * Hold the submitted tags for the transaction, as its very first statement.
+ *
+ * Counting them and then inserting left a gap: another tab deleting one in
+ * between met the foreign key as a P2003, which nothing here translates, so an
+ * ordinary tag deletion elsewhere turned a whole contact save into a server
+ * error and rolled back the contact, its custom fields and its avatar with it.
+ * Held, the tag cannot go anywhere and the save keeps it.
+ *
+ * *First*, though, is not a stylistic preference. A locking read taken after
+ * the transaction has already established a read view — after the contact row
+ * is written, say — and which then waits on the very delete it is guarding
+ * against, comes back as "Record has changed since last read" (MariaDB error
+ * 1020) instead of as a row count. That turned one server error into another,
+ * on MariaDB 11 but not on 10.11, so it appeared only in CI. Nothing has been
+ * read when this runs, so there is no view for the lock to disagree with,
+ * which is also why the tag actions have always taken theirs first.
+ *
+ * Owner-scoped, so a tag belonging to another account is simply not returned
+ * and gets the same answer without anything of theirs being read. Returns the
+ * deduplicated ids, so the caller counts and writes each exactly once.
+ */
+async function lockSubmittedTags(
+  tx: Prisma.TransactionClient,
+  ownerId: string,
+  tagIds: string[],
+): Promise<string[]> {
+  const unique = [...new Set(tagIds)];
+  if (!unique.length) return unique;
+  const locked = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM Tag
+    WHERE ownerId = ${ownerId} AND id IN (${Prisma.join(unique)})
+    FOR UPDATE
+  `;
+  if (locked.length !== unique.length) throw new InvalidTagError();
+  return unique;
+}
+
+class InvalidTagError extends Error {}
 
 const nameSchema = z.object({
   firstName: z.string().trim().min(1, "A first name is required.").max(120),
@@ -49,16 +129,25 @@ function revalidateContact(id?: string) {
 }
 
 /** Assert a row belongs to the signed-in user before touching it. */
-async function assertOwnedContact(ownerId: string, contactId: string): Promise<boolean> {
+async function assertOwnedContact(
+  ownerId: string,
+  contactId: string,
+): Promise<boolean> {
+  const scope = await privacyScope();
   const found = await prisma.contact.findFirst({
-    where: { id: contactId, ownerId },
+    where: { id: contactId, ownerId, ...contactPrivacyWhere(scope) },
     select: { id: true },
   });
   return Boolean(found);
 }
 
-export async function createContact(form: FormData): Promise<ActionResult<{ id: string }>> {
+export async function createContact(
+  form: FormData,
+): Promise<ActionResult<{ id: string }>> {
   const { ownerId } = await owner();
+  // Read before the transaction opens, so the cookie the lock lives in is not
+  // consulted with one held.
+  const scope = await privacyScope();
 
   const parsed = nameSchema.safeParse({
     firstName: str(form, "firstName"),
@@ -93,42 +182,54 @@ export async function createContact(form: FormData): Promise<ActionResult<{ id: 
   let contact: { id: string };
   try {
     contact = await prisma.$transaction(async (tx) => {
-    const created = await tx.contact.create({
-      data: {
-        ownerId,
-        firstName: parsed.data.firstName,
-        lastName: parsed.data.lastName ?? null,
-        nickname: str(form, "nickname") ?? null,
-        pronouns: str(form, "pronouns") ?? null,
-        categoryId: str(form, "categoryId") ?? null,
-        occupation: str(form, "occupation") ?? null,
-        employer: str(form, "employer") ?? null,
-        city: parsed.data.city ?? null,
-        region: parsed.data.region ?? null,
-        country: parsed.data.country ?? null,
-        summary: str(form, "summary") ?? null,
-        howWeMet: str(form, "howWeMet") ?? null,
-        whereWeMet: parsed.data.whereWeMet ?? null,
-        meetingSourceId: str(form, "meetingSourceId") ?? null,
-        birthDate: birth?.date ?? null,
-        birthDatePrecision: birth?.precision ?? "DAY",
-        metOn: met?.date ?? null,
-        metOnPrecision: met?.precision ?? "DAY",
-        cadenceDays: cadenceDays && cadenceDays > 0 ? Math.round(cadenceDays) : null,
-        isFavorite: bool(form, "isFavorite"),
-        isRomantic: bool(form, "isRomantic"),
-        avatarPath: storedAvatar?.publicPath ?? null,
-      },
-    });
+      // Before the contact row, so the lock is the transaction's first
+      // statement — see `lockSubmittedTags`.
+      const tagIds = await lockSubmittedTags(tx, ownerId, strList(form, "tagIds"));
+      const created = await tx.contact.create({
+        data: {
+          ownerId,
+          firstName: parsed.data.firstName,
+          lastName: parsed.data.lastName ?? null,
+          nickname: str(form, "nickname") ?? null,
+          pronouns: str(form, "pronouns") ?? null,
+          categoryId: str(form, "categoryId") ?? null,
+          occupation: str(form, "occupation") ?? null,
+          employer: str(form, "employer") ?? null,
+          city: parsed.data.city ?? null,
+          region: parsed.data.region ?? null,
+          country: parsed.data.country ?? null,
+          summary: str(form, "summary") ?? null,
+          howWeMet: str(form, "howWeMet") ?? null,
+          whereWeMet: parsed.data.whereWeMet ?? null,
+          meetingSourceId: str(form, "meetingSourceId") ?? null,
+          birthDate: birth?.date ?? null,
+          birthDatePrecision: birth?.precision ?? "DAY",
+          metOn: met?.date ?? null,
+          metOnPrecision: met?.precision ?? "DAY",
+          cadenceDays:
+            cadenceDays && cadenceDays > 0 ? Math.round(cadenceDays) : null,
+          isFavorite: bool(form, "isFavorite"),
+          isRomantic: bool(form, "isRomantic"),
+          avatarPath: storedAvatar?.publicPath ?? null,
+        },
+      });
 
-    await saveCustomFieldValuesOrThrow(tx, ownerId, "CONTACT", created.id, form);
-    // A new contact has no interactions, but this seeds nextTouchAt from their
-    // creation date so a cadence starts counting immediately.
-    await recomputeContactActivity(tx, [created.id]);
-    return created;
+      await saveCustomFieldValuesOrThrow(
+        tx,
+        ownerId,
+        "CONTACT",
+        created.id,
+        form,
+      );
+      await replaceTags(tx, ownerId, scope, created.id, tagIds);
+      // A new contact has no interactions, but this seeds nextTouchAt from their
+      // creation date so a cadence starts counting immediately.
+      await recomputeContactActivity(tx, [created.id]);
+      return created;
     });
   } catch (error) {
     await removeAvatarFile(storedAvatar?.publicPath ?? null).catch(() => {});
+    if (error instanceof InvalidTagError) return fail("One or more tags are unavailable.");
     const failure = customFieldFailure(error);
     if (failure) return failure;
     throw error;
@@ -180,40 +281,49 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
 
   try {
     await prisma.$transaction(async (tx) => {
-    await tx.contact.update({
-      where: { id },
-      data: {
-        firstName: parsed.data.firstName,
-        lastName: parsed.data.lastName ?? null,
-        nickname: str(form, "nickname") ?? null,
-        pronouns: str(form, "pronouns") ?? null,
-        categoryId: str(form, "categoryId") ?? null,
-        occupation: str(form, "occupation") ?? null,
-        employer: str(form, "employer") ?? null,
-        city: parsed.data.city ?? null,
-        region: parsed.data.region ?? null,
-        country: parsed.data.country ?? null,
-        summary: str(form, "summary") ?? null,
-        howWeMet: str(form, "howWeMet") ?? null,
-        whereWeMet: parsed.data.whereWeMet ?? null,
-        meetingSourceId: str(form, "meetingSourceId") ?? null,
-        birthDate: birth?.date ?? null,
-        birthDatePrecision: birth?.precision ?? "DAY",
-        metOn: met?.date ?? null,
-        metOnPrecision: met?.precision ?? "DAY",
-        cadenceDays: cadenceDays && cadenceDays > 0 ? Math.round(cadenceDays) : null,
-        isFavorite: bool(form, "isFavorite"),
-        isRomantic: bool(form, "isRomantic"),
-        ...(storedAvatar ? { avatarPath: storedAvatar.publicPath } : removeAvatar ? { avatarPath: null } : {}),
-      },
-    });
+      // First, as in `createContact` and for the same reason.
+      const tagIds = await lockSubmittedTags(tx, ownerId, strList(form, "tagIds"));
+      await tx.contact.update({
+        where: { id },
+        data: {
+          firstName: parsed.data.firstName,
+          lastName: parsed.data.lastName ?? null,
+          nickname: str(form, "nickname") ?? null,
+          pronouns: str(form, "pronouns") ?? null,
+          categoryId: str(form, "categoryId") ?? null,
+          occupation: str(form, "occupation") ?? null,
+          employer: str(form, "employer") ?? null,
+          city: parsed.data.city ?? null,
+          region: parsed.data.region ?? null,
+          country: parsed.data.country ?? null,
+          summary: str(form, "summary") ?? null,
+          howWeMet: str(form, "howWeMet") ?? null,
+          whereWeMet: parsed.data.whereWeMet ?? null,
+          meetingSourceId: str(form, "meetingSourceId") ?? null,
+          birthDate: birth?.date ?? null,
+          birthDatePrecision: birth?.precision ?? "DAY",
+          metOn: met?.date ?? null,
+          metOnPrecision: met?.precision ?? "DAY",
+          cadenceDays:
+            cadenceDays && cadenceDays > 0 ? Math.round(cadenceDays) : null,
+          isFavorite: bool(form, "isFavorite"),
+          isRomantic: bool(form, "isRomantic"),
+          ...(storedAvatar
+            ? { avatarPath: storedAvatar.publicPath }
+            : removeAvatar
+              ? { avatarPath: null }
+              : {}),
+        },
+      });
 
-    await saveCustomFieldValuesOrThrow(tx, ownerId, "CONTACT", id, form);
-    // The cadence may have changed, so nextTouchAt has to be re-derived.
-    await recomputeContactActivity(tx, [id]);
+      await saveCustomFieldValuesOrThrow(tx, ownerId, "CONTACT", id, form);
+      await replaceTags(tx, ownerId, scope, id, tagIds);
+      // The cadence may have changed, so nextTouchAt has to be re-derived.
+      await recomputeContactActivity(tx, [id]);
     });
   } catch (error) {
     await removeAvatarFile(storedAvatar?.publicPath ?? null).catch(() => {});
+    if (error instanceof InvalidTagError) return fail("One or more tags are unavailable.");
     const failure = customFieldFailure(error);
     if (failure) return failure;
     throw error;
@@ -233,7 +343,9 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
 }
 
 /** Edit the canonical birthday without creating an ImportantDate shadow row. */
-export async function updateContactBirthday(form: FormData): Promise<ActionResult> {
+export async function updateContactBirthday(
+  form: FormData,
+): Promise<ActionResult> {
   const { ownerId } = await owner();
   const id = str(form, "id");
   const birth = partialDate(form, "birthDate");
@@ -268,7 +380,8 @@ export async function patchContact(
   },
 ): Promise<ActionResult> {
   const { ownerId } = await owner();
-  if (!(await assertOwnedContact(ownerId, id))) return fail("Contact not found.");
+  if (!(await assertOwnedContact(ownerId, id)))
+    return fail("Contact not found.");
 
   await prisma.$transaction(async (tx) => {
     await tx.contact.update({ where: { id }, data: patch });
@@ -282,10 +395,15 @@ export async function patchContact(
 }
 
 /** Push someone off the reach-out list for a while without logging a fake contact. */
-export async function snoozeContact(id: string, days: number): Promise<ActionResult> {
+export async function snoozeContact(
+  id: string,
+  days: number,
+): Promise<ActionResult> {
   const { ownerId, timezone } = await owner();
-  if (!(await assertOwnedContact(ownerId, id))) return fail("Contact not found.");
-  if (!Number.isFinite(days) || days <= 0) return fail("Pick how long to snooze for.");
+  if (!(await assertOwnedContact(ownerId, id)))
+    return fail("Contact not found.");
+  if (!Number.isFinite(days) || days <= 0)
+    return fail("Pick how long to snooze for.");
 
   await prisma.$transaction(async (tx) => {
     await tx.contact.update({
@@ -317,7 +435,10 @@ export async function deleteContact(id: string): Promise<ActionResult> {
         where: { ownerId, participants: { some: { contactId: id } } },
         select: { id: true },
       }),
-      tx.dateEntry.findMany({ where: { ownerId, contactId: id }, select: { id: true } }),
+      tx.dateEntry.findMany({
+        where: { ownerId, contactId: id },
+        select: { id: true },
+      }),
     ]);
     await deleteCustomFieldValues(tx, ownerId, [
       { entity: "CONTACT", entityIds: [id] },
@@ -338,6 +459,9 @@ export async function deleteContact(id: string): Promise<ActionResult> {
   return ok();
 }
 
-export async function setContactArchived(id: string, archived: boolean): Promise<ActionResult> {
+export async function setContactArchived(
+  id: string,
+  archived: boolean,
+): Promise<ActionResult> {
   return patchContact(id, { isArchived: archived });
 }

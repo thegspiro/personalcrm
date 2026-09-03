@@ -207,9 +207,11 @@ Important-date, overdue cadence, due-task, and timezone-aware daily digest
 reminders are delivered by the hourly scheduler through the channels configured
 under Settings → Reminders. Each delivery has a durable policy-specific key and
 retries re-check current owner, state, policy, and privacy before sending.
-`UserPreference.weekStartsOn` is likewise reserved and read by nothing. Nothing
-writes to `/config/backups`. Tags exist in the schema with no UI. There is no
-account management after the welcome wizard. Full list in
+`UserPreference.weekStartsOn` is likewise reserved and read by nothing. The
+`svc-backup` service writes a daily dump to `/config/backups`, tags have a UI
+under Settings → Tags and on the people list, and Settings → Account manages
+the display name, email, password and signed-in sessions. Password recovery is
+still deliberately absent. Full list in
 [docs/README.md](docs/README.md#known-gaps).
 
 ## Commits

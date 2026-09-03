@@ -376,8 +376,9 @@ export async function loadInteractionForEdit(
 
 export async function deleteInteraction(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
+  const scope = await privacyScope();
   const existing = await prisma.interaction.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...interactionPrivacyWhere(scope) },
     select: { id: true },
   });
   if (!existing) return fail("Interaction not found.");

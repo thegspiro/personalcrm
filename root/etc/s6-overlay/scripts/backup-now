@@ -1,0 +1,181 @@
+#!/command/with-contenv bash
+# Produce one consistent, compressed MariaDB backup and publish it atomically.
+set -euo pipefail
+source /etc/s6-overlay/scripts/common.sh
+
+BACKUP_DIR="${BACKUP_DIR:-/config/backups}"
+# Trimmed to match what preflight validated; see backup-scheduler.
+trim() { local v="${1#"${1%%[![:space:]]*}"}"; printf '%s' "${v%"${v##*[![:space:]]}"}"; }
+RETENTION_DAYS="$(trim "${BACKUP_RETENTION_DAYS:-30}")"
+MIN_FREE_MB="$(trim "${BACKUP_MIN_FREE_MB:-512}")"
+LOCK_FILE="${BACKUP_DIR}/.backup.lock"
+# The option file holds the database password, so it is written to volatile
+# runtime storage rather than beside the dumps. Under /config it survived a
+# SIGKILL, a container crash or a power cut — the trap cannot run for any of
+# those — and sat on the same persistent volume that a host-level backup or a
+# sync job would then copy the credential out of, alongside the dumps.
+CREDENTIAL_DIR="${BACKUP_RUNTIME_DIR:-/run/personalcrm}"
+credentials=""
+temporary=""
+
+log() { printf '[backup] %s\n' "$*"; }
+fail() { printf '[backup] ERROR: %s\n' "$*" >&2; exit 1; }
+cleanup() {
+    [[ -n "${temporary}" ]] && rm -f -- "${temporary}"
+    [[ -n "${credentials}" ]] && rm -f -- "${credentials}"
+}
+trap cleanup EXIT HUP INT TERM
+
+[[ "${RETENTION_DAYS}" =~ ^[1-9][0-9]*$ ]] || fail "BACKUP_RETENTION_DAYS must be a positive integer"
+[[ "${MIN_FREE_MB}" =~ ^[0-9]+$ ]] || fail "BACKUP_MIN_FREE_MB must be a non-negative integer"
+mkdir -p "${BACKUP_DIR}"
+umask 077
+exec 9>"${LOCK_FILE}"
+if ! flock -n 9; then
+    fail "another backup is already running"
+fi
+
+available_mb="$(df -Pm "${BACKUP_DIR}" | awk 'NR == 2 { print $4 }')"
+[[ "${available_mb}" =~ ^[0-9]+$ ]] || fail "could not determine free space in ${BACKUP_DIR}"
+# Compared as decimal strings, not as numbers.
+#
+# The shell's arithmetic has bitten this check twice. "08" is an invalid octal
+# literal, and because the expression sits in an `if` the error read as false
+# rather than stopping the script. Reading both in base ten fixed that and left
+# the other half: arithmetic is fixed width, so a minimum beyond its range
+# wraps — 9999999999999999999 made "100 < minimum" false as surely as the octal
+# error did. Both times the guard was skipped and the dump ran on a full disk,
+# which is the one thing it exists to prevent.
+#
+# Digit strings have neither failure. Leading zeroes go, then the shorter
+# number is the smaller one, and equal lengths compare left to right.
+lt() {
+    local a="$1" b="$2"
+    while [[ "${#a}" -gt 1 && "${a}" == 0* ]]; do a="${a#0}"; done
+    while [[ "${#b}" -gt 1 && "${b}" == 0* ]]; do b="${b#0}"; done
+    if [[ "${#a}" -ne "${#b}" ]]; then
+        [[ "${#a}" -lt "${#b}" ]]
+    else
+        [[ "${a}" < "${b}" ]]
+    fi
+}
+if lt "${available_mb}" "${MIN_FREE_MB}"; then
+    fail "only ${available_mb} MiB is free in ${BACKUP_DIR}; ${MIN_FREE_MB} MiB is required"
+fi
+
+export_runtime_env
+# init-perms creates and hands over the default directory at boot, because
+# /run belongs to root and this script runs as the unprivileged account. A
+# custom BACKUP_RUNTIME_DIR is the operator's to make writable, so say which
+# path is the problem rather than failing on a bare permission error.
+if ! mkdir -p "${CREDENTIAL_DIR}" 2>/dev/null; then
+    fail "cannot create ${CREDENTIAL_DIR}; set BACKUP_RUNTIME_DIR to a directory this account can write"
+fi
+chmod 700 "${CREDENTIAL_DIR}" 2>/dev/null || true
+# Belt and braces: /run is tmpfs in every image this ships in, but that is a
+# property of the runtime rather than something this script can insist on, and
+# a sweep costs nothing. Anything left by a run that was killed goes now.
+find "${CREDENTIAL_DIR}" -maxdepth 1 -type f -name '.mariadb-client.*' -delete 2>/dev/null || true
+credentials="$(mktemp "${CREDENTIAL_DIR}/.mariadb-client.XXXXXX")"
+# Parse rather than echoing DATABASE_URL: the credential never appears in argv
+# or logs. The option file exists only for this run and is mode 0600.
+# Node prints the decoded database name, and the shell keeps that rather than
+# reading it back out of the option file. `esc` escapes the value it writes, so
+# a database whose name contains a double quote — legal, and reachable through
+# a percent-encoded DATABASE_URL — came back out of the file with a literal
+# backslash in it. The application connected to `foo"bar` while every dump
+# named `foo\"bar`, which does not exist, so the backups failed nightly and
+# nothing else did.
+database="$(node - "${credentials}" <<'NODE'
+const fs = require("node:fs");
+const target = process.argv[2];
+const url = new URL(process.env.DATABASE_URL);
+if (!/^mysql:$|^mariadb:$/.test(url.protocol)) throw new Error("DATABASE_URL must use mysql:// or mariadb://");
+const esc = (value) => value.replaceAll("\\", "\\\\").replaceAll("\n", "\\n").replaceAll('"', '\\"');
+const db = decodeURIComponent(url.pathname.replace(/^\//, ""));
+if (!db) throw new Error("DATABASE_URL must name a database");
+
+// The application connects with the whole URL; this file has to reproduce the
+// parts of it that decide *how* the connection is made. Reading only user,
+// password, host and port and then forcing TCP meant a URL naming a socket, or
+// requiring TLS, produced a dump that either could not connect at all or
+// connected less safely than the app does — while the app itself carried on
+// working, so nothing said the nightly backup had stopped.
+const params = url.searchParams;
+// Pool sizing and timeouts say nothing about how or where to connect, so they
+// are simply not the dump's business.
+const poolOnly = new Set([
+  "connection_limit", "pool_timeout", "connect_timeout", "socket_timeout",
+]);
+const translated = new Set(["socket", "sslcert", "sslaccept"]);
+const untranslatable = [...params.keys()].filter(
+  (key) => !poolOnly.has(key) && !translated.has(key),
+);
+// Refused rather than ignored. Silently dropping, say, a client identity would
+// mean the dump connects on weaker terms than the application — the failure
+// this whole file exists to avoid. Only the names are printed; no value from
+// the URL reaches the log.
+if (untranslatable.length > 0) {
+  throw new Error(
+    `DATABASE_URL carries connection options the backup cannot reproduce: ${untranslatable.join(", ")}. ` +
+    "It will not connect on weaker terms than the application, so it stops here. " +
+    "See docs/backup.md for what is supported.",
+  );
+}
+
+const socketPath = params.get("socket");
+// WHATWG keeps the square brackets around an IPv6 literal, because in a URL
+// they are delimiters separating the host from the port. The MariaDB client
+// wants the address itself, so `host="[2001:db8::1]"` fails to resolve — the
+// application connecting happily through the same URL while every scheduled
+// dump failed.
+const host = url.hostname.replace(/^\[|\]$/g, "");
+const where = socketPath
+  ? [`socket="${esc(socketPath)}"`, "protocol=socket"]
+  : [`host="${esc(host)}"`, `port=${url.port || 3306}`, "protocol=tcp"];
+
+const tls = [];
+const ca = params.get("sslcert");
+if (ca) tls.push(`ssl-ca="${esc(ca)}"`);
+const accept = params.get("sslaccept");
+if (accept === "accept_invalid_certs") tls.push("ssl-verify-server-cert=0");
+else if (accept === "strict" || (ca && !accept)) tls.push("ssl-verify-server-cert=1");
+else if (accept) {
+  throw new Error(`DATABASE_URL sslaccept="${accept}" is not one this backup understands.`);
+}
+
+const config = [
+  "[client]",
+  `user="${esc(decodeURIComponent(url.username))}"`,
+  `password="${esc(decodeURIComponent(url.password))}"`,
+  ...where,
+  ...tls,
+  // No database line. `mariadb-dump` reads [client] and [mariadb-dump]; the
+  // name lived here only to be read back out, which is what made an escaped
+  // value look like the real one.
+  "",
+].join("\n");
+fs.writeFileSync(target, config, { mode: 0o600 });
+// The only thing this writes to stdout, because the shell captures it.
+process.stdout.write(db);
+NODE
+)"
+[[ -n "${database}" ]] || fail "DATABASE_URL must name a database"
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+final="${BACKUP_DIR}/personalcrm-${timestamp}.sql.gz"
+temporary="${final}.partial.$$"
+log "starting consistent dump to ${final}"
+if ! mariadb-dump --defaults-extra-file="${credentials}" \
+        --single-transaction --quick --routines --events --triggers --hex-blob \
+        --databases "${database}" | gzip -c > "${temporary}"; then
+    fail "dump failed; incomplete output was removed"
+fi
+[[ -s "${temporary}" ]] || fail "dump produced an empty file"
+mv -f -- "${temporary}" "${final}"
+temporary=""
+log "published ${final} ($(du -h "${final}" | awk '{print $1}'))"
+
+# Retention runs only after a successful publication. A failed or full-disk run
+# never sacrifices an older known-good backup.
+find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'personalcrm-*.sql.gz' \
+    -mtime "+${RETENTION_DAYS}" -print -delete | sed 's/^/[backup] expired /'

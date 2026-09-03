@@ -5,6 +5,11 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
 import { type ActionResult, fail, ok, owner, str, strList } from "./helpers";
 import { endFamilyPair } from "@/server/services/family-links";
+import {
+  contactPrivacyWhere,
+  householdPrivacyWhere,
+  privacyScope,
+} from "@/server/privacy/filter";
 
 /**
  * Households and family links.
@@ -25,16 +30,24 @@ function touch(contactIds: Array<string | null | undefined> = []) {
 
 export async function createHousehold(form: FormData): Promise<ActionResult<{ id: string }>> {
   const { ownerId } = await owner();
+  const scope = await privacyScope();
   const name = str(form, "name");
   if (!name) return fail("Give the household a name.");
 
-  const memberIds = strList(form, "memberIds");
+  const memberIds = [...new Set(strList(form, "memberIds"))];
   const members = memberIds.length
     ? await prisma.contact.findMany({
-        where: { id: { in: memberIds }, ownerId },
+        where: { id: { in: memberIds }, ownerId, ...contactPrivacyWhere(scope) },
         select: { id: true },
       })
     : [];
+  // Anything the scope dropped is refused rather than quietly left out. The
+  // form can be rendered while unlocked with private people ticked and
+  // submitted after the lock closes in another tab; saving the visible subset
+  // reported success and created a household missing the members its owner
+  // had just chosen, with nothing on screen to say so.
+  if (members.length !== memberIds.length)
+    return fail("Some of those people aren't available right now. Reopen the form and try again.");
 
   const existing = await prisma.household.findFirst({
     where: { ownerId, name },
@@ -69,7 +82,7 @@ export async function updateHousehold(form: FormData): Promise<ActionResult> {
   if (!name) return fail("Give the household a name.");
 
   const household = await prisma.household.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...householdPrivacyWhere(await privacyScope()) },
     select: { id: true },
   });
   if (!household) return fail("Not found.");
@@ -92,7 +105,7 @@ export async function updateHousehold(form: FormData): Promise<ActionResult> {
 export async function deleteHousehold(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
   const household = await prisma.household.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...householdPrivacyWhere(await privacyScope()) },
     select: { members: { select: { contactId: true } } },
   });
   if (!household) return fail("Not found.");
@@ -106,16 +119,20 @@ export async function deleteHousehold(id: string): Promise<ActionResult> {
 
 export async function addHouseholdMember(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
+  const scope = await privacyScope();
   const householdId = str(form, "householdId");
   const contactId = str(form, "contactId");
   if (!householdId || !contactId) return fail("Pick someone to add.");
 
   const [household, contact] = await Promise.all([
     prisma.household.findFirst({
-      where: { id: householdId, ownerId },
+      where: { id: householdId, ownerId, ...householdPrivacyWhere(scope) },
       select: { id: true, _count: { select: { members: true } } },
     }),
-    prisma.contact.findFirst({ where: { id: contactId, ownerId }, select: { id: true } }),
+    prisma.contact.findFirst({
+      where: { id: contactId, ownerId, ...contactPrivacyWhere(scope) },
+      select: { id: true },
+    }),
   ]);
   if (!household || !contact) return fail("Not found.");
 
@@ -140,7 +157,7 @@ export async function removeHouseholdMember(
 ): Promise<ActionResult> {
   const { ownerId } = await owner();
   const household = await prisma.household.findFirst({
-    where: { id: householdId, ownerId },
+    where: { id: householdId, ownerId, ...householdPrivacyWhere(await privacyScope()) },
     select: { id: true },
   });
   if (!household) return fail("Not found.");
@@ -163,6 +180,7 @@ export async function removeHouseholdMember(
  */
 export async function acceptSuggestion(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
+  const scope = await privacyScope();
   const fromContactId = str(form, "fromContactId");
   const toContactId = str(form, "toContactId");
   const typeId = str(form, "typeId");
@@ -170,8 +188,8 @@ export async function acceptSuggestion(form: FormData): Promise<ActionResult> {
   if (fromContactId === toContactId) return fail("Someone can't be related to themselves.");
 
   const [from, to, type] = await Promise.all([
-    prisma.contact.findFirst({ where: { id: fromContactId, ownerId }, select: { id: true } }),
-    prisma.contact.findFirst({ where: { id: toContactId, ownerId }, select: { id: true } }),
+    prisma.contact.findFirst({ where: { id: fromContactId, ownerId, ...contactPrivacyWhere(scope) }, select: { id: true } }),
+    prisma.contact.findFirst({ where: { id: toContactId, ownerId, ...contactPrivacyWhere(scope) }, select: { id: true } }),
     prisma.taxonomyTerm.findFirst({
       where: { id: typeId, ownerId, kind: "RELATIONSHIP_TYPE" },
       select: { id: true, inverseTermId: true },
@@ -227,7 +245,11 @@ export async function dismissSuggestion(form: FormData): Promise<ActionResult> {
   if (!fromContactId || !toContactId) return fail("Not found.");
 
   const pair = await prisma.contact.findMany({
-    where: { id: { in: [fromContactId, toContactId] }, ownerId },
+    where: {
+      id: { in: [fromContactId, toContactId] },
+      ownerId,
+      ...contactPrivacyWhere(await privacyScope()),
+    },
     select: { id: true },
   });
   if (pair.length !== 2) return fail("Not found.");
@@ -264,8 +286,14 @@ export async function endRelationshipLink(form: FormData): Promise<ActionResult>
   const id = str(form, "id");
   if (!id) return fail("Not found.");
 
+  const scope = await privacyScope();
   const existing = await prisma.relationship.findFirst({
-    where: { id, ownerId },
+    where: {
+      id,
+      ownerId,
+      fromContact: contactPrivacyWhere(scope),
+      toContact: contactPrivacyWhere(scope),
+    },
     select: { pairId: true, fromContactId: true, toContactId: true },
   });
   if (!existing) return fail("Not found.");
