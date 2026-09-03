@@ -97,6 +97,72 @@ describe("notification destinations", () => {
     expect(smtp.mock.calls.map((call) => call[1][0].address)).toEqual(["203.0.113.9", "10.0.0.9"]);
   });
 
+  it("opens its own connection each time, so a pooled socket cannot skip the pin", async () => {
+    // The default global agents keep sockets alive and key them by host and
+    // port, not by the addresses a delivery validated. A second request to the
+    // same origin could pick up the first one's socket and never call `lookup`
+    // — reaching an answer that had since changed, or one an administrator was
+    // allowed and a member is not.
+    const { createServer } = await import("node:http");
+    const sockets = new Set<unknown>();
+    let lookups = 0;
+    const server = createServer((_request, response) => {
+      response.writeHead(204);
+      response.end();
+    });
+    server.on("connection", (socket) => sockets.add(socket));
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      const resolve = async () => {
+        lookups += 1;
+        return [{ address: "127.0.0.1", family: 4 as const }];
+      };
+      const channel_ = channel("WEBHOOK", { url: `http://127.0.0.1:${port}/hook` });
+      // Administrator, so the loopback address is allowed through the boundary.
+      const deps = { resolve, isAdministrator: async () => true };
+      await deliverToChannel(channel_, "s", "b", deps);
+      await deliverToChannel(channel_, "s", "b", deps);
+
+      expect(lookups).toBe(2);
+      // Two deliveries, two connections. With a pooled agent the second reuses
+      // the first and the count is one.
+      expect(sockets.size).toBe(2);
+    } finally {
+      await new Promise<void>((done) => server.close(() => done()));
+    }
+  });
+
+  it("gives up on a response that trickles rather than outliving the lease", async () => {
+    // The transport timeout only fires on silence. An endpoint that sends a
+    // byte often enough never trips it, so the send stayed pending past the
+    // scheduler's five-minute lease — long enough for another pass to reclaim
+    // the row and send it a second time. This drives the real adapter, with
+    // only the budget shortened.
+    const { createServer } = await import("node:http");
+    let drip: NodeJS.Timeout | undefined;
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "Content-Type": "text/plain" });
+      drip = setInterval(() => response.write("."), 20);
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      await expect(
+        deliverToChannel(channel("WEBHOOK", { url: `http://127.0.0.1:${port}/` }), "s", "b", {
+          resolve: async () => [{ address: "127.0.0.1", family: 4 as const }],
+          isAdministrator: async () => true,
+          deadlineMs: 200,
+        }),
+      ).rejects.toThrow(/deadline/i);
+    } finally {
+      clearInterval(drip);
+      await new Promise<void>((done) => server.close(() => done()));
+    }
+  });
+
   it("enforces the channel owner's current role at delivery time", async () => {
     const resolve = async () => [{ address: "192.168.1.20", family: 4 as const }];
     const http = vi.fn(async () => ({ status: 200 }));

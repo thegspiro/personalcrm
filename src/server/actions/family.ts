@@ -34,13 +34,20 @@ export async function createHousehold(form: FormData): Promise<ActionResult<{ id
   const name = str(form, "name");
   if (!name) return fail("Give the household a name.");
 
-  const memberIds = strList(form, "memberIds");
+  const memberIds = [...new Set(strList(form, "memberIds"))];
   const members = memberIds.length
     ? await prisma.contact.findMany({
         where: { id: { in: memberIds }, ownerId, ...contactPrivacyWhere(scope) },
         select: { id: true },
       })
     : [];
+  // Anything the scope dropped is refused rather than quietly left out. The
+  // form can be rendered while unlocked with private people ticked and
+  // submitted after the lock closes in another tab; saving the visible subset
+  // reported success and created a household missing the members its owner
+  // had just chosen, with nothing on screen to say so.
+  if (members.length !== memberIds.length)
+    return fail("Some of those people aren't available right now. Reopen the form and try again.");
 
   const existing = await prisma.household.findFirst({
     where: { ownerId, name },

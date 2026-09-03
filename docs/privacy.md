@@ -82,9 +82,17 @@ but a tag that exists only on private people is neither listed nor assignable.
 The write check is not redundant with the list: a contact form rendered while
 unlocked keeps the ids it was given, and closing the lock in another tab does
 not empty that form. Adding a contact, editing one, and the per-contact toggle
-all refuse an id the current scope does not admit. Merging or deleting a tag is
-refused while locked whenever the tag is on someone private, since one moves
-the hidden assignment and the other destroys it.
+all refuse an id the current scope does not admit, and renaming asks the same
+predicate. Merging or deleting a tag is refused while locked whenever the tag
+is on someone private, since one moves the hidden assignment and the other
+destroys it — and that check is scoped by owner on both sides, so a tag
+belonging to another account answers "not found" whatever is assigned to it
+rather than distinguishing itself by the refusal it earns.
+
+Creating or renaming a tag is refused outright while locked, for the reason a
+place cannot be renamed: both answer "is this name already taken", and a name
+that is taken but matches nothing you can see belongs to a tag used only by
+private people. Assigning an existing tag changes no name and stays available.
 
 The Places directory derives its visits, people, rankings and last-visited
 dates only from interactions admitted by `interactionPrivacyWhere`. A place

@@ -16,12 +16,31 @@ function refresh(contactId?: string) {
   if (contactId) revalidatePath(`/people/${contactId}`);
 }
 
+/**
+ * Whether the tag namespace may be changed right now.
+ *
+ * Creating or renaming necessarily answers "is this name already taken", and
+ * a name that is taken but belongs to a tag you cannot see is one the lock is
+ * hiding — a tag used only by private people. Guess it and the collision
+ * confirms it; ask for a free name and it saves. That is an oracle for the
+ * labels someone put on their private contacts, and, as with renaming a
+ * place, the signal is the refusal rather than the sentence, so softer wording
+ * would not help. Both are held back until an unlock; assigning an existing
+ * tag, which changes no name, stays available.
+ */
+async function namespaceLocked(): Promise<boolean> {
+  const scope = await privacyScope();
+  return scope.enabled && !scope.unlocked;
+}
+
 export async function createTag(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
   const parsed = tagName.safeParse(str(form, "name"));
   if (!parsed.success) return invalid(parsed.error);
   const slug = normalizeTagSlug(parsed.data);
   if (!slug) return fail("Use at least one letter or number.");
+  if (await namespaceLocked())
+    return fail("Unlock to add a tag.");
   const exists = await prisma.tag.findUnique({
     where: { ownerId_slug: { ownerId, slug } },
   });
@@ -72,8 +91,15 @@ export async function renameTag(form: FormData): Promise<ActionResult> {
   if (!parsed.success) return invalid(parsed.error);
   const slug = normalizeTagSlug(parsed.data);
   if (!slug) return fail("Use at least one letter or number.");
+  if (await namespaceLocked())
+    return fail("Unlock to rename a tag.");
+  // Scoped as well as owner-checked. Settings rendered while unlocked keeps
+  // every id it listed, and closing the lock in another tab does not empty
+  // that form, so ownership alone would let a stale one rename a tag the lock
+  // is now hiding.
+  const scope = await privacyScope();
   const tag = await prisma.tag.findFirst({
-    where: { id, ownerId },
+    where: { id, ...tagVisibleWhere(ownerId, scope) },
     select: { id: true },
   });
   if (!tag) return fail("Tag not found.");
@@ -98,11 +124,22 @@ export async function renameTag(form: FormData): Promise<ActionResult> {
  * association too — a change to a record the session cannot see, made by a
  * session that cannot see it. Both refuse instead.
  */
-async function touchesHiddenContacts(tagIds: string[]): Promise<boolean> {
+async function touchesHiddenContacts(
+  ownerId: string,
+  tagIds: string[],
+): Promise<boolean> {
   const scope = await privacyScope();
   if (scope.unlocked) return false;
+  // Owner-scoped on both sides. Unscoped, submitting another account's tag id
+  // answered from their rows: the unlock message when their tag was on one of
+  // their private contacts, "Tag not found" otherwise — a difference that is
+  // itself a fact about an account this one cannot see.
   const hidden = await prisma.contactTag.count({
-    where: { tagId: { in: tagIds }, contact: { isPrivate: true } },
+    where: {
+      tagId: { in: tagIds },
+      tag: { ownerId },
+      contact: { ownerId, isPrivate: true },
+    },
   });
   return hidden > 0;
 }
@@ -118,7 +155,7 @@ export async function mergeTag(
     where: { ownerId, id: { in: [sourceId, destinationId] } },
   });
   if (tags !== 2) return fail("Tag not found.");
-  if (await touchesHiddenContacts([sourceId, destinationId]))
+  if (await touchesHiddenContacts(ownerId, [sourceId, destinationId]))
     return fail("Unlock to merge a tag that is on someone private.");
   await prisma.$transaction(async (tx) => {
     const assignments = await tx.contactTag.findMany({
@@ -142,8 +179,16 @@ export async function mergeTag(
 /** Deleting a tag removes only its join rows; contacts themselves are preserved. */
 export async function deleteTag(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
+  // Ownership first, so a tag that is not this account's gets the same "not
+  // found" whatever is assigned to it. Probing before this answered from the
+  // other account's rows.
+  const tag = await prisma.tag.findFirst({
+    where: { id, ownerId },
+    select: { id: true },
+  });
+  if (!tag) return fail("Tag not found.");
   // The assignments go with it by cascade, private ones included.
-  if (await touchesHiddenContacts([id]))
+  if (await touchesHiddenContacts(ownerId, [id]))
     return fail("Unlock to delete a tag that is on someone private.");
   const result = await prisma.tag.deleteMany({ where: { id, ownerId } });
   if (!result.count) return fail("Tag not found.");

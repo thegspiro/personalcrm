@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import { normalizeLocationName } from "@/lib/locations";
 import { locationVisibleWhere } from "@/server/queries/locations";
@@ -27,6 +28,22 @@ import {
  * label alone — past entries keep the words typed at the time — and archiving
  * hides a place from the lists while its history stays reachable.
  */
+
+/**
+ * A name as the `(ownerId, normalizedValue)` index will compare it.
+ *
+ * The column is utf8mb4_unicode_ci, which folds accents as well as case;
+ * `normalizeLocationName`, which decides what is *stored*, deliberately does
+ * not. Two spellings that differ only by an accent are therefore one key in
+ * the database and two everywhere else, and inserting both is a constraint
+ * error rather than a message on the form. This is only ever used to compare
+ * — nothing built from it is written.
+ */
+function indexKey(value: string): string {
+  return normalizeLocationName(value)
+    .normalize("NFD")
+    .replace(/\p{M}+/gu, "");
+}
 
 const schema = z.object({
   name: z.string().trim().min(1, "Give the place a name.").max(191),
@@ -111,17 +128,25 @@ export async function updateLocation(form: FormData): Promise<ActionResult> {
   // back. Splitting on commas as well took "Washington, D.C." to be two
   // places, and left the generic half of it resolving quick-add text to the
   // wrong venue.
-  const aliases = Array.from(
-    new Map(
-      (parsed.data.aliases ?? "")
-        .split(/\r?\n/)
-        .map((value) => value.trim().replace(/\s+/g, " "))
-        .filter(Boolean)
-        .map((value) => [normalizeLocationName(value), value]),
-    ).entries(),
-  )
-    .filter(([normalized]) => normalized !== normalizedName)
-    .map(([normalizedValue, value]) => ({ value, normalizedValue }));
+  // Deduplicated on the key the *index* compares by, not the one stored.
+  // `normalizeLocationName` is deliberately conservative — whitespace and case
+  // only — while `(ownerId, normalizedValue)` is utf8mb4_unicode_ci, which
+  // also folds accents. "Cafe" and "Café" were therefore two entries here and
+  // one key there, so both reached `createMany` and an ordinary place edit
+  // died on a constraint error. The stored `normalizedValue` is unchanged;
+  // only the comparison is widened to match what the database will do.
+  const aliasByKey = new Map<string, string>();
+  for (const value of (parsed.data.aliases ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/\s+/g, " "))
+    .filter(Boolean)) {
+    // First spelling wins, so the choice does not depend on the order the
+    // duplicates happen to appear in and re-saving the form is stable.
+    if (!aliasByKey.has(indexKey(value))) aliasByKey.set(indexKey(value), value);
+  }
+  const aliases = Array.from(aliasByKey.values())
+    .map((value) => ({ value, normalizedValue: normalizeLocationName(value) }))
+    .filter(({ value }) => indexKey(value) !== indexKey(name));
 
   // Each one is a row of its own, in a column the combined 4,000-character
   // bound on the whole field says nothing about; over it, createMany throws
@@ -231,41 +256,56 @@ export async function updateLocation(form: FormData): Promise<ActionResult> {
     identity = identityFrom(lookup.data);
   }
 
-  await prisma.$transaction(async (tx) => {
-    await tx.location.update({
-      where: { id },
-      data: {
-        name,
-        normalizedName,
-        address: parsed.data.address ?? null,
-        city: parsed.data.city ?? null,
-        region: parsed.data.region ?? null,
-        country: parsed.data.country ?? null,
-        phone: parsed.data.phone ?? null,
-        url: parsed.data.url ?? null,
-        notes: parsed.data.notes ?? null,
-        ...identity,
-      },
-    });
-    await tx.locationAlias.deleteMany({ where: { ownerId, locationId: id } });
-    await tx.locationAlias.createMany({
-      data: [
-        {
-          ownerId,
-          locationId: id,
-          value: name,
-          normalizedValue: normalizedName,
-          isCanonical: true,
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.location.update({
+        where: { id },
+        data: {
+          name,
+          normalizedName,
+          address: parsed.data.address ?? null,
+          city: parsed.data.city ?? null,
+          region: parsed.data.region ?? null,
+          country: parsed.data.country ?? null,
+          phone: parsed.data.phone ?? null,
+          url: parsed.data.url ?? null,
+          notes: parsed.data.notes ?? null,
+          ...identity,
         },
-        ...aliases.map((alias) => ({
-          ownerId,
-          locationId: id,
-          ...alias,
-          isCanonical: false,
-        })),
-      ],
+      });
+      await tx.locationAlias.deleteMany({ where: { ownerId, locationId: id } });
+      await tx.locationAlias.createMany({
+        data: [
+          {
+            ownerId,
+            locationId: id,
+            value: name,
+            normalizedValue: normalizedName,
+            isCanonical: true,
+          },
+          ...aliases.map((alias) => ({
+            ownerId,
+            locationId: id,
+            ...alias,
+            isCanonical: false,
+          })),
+        ],
+      });
     });
-  });
+  } catch (error) {
+    // `indexKey` reads utf8mb4_unicode_ci rather than being it, so a rule it
+    // does not reproduce would surface as an unhandled constraint error that
+    // rolls back an otherwise ordinary edit with nothing shown on the form.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    )
+      return fieldError(
+        "aliases",
+        "Two of those names count as the same one. Keep whichever you prefer.",
+      );
+    throw error;
+  }
 
   touch(id);
   return ok();

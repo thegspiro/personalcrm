@@ -9,6 +9,12 @@ trim() { local v="${1#"${1%%[![:space:]]*}"}"; printf '%s' "${v%"${v##*[![:space
 RETENTION_DAYS="$(trim "${BACKUP_RETENTION_DAYS:-30}")"
 MIN_FREE_MB="$(trim "${BACKUP_MIN_FREE_MB:-512}")"
 LOCK_FILE="${BACKUP_DIR}/.backup.lock"
+# The option file holds the database password, so it is written to volatile
+# runtime storage rather than beside the dumps. Under /config it survived a
+# SIGKILL, a container crash or a power cut — the trap cannot run for any of
+# those — and sat on the same persistent volume that a host-level backup or a
+# sync job would then copy the credential out of, alongside the dumps.
+CREDENTIAL_DIR="${BACKUP_RUNTIME_DIR:-/run/personalcrm}"
 credentials=""
 temporary=""
 
@@ -36,7 +42,13 @@ if (( available_mb < MIN_FREE_MB )); then
 fi
 
 export_runtime_env
-credentials="$(mktemp "${BACKUP_DIR}/.mariadb-client.XXXXXX")"
+mkdir -p "${CREDENTIAL_DIR}"
+chmod 700 "${CREDENTIAL_DIR}"
+# Belt and braces: /run is tmpfs in every image this ships in, but that is a
+# property of the runtime rather than something this script can insist on, and
+# a sweep costs nothing. Anything left by a run that was killed goes now.
+find "${CREDENTIAL_DIR}" -maxdepth 1 -type f -name '.mariadb-client.*' -delete 2>/dev/null || true
+credentials="$(mktemp "${CREDENTIAL_DIR}/.mariadb-client.XXXXXX")"
 # Parse rather than echoing DATABASE_URL: the credential never appears in argv
 # or logs. The option file exists only for this run and is mode 0600.
 node - "${credentials}" <<'NODE'

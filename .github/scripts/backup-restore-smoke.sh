@@ -21,6 +21,10 @@ backup="$(find "${RUNNER_TEMP}/config/backups" -maxdepth 1 -name 'personalcrm-*.
 test -n "${backup}"
 test "$(stat -c '%u:%g' "${backup}")" = "1001:1001"
 test -z "$(find "${RUNNER_TEMP}/config/backups" -maxdepth 1 \( -name '*.partial.*' -o -name '.mariadb-client.*' \) -print -quit)"
+# The option file holds the database password. It is written to volatile
+# runtime storage, never to the persistent volume the dumps are published on,
+# and it is gone once the run ends.
+test -z "$(docker exec "${container}" sh -c "find /run/personalcrm -maxdepth 1 -type f -name '.mariadb-client.*' -print -quit 2>/dev/null")"
 
 sql -e 'DROP DATABASE personalcrm;'
 gzip -dc "${backup}" | docker exec -i "${container}" mariadb --socket=/run/mysqld/mysqld.sock

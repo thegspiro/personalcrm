@@ -246,11 +246,16 @@ Every place a lookup can be reached from is behind an explicit button. See
 
 | Action | Notes |
 | --- | --- |
-| `createTag` | Name plus a `normalizeTagSlug` key, unique per owner. The key keeps letters and numbers in any script, so a name with no ASCII spelling is not refused as empty |
-| `renameTag` | Recomputes the key; a rename onto an existing one is refused rather than merged |
+| `createTag` | Name plus a `normalizeTagSlug` key, unique per owner. The key keeps letters and numbers in any script, so a name with no ASCII spelling is not refused as empty. Refused while locked — see below |
+| `renameTag` | Recomputes the key; a rename onto an existing one is refused rather than merged. Refused while locked, and the tag itself must be one `tagVisibleWhere` admits |
 | `mergeTag` | Moves the source's assignments onto the destination and deletes the source. Refused while locked if either tag is on someone private — the move would carry the hidden assignment |
 | `deleteTag` | Removes the tag; assignments go by cascade, contacts are untouched. Refused while locked on the same condition, since the cascade destroys the hidden assignment |
 | `setContactTag` | Assigns or unassigns one tag on one contact |
+
+Creating and renaming are refused while the lock is closed, because both answer
+"is this name taken" and a taken name you cannot see belongs to a tag used only
+by private people — the same reasoning that holds back a place rename.
+Assigning an existing tag changes no name and is unaffected.
 
 Every one of these scopes by `ownerId`, and each that names a tag by id asks
 `tagVisibleWhere` rather than ownership alone — as do `createContact` and

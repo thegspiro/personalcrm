@@ -25,7 +25,7 @@ vi.mock("@/server/privacy/lock", () => ({
   recordProtectedReadActivity: async () => ({ ok: true, expiresAt: null }),
 }));
 
-const { createTag, deleteTag, mergeTag, setContactTag } =
+const { createTag, deleteTag, mergeTag, renameTag, setContactTag } =
   await import("@/server/actions/tags");
 const { createContact, updateContact } = await import("@/server/actions/contacts");
 const { listTags } = await import("@/server/queries/tags");
@@ -178,6 +178,96 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     state.unlocked = true;
     expect((await mergeTag(source.id, destination.id)).ok).toBe(true);
     expect(await prisma.contactTag.count({ where: { tagId: destination.id } })).toBe(2);
+  });
+
+  it("will not answer whether a hidden tag name is taken, and will not rename one", async () => {
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = true;
+    state.unlocked = true;
+    const secret = await prisma.contact.create({
+      data: { ownerId: owner.id, firstName: "Robin", isPrivate: true },
+    });
+    const hiddenTag = await prisma.tag.create({
+      data: {
+        ownerId: owner.id,
+        name: "Therapy",
+        slug: "therapy",
+        contacts: { create: { contactId: secret.id } },
+      },
+    });
+
+    state.unlocked = false;
+    const taken = new FormData();
+    taken.set("name", "Therapy");
+    const free = new FormData();
+    free.set("name", "Cycling");
+
+    // Creating answers "is this name taken", and a name that is taken but
+    // matches nothing you can see is a tag the lock is hiding. Identical
+    // refusals, so the two cannot be told apart — the signal was the refusal,
+    // not the sentence.
+    const onto = await createTag(taken);
+    const other = await createTag(free);
+    expect(onto.ok).toBe(false);
+    expect(other.ok).toBe(false);
+    expect(onto.error).toBe(other.error);
+    expect(onto.error).toMatch(/unlock/i);
+    expect(await prisma.tag.count({ where: { ownerId: owner.id } })).toBe(1);
+
+    // Renaming is the same question asked the other way round, and the id it
+    // takes may be one Settings listed before the lock closed.
+    const rename = new FormData();
+    rename.set("id", hiddenTag.id);
+    rename.set("name", "Wellbeing");
+    const renamed = await renameTag(rename);
+    expect(renamed.ok).toBe(false);
+    expect(renamed.error).toMatch(/unlock/i);
+    expect(
+      (await prisma.tag.findUniqueOrThrow({ where: { id: hiddenTag.id } })).name,
+    ).toBe("Therapy");
+
+    // Unlocked, both are ordinary again.
+    state.unlocked = true;
+    expect((await createTag(free)).ok).toBe(true);
+    expect((await createTag(taken)).ok).toBe(false);
+    expect((await renameTag(rename)).ok).toBe(true);
+  });
+
+  it("answers for another account's tag the same way whatever is assigned to it", async () => {
+    const owner = await createTestUser();
+    const stranger = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = true;
+    state.unlocked = false;
+
+    // Two tags belonging to someone else: one on a private contact of theirs,
+    // one on nobody. Unscoped, the hidden-assignment probe ran before
+    // ownership was established and answered from their rows — the unlock
+    // message for the first, "Tag not found" for the second, which is itself
+    // a fact about an account this one cannot see.
+    const theirContact = await prisma.contact.create({
+      data: { ownerId: stranger.id, firstName: "Nobody", isPrivate: true },
+    });
+    const theirUsedTag = await prisma.tag.create({
+      data: {
+        ownerId: stranger.id,
+        name: "Theirs",
+        slug: "theirs",
+        contacts: { create: { contactId: theirContact.id } },
+      },
+    });
+    const theirEmptyTag = await prisma.tag.create({
+      data: { ownerId: stranger.id, name: "Spare", slug: "spare" },
+    });
+
+    const used = await deleteTag(theirUsedTag.id);
+    const empty = await deleteTag(theirEmptyTag.id);
+    expect(used.ok).toBe(false);
+    expect(empty.ok).toBe(false);
+    expect(used.error).toBe(empty.error);
+    expect(used.error).toMatch(/not found/i);
+    expect(await prisma.tag.count({ where: { ownerId: stranger.id } })).toBe(2);
   });
 
   it("refuses a tag the lock is hiding on every write that takes its id", async () => {

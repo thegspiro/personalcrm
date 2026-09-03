@@ -385,6 +385,48 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       expect(result.fieldErrors?.aliases).toBeTruthy();
     });
 
+    it("folds two aliases the index will call one, rather than dying on the key", async () => {
+      state.unlocked = true;
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, []);
+
+      // normalizeLocationName keeps accents; the unique index is
+      // utf8mb4_unicode_ci and does not. Both spellings therefore reached
+      // createMany as separate rows and one key, and a constraint error rolled
+      // back an otherwise ordinary edit with nothing shown on the form.
+      const result = await updateLocation(
+        formFor({
+          id: cafe.id,
+          name: "Corner Cafe",
+          aliases: "Cafe Central\nCaf\u00e9 Central\nThe Corner",
+        }),
+      );
+
+      expect(result).toMatchObject({ ok: true });
+      const saved = await prisma.locationAlias.findMany({
+        where: { locationId: cafe.id, isCanonical: false },
+        select: { value: true },
+        orderBy: { value: "asc" },
+      });
+      // One row for the pair, keeping the spelling that was typed first.
+      expect(saved.map((alias) => alias.value)).toEqual([
+        "Cafe Central",
+        "The Corner",
+      ]);
+
+      // And an alias the index will call the same as the canonical name is
+      // dropped rather than written beside it.
+      const accented = await updateLocation(
+        formFor({ id: cafe.id, name: "Corner Cafe", aliases: "Corner Caf\u00e9" }),
+      );
+      expect(accented).toMatchObject({ ok: true });
+      expect(
+        await prisma.locationAlias.count({
+          where: { locationId: cafe.id, isCanonical: false },
+        }),
+      ).toBe(0);
+    });
+
     it("refuses a rename onto another place rather than merging them", async () => {
       state.unlocked = true;
       const cafe = await place(state.ownerId, "Corner Cafe");

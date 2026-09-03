@@ -1,7 +1,7 @@
 import "server-only";
 import type { NotificationChannel } from "@prisma/client";
-import { request as httpRequest } from "node:http";
-import { request as httpsRequest } from "node:https";
+import { Agent as HttpAgent, request as httpRequest } from "node:http";
+import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import net from "node:net";
 import nodemailer from "nodemailer";
 import type SMTPTransport from "nodemailer/lib/smtp-transport";
@@ -20,6 +20,7 @@ interface HttpInput {
   addresses: ResolvedAddress[];
   headers: Record<string, string>;
   body: string;
+  deadlineMs: number;
 }
 
 type HttpAdapter = (input: HttpInput) => Promise<{ status: number }>;
@@ -27,20 +28,45 @@ type SmtpAdapter = (
   config: Record<string, unknown>,
   addresses: ResolvedAddress[],
   mail: { from: string; to: string; subject: string; text: string },
+  deadlineMs: number,
 ) => Promise<void>;
 
 export interface DeliveryDependencies {
   resolve?: ResolveHostname;
+  /** The total delivery budget; only tests ever shorten it. */
+  deadlineMs?: number;
   isAdministrator?: (ownerId: string) => Promise<boolean>;
   http?: HttpAdapter;
   smtp?: SmtpAdapter;
 }
 
-const defaultHttp: HttpAdapter = ({ url, addresses, headers, body }) => new Promise((resolve, reject) => {
+/**
+ * How long one delivery may take in total, measured on the clock rather than
+ * on socket activity.
+ *
+ * The scheduler holds a five-minute lease on the ledger row it is sending. A
+ * transport-level timeout only fires on silence, so an endpoint that dribbles
+ * a byte more often than that never trips one — the send stays pending past
+ * the lease, a later pass reclaims the row and sends it again, and the first
+ * attempt is still blocking every other candidate behind it.
+ */
+const DELIVERY_DEADLINE_MS = 60_000;
+
+const defaultHttp: HttpAdapter = ({ url, addresses, headers, body, deadlineMs }) => new Promise((resolve, reject) => {
   const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
     method: "POST",
     headers,
     timeout: 15_000,
+    // A dedicated agent with pooling off, because the default global agents
+    // keep sockets alive and key them by host and port — not by the addresses
+    // this delivery validated. A second request to the same origin could pick
+    // up a socket opened for the first and never call `lookup` at all, so an
+    // answer that has since changed, or one an administrator was allowed and
+    // a member is not, would be reached with no check. A connection per
+    // delivery is the only way the pin means anything.
+    agent: url.protocol === "https:"
+      ? new HttpsAgent({ keepAlive: false, maxSockets: 1 })
+      : new HttpAgent({ keepAlive: false, maxSockets: 1 }),
     // The URL retains the configured hostname (Host, TLS SNI and certificate
     // verification), while lookup can return only the addresses just
     // validated. Every answer is handed back, not only the first: node picks
@@ -58,10 +84,23 @@ const defaultHttp: HttpAdapter = ({ url, addresses, headers, body }) => new Prom
         : callback(null, addresses[0].address, addresses[0].family),
   }, (response) => {
     response.resume();
-    response.once("end", () => resolve({ status: response.statusCode ?? 0 }));
+    response.once("end", () => {
+      clearTimeout(deadline);
+      resolve({ status: response.statusCode ?? 0 });
+    });
   });
   request.once("timeout", () => request.destroy(new Error("Channel request timed out.")));
-  request.once("error", reject);
+  // The wall clock, independent of the socket: `timeout` above only fires on
+  // inactivity, so it never ends a response that keeps trickling.
+  const deadline = setTimeout(
+    () => request.destroy(new Error("Channel request exceeded its deadline.")),
+    deadlineMs,
+  );
+  request.once("close", () => clearTimeout(deadline));
+  request.once("error", (error) => {
+    clearTimeout(deadline);
+    reject(error);
+  });
   request.end(body);
 });
 
@@ -88,7 +127,7 @@ function connectToOne(addresses: ResolvedAddress[], port: number): Promise<net.S
   });
 }
 
-const defaultSmtp: SmtpAdapter = async (config, addresses, mail) => {
+const defaultSmtp: SmtpAdapter = async (config, addresses, mail, deadlineMs) => {
   const host = config.host as string;
   const port = typeof config.port === "number" ? config.port : 587;
   const transport = nodemailer.createTransport({
@@ -116,7 +155,25 @@ const defaultSmtp: SmtpAdapter = async (config, addresses, mail) => {
       );
     },
   });
-  await transport.sendMail(mail);
+  // The same wall-clock bound as the HTTP path, for the same reason: every
+  // nodemailer timeout above fires on silence, so a server that answers each
+  // command slowly but never stops can still outlive the scheduler's lease.
+  // Closing the transport ends the session and frees the socket.
+  let deadline: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      transport.sendMail(mail),
+      new Promise<never>((_resolve, reject) => {
+        deadline = setTimeout(
+          () => reject(new Error("Channel delivery exceeded its deadline.")),
+          deadlineMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(deadline);
+    transport.close();
+  }
 };
 
 export async function deliverToChannel(
@@ -138,6 +195,7 @@ export async function deliverToChannel(
   });
   const administrative = await isAdministrator(channel.ownerId);
   const resolveDns = dependencies.resolve ?? resolveHostname;
+  const deadlineMs = dependencies.deadlineMs ?? DELIVERY_DEADLINE_MS;
 
   if (channel.kind === "EMAIL") {
     if (typeof config.host !== "string" || typeof config.to !== "string" || typeof config.from !== "string") {
@@ -146,7 +204,7 @@ export async function deliverToChannel(
     const addresses = await validateDestination(config.host, administrative, resolveDns);
     await (dependencies.smtp ?? defaultSmtp)(config, addresses, {
       from: config.from, to: config.to, subject, text: body,
-    });
+    }, deadlineMs);
     return;
   }
 
@@ -162,7 +220,7 @@ export async function deliverToChannel(
   }
   const payload = channel.kind === "DISCORD" ? { content: `${subject}\n${body}` } : { title: subject, message: body };
   const response = await (dependencies.http ?? defaultHttp)({
-    url, addresses, headers, body: JSON.stringify(payload),
+    url, addresses, headers, body: JSON.stringify(payload), deadlineMs,
   });
   if (response.status >= 300 && response.status < 400) {
     throw new Error(`Channel redirected (HTTP ${response.status}), which is not followed. Configure the address it points at.`);

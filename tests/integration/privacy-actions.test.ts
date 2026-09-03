@@ -49,6 +49,7 @@ const { updateDebt, settleDebt, deleteDebt } = await import("@/server/actions/de
 const { updateInteraction, deleteInteraction } = await import(
   "@/server/actions/interactions"
 );
+const { createHousehold } = await import("@/server/actions/family");
 
 function form(fields: Record<string, string>): FormData {
   const data = new FormData();
@@ -221,5 +222,42 @@ describe.skipIf(!hasTestDatabase)("locked mutation privacy", () => {
 
     expect(await settleDebt(debt.id, new Date("2026-08-02T00:00:00.000Z"))).toMatchObject({ ok: false });
     expect(await deleteDebt(debt.id)).toMatchObject({ ok: false });
+  });
+
+  it("refuses a household whose member list the lock has cut down", async () => {
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = true;
+    state.unlocked = true;
+    const [visible, secret] = await Promise.all([
+      prisma.contact.create({ data: { ownerId: owner.id, firstName: "Dana" } }),
+      prisma.contact.create({
+        data: { ownerId: owner.id, firstName: "Robin", isPrivate: true },
+      }),
+    ]);
+
+    // The form is filled in with both while unlocked; the lock closes in
+    // another tab before it is submitted. Saving the visible half reported
+    // success and created a household missing a member its owner had just
+    // ticked, with nothing on screen to say so.
+    state.unlocked = false;
+    const data = new FormData();
+    data.set("name", "Home");
+    data.append("memberIds", visible.id);
+    data.append("memberIds", secret.id);
+    const partial = await createHousehold(data);
+
+    expect(partial.ok).toBe(false);
+    expect(await prisma.household.count({ where: { ownerId: owner.id } })).toBe(0);
+
+    // Unlocked, the same submission saves with everyone on it.
+    state.unlocked = true;
+    const saved = await createHousehold(data);
+    expect(saved.ok).toBe(true);
+    expect(
+      await prisma.householdMember.count({
+        where: { household: { ownerId: owner.id } },
+      }),
+    ).toBe(2);
   });
 });

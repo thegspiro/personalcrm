@@ -50,7 +50,12 @@ The service and manual command run as the `PUID`/`PGID`-backed `abc` account, so
 published files have the configured host ownership. Database credentials are
 read from `DATABASE_URL` (or generated secrets for bundled MariaDB), written to
 a short-lived mode-`0600` MariaDB option file, and never placed in process
-arguments or logs.
+arguments or logs. That file lives under `/run` — volatile storage, not the
+`/config` volume the dumps are published on — so a run killed outright, or a
+host that loses power, cannot leave the password sitting next to the backups
+for a host-level sync job to copy. Each run also sweeps anything an earlier
+one left behind. Override the directory with `BACKUP_RUNTIME_DIR` if `/run` is
+unwritable in your setup.
 
 > **Backups are not encrypted.** SQL dumps can contain every private note and
 > stored application secret. Files are mode `0600`, but anyone with host/root
