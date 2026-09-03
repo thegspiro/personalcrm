@@ -790,10 +790,11 @@ describe.skipIf(!hasTestDatabase)("tag writes against a concurrent tab", () => {
       data: { ownerId: owner.id, name: "Neighbours", slug: "neighbours" },
     });
 
-    // The tag is held for the write, so it is no longer the half that can go
-    // missing. The contact still is: another tab deleting it after the lookup
-    // leaves the insert to meet its foreign key, and P2003 out of a server
-    // action is a 500 on what is, to the person, a contact that is not there.
+    // Both halves are held, and the contact is why that matters rather than a
+    // catch: how a vanished contact arrives at the insert depends on the
+    // server — P2003 on MariaDB 10.11, but 1020 "record has changed since last
+    // read" on MariaDB 11, which is no Prisma code at all and escaped as a
+    // 500. CI runs 11 and found it; this machine runs 10.11 and could not.
     let held: Awaited<ReturnType<typeof holdUncommitted>>;
     state.duringPrivacyRead = async () => {
       held = await holdUncommitted((tx) =>

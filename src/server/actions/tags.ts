@@ -47,18 +47,19 @@ function isDuplicateSlug(error: unknown): boolean {
 }
 
 /**
- * A tag that existed when this action looked and did not when it wrote.
+ * A tag that existed when the rename looked and did not when it wrote.
  *
- * Every write here reads first, and another tab can delete the row in
- * between: an update then raises P2025 and an insert referencing it P2003.
- * Both escaped as server errors on what is, from the person's point of view,
- * simply a tag that is no longer there — the same outcome the read would have
- * reported a moment later, and it should read the same way.
+ * `renameTag` reads and then updates without holding the row, so another tab
+ * can delete it in between; the update raises P2025, which escaped as a server
+ * error on what is, from the person's point of view, simply a tag that is no
+ * longer there. The paths that *insert* against a tag hold it instead of
+ * catching afterwards, because their failure is not a Prisma code on every
+ * server — see `lockContact`.
  */
 function isVanishedTag(error: unknown): boolean {
   return (
     error instanceof Prisma.PrismaClientKnownRequestError &&
-    (error.code === "P2025" || error.code === "P2003")
+    error.code === "P2025"
   );
 }
 
@@ -122,9 +123,7 @@ export async function setContactTag(
   const scope = await privacyScope();
   const MISSING = "Contact or tag not found.";
   if (!contactId || !tagId) return fail(MISSING);
-  let assignedOk: boolean;
-  try {
-    assignedOk = await prisma.$transaction(async (tx) => {
+  const assignedOk = await prisma.$transaction(async (tx) => {
       // The lock comes first — before the visibility question, and before
       // anything else is read, for the reason `lockSubmittedTags` in
       // `actions/contacts.ts` gives about read views.
@@ -137,6 +136,10 @@ export async function setContactTag(
       // upsert does not collide with that assignment either — both take only a
       // shared lock on the tag row — so nothing else would have stopped it.
       if ((await lockTags(tx, ownerId, [tagId])) !== 1) return false;
+      // The contact next, and still before anything is read. Tag then contact
+      // is the order the contact-save paths take too, so the two cannot
+      // deadlock against each other.
+      if ((await lockContact(tx, ownerId, contactId)) !== 1) return false;
       const [contact, tag] = await Promise.all([
         tx.contact.findFirst({
           where: { id: contactId, ownerId, ...contactPrivacyWhere(scope) },
@@ -162,12 +165,6 @@ export async function setContactTag(
       else await tx.contactTag.deleteMany({ where: { contactId, tagId } });
       return true;
     });
-  } catch (error) {
-    // The tag is held, so it cannot be the one that went missing; the contact
-    // can, and its foreign key reads the same way to the person.
-    if (isVanishedTag(error)) return fail(MISSING);
-    throw error;
-  }
   if (!assignedOk) return fail(MISSING);
   refresh(contactId);
   return ok();
@@ -235,6 +232,31 @@ async function lockTags(
   const rows = await tx.$queryRaw<Array<{ id: string }>>`
     SELECT id FROM Tag
     WHERE ownerId = ${ownerId} AND id IN (${Prisma.join(tagIds)})
+    FOR UPDATE
+  `;
+  return rows.length;
+}
+
+/**
+ * Hold this account's contact for the rest of the transaction.
+ *
+ * The other half of an assignment, and held for the same reason: a contact
+ * deleted between the lookup and the write leaves the insert to meet its
+ * foreign key, and how that arrives depends on the server. MariaDB 10.11
+ * raises P2003, which reads as a missing row; MariaDB 11 raises 1020,
+ * "record has changed since last read", which is not a Prisma error code at
+ * all and escaped the action as a 500 — so translating the first was never
+ * going to be enough. Holding the row means neither can happen: the delete
+ * waits, and the lock simply comes back empty.
+ */
+async function lockContact(
+  tx: Prisma.TransactionClient,
+  ownerId: string,
+  contactId: string,
+): Promise<number> {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM Contact
+    WHERE ownerId = ${ownerId} AND id = ${contactId}
     FOR UPDATE
   `;
   return rows.length;

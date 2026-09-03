@@ -10,6 +10,11 @@
   and the assignment went ahead, publishing the tag's name through its new
   visible use. The tag is now held for the write, so the answer cannot go stale
   between asking and acting.
+- **Assigning a tag no longer fails outright when the person is deleted at the
+  same moment.** The contact is held for the write alongside the tag, so a
+  deletion in another tab waits rather than leaving the save to report a server
+  error — which is what it did, in a way that differed between database
+  versions.
 - **An email change no longer goes through on a password that has since been
   changed.** Changing your password is how you take an account back, and it
   ends every other session — but an email change already in flight on one of
