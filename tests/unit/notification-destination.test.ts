@@ -242,6 +242,82 @@ describe("notification destinations", () => {
     }
   }, 15_000);
 
+  it("abandons a dial still working through the addresses at the deadline", async () => {
+    // The earlier fix held the *connected* socket, which is undefined while
+    // `connectToOne` is still trying answers. Enough unreachable ones and the
+    // dial worked on past the abandoned send — then a later address connected
+    // and carried the message, after the scheduler had recorded a failure and
+    // queued the retry.
+    //
+    // This needs an address whose connect neither completes nor fails, and
+    // whether a reserved range behaves that way is the network's business,
+    // not this repository's: 192.0.2.1 hangs on one machine here and is
+    // refused in 3ms on another. So one is looked for, and the check says so
+    // rather than inventing a result when the environment offers none.
+    const net = await import("node:net");
+    const stalls = async (address: string) =>
+      await new Promise<boolean>((decide) => {
+        const probe = net.connect({ host: address, port: 2525 });
+        const timer = setTimeout(() => { probe.destroy(); decide(true); }, 250);
+        const settle = (answer: boolean) => {
+          clearTimeout(timer);
+          probe.destroy();
+          decide(answer);
+        };
+        probe.once("connect", () => settle(false));
+        probe.once("error", () => settle(false));
+      });
+    let blackhole: string | undefined;
+    for (const candidate of ["198.51.100.1", "203.0.113.1", "192.0.2.1"]) {
+      if (await stalls(candidate)) { blackhole = candidate; break; }
+    }
+    if (!blackhole) {
+      console.warn("no unroutable address stalls here; the abandoned-dial check did not run");
+      return;
+    }
+
+    let reached = 0;
+    const server = net.createServer((socket) => {
+      reached += 1;
+      socket.resume();
+      socket.write("220 late.example ESMTP\r\n");
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      await expect(
+        deliverToChannel(
+          channel("EMAIL", {
+            host: "smtp.example", port, from: "crm@example.com", to: "me@example.com",
+          }),
+          "s", "b",
+          {
+            // The first answer goes nowhere, so the dial is still in progress
+            // when the budget runs out. The second would answer, and must
+            // never be tried once the delivery has been given up on.
+            resolve: async () => [
+              { address: blackhole, family: 4 as const },
+              { address: "127.0.0.1", family: 4 as const },
+            ],
+            isAdministrator: async () => true,
+            deadlineMs: 300,
+          },
+        ),
+      ).rejects.toThrow(/deadline|timed out/i);
+
+      // Deliberately long. Without the budget reaching the dial, the first
+      // socket runs to its own fifteen-second connect timeout and *then* the
+      // second address is tried — so a short wait here would pass against the
+      // broken code as readily as the fixed one. Waiting past that point is
+      // what makes this a proof rather than a coincidence.
+      await new Promise((settle) => setTimeout(settle, 17_000));
+      expect(reached).toBe(0);
+    } finally {
+      await new Promise<void>((done) => server.close(() => done()));
+    }
+  }, 40_000);
+
   it("enforces the channel owner's current role at delivery time", async () => {
     const resolve = async () => [{ address: "192.168.1.20", family: 4 as const }];
     const http = vi.fn(async () => ({ status: 200 }));

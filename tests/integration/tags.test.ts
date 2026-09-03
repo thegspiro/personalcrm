@@ -297,6 +297,39 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     expect(detail?.tags.map((join) => join.tag.name) ?? []).toEqual([]);
   });
 
+  it("does not carry another account's person through a tag merge", async () => {
+    const owner = await createTestUser();
+    const stranger = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = false;
+    state.unlocked = true;
+    const [mine, theirs] = await Promise.all([
+      prisma.contact.create({ data: { ownerId: owner.id, firstName: "Dana" } }),
+      prisma.contact.create({ data: { ownerId: stranger.id, firstName: "Nobody" } }),
+    ]);
+    const [source, destination] = await Promise.all([
+      prisma.tag.create({ data: { ownerId: owner.id, name: "Climbing", slug: "climbing" } }),
+      prisma.tag.create({ data: { ownerId: owner.id, name: "Outdoors", slug: "outdoors" } }),
+    ]);
+    // Independent foreign keys again: this account's tag joined to another
+    // account's person. Copying that row onto the destination would make this
+    // account the author of a cross-owner association it cannot see.
+    await prisma.contactTag.createMany({
+      data: [
+        { contactId: mine.id, tagId: source.id },
+        { contactId: theirs.id, tagId: source.id },
+      ],
+    });
+
+    expect((await mergeTag(source.id, destination.id)).ok).toBe(true);
+
+    const moved = await prisma.contactTag.findMany({
+      where: { tagId: destination.id },
+      select: { contactId: true },
+    });
+    expect(moved.map((join) => join.contactId)).toEqual([mine.id]);
+  });
+
   it("refuses a tag the lock is hiding on every write that takes its id", async () => {
     const owner = await createTestUser();
     state.ownerId = owner.id;

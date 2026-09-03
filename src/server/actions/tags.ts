@@ -159,7 +159,13 @@ export async function mergeTag(
     return fail("Unlock to merge a tag that is on someone private.");
   await prisma.$transaction(async (tx) => {
     const assignments = await tx.contactTag.findMany({
-      where: { tagId: sourceId },
+      // Scoped by the contact's owner, not merely the tag's. The two are
+      // independent foreign keys, so an import or a restore can join this
+      // account's tag to another account's person — and copying that row onto
+      // the destination would have made this account the author of a
+      // cross-owner association it cannot see. Such a row is left where it is
+      // rather than carried forward.
+      where: { tagId: sourceId, contact: { ownerId } },
       select: { contactId: true },
     });
     if (assignments.length)

@@ -37,7 +37,13 @@ fi
 
 available_mb="$(df -Pm "${BACKUP_DIR}" | awk 'NR == 2 { print $4 }')"
 [[ "${available_mb}" =~ ^[0-9]+$ ]] || fail "could not determine free space in ${BACKUP_DIR}"
-if (( available_mb < MIN_FREE_MB )); then
+# Both read as base ten. A setting written "08" passes every digit check and
+# then is an invalid octal literal to the shell's arithmetic — and because the
+# expression sits in an `if`, the error evaluates as false rather than stopping
+# the script, so the guard was skipped and the dump went ahead with the disk
+# nearly full. The one failure mode this check exists to prevent, reached by
+# writing the number with a leading zero.
+if (( 10#${available_mb} < 10#${MIN_FREE_MB} )); then
     fail "only ${available_mb} MiB is free in ${BACKUP_DIR}; ${MIN_FREE_MB} MiB is required"
 fi
 

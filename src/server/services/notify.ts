@@ -133,21 +133,54 @@ const defaultHttp: HttpAdapter = ({ url, addresses, headers, body, deadlineMs })
  * connection nobody was waiting for and nobody would close, accumulating a
  * file descriptor per failed delivery and per retry of it.
  */
-function connectToOne(addresses: ResolvedAddress[], port: number): Promise<net.Socket> {
+function connectToOne(
+  addresses: ResolvedAddress[],
+  port: number,
+  budgetMs: number,
+  signal: AbortSignal,
+): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let dialing: net.Socket | undefined;
+    // The budget is enforced here rather than only raced from outside. Racing
+    // it left a tie the dial could win: this attempt's own timeout and the
+    // delivery deadline expire together, timers registered for the same
+    // instant run in the order they were created, and so the next address was
+    // tried a moment before the abort landed.
+    const stopAt = Date.now() + budgetMs;
+    // The delivery's deadline reaches the dial itself. Without this, enough
+    // unreachable answers kept `connectToOne` working through the list long
+    // after the send had been abandoned — and a later address could still
+    // connect and carry the message, arriving after the scheduler had recorded
+    // a failure and queued the retry.
+    const abandon = () => {
+      if (settled) return;
+      settled = true;
+      dialing?.destroy();
+      reject(new Error("Channel delivery exceeded its deadline."));
+    };
+    if (signal.aborted) {
+      abandon();
+      return;
+    }
+    signal.addEventListener("abort", abandon, { once: true });
     const attempt = (index: number) => {
+      if (settled) return;
       const socket = net.connect({
         host: addresses[index].address,
         port,
         family: addresses[index].family,
       });
-      socket.setTimeout(15_000, () => socket.destroy(new Error("Channel connection timed out.")));
+      dialing = socket;
+      // Never longer than the delivery has left. One attempt outliving the
+      // whole budget helps nobody, and made the list itself unbounded in time.
+      socket.setTimeout(Math.min(15_000, budgetMs), () => socket.destroy(new Error("Channel connection timed out.")));
       const onError = (error: Error) => {
         if (settled) return;
-        if (index + 1 < addresses.length) attempt(index + 1);
+        if (index + 1 < addresses.length && Date.now() < stopAt) attempt(index + 1);
         else {
           settled = true;
+          signal.removeEventListener("abort", abandon);
           reject(error);
         }
       };
@@ -159,6 +192,7 @@ function connectToOne(addresses: ResolvedAddress[], port: number): Promise<net.S
           return;
         }
         settled = true;
+        signal.removeEventListener("abort", abandon);
         socket.off("error", onError);
         socket.setTimeout(0);
         resolve(socket);
@@ -172,8 +206,12 @@ const defaultSmtp: SmtpAdapter = async (config, addresses, mail, deadlineMs) => 
   const host = config.host as string;
   const port = typeof config.port === "number" ? config.port : 587;
   // The socket nodemailer is actually talking on, so the deadline can end the
-  // exchange rather than merely stop waiting for it.
+  // exchange rather than merely stop waiting for it — and a controller for the
+  // phase before that, when there is no socket yet because the dial is still
+  // working through the addresses.
   let live: net.Socket | undefined;
+  let expired = false;
+  const dial = new AbortController();
   const transport = nodemailer.createTransport({
     host,
     port,
@@ -193,7 +231,7 @@ const defaultSmtp: SmtpAdapter = async (config, addresses, mail, deadlineMs) => 
     // The connect itself is bounded here rather than by nodemailer, which
     // hands the socket back already opened and so never sees this phase.
     getSocket: (_options: SMTPTransport.Options, callback: (error: Error | null, value?: { connection: net.Socket }) => void) => {
-      connectToOne(addresses, port).then(
+      connectToOne(addresses, port, deadlineMs, dial.signal).then(
         (connection) => {
           // Held so the deadline below can end the session outright. Closing
           // the transport is not enough: for a non-pooled transport it does
@@ -203,6 +241,13 @@ const defaultSmtp: SmtpAdapter = async (config, addresses, mail, deadlineMs) => 
           // duplicate the deadline exists to prevent, arriving by the very
           // mechanism meant to stop it.
           live = connection;
+          // Resolved after the deadline had already fired: the abort and this
+          // callback are a microtask apart, so the socket must be checked here
+          // as well or it would be handed to nodemailer to send on.
+          if (expired) {
+            connection.destroy();
+            return;
+          }
           callback(null, { connection });
         },
         (error: Error) => callback(error),
@@ -218,7 +263,11 @@ const defaultSmtp: SmtpAdapter = async (config, addresses, mail, deadlineMs) => 
       transport.sendMail(mail),
       new Promise<never>((_resolve, reject) => {
         deadline = setTimeout(() => {
-          // Destroy first, so nothing is in flight once this rejects.
+          // Nothing may be in flight once this rejects: a dial still working
+          // through the addresses is abandoned, and a session already open is
+          // destroyed.
+          expired = true;
+          dial.abort();
           live?.destroy();
           reject(new Error("Channel delivery exceeded its deadline."));
         }, deadlineMs);
