@@ -45,24 +45,51 @@ test("a plan checklist can be created, edited, checked and deleted without mobil
     if (headers["rsc"] === "1" && !headers["next-action"]) await new Promise((resolve) => setTimeout(resolve, 1500));
     await route.continue();
   });
+  // Watched from inside the page, not sampled from outside: a state that
+  // lasts one frame is exactly the one a poll misses. The observer runs after
+  // every task that touched the editor or the button and looks at what is
+  // on screen then — the states a click could land on, which is the point.
+  // A state a render creates and undoes inside one task was never on screen
+  // and is rightly not counted. Counting starts with the first disabled Save
+  // it sees, which is the submit being registered; the click itself touches
+  // the tree a moment before that, while the button is rightly still live.
+  await page.evaluate(() => {
+    const watch = { checks: 0, liveWhileOpen: 0, armed: false };
+    (window as unknown as { __saveWatch: typeof watch }).__saveWatch = watch;
+    const editorField = () => {
+      const label = Array.from(document.querySelectorAll("label")).find(
+        (candidate) => candidate.textContent?.trim() === "What do you want to do?",
+      );
+      return label?.htmlFor ? document.getElementById(label.htmlFor) : null;
+    };
+    const saveButton = () =>
+      Array.from(document.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim() === "Save") ?? null;
+    new MutationObserver(() => {
+      const button = saveButton();
+      if (!watch.armed) {
+        if (button?.disabled) watch.armed = true;
+        return;
+      }
+      watch.checks += 1;
+      if (editorField() && button && !button.disabled) watch.liveWhileOpen += 1;
+    }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["disabled"] });
+  });
   const save = plans.getByRole("button", { name: "Save", exact: true });
   const editor = plans.getByLabel("What do you want to do?");
   const clicked = Date.now();
   await save.click();
   await expect(save).toBeDisabled();
-  let polls = 0;
-  for (;;) {
-    if (!(await editor.isVisible())) break;
-    const enabled = await save.isEnabled({ timeout: 200 }).catch(() => false);
-    expect(enabled, "Save re-enabled while the editor was still open").toBe(false);
-    polls += 1;
-    await page.waitForTimeout(25);
-  }
+  await expect(editor).toBeHidden();
   await page.unroute("**/*");
-  // The slowed refresh is what makes the assertion above mean anything: an
-  // editor that closed before the delay elapsed was not waiting on it.
+  // The slowed refresh is what makes the check mean anything: an editor that
+  // closed before the delay elapsed was not waiting on it.
   expect(Date.now() - clicked, "the editor closed before the slowed refresh could have landed").toBeGreaterThanOrEqual(1500);
-  expect(polls, "the editor was never seen open with its save returned").toBeGreaterThan(5);
+  const watch = await page.evaluate(
+    () => (window as unknown as { __saveWatch: { checks: number; liveWhileOpen: number; armed: boolean } }).__saveWatch,
+  );
+  expect(watch.armed, "the observer never saw the submit register").toBe(true);
+  expect(watch.checks, "the observer saw nothing change after the submit").toBeGreaterThan(0);
+  expect(watch.liveWhileOpen, "Save was live while the editor was still open").toBe(0);
 
   // Waiting for it to close is waiting for the save to be reflected.
   // Reopening it straight away used to show — and could save back — the
