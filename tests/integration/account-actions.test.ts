@@ -274,6 +274,36 @@ describe.skipIf(!hasTestDatabase)("account actions", () => {
     ).not.toBe(long);
   });
 
+  it("will not move the sign-in address on a credential that has been replaced", async () => {
+    // A password change is how an account is taken back, and it ends the other
+    // sessions. An email change already in flight on one of those — the copied
+    // cookie the whole policy is about — had confirmed the old password a
+    // moment earlier, and wrote regardless: the address the account signs in
+    // with could still be moved after the credential authorising it was gone.
+    const winner = await hashPassword("SomebodyElse3!");
+    state.beforeWrite = async () => {
+      await prisma.user.update({
+        where: { id: state.ownerId },
+        data: { passwordHash: winner },
+      });
+    };
+
+    const before = await prisma.user.findUniqueOrThrow({
+      where: { id: state.ownerId },
+    });
+    const result = await updateEmail(
+      form({ email: "moved@example.com", currentPassword: "OldPassword1!" }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.fieldErrors?.currentPassword).toBe(
+      "Current password is incorrect.",
+    );
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: state.ownerId } }))
+        .email,
+    ).toBe(before.email);
+  });
+
   it("changes nothing when the password moved after the confirmation", async () => {
     // Two changes racing both confirm the old password before either
     // transaction opens, and the window is a whole bcrypt comparison wide.

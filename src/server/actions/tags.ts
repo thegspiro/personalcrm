@@ -120,34 +120,55 @@ export async function setContactTag(
 ): Promise<ActionResult> {
   const { ownerId } = await owner();
   const scope = await privacyScope();
-  const [contact, tag] = await Promise.all([
-    prisma.contact.findFirst({
-      where: { id: contactId, ownerId, ...contactPrivacyWhere(scope) },
-      select: { id: true },
-    }),
-    // The tag has to be one the lock is currently showing, not merely one the
-    // account owns. This takes an id straight off a page that may have been
-    // rendered before the lock closed, and a tag living only on private people
-    // is exactly what must not be assignable from a locked session.
-    prisma.tag.findFirst({
-      where: { id: tagId, ...tagVisibleWhere(ownerId, scope) },
-      select: { id: true },
-    }),
-  ]);
   const MISSING = "Contact or tag not found.";
-  if (!contact || !tag) return fail(MISSING);
-  if (assigned)
-    try {
-      await prisma.contactTag.upsert({
-        where: { contactId_tagId: { contactId, tagId } },
-        create: { contactId, tagId },
-        update: {},
-      });
-    } catch (error) {
-      if (isVanishedTag(error)) return fail(MISSING);
-      throw error;
-    }
-  else await prisma.contactTag.deleteMany({ where: { contactId, tagId } });
+  if (!contactId || !tagId) return fail(MISSING);
+  let assignedOk: boolean;
+  try {
+    assignedOk = await prisma.$transaction(async (tx) => {
+      // The lock comes first — before the visibility question, and before
+      // anything else is read, for the reason `lockSubmittedTags` in
+      // `actions/contacts.ts` gives about read views.
+      //
+      // Asked without it, the answer went stale in the gap before the write. A
+      // tag on nobody is visible while locked, because a tag on nobody
+      // discloses nothing; an unlocked tab assigning it to a private person in
+      // that gap makes it a tag that exists only on private people, which is
+      // exactly what a locked session must not be able to put on anyone. The
+      // upsert does not collide with that assignment either — both take only a
+      // shared lock on the tag row — so nothing else would have stopped it.
+      if ((await lockTags(tx, ownerId, [tagId])) !== 1) return false;
+      const [contact, tag] = await Promise.all([
+        tx.contact.findFirst({
+          where: { id: contactId, ownerId, ...contactPrivacyWhere(scope) },
+          select: { id: true },
+        }),
+        // The tag has to be one the lock is currently showing, not merely one
+        // the account owns. This takes an id straight off a page that may have
+        // been rendered before the lock closed, and a tag living only on
+        // private people is exactly what must not be assignable from a locked
+        // session.
+        tx.tag.findFirst({
+          where: { id: tagId, ...tagVisibleWhere(ownerId, scope) },
+          select: { id: true },
+        }),
+      ]);
+      if (!contact || !tag) return false;
+      if (assigned)
+        await tx.contactTag.upsert({
+          where: { contactId_tagId: { contactId, tagId } },
+          create: { contactId, tagId },
+          update: {},
+        });
+      else await tx.contactTag.deleteMany({ where: { contactId, tagId } });
+      return true;
+    });
+  } catch (error) {
+    // The tag is held, so it cannot be the one that went missing; the contact
+    // can, and its foreign key reads the same way to the person.
+    if (isVanishedTag(error)) return fail(MISSING);
+    throw error;
+  }
+  if (!assignedOk) return fail(MISSING);
   refresh(contactId);
   return ok();
 }

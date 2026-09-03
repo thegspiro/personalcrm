@@ -142,8 +142,20 @@ export async function updateEmail(form: FormData): Promise<ActionResult> {
   const confirmed = await confirmPassword(ownerId, secret(form, "currentPassword"));
   if (!confirmed.ok) return confirmed.result;
   const email = parsed.data.toLowerCase();
+  // Conditional on the confirmed hash, exactly as `changePassword` is.
+  //
+  // A password change is how an account is taken back, and it revokes the
+  // sessions that are not this one. An email change already in flight on one
+  // of those — the copied cookie this whole policy is about — had confirmed
+  // the old password a moment earlier and wrote regardless, so the address the
+  // account signs in with could still be moved after the credential that
+  // authorised it had been replaced.
+  let changed: number;
   try {
-    await prisma.user.update({ where: { id: ownerId }, data: { email } });
+    ({ count: changed } = await prisma.user.updateMany({
+      where: { id: ownerId, passwordHash: confirmed.passwordHash },
+      data: { email },
+    }));
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -152,6 +164,8 @@ export async function updateEmail(form: FormData): Promise<ActionResult> {
       return fieldError("email", "An account with that email already exists.");
     throw error;
   }
+  if (!changed)
+    return fieldError("currentPassword", "Current password is incorrect.");
   revalidatePath("/", "layout");
   return ok();
 }

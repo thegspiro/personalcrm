@@ -544,7 +544,7 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     expect(result.ok === false && result.error).toBe("Tag not found.");
   });
 
-  it("answers 'not found' when a tag is deleted between the check and the assignment", async () => {
+  it("answers 'not found' when the tag is deleted before the assignment", async () => {
     const owner = await createTestUser();
     state.ownerId = owner.id;
     state.enabled = false;
@@ -555,11 +555,13 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     const tag = await prisma.tag.create({
       data: { ownerId: owner.id, name: "Neighbours", slug: "neighbours" },
     });
-    state.beforeWrite = async () => {
+    // Before the transaction, because the lock the assignment now takes closes
+    // the window after it: a delete cannot commit while the row is held, so the
+    // lock simply comes back empty and there is no foreign key left to meet.
+    state.duringPrivacyRead = async () => {
       await prisma.tag.delete({ where: { id: tag.id } });
     };
 
-    // P2003 out of the upsert this time, for the same reason.
     const result = await setContactTag(contact.id, tag.id, true);
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.error).toBe("Contact or tag not found.");
@@ -730,6 +732,82 @@ describe.skipIf(!hasTestDatabase)("tag writes against a concurrent tab", () => {
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.error).toMatch(/Unlock to delete/);
     expect(await prisma.tag.count({ where: { id: tag.id } })).toBe(1);
+  });
+
+  it("refuses to assign a tag that became private-only after the check", async () => {
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = true;
+    state.unlocked = false;
+    const visible = await prisma.contact.create({
+      data: { ownerId: owner.id, firstName: "Sam" },
+    });
+    const hidden = await prisma.contact.create({
+      data: { ownerId: owner.id, firstName: "Wren", isPrivate: true },
+    });
+    // On nobody, so a locked session may use it: a tag on nobody discloses
+    // nothing about anybody.
+    const tag = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Choir", slug: "choir" },
+    });
+
+    // An unlocked tab puts it on someone private while this request is between
+    // its visibility check and its write.
+    let held: Awaited<ReturnType<typeof holdUncommitted>>;
+    state.duringPrivacyRead = async () => {
+      held = await holdUncommitted((tx) =>
+        tx.contactTag.create({ data: { contactId: hidden.id, tagId: tag.id } }),
+      );
+    };
+
+    const assigning = setContactTag(visible.id, tag.id, true);
+    await releaseAfterItBlocks(() => held.release());
+    await held!.settled;
+    const result = await assigning;
+
+    // The tag now exists only on a private person, so putting it on a visible
+    // one publishes its name through that use — the disclosure the visibility
+    // check exists to prevent, made by a session that cannot see the person it
+    // is about. Two shared locks on the tag row do not collide, so nothing
+    // else would have stopped the write either.
+    expect(result.ok).toBe(false);
+    expect(
+      await prisma.contactTag.count({
+        where: { contactId: visible.id, tagId: tag.id },
+      }),
+    ).toBe(0);
+  });
+
+  it("answers 'not found' when the contact is deleted mid-assignment", async () => {
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = false;
+    state.unlocked = true;
+    const contact = await prisma.contact.create({
+      data: { ownerId: owner.id, firstName: "Sam" },
+    });
+    const tag = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Neighbours", slug: "neighbours" },
+    });
+
+    // The tag is held for the write, so it is no longer the half that can go
+    // missing. The contact still is: another tab deleting it after the lookup
+    // leaves the insert to meet its foreign key, and P2003 out of a server
+    // action is a 500 on what is, to the person, a contact that is not there.
+    let held: Awaited<ReturnType<typeof holdUncommitted>>;
+    state.duringPrivacyRead = async () => {
+      held = await holdUncommitted((tx) =>
+        tx.contact.delete({ where: { id: contact.id } }),
+      );
+    };
+
+    const assigning = setContactTag(contact.id, tag.id, true);
+    await releaseAfterItBlocks(() => held.release());
+    await held!.settled;
+    const result = await assigning;
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toBe("Contact or tag not found.");
   });
 
   it("reports an unavailable tag rather than failing the whole contact save", async () => {

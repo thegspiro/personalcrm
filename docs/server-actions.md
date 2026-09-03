@@ -56,7 +56,10 @@ enforces rather than documents:
 All mutations derive the account from the authenticated session; no caller may
 choose an owner. `updateDisplayName` changes the navigation/profile label.
 `updateEmail` uses registration's trim-and-lowercase normalization, requires the
-current password, and relies on the database uniqueness constraint. Password
+current password, and relies on the database uniqueness constraint; like
+`changePassword` its write is conditional on the row still carrying the hash it
+confirmed, so a request in flight on a session a password change has just
+revoked cannot still move the sign-in address. Password
 changes reuse the signup strength and bcrypt helpers, preserve the current
 session, revoke every other session, and clear `privacyUnlockedAt` on the
 preserved session — which is also re-keyed, so copies of its cookie stop

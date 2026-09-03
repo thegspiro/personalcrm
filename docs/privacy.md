@@ -25,12 +25,15 @@ Two design decisions carry the whole thing:
 never client state. A client cannot claim to be unlocked, and the unlock dies
 with the session rather than lingering after sign-out.
 
-Tag merges and deletions ask whether the tag is on anyone private *inside*
-the transaction, after `SELECT ... FOR UPDATE` on the tag rows. Asked before
+Tag merges, deletions and assignments ask their privacy question *inside* the
+transaction, after `SELECT ... FOR UPDATE` on the tag rows. Asked before
 it, the answer described a moment that had already passed: an unlocked session
 elsewhere could add the private assignment in the gap, and the locked session
-would then move or destroy it. Contact saves hold their submitted tags the same
-way. A lock is what makes a privacy answer still true when it is acted on.
+would then move or destroy it. Assigning has the same shape from the other
+direction: a tag on nobody is visible while locked, and an unlocked session
+making it private-only in the gap turned the assignment into a disclosure.
+Contact saves hold their submitted tags the same way. A lock is what makes a
+privacy answer still true when it is acted on.
 
 A password change is also a privacy boundary: it revokes every other session,
 re-keys the current one, and clears `privacyUnlockedAt` on it. The current
