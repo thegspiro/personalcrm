@@ -16,6 +16,84 @@ export function hashSessionToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+async function currentTokenHash(): Promise<string | null> {
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  return token ? hashSessionToken(token) : null;
+}
+
+export interface SafeSession {
+  id: string;
+  createdAt: Date;
+  expiresAt: Date;
+  userAgent: string | null;
+  ip: string | null;
+  current: boolean;
+  privacyUnlocked: boolean;
+}
+
+/** Account-facing session metadata. Token material never leaves this module. */
+export async function listSessions(userId: string): Promise<SafeSession[]> {
+  const tokenHash = await currentTokenHash();
+  const rows = await prisma.session.findMany({
+    where: { userId, expiresAt: { gt: new Date() } },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      tokenHash: true,
+      createdAt: true,
+      expiresAt: true,
+      userAgent: true,
+      ip: true,
+      privacyUnlockedAt: true,
+    },
+  });
+  return rows.map(({ tokenHash: storedHash, privacyUnlockedAt, ...row }) => ({
+    ...row,
+    current: tokenHash === storedHash,
+    privacyUnlocked: privacyUnlockedAt !== null,
+  }));
+}
+
+/** Delete an owned, non-current session. The compound predicate prevents IDOR. */
+export async function revokeOtherSession(
+  userId: string,
+  sessionId: string,
+): Promise<boolean> {
+  const tokenHash = await currentTokenHash();
+  if (!tokenHash) return false;
+  const result = await prisma.session.deleteMany({
+    where: { id: sessionId, userId, tokenHash: { not: tokenHash } },
+  });
+  return result.count === 1;
+}
+
+export async function revokeAllOtherSessions(userId: string): Promise<number> {
+  const tokenHash = await currentTokenHash();
+  if (!tokenHash) return 0;
+  return (
+    await prisma.session.deleteMany({
+      where: { userId, tokenHash: { not: tokenHash } },
+    })
+  ).count;
+}
+
+/** Password changes retain this login, close its privacy unlock, and end every other login. */
+export async function secureSessionsAfterPasswordChange(
+  userId: string,
+): Promise<void> {
+  const tokenHash = await currentTokenHash();
+  if (!tokenHash) return;
+  await prisma.$transaction([
+    prisma.session.deleteMany({
+      where: { userId, tokenHash: { not: tokenHash } },
+    }),
+    prisma.session.updateMany({
+      where: { userId, tokenHash },
+      data: { privacyUnlockedAt: null },
+    }),
+  ]);
+}
+
 function isSecureContext(): boolean {
   return (process.env.APP_URL ?? "").startsWith("https://");
 }

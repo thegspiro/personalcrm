@@ -5,6 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Icon } from "@/components/nav/icon";
 
 const TABS = [
+  { value: "account", label: "Account", icon: "UserRound" },
   { value: "appearance", label: "Look", icon: "Palette" },
   { value: "fields", label: "Fields", icon: "SlidersHorizontal" },
   { value: "taxonomies", label: "Types", icon: "Tags" },
@@ -25,6 +26,7 @@ const TABS = [
  */
 export function SettingsTabs({
   appearance,
+  account,
   fields,
   taxonomies,
   tags,
@@ -38,6 +40,7 @@ export function SettingsTabs({
   // Every entry in TABS needs one here, or its tab renders empty. Two branches
   // each adding a tab is exactly how one goes missing.
   const panels = {
+    account,
     appearance,
     fields,
     taxonomies,
