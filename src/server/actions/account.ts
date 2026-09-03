@@ -20,7 +20,6 @@ import {
   invalid,
   ok,
   owner,
-  str,
   type ActionResult,
 } from "./helpers";
 
@@ -33,7 +32,24 @@ const emailSchema = z
   .string()
   .trim()
   .min(1, "Enter an email.")
+  // Bounded to the column, so an over-long address comes back as a field
+  // error rather than a length error thrown out of the update — which is not
+  // the duplicate-address case below and would escape as a server error.
+  .max(191, "Use at most 191 characters.")
   .email("That doesn't look like an email.");
+
+/**
+ * A password exactly as it was typed.
+ *
+ * `str` trims, and sign-in does not: an account whose password has a leading
+ * or trailing space can sign in and then fail to confirm that same password
+ * here, and a new one would be stored without the spaces its owner and their
+ * password manager supplied.
+ */
+function secret(form: FormData, key: string): string | undefined {
+  const value = form.get(key);
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
 
 export async function updateDisplayName(form: FormData): Promise<ActionResult> {
   const parsed = nameSchema.safeParse(form.get("name"));
@@ -65,7 +81,7 @@ export async function updateEmail(form: FormData): Promise<ActionResult> {
   const parsed = emailSchema.safeParse(form.get("email"));
   if (!parsed.success) return invalid(parsed.error);
   const { ownerId } = await owner();
-  if (!(await authenticatedUser(ownerId, str(form, "currentPassword"))))
+  if (!(await authenticatedUser(ownerId, secret(form, "currentPassword"))))
     return fieldError("currentPassword", "Current password is incorrect.");
   const email = parsed.data.toLowerCase();
   try {
@@ -84,10 +100,10 @@ export async function updateEmail(form: FormData): Promise<ActionResult> {
 
 export async function changePassword(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
-  if (!(await authenticatedUser(ownerId, str(form, "currentPassword"))))
+  if (!(await authenticatedUser(ownerId, secret(form, "currentPassword"))))
     return fieldError("currentPassword", "Current password is incorrect.");
-  const password = str(form, "newPassword") ?? "";
-  if (password !== str(form, "confirmPassword"))
+  const password = secret(form, "newPassword") ?? "";
+  if (password !== secret(form, "confirmPassword"))
     return fieldError("confirmPassword", "Those passwords don't match.");
   const strength = checkPasswordStrength(password);
   if (!strength.ok)

@@ -32,7 +32,7 @@ FROM `Location`;
 -- created with.
 INSERT INTO `LocationAlias` (`id`, `ownerId`, `locationId`, `value`, `normalizedValue`, `isCanonical`)
 SELECT CONCAT('loc_alias_', REPLACE(UUID(), '-', '')), candidate.ownerId, candidate.locationId,
-       candidate.value, candidate.normalizedValue, false
+       MIN(candidate.value), candidate.normalizedValue, false
 FROM (
   SELECT l.`ownerId`, l.`id` AS locationId,
          TRIM(j.aliasValue) COLLATE utf8mb4_unicode_ci AS value,
@@ -51,4 +51,9 @@ WHERE claimed.id IS NULL
        WHERE l2.`ownerId` = candidate.ownerId
          AND LOWER(REGEXP_REPLACE(TRIM(j2.aliasValue), '[[:space:]]+', ' '))
                COLLATE utf8mb4_unicode_ci = candidate.normalizedValue) = 1
-GROUP BY candidate.ownerId, candidate.locationId, candidate.normalizedValue, candidate.value;
+-- Grouped by the key the unique index is on, not by the text. Two spellings
+-- of one alias that differ only in their spacing normalise to the same value,
+-- and grouping by the text kept both — two rows claiming one key, which the
+-- index refuses and the whole upgrade aborts on. One row now, with the
+-- earliest spelling kept so the choice is the same on every run.
+GROUP BY candidate.ownerId, candidate.locationId, candidate.normalizedValue;

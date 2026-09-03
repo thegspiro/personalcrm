@@ -4,8 +4,10 @@ set -euo pipefail
 source /etc/s6-overlay/scripts/common.sh
 
 BACKUP_DIR="${BACKUP_DIR:-/config/backups}"
-RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
-MIN_FREE_MB="${BACKUP_MIN_FREE_MB:-512}"
+# Trimmed to match what preflight validated; see backup-scheduler.
+trim() { local v="${1#"${1%%[![:space:]]*}"}"; printf '%s' "${v%"${v##*[![:space:]]}"}"; }
+RETENTION_DAYS="$(trim "${BACKUP_RETENTION_DAYS:-30}")"
+MIN_FREE_MB="$(trim "${BACKUP_MIN_FREE_MB:-512}")"
 LOCK_FILE="${BACKUP_DIR}/.backup.lock"
 credentials=""
 temporary=""

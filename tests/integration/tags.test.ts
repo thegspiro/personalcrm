@@ -25,7 +25,7 @@ vi.mock("@/server/privacy/lock", () => ({
   recordProtectedReadActivity: async () => ({ ok: true, expiresAt: null }),
 }));
 
-const { deleteTag, mergeTag, setContactTag } =
+const { createTag, deleteTag, mergeTag, setContactTag } =
   await import("@/server/actions/tags");
 const { listTags } = await import("@/server/queries/tags");
 const { listContacts } = await import("@/server/queries/contacts");
@@ -128,5 +128,54 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     expect(await listTags(owner.id)).toEqual([
       expect.objectContaining({ name: "Visible", usageCount: 1 }),
     ]);
+  });
+  it("keeps a tag nobody carries listed while locked, so it can be given out", async () => {
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = true;
+    state.unlocked = true;
+    const form = new FormData();
+    form.set("name", "Cycling");
+    expect((await createTag(form)).ok).toBe(true);
+
+    // A tag on nobody discloses nobody. Hiding it left one just created
+    // missing from settings and from every contact form until an unlock.
+    state.unlocked = false;
+    expect((await listTags(owner.id)).map((tag) => tag.name)).toEqual(["Cycling"]);
+  });
+
+  it("refuses to merge or delete a tag whose other half is hidden by the lock", async () => {
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = true;
+    state.unlocked = true;
+    const [visible, secret] = await Promise.all([
+      prisma.contact.create({ data: { ownerId: owner.id, firstName: "Dana" } }),
+      prisma.contact.create({ data: { ownerId: owner.id, firstName: "Robin", isPrivate: true } }),
+    ]);
+    const [source, destination] = await Promise.all([
+      prisma.tag.create({ data: { ownerId: owner.id, name: "Climbing", slug: "climbing" } }),
+      prisma.tag.create({ data: { ownerId: owner.id, name: "Outdoors", slug: "outdoors" } }),
+    ]);
+    await prisma.contactTag.createMany({
+      data: [
+        { contactId: visible.id, tagId: source.id },
+        { contactId: secret.id, tagId: source.id },
+      ],
+    });
+
+    // The visible half keeps the tag listed while locked, so it is offered —
+    // but acting on it would move or destroy the private association too.
+    state.unlocked = false;
+    expect((await listTags(owner.id)).map((tag) => tag.name).sort()).toEqual(["Climbing", "Outdoors"]);
+    expect((await mergeTag(source.id, destination.id)).ok).toBe(false);
+    expect((await deleteTag(source.id)).ok).toBe(false);
+    expect(await prisma.contactTag.count({ where: { tagId: source.id } })).toBe(2);
+    expect(await prisma.tag.count({ where: { ownerId: owner.id } })).toBe(2);
+
+    // Unlocked, both are the owner's to do.
+    state.unlocked = true;
+    expect((await mergeTag(source.id, destination.id)).ok).toBe(true);
+    expect(await prisma.contactTag.count({ where: { tagId: destination.id } })).toBe(2);
   });
 });

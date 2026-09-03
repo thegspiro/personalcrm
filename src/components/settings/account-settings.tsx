@@ -18,11 +18,20 @@ export function AccountSettings({
   name,
   email,
   sessions,
+  timezone,
 }: {
   name: string;
   email: string;
   sessions: SafeSession[];
+  timezone: string;
 }) {
+  // The account's timezone, not the container's and not the browser's, which
+  // disagree often enough to put a session on the wrong calendar day. The
+  // locale is fixed for the same reason the reminder settings fix theirs:
+  // this is rendered on the server and hydrated in the browser, and a locale
+  // that differs between the two is a mismatch in the markup.
+  const when = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: timezone });
+  const day = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: timezone });
   const submit = useAddAction();
   const run = useAction();
   return (
@@ -151,8 +160,8 @@ export function AccountSettings({
                   {session.current ? " · This device" : ""}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Created {session.createdAt.toLocaleString()} · expires{" "}
-                  {session.expiresAt.toLocaleDateString()}
+                  Created {when.format(session.createdAt)} · expires{" "}
+                  {day.format(session.expiresAt)}
                   {session.ip ? ` · ${session.ip}` : ""}
                 </p>
               </div>

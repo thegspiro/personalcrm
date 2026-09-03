@@ -26,7 +26,13 @@ export function TagSettings({
         assignments, never contacts.
       </p>
       <form
-        action={(form) => void run(() => createTag(form), "Tag added")}
+        // Awaited, not discarded: a form action that returns immediately
+        // leaves React thinking the submit is done, so the button goes live
+        // again over a request still in flight and a second click races the
+        // first on the same unique name.
+        action={async (form) => {
+          await run(() => createTag(form), "Tag added");
+        }}
         className="flex items-end gap-2"
       >
         <Field label="New tag" htmlFor="new-tag">
@@ -53,7 +59,9 @@ function TagRow({
   return (
     <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-[1fr_auto]">
       <form
-        action={(form) => void run(() => renameTag(form), "Tag renamed")}
+        action={async (form) => {
+          await run(() => renameTag(form), "Tag renamed");
+        }}
         className="flex items-end gap-2"
       >
         <input type="hidden" name="id" value={tag.id} />

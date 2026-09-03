@@ -9,10 +9,18 @@ export async function listTags(ownerId: string) {
   const tags = await prisma.tag.findMany({
     where: {
       ownerId,
-      // While locked, do not reveal a tag which exists only on private people.
+      // While locked, do not reveal a tag that exists only on private people.
+      // A tag on nobody reveals nothing, and hiding it would leave a tag just
+      // created unusable — absent from settings and from every contact form —
+      // until the lock was opened.
       ...(scope.unlocked
         ? {}
-        : { contacts: { some: { contact: visibleContact } } }),
+        : {
+            OR: [
+              { contacts: { none: {} } },
+              { contacts: { some: { contact: visibleContact } } },
+            ],
+          }),
     },
     select: {
       id: true,

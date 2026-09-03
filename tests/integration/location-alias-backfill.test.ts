@@ -36,7 +36,10 @@ describe.skipIf(!hasTestDatabase)("location alias backfill", () => {
         ownerId: user.id,
         name: "Corner Cafe",
         normalizedName: "corner cafe",
-        aliases: ["The Corner", "  Spaced   Out  ", ""],
+        // Two spellings of one alias, differing only in their spacing: they
+        // normalise to the same value, and both being kept is a duplicate
+        // claim on the unique key that aborts the whole migration.
+        aliases: ["The Corner", "  Spaced   Out  ", "Spaced Out", ""],
       },
     });
     const bar = await prisma.location.create({
@@ -79,6 +82,7 @@ describe.skipIf(!hasTestDatabase)("location alias backfill", () => {
     // "Owl Bar" names one place; the run-together spacing is normalised but
     // the text the row was written with is kept.
     expect(mine.map((row) => row.normalizedValue).sort()).toEqual(["owl bar", "spaced out"]);
+    expect(mine.filter((row) => row.normalizedValue === "spaced out")).toHaveLength(1);
     expect(mine.find((row) => row.normalizedValue === "spaced out")?.value).toBe("Spaced   Out");
 
     // Ambiguous between two places, and a collision with a canonical name:

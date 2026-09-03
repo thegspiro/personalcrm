@@ -110,4 +110,37 @@ describe.skipIf(!hasTestDatabase)("account actions", () => {
     });
     expect(await verifyPassword("NewPassword2!", user.passwordHash)).toBe(true);
   });
+  it("keeps the whitespace a password was chosen with, as signing in does", async () => {
+    // Sign-in reads the field raw. Trimming it here meant an account whose
+    // password has a leading or trailing space could sign in and then fail to
+    // confirm that same password, and a new one would be stored without the
+    // spaces its owner supplied.
+    const padded = "  Spaced Password1!  ";
+    await prisma.user.update({
+      where: { id: state.ownerId },
+      data: { passwordHash: await hashPassword(padded) },
+    });
+    expect((await updateEmail(form({ email: "moved@example.com", currentPassword: padded }))).ok).toBe(true);
+
+    expect(
+      (await changePassword(form({
+        currentPassword: padded,
+        newPassword: "  Another Password2!  ",
+        confirmPassword: "  Another Password2!  ",
+      }))).ok,
+    ).toBe(true);
+    const stored = await prisma.user.findUniqueOrThrow({ where: { id: state.ownerId } });
+    expect(await verifyPassword("  Another Password2!  ", stored.passwordHash)).toBe(true);
+    expect(await verifyPassword("Another Password2!", stored.passwordHash)).toBe(false);
+  });
+
+  it("refuses an email longer than the column rather than throwing at the update", async () => {
+    const long = `${"a".repeat(180)}@example.com`;
+    expect(long.length).toBeGreaterThan(191);
+    const result = await updateEmail(form({ email: long, currentPassword: "OldPassword1!" }));
+    expect(result.ok).toBe(false);
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: state.ownerId } })).email,
+    ).not.toBe(long);
+  });
 });

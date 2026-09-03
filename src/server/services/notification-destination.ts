@@ -35,13 +35,48 @@ for (const [network, prefix, family] of [
   ["ff00::", 8, "ipv6"],
 ] as const) nonPublic.addSubnet(network, prefix, family);
 
+/**
+ * The eight groups of an IPv6 address, whichever way it is spelled: `::`
+ * elided, a dotted IPv4 tail, leading zeroes dropped or kept. Null if it is
+ * not an IPv6 address at all.
+ */
+function ipv6Groups(address: string): number[] | null {
+  if (isIP(address) !== 6) return null;
+  let text = address;
+  // A dotted tail is the last two groups written as IPv4.
+  const dotted = /(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+  if (dotted) {
+    const octets = dotted.slice(1).map(Number);
+    const high = ((octets[0] << 8) | octets[1]).toString(16);
+    const low = ((octets[2] << 8) | octets[3]).toString(16);
+    text = `${text.slice(0, dotted.index)}${high}:${low}`;
+  }
+  const [before, after] = text.split("::");
+  const head = before ? before.split(":") : [];
+  const tail = text.includes("::") ? (after ? after.split(":") : []) : [];
+  if (!text.includes("::") && head.length !== 8) return null;
+  const groups = [...head, ...Array(8 - head.length - tail.length).fill("0"), ...tail];
+  if (groups.length !== 8) return null;
+  const parsed = groups.map((group) => Number.parseInt(group || "0", 16));
+  return parsed.every((group) => Number.isInteger(group) && group >= 0 && group <= 0xffff)
+    ? parsed
+    : null;
+}
+
+/**
+ * The IPv4 address inside an IPv4-mapped IPv6 one, or null.
+ *
+ * Decided from the groups rather than from the spelling. `::ffff:127.0.0.1`
+ * and `0:0:0:0:0:ffff:7f00:1` are the same address, and a check that
+ * recognised only the compressed form let the expanded one past as public —
+ * an SMTP host a member could point at the loopback interface.
+ */
 function mappedIpv4(address: string): string | null {
-  const match = /^::ffff:(?:(\d+\.\d+\.\d+\.\d+)|([0-9a-f]{1,4}):([0-9a-f]{1,4}))$/i.exec(address);
-  if (!match) return null;
-  if (match[1]) return match[1];
-  const high = Number.parseInt(match[2], 16);
-  const low = Number.parseInt(match[3], 16);
-  return `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`;
+  const groups = ipv6Groups(address);
+  if (!groups) return null;
+  const mapped = groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff;
+  if (!mapped) return null;
+  return `${groups[6] >> 8}.${groups[6] & 255}.${groups[7] >> 8}.${groups[7] & 255}`;
 }
 
 /** True only for globally routable unicast destinations. */

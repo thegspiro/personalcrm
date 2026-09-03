@@ -17,7 +17,7 @@ import {
 
 interface HttpInput {
   url: URL;
-  address: ResolvedAddress;
+  addresses: ResolvedAddress[];
   headers: Record<string, string>;
   body: string;
 }
@@ -25,7 +25,7 @@ interface HttpInput {
 type HttpAdapter = (input: HttpInput) => Promise<{ status: number }>;
 type SmtpAdapter = (
   config: Record<string, unknown>,
-  address: ResolvedAddress,
+  addresses: ResolvedAddress[],
   mail: { from: string; to: string; subject: string; text: string },
 ) => Promise<void>;
 
@@ -36,14 +36,26 @@ export interface DeliveryDependencies {
   smtp?: SmtpAdapter;
 }
 
-const defaultHttp: HttpAdapter = ({ url, address, headers, body }) => new Promise((resolve, reject) => {
+const defaultHttp: HttpAdapter = ({ url, addresses, headers, body }) => new Promise((resolve, reject) => {
   const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
     method: "POST",
     headers,
     timeout: 15_000,
     // The URL retains the configured hostname (Host, TLS SNI and certificate
-    // verification), while lookup can return only the address just validated.
-    lookup: (_hostname, _options, callback) => callback(null, address.address, address.family),
+    // verification), while lookup can return only the addresses just
+    // validated. Every answer is handed back, not only the first: node picks
+    // between them and moves on from one that will not connect, which an
+    // AAAA answer on a host without IPv6 otherwise makes fatal. They all came
+    // from the same validated set, so the pinning is unchanged.
+    //
+    // The array form is not optional. Connection family autoselection calls
+    // this with `all` set, and answering that with a bare address raises
+    // ERR_INVALID_IP_ADDRESS before a socket is opened — every HTTP channel,
+    // every time.
+    lookup: (_hostname, options, callback) =>
+      options?.all
+        ? callback(null, addresses as unknown as string, 0)
+        : callback(null, addresses[0].address, addresses[0].family),
   }, (response) => {
     response.resume();
     response.once("end", () => resolve({ status: response.statusCode ?? 0 }));
@@ -53,7 +65,30 @@ const defaultHttp: HttpAdapter = ({ url, address, headers, body }) => new Promis
   request.end(body);
 });
 
-const defaultSmtp: SmtpAdapter = async (config, address, mail) => {
+/** Connect to the validated answers in turn, so one dead address is not fatal. */
+function connectToOne(addresses: ResolvedAddress[], port: number): Promise<net.Socket> {
+  return new Promise((resolve, reject) => {
+    const attempt = (index: number) => {
+      const socket = net.connect({
+        host: addresses[index].address,
+        port,
+        family: addresses[index].family,
+      });
+      socket.setTimeout(15_000, () => socket.destroy(new Error("Channel connection timed out.")));
+      socket.once("error", (error) => {
+        if (index + 1 < addresses.length) attempt(index + 1);
+        else reject(error);
+      });
+      socket.once("connect", () => {
+        socket.setTimeout(0);
+        resolve(socket);
+      });
+    };
+    attempt(0);
+  });
+}
+
+const defaultSmtp: SmtpAdapter = async (config, addresses, mail) => {
   const host = config.host as string;
   const port = typeof config.port === "number" ? config.port : 587;
   const transport = nodemailer.createTransport({
@@ -75,13 +110,10 @@ const defaultSmtp: SmtpAdapter = async (config, address, mail) => {
     // The connect itself is bounded here rather than by nodemailer, which
     // hands the socket back already opened and so never sees this phase.
     getSocket: (_options: SMTPTransport.Options, callback: (error: Error | null, value?: { connection: net.Socket }) => void) => {
-      const socket = net.connect({ host: address.address, port, family: address.family });
-      socket.setTimeout(15_000, () => socket.destroy(new Error("Channel connection timed out.")));
-      socket.once("error", (error) => callback(error));
-      socket.once("connect", () => {
-        socket.setTimeout(0);
-        callback(null, { connection: socket });
-      });
+      connectToOne(addresses, port).then(
+        (connection) => callback(null, { connection }),
+        (error: Error) => callback(error),
+      );
     },
   });
   await transport.sendMail(mail);
@@ -112,7 +144,7 @@ export async function deliverToChannel(
       throw new Error("Email channel requires host, from, and to.");
     }
     const addresses = await validateDestination(config.host, administrative, resolveDns);
-    await (dependencies.smtp ?? defaultSmtp)(config, addresses[0], {
+    await (dependencies.smtp ?? defaultSmtp)(config, addresses, {
       from: config.from, to: config.to, subject, text: body,
     });
     return;
@@ -130,7 +162,7 @@ export async function deliverToChannel(
   }
   const payload = channel.kind === "DISCORD" ? { content: `${subject}\n${body}` } : { title: subject, message: body };
   const response = await (dependencies.http ?? defaultHttp)({
-    url, address: addresses[0], headers, body: JSON.stringify(payload),
+    url, addresses, headers, body: JSON.stringify(payload),
   });
   if (response.status >= 300 && response.status < 400) {
     throw new Error(`Channel redirected (HTTP ${response.status}), which is not followed. Configure the address it points at.`);

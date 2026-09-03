@@ -107,10 +107,14 @@ export async function updateLocation(form: FormData): Promise<ActionResult> {
 
   const name = parsed.data.name.replace(/\s+/g, " ");
   const normalizedName = normalizeLocationName(name);
+  // One per line, which is what the field asks for and how it is rendered
+  // back. Splitting on commas as well took "Washington, D.C." to be two
+  // places, and left the generic half of it resolving quick-add text to the
+  // wrong venue.
   const aliases = Array.from(
     new Map(
       (parsed.data.aliases ?? "")
-        .split(/\r?\n|,/)
+        .split(/\r?\n/)
         .map((value) => value.trim().replace(/\s+/g, " "))
         .filter(Boolean)
         .map((value) => [normalizeLocationName(value), value]),
@@ -118,6 +122,12 @@ export async function updateLocation(form: FormData): Promise<ActionResult> {
   )
     .filter(([normalized]) => normalized !== normalizedName)
     .map(([normalizedValue, value]) => ({ value, normalizedValue }));
+
+  // Each one is a row of its own, in a column the combined 4,000-character
+  // bound on the whole field says nothing about; over it, createMany throws
+  // a length error nobody catches.
+  if (aliases.some(({ value, normalizedValue }) => value.length > 191 || normalizedValue.length > 191))
+    return fieldError("aliases", "Keep each alternate name under 191 characters.");
 
   if (normalizedName !== existing.normalizedName) {
     // Renaming is refused outright while the lock is closed — every rename,

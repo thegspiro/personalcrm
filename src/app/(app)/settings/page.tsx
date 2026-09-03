@@ -93,6 +93,7 @@ export default async function SettingsPage() {
             name={user.name}
             email={user.email}
             sessions={sessions}
+            timezone={prefs.timezone}
           />
         }
         appearance={

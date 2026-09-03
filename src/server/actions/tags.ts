@@ -84,6 +84,24 @@ export async function renameTag(form: FormData): Promise<ActionResult> {
 }
 
 /** Move every assignment to the destination, deduplicate, then remove the source. */
+/**
+ * Whether a tag is on anyone the closed lock is hiding.
+ *
+ * A tag used by one visible person and one private one stays listed while
+ * locked, because the visible use is reason enough to show it. Merging or
+ * deleting it from that session would move or destroy the private
+ * association too — a change to a record the session cannot see, made by a
+ * session that cannot see it. Both refuse instead.
+ */
+async function touchesHiddenContacts(tagIds: string[]): Promise<boolean> {
+  const scope = await privacyScope();
+  if (scope.unlocked) return false;
+  const hidden = await prisma.contactTag.count({
+    where: { tagId: { in: tagIds }, contact: { isPrivate: true } },
+  });
+  return hidden > 0;
+}
+
 export async function mergeTag(
   sourceId: string,
   destinationId: string,
@@ -95,6 +113,8 @@ export async function mergeTag(
     where: { ownerId, id: { in: [sourceId, destinationId] } },
   });
   if (tags !== 2) return fail("Tag not found.");
+  if (await touchesHiddenContacts([sourceId, destinationId]))
+    return fail("Unlock to merge a tag that is on someone private.");
   await prisma.$transaction(async (tx) => {
     const assignments = await tx.contactTag.findMany({
       where: { tagId: sourceId },
@@ -117,6 +137,9 @@ export async function mergeTag(
 /** Deleting a tag removes only its join rows; contacts themselves are preserved. */
 export async function deleteTag(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
+  // The assignments go with it by cascade, private ones included.
+  if (await touchesHiddenContacts([id]))
+    return fail("Unlock to delete a tag that is on someone private.");
   const result = await prisma.tag.deleteMany({ where: { id, ownerId } });
   if (!result.count) return fail("Tag not found.");
   refresh();

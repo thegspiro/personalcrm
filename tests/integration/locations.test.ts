@@ -356,6 +356,35 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       expect(logged.location).toBe("corner cafe");
     });
 
+    it("keeps a comma inside an alias, and bounds each one to its column", async () => {
+      state.unlocked = true;
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, []);
+
+      // The field asks for one per line and is rendered back that way.
+      // Splitting on commas too made "Washington, D.C." two places, one of
+      // them named "Washington" — generic enough to catch quick-add text
+      // meant for somewhere else entirely.
+      const first = await updateLocation(
+        formFor({ id: cafe.id, name: "Corner Cafe", aliases: "Washington, D.C.\nThe Corner" }),
+      );
+      expect(first).toMatchObject({ ok: true });
+      const saved = await prisma.locationAlias.findMany({
+        where: { locationId: cafe.id, isCanonical: false },
+        select: { value: true },
+        orderBy: { value: "asc" },
+      });
+      expect(saved.map((alias) => alias.value)).toEqual(["The Corner", "Washington, D.C."]);
+
+      // Each alias is a row in a VARCHAR(191) column, which the 4,000
+      // character bound on the whole field says nothing about.
+      const result = await updateLocation(
+        formFor({ id: cafe.id, name: "Corner Cafe", aliases: "x".repeat(192) }),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.fieldErrors?.aliases).toBeTruthy();
+    });
+
     it("refuses a rename onto another place rather than merging them", async () => {
       state.unlocked = true;
       const cafe = await place(state.ownerId, "Corner Cafe");
