@@ -976,6 +976,61 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
     ).rejects.toMatchObject({ code: "P2002" });
   });
 
+  it("prefers a place's own name over another place's alias for it", async () => {
+    // Reachable from an import, a restore, a hand repair, or an upgrade caught
+    // mid-deployment: the canonical claim for one place is missing while
+    // another place carries an alias spelt the same. The action-side checks
+    // stop it being created through the UI; they cannot stop it arriving.
+    const cafe = await prisma.location.create({
+      data: {
+        ownerId: state.ownerId,
+        name: "Corner Cafe",
+        normalizedName: normalizeLocationName("Corner Cafe"),
+      },
+    });
+    const bar = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "Quiet Bar"),
+    );
+    await prisma.locationAlias.create({
+      data: {
+        ownerId: state.ownerId,
+        locationId: bar!.id,
+        value: "Corner Cafe",
+        normalizedValue: normalizeLocationName("Corner Cafe"),
+      },
+    });
+
+    const resolved = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "Corner Cafe", {
+        address: "12 Corner Street",
+      }),
+    );
+
+    // Asking the alias index first filed every mention of the cafe's real name
+    // against the bar, and wrote the cafe's address onto the bar with it.
+    expect(resolved?.id).toBe(cafe.id);
+    expect(
+      (await prisma.location.findUniqueOrThrow({ where: { id: bar!.id } }))
+        .address,
+    ).toBeNull();
+    expect(
+      (await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } }))
+        .address,
+    ).toBe("12 Corner Street");
+    // And the conflicting claim is re-pointed rather than left to mislead the
+    // next lookup in the same way.
+    const claim = await prisma.locationAlias.findUniqueOrThrow({
+      where: {
+        ownerId_normalizedValue: {
+          ownerId: state.ownerId,
+          normalizedValue: normalizeLocationName("Corner Cafe"),
+        },
+      },
+    });
+    expect(claim.locationId).toBe(cafe.id);
+    expect(claim.isCanonical).toBe(true);
+  });
+
   it("will not hand back a location the alias points at across accounts", async () => {
     const stranger = await createTestUser();
     const theirs = await prisma.location.create({

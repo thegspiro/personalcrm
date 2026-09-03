@@ -79,7 +79,14 @@ find "${CREDENTIAL_DIR}" -maxdepth 1 -type f -name '.mariadb-client.*' -delete 2
 credentials="$(mktemp "${CREDENTIAL_DIR}/.mariadb-client.XXXXXX")"
 # Parse rather than echoing DATABASE_URL: the credential never appears in argv
 # or logs. The option file exists only for this run and is mode 0600.
-node - "${credentials}" <<'NODE'
+# Node prints the decoded database name, and the shell keeps that rather than
+# reading it back out of the option file. `esc` escapes the value it writes, so
+# a database whose name contains a double quote — legal, and reachable through
+# a percent-encoded DATABASE_URL — came back out of the file with a literal
+# backslash in it. The application connected to `foo"bar` while every dump
+# named `foo\"bar`, which does not exist, so the backups failed nightly and
+# nothing else did.
+database="$(node - "${credentials}" <<'NODE'
 const fs = require("node:fs");
 const target = process.argv[2];
 const url = new URL(process.env.DATABASE_URL);
@@ -143,14 +150,17 @@ const config = [
   `password="${esc(decodeURIComponent(url.password))}"`,
   ...where,
   ...tls,
-  "[personalcrm-backup]",
-  `database="${esc(db)}"`,
+  // No database line. `mariadb-dump` reads [client] and [mariadb-dump]; the
+  // name lived here only to be read back out, which is what made an escaped
+  // value look like the real one.
   "",
 ].join("\n");
 fs.writeFileSync(target, config, { mode: 0o600 });
+// The only thing this writes to stdout, because the shell captures it.
+process.stdout.write(db);
 NODE
-
-database="$(sed -n 's/^database="\(.*\)"$/\1/p' "${credentials}")"
+)"
+[[ -n "${database}" ]] || fail "DATABASE_URL must name a database"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 final="${BACKUP_DIR}/personalcrm-${timestamp}.sql.gz"
 temporary="${final}.partial.$$"

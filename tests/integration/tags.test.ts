@@ -604,6 +604,50 @@ async function releaseAfterItBlocks(release: () => void): Promise<void> {
   release();
 }
 
+describe.skipIf(!hasTestDatabase)("tag name validation", () => {
+  beforeEach(async () => {
+    await reset();
+    state.duringPrivacyRead = null;
+    state.beforeWrite = null;
+    state.enabled = false;
+    state.unlocked = true;
+    state.ownerId = (await createTestUser()).id;
+  });
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  // `tagName` is a bare string schema, so its issues carry an empty path and
+  // `invalid()` — which keeps only issues that have one — dropped them. The
+  // toast said to check the highlighted fields, nothing was highlighted, and
+  // nothing said what was wrong. `useAction` shows the field detail when there
+  // is any, so naming the field is what puts the sentence on screen.
+  const named = (result: Awaited<ReturnType<typeof createTag>>) =>
+    result.ok === false ? result.fieldErrors?.name : undefined;
+
+  it("names the field when a tag name is only whitespace", async () => {
+    // `required` on the input is satisfied by a space, so this is reachable
+    // from the form and not only from a direct request.
+    const form = new FormData();
+    form.set("name", "   ");
+    expect(named(await createTag(form))).toBe("A tag name is required.");
+  });
+
+  it("names the field when a rename exceeds the column", async () => {
+    const tag = await prisma.tag.create({
+      data: { ownerId: state.ownerId, name: "Book club", slug: "book-club" },
+    });
+    const form = new FormData();
+    form.set("id", tag.id);
+    form.set("name", "x".repeat(97));
+    expect(named(await renameTag(form))).toBeTruthy();
+    // And the tag is untouched.
+    expect(
+      (await prisma.tag.findUniqueOrThrow({ where: { id: tag.id } })).name,
+    ).toBe("Book club");
+  });
+});
+
 describe.skipIf(!hasTestDatabase)("tag writes against a concurrent tab", () => {
   beforeEach(async () => {
     await reset();

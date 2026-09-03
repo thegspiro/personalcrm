@@ -11,7 +11,7 @@ import {
   type PrivacyScope,
 } from "@/server/privacy/filter";
 import { tagVisibleWhere } from "@/server/queries/tags";
-import { fail, invalid, ok, owner, str, type ActionResult } from "./helpers";
+import { fail, fieldError, ok, owner, str, type ActionResult } from "./helpers";
 
 const tagName = z.string().trim().min(1, "A tag name is required.").max(96);
 
@@ -67,10 +67,30 @@ async function namespaceLocked(): Promise<boolean> {
   return scope.enabled && !scope.unlocked;
 }
 
+/**
+ * A schema failure on the name, named.
+ *
+ * `tagName` is a bare string schema, so its issues carry an empty path, and
+ * `invalid()` keeps only issues that have one: the form was told to check the
+ * highlighted fields with nothing highlighted and no word about what was
+ * wrong. A whitespace-only name reaches this through `required`, which is
+ * satisfied by a space, and an over-long one through any direct request.
+ */
+function nameProblem(error: z.ZodError): ActionResult {
+  return fieldError(
+    "name",
+    error.issues[0]?.message ?? "A tag name is required.",
+  );
+}
+
 export async function createTag(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
-  const parsed = tagName.safeParse(str(form, "name"));
-  if (!parsed.success) return invalid(parsed.error);
+  // The raw field, not `str`: that trims first and returns undefined for a
+  // blank, which reaches the schema as "expected string, received undefined"
+  // rather than as the sentence the person needs. The account actions read it
+  // the same way, for the same reason.
+  const parsed = tagName.safeParse(form.get("name"));
+  if (!parsed.success) return nameProblem(parsed.error);
   const slug = normalizeTagSlug(parsed.data);
   if (!slug) return fail("Use at least one letter or number.");
   if (await namespaceLocked())
@@ -135,9 +155,9 @@ export async function setContactTag(
 export async function renameTag(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
   const id = str(form, "id");
-  const parsed = tagName.safeParse(str(form, "name"));
+  const parsed = tagName.safeParse(form.get("name"));
   if (!id) return fail(NOT_FOUND);
-  if (!parsed.success) return invalid(parsed.error);
+  if (!parsed.success) return nameProblem(parsed.error);
   const slug = normalizeTagSlug(parsed.data);
   if (!slug) return fail("Use at least one letter or number.");
   if (await namespaceLocked())
