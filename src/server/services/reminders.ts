@@ -22,6 +22,7 @@ import {
   importantDateMessage,
   reminderDedupKey,
   taskMessage,
+  type DigestItem,
   type ReminderMessage,
   type SchedulingPolicy,
 } from "@/lib/reminder-schedule";
@@ -141,12 +142,56 @@ function taskWhere(user: Pick<ScheduledUser, "id">, schedule: Schedule) {
   };
 }
 
+/** Selects only fields that are permitted to leave the server in a digest. */
+async function digestItemsForUser(db: Db, user: Pick<ScheduledUser, "id">, schedule: Schedule, now: Date): Promise<DigestItem[]> {
+  const [dates, cadence, tasks] = await Promise.all([
+    db.importantDate.findMany({
+      where: { ownerId: user.id, contact: { ownerId: user.id, ...visibleContact(schedule.locked) } },
+      select: {
+        label: true, date: true, recurrence: true, reminderDaysBefore: true,
+        contact: { select: { firstName: true, lastName: true } },
+      },
+    }),
+    db.contact.findMany({
+      where: cadenceWhere(user, schedule, now),
+      select: { firstName: true, lastName: true, nextTouchAt: true },
+    }),
+    db.task.findMany({
+      where: taskWhere(user, schedule),
+      select: { title: true, dueDate: true, contact: { select: { firstName: true, lastName: true } } },
+    }),
+  ]);
+  const items: DigestItem[] = [];
+  for (const date of dates) {
+    for (const offset of effectiveReminderDays(reminderPolicy(date.reminderDaysBefore))) {
+      const occurrence = dueOccurrence(plainDateFromDb(date.date), date.recurrence, schedule.today, offset);
+      if (occurrence) items.push({
+        kind: "IMPORTANT_DATE", label: date.label, contactName: personName(date.contact), date: occurrence,
+      });
+    }
+  }
+  for (const contact of cadence) {
+    if (contact.nextTouchAt) items.push({
+      kind: "CADENCE", contactName: personName(contact),
+      date: calendarDateInTz(contact.nextTouchAt, schedule.timezone),
+    });
+  }
+  for (const task of tasks) {
+    if (task.dueDate) items.push({
+      kind: "TASK", title: task.title,
+      contactName: task.contact ? personName(task.contact) : null,
+      date: plainDateFromDb(task.dueDate),
+    });
+  }
+  return items;
+}
+
 async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promise<Candidate[]> {
   const schedule = scheduleFor(user, now);
   const candidates: Candidate[] = [];
 
   const dates = await db.importantDate.findMany({
-    where: { ownerId: user.id, contact: visibleContact(schedule.locked) },
+    where: { ownerId: user.id, contact: { ownerId: user.id, ...visibleContact(schedule.locked) } },
     include: { contact: CONTACT_NAME },
   });
   for (const date of dates) {
@@ -202,6 +247,7 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
   }
 
   if (user.preference.digestEnabled && digestIsDue(now, schedule.timezone, user.preference.digestHour)) {
+    const digestItems = await digestItemsForUser(db, user, schedule, now);
     candidates.push({
       entityType: "DIGEST",
       entityId: user.id,
@@ -209,7 +255,7 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
       occurrence: dailyOccurrence(now, schedule.timezone),
       scheduledFor: plainDateToDb(schedule.today),
       offsetDays: 0,
-      ...digestMessage(cadence.length, tasks.length),
+      ...digestMessage(digestItems, schedule.today),
     });
   }
   return candidates;
@@ -250,7 +296,7 @@ async function currentMessage(
   switch (log.schedulingPolicy as SchedulingPolicy) {
     case "IMPORTANT_DATE_OFFSET": {
       const date = await db.importantDate.findFirst({
-        where: { id: log.entityId, ownerId: user.id, contact: visibleContact(schedule.locked) },
+        where: { id: log.entityId, ownerId: user.id, contact: { ownerId: user.id, ...visibleContact(schedule.locked) } },
         include: { contact: CONTACT_NAME },
       });
       if (!date || !effectiveReminderDays(reminderPolicy(date.reminderDaysBefore)).includes(log.offsetDays)) {
@@ -313,11 +359,7 @@ async function currentMessage(
       // candidate would wait for it; so does the retry, keeping its row and
       // its key rather than sending early or being cancelled outright.
       if (!digestIsDue(now, schedule.timezone, user.preference.digestHour)) return NOT_YET;
-      const [cadence, tasks] = await Promise.all([
-        db.contact.count({ where: cadenceWhere(user, schedule, now) }),
-        db.task.count({ where: taskWhere(user, schedule) }),
-      ]);
-      return digestMessage(cadence, tasks);
+      return digestMessage(await digestItemsForUser(db, user, schedule, now), schedule.today);
     }
     default:
       return null;
