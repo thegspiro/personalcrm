@@ -362,6 +362,33 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     expect(renamed.error).toMatch(/already used/i);
   });
 
+  it("still counts a tag as unassigned when only another account uses it", async () => {
+    const owner = await createTestUser();
+    const stranger = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = true;
+    state.unlocked = true;
+    const tag = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Cycling", slug: "cycling" },
+    });
+    const theirs = await prisma.contact.create({
+      data: { ownerId: stranger.id, firstName: "Nobody" },
+    });
+    // One imported row joining this account's tag to a person it does not own.
+    // "On nobody" has to mean nobody of *this* account's, or the tag vanishes
+    // while locked on the strength of someone its owner cannot see — and
+    // becomes unusable in every write path with it.
+    await prisma.contactTag.create({ data: { contactId: theirs.id, tagId: tag.id } });
+
+    state.unlocked = false;
+    expect((await listTags(owner.id)).map((row) => row.name)).toEqual(["Cycling"]);
+
+    const mine = await prisma.contact.create({
+      data: { ownerId: owner.id, firstName: "Dana" },
+    });
+    expect((await setContactTag(mine.id, tag.id, true)).ok).toBe(true);
+  });
+
   it("refuses a tag the lock is hiding on every write that takes its id", async () => {
     const owner = await createTestUser();
     state.ownerId = owner.id;

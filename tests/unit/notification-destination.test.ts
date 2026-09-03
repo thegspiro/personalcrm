@@ -335,6 +335,23 @@ describe("notification destinations", () => {
     expect(Date.now() - started).toBeLessThan(3_000);
   }, 10_000);
 
+  it("counts the role lookup against the budget too", async () => {
+    // Everything that waits on the world has to be inside the clock. The role
+    // lookup was the last await left outside it: a stalled one held the
+    // delivery open past the lease, and a later pass could reclaim the row and
+    // send while this one waited.
+    const resolve = vi.fn(async () => [{ address: "93.184.216.34", family: 4 as const }]);
+    await expect(
+      deliverToChannel(channel("NTFY", { url: "https://ntfy.example/topic" }), "s", "b", {
+        resolve,
+        isAdministrator: () => new Promise(() => {}),
+        deadlineMs: 300,
+      }),
+    ).rejects.toThrow(/deadline/i);
+    // It never got as far as looking the destination up.
+    expect(resolve).not.toHaveBeenCalled();
+  }, 10_000);
+
   it("hands the transport only what the budget has left", async () => {
     // Resolution taking most of the budget must not reset it. The adapter is
     // asked what it was given, so a fresh full budget here is visible.

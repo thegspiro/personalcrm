@@ -32,7 +32,12 @@ export function tagVisibleWhere(
       ? {}
       : {
           OR: [
-            { contacts: { none: {} } },
+            // "On nobody" means nobody *of this account's*. An unscoped `none`
+            // counted a join to another account's contact — a state the two
+            // independent foreign keys permit — so one imported row made an
+            // otherwise unassigned tag vanish while locked and become
+            // unusable, on the strength of a person its owner cannot see.
+            { contacts: { none: { contact: { ownerId } } } },
             { contacts: { some: { contact: visibleContact } } },
           ],
         }),

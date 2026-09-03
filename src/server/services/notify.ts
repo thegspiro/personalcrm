@@ -292,21 +292,15 @@ export async function deliverToChannel(
     );
   }
   const config = resolved.config;
-  const isAdministrator = dependencies.isAdministrator ?? (async (ownerId: string) => {
-    const user = await prisma.user.findUnique({ where: { id: ownerId }, select: { role: true } });
-    return user?.role === "ADMIN";
-  });
-  const administrative = await isAdministrator(channel.ownerId);
-  const resolveDns = dependencies.resolve ?? resolveHostname;
-  // The budget starts here, not at the transport. Resolution is a network
-  // round trip like any other, and starting the clock after it meant a
-  // resolver that stalled was unbounded — and then handed the transport a
-  // fresh full budget on top, so the "total" deadline was nothing of the kind
-  // and the send could still outlive the lease it was supposed to fit inside.
+  // The budget covers everything after this point, transports included. Any
+  // await left outside it is unbounded on its own and then hands whatever
+  // follows a fresh full budget, so the total is not a total — which was true
+  // first of resolution and then, one round later, of the role lookup. There
+  // is nothing between here and the return that the clock does not cover.
   const startedAt = Date.now();
   const budgetMs = dependencies.deadlineMs ?? DELIVERY_DEADLINE_MS;
   const remaining = () => budgetMs - (Date.now() - startedAt);
-  /** Resolution, held to the same clock as everything after it. */
+  /** Anything that waits on the world, held to the delivery's own clock. */
   const withinBudget = async <T,>(work: Promise<T>): Promise<T> => {
     let timer: NodeJS.Timeout | undefined;
     try {
@@ -323,6 +317,16 @@ export async function deliverToChannel(
       clearTimeout(timer);
     }
   };
+
+  const isAdministrator = dependencies.isAdministrator ?? (async (ownerId: string) => {
+    const user = await prisma.user.findUnique({ where: { id: ownerId }, select: { role: true } });
+    return user?.role === "ADMIN";
+  });
+  // A database round trip like any other: a stalled one held the delivery open
+  // past the lease, and a later pass could then reclaim the row and send it
+  // while this one was still waiting.
+  const administrative = await withinBudget(isAdministrator(channel.ownerId));
+  const resolveDns = dependencies.resolve ?? resolveHostname;
 
   if (channel.kind === "EMAIL") {
     if (typeof config.host !== "string" || typeof config.to !== "string" || typeof config.from !== "string") {
