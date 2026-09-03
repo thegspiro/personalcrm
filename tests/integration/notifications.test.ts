@@ -21,6 +21,14 @@ vi.mock("@/server/db/client", async () => {
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 
+vi.mock("node:dns/promises", () => ({
+  // A public answer for everything, so no test depends on the network — except
+  // one name that answers with nothing, which is how a destination that cannot
+  // be resolved reaches the code under test.
+  lookup: async (hostname: string) =>
+    hostname.includes("unresolvable") ? [] : [{ address: "93.184.216.34", family: 4 }],
+}));
+
 vi.mock("@/server/user/context", () => ({
   getUserContext: async () => ({
     user: { id: state.ownerId, role: state.role },
@@ -337,17 +345,15 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     });
 
     const calls: Array<Record<string, string>> = [];
-    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-      const headers = new Headers(init?.headers);
-      calls.push(Object.fromEntries(headers.entries()));
-      return new Response("{}", { status: 200 });
+    const http = vi.fn(async (input: { headers: Record<string, string> }) => {
+      calls.push(input.headers);
+      return { status: 200 };
     });
-    vi.stubGlobal("fetch", fetchMock);
-    try {
-      await deliverToChannel(channel, "subject", "body");
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    await deliverToChannel(channel, "subject", "body", {
+      resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+      isAdministrator: async () => true,
+      http,
+    });
 
     // Gotify rejects a bearer token, so sharing ntfy's scheme meant the channel
     // was offered and never delivered.
@@ -380,6 +386,30 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     ).toBe(true);
   });
 
+  it("saves a destination that does not resolve, and refuses to send to it", async () => {
+    // Saving must not depend on DNS answering. A name is unresolvable for
+    // reasons that say nothing about where it points — the resolver is down,
+    // the box is offline, the host is internal and not in DNS yet — and
+    // refusing those would make configuring a channel a network operation.
+    state.role = "MEMBER";
+    const saved = await createChannel(
+      form({ kind: "NTFY", name: "Not yet", url: "https://unresolvable.example.com/topic" }),
+    );
+    expect(saved.ok).toBe(true);
+
+    // Nothing is lost by allowing it: the check runs again before the send,
+    // where it is a failure on the row rather than a message gone astray.
+    const channel = await prisma.notificationChannel.findFirstOrThrow();
+    await expect(
+      deliverToChannel(channel, "subject", "body", {
+        isAdministrator: async () => false,
+        http: async () => {
+          throw new Error("must not be reached");
+        },
+      }),
+    ).rejects.toThrow(/did not resolve/);
+  });
+
   it("applies the same boundary to an SMTP host, which is not a URL", async () => {
     // The guard read `url`, and an email channel has none — so the hole it
     // left was exactly the size of a host plus any port, opened from the
@@ -408,21 +438,15 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     });
 
     const seen: string[] = [];
-    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      seen.push(String(url));
-      // What an endpoint the member controls can answer with.
-      expect(init?.redirect).toBe("manual");
-      return new Response(null, {
-        status: 307,
-        headers: { location: "http://127.0.0.1:8080/internal" },
-      });
+    const http = vi.fn(async (input: { url: URL }) => {
+      seen.push(String(input.url));
+      return { status: 307 };
     });
-    vi.stubGlobal("fetch", fetchMock);
-    try {
-      await expect(deliverToChannel(channel, "subject", "body")).rejects.toThrow(/redirect/i);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    await expect(deliverToChannel(channel, "subject", "body", {
+      resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+      isAdministrator: async () => false,
+      http,
+    })).rejects.toThrow(/redirect/i);
 
     // Only the configured address was contacted; the redirect was not taken.
     expect(seen).toEqual(["https://public.example/hook"]);

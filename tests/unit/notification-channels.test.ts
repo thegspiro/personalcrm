@@ -7,8 +7,6 @@ import {
   encryptedKeyFor,
   isChannelKind,
   secretFieldsFor,
-  isPrivateHostname,
-  targetsPrivateHost,
   validateChannelConfig,
 } from "@/lib/notification-channels";
 
@@ -135,55 +133,6 @@ describe("the test notification", () => {
       expect(text).not.toMatch(/[${}]/);
       expect(text.length).toBeGreaterThan(0);
     }
-  });
-});
-
-describe("targetsPrivateHost", () => {
-  it("recognises the literal addresses a probe would use", () => {
-    for (const url of [
-      "http://127.0.0.1:8080/hook",
-      "http://localhost:3000/hook",
-      "https://10.0.0.5/message",
-      "http://192.168.1.1/",
-      "http://172.16.0.9/",
-      "http://172.31.255.254/",
-      "http://169.254.169.254/latest/meta-data/",
-      "http://100.64.0.1/",
-      "http://0.0.0.0/",
-      "http://[::1]:8080/",
-      "http://[fd00::1]/",
-    ]) {
-      expect(targetsPrivateHost(url), url).toBe(true);
-    }
-  });
-
-  it("leaves public addresses and ordinary hostnames alone", () => {
-    for (const url of [
-      "https://ntfy.sh/my-topic",
-      "https://discord.com/api/webhooks/1/x",
-      "https://gotify.example.com/message",
-      "http://172.32.0.1/",
-      "http://8.8.8.8/",
-      "http://192.169.1.1/",
-      "not a url",
-    ]) {
-      expect(targetsPrivateHost(url), url).toBe(false);
-    }
-  });
-
-  it("answers the same question of a bare hostname, which is what SMTP gives", () => {
-    // An email channel has a host and a port, not a URL.
-    expect(isPrivateHostname("127.0.0.1")).toBe(true);
-    expect(isPrivateHostname("localhost")).toBe(true);
-    expect(isPrivateHostname("10.0.0.25")).toBe(true);
-    expect(isPrivateHostname("[::1]")).toBe(true);
-    expect(isPrivateHostname("smtp.example.com")).toBe(false);
-    expect(isPrivateHostname("  ")).toBe(false);
-  });
-
-  it("does not treat a hostname that merely looks numeric as private", () => {
-    // Four dotted parts, but not an address.
-    expect(targetsPrivateHost("http://10.0.0.999/")).toBe(false);
   });
 });
 

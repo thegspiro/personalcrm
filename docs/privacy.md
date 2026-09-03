@@ -332,9 +332,12 @@ Gotify are meant to be run, and it is the case where nothing leaves the
 building at all.
 
 With one boundary: on an installation with more than one account, only an
-administrator may aim a channel at a **private, loopback or link-local
-address**. The server makes the request and reports what came back, so without
-that line any member could use it to probe the host's own network. A
+administrator may aim a channel at a **non-public address**. This includes
+private, loopback, link-local, multicast, unspecified, carrier-grade NAT and
+reserved IPv4 and IPv6 ranges. Every hostname is resolved in full; one
+non-public answer makes the whole destination non-public. The server makes the
+request and reports what came back, so without that line any member could use
+it to probe the host's own network. A
 single-account install never meets it — the only account is the administrator.
 
 That applies to an SMTP host as much as to a URL — an email channel names a
@@ -346,18 +349,20 @@ to a refused one would otherwise walk straight through the boundary, since the
 destination never passes back through it. A notification endpoint has no reason
 to redirect; configure the address it points at.
 
-**Literal addresses only, and that is a deliberate limit rather than an
-oversight.** A hostname that resolves to a private address is not caught. Doing
-so properly means resolving the name and then pinning the connection to the
-address that was checked — otherwise the answer can change between the check
-and the connection — in both the HTTP client and the mail transport. That is
-not implemented; see [known gaps](README.md#known-gaps).
+The check runs both when configuration is saved and immediately before every
+delivery. HTTP and SMTP connections are pinned to an address from that exact
+validated answer set while the original hostname remains in use for HTTP Host,
+TLS SNI and certificate verification. DNS therefore cannot change the address
+between the safety check and the connection. Redirects remain refused.
 
-So the boundary raises the cost of probing rather than making it impossible. It
-is worth having on those terms, and it is not worth mistaking for more. If the
-people with accounts on your installation are not people you trust with an
-outbound request from the server, `DISABLE_SIGNUP` is the control that actually
-answers that, and it is the recommended posture anyway.
+The two checks differ in one way. Saving is refused for a name that resolves
+somewhere a member may not reach, but not for one that does not resolve at
+all: a name is unresolvable for reasons that say nothing about where it points
+— the resolver is down, the machine is offline, the host is internal and not
+in DNS yet — and refusing those would make configuring a channel depend on the
+network being up. Nothing is lost by allowing them, because the check before
+the send is the one that matters, and there an unresolvable name is a failure
+recorded on the row rather than a message sent somewhere it should not go.
 
 ### Private contacts and the send
 

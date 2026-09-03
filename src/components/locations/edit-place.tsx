@@ -138,7 +138,16 @@ export function EditPlaceSheet({
             </SheetDescription>
           </SheetHeader>
 
-          <form action={onSubmit} id={`edit-place-${place.id}`}>
+          <form
+            action={onSubmit}
+            id={`edit-place-${place.id}`}
+            // The sheet is a column with a scrolling body and a footer that
+            // stays put; this form sits between them, so it has to be a column
+            // that shrinks too. Without it the body cannot shrink, the form
+            // grows past the sheet's height, and Save is clipped off the
+            // bottom on a phone — visible to a test, unreachable to a thumb.
+            className="flex min-h-0 flex-1 flex-col"
+          >
             <SheetBody className="grid gap-3">
               <Field label="Name" htmlFor="place-name" error={fieldErrors.name}>
                 <Input
