@@ -26,8 +26,9 @@ import type { ActionResult } from "@/server/actions/helpers";
  * suspends that render until its data arrives; and the update that ends the
  * form's pending state is part of it. A submit button reading the form's
  * status is therefore disabled from the click until the refreshed row has
- * rendered, so nothing can be submitted twice in between. The plan-checklist
- * spec slows a refresh and checks exactly that.
+ * rendered — and the editor closes in that same commit, before it is
+ * painted, so there is no frame in which it is open with a live button. The
+ * plan-checklist spec slows a refresh and checks exactly that.
  */
 export function useAction() {
   const router = useRouter();
@@ -43,7 +44,13 @@ export function useAction() {
     startTransition(() => router.refresh());
   }, [requested, router, startTransition]);
 
-  React.useEffect(() => {
+  // A layout effect, not a passive one: the commit that lands the refresh
+  // also ends the form's pending state, and a passive effect runs only after
+  // that commit has been painted — one frame with the editor still open over
+  // the refreshed row and its Save button live. Closing from a layout effect
+  // re-renders before the paint, so that frame never exists; the plan
+  // checklist spec caught it on a slow runner.
+  React.useLayoutEffect(() => {
     // The pending render is what proves a refresh was in flight; without
     // waiting for it, the effect that starts the transition and this one
     // run in the same commit, before anything has been fetched.
