@@ -411,6 +411,12 @@ function restoreNames(text: string, names: MaskedName[]): string {
  *
  * Only the first hit is taken — an interaction happens in one place.
  */
+/**
+ * Where an interaction stops being where it happened and starts being notes.
+ * The same boundary `splitTitleAndNotes` uses.
+ */
+const COMMENTARY_PATTERN = /,|\s[–—-]\s/;
+
 export function matchKnownLocation(
   text: string,
   locations: ParseLocation[],
@@ -438,7 +444,7 @@ export function matchKnownLocation(
   // talked about Northside Cafe" happened wherever it happened, and reading a
   // venue out of the sentence about it also cut the note down to "talked
   // about". The same boundary `splitTitleAndNotes` uses.
-  const commentary = text.search(/,|\s[–—-]\s/);
+  const commentary = text.search(COMMENTARY_PATTERN);
   const searchable = commentary === -1 ? text : text.slice(0, commentary);
 
   for (const { location, matchName } of candidates) {
@@ -451,8 +457,19 @@ export function matchKnownLocation(
       `(?<![A-Za-z0-9])${words.join("\\s+")}(?![A-Za-z0-9])`,
       "i",
     );
-    const found = pattern.exec(searchable);
+    // A name that carries the boundary inside itself — "Washington, D.C." —
+    // can never be found in `searchable`, which stops at the first comma, so
+    // quick add proposed a brand new place called "Washington" instead of the
+    // one the account already had. Those names are searched in the whole line
+    // and accepted only if they *start* before the boundary: the venue is
+    // still in the part before the notes, it merely spans a comma of its own.
+    // Every other name keeps the narrow search, so "talked about Northside
+    // Cafe" remains commentary rather than a venue.
+    const spansCommentary = COMMENTARY_PATTERN.test(matchName);
+    const found = pattern.exec(spansCommentary ? text : searchable);
     if (!found) continue;
+    if (spansCommentary && commentary !== -1 && found.index > commentary)
+      continue;
 
     const at = found.index;
     const matchedText = found[0];

@@ -75,6 +75,17 @@ every account that never switched the lock on, which is unlocked by definition.
 **Counts are filtered too.** A total that shifts when you unlock is itself a
 disclosure. Tag queries apply the same contact scope: while locked, tags used only by private contacts are omitted and usage totals count visible contacts only.
 
+One predicate, `tagVisibleWhere`, expresses that, and the write paths ask it as
+well as the list. A tag on nobody stays listed while locked — it discloses
+nobody, and hiding it would leave a tag just created unusable until an unlock —
+but a tag that exists only on private people is neither listed nor assignable.
+The write check is not redundant with the list: a contact form rendered while
+unlocked keeps the ids it was given, and closing the lock in another tab does
+not empty that form. Adding a contact, editing one, and the per-contact toggle
+all refuse an id the current scope does not admit. Merging or deleting a tag is
+refused while locked whenever the tag is on someone private, since one moves
+the hidden assignment and the other destroys it.
+
 The Places directory derives its visits, people, rankings and last-visited
 dates only from interactions admitted by `interactionPrivacyWhere`. A place
 known solely through hidden interactions is not listed while locked. Plans at
@@ -86,6 +97,16 @@ a hidden place is neither offered back to you nor editable while locked, and
 "that place wasn't found" is the only answer either way, since a distinguishable
 error would itself confirm one exists. Typing its name still resolves to the
 existing row rather than creating a duplicate.
+
+Renaming a place is refused outright while locked — every rename, not only the
+ones that collide. Enforcing uniqueness necessarily answers "is this name
+already taken", and a name that is taken but matches nothing you can see is a
+place the lock is hiding, so the refusal itself was the signal. Changing a
+place's alternate names is refused for the same reason and in the same words:
+the alias claims are checked against the whole account, hidden places included,
+so guessing one asked exactly the question the rename guard exists to refuse.
+Only a *change* is held back; every other field stays editable while locked,
+and a save that resubmits the aliases it was rendered with goes through.
 
 The module is deliberately pure and free of request context so it can be tested
 directly against a database; [`filter.ts`](../src/server/privacy/filter.ts)

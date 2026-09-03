@@ -19,9 +19,45 @@ export async function resolveLocation(
     where: {
       ownerId_normalizedValue: { ownerId, normalizedValue: normalizedName },
     },
-    select: { location: { select: { id: true, name: true } } },
+    // The alias's own ownerId and its location's are two independent foreign
+    // keys, so an imported, restored or hand-repaired row can carry one
+    // account's alias against another account's place. Accepting it on the
+    // alias's owner alone would hand back that foreign location — and this
+    // function then attaches interactions to it, and writes `details` onto
+    // its address and URL. The location has to be ours too.
+    select: { location: { select: { id: true, name: true, ownerId: true } } },
   });
-  let existing: { id: string; name: string } | null = existingAlias?.location ?? null;
+  const claimed = existingAlias?.location ?? null;
+  const usable = claimed?.ownerId === ownerId;
+  let existing: { id: string; name: string } | null =
+    claimed && usable ? { id: claimed.id, name: claimed.name } : null;
+  // The key is claimed in our own namespace but points somewhere we cannot
+  // use, so every write below has to re-point that row rather than insert
+  // beside it — the unique index would refuse a second one, and a raw
+  // constraint error out of `resolveLocation` reaches the caller as a failed
+  // save with nothing to show for it. Claiming it is the repair: the row is
+  // ours, and where it points is the part that is wrong.
+  const claimIsStale = Boolean(claimed) && !usable;
+  const claimCanonical = async (locationId: string, value: string) => {
+    if (claimIsStale) {
+      await tx.locationAlias.update({
+        where: {
+          ownerId_normalizedValue: { ownerId, normalizedValue: normalizedName },
+        },
+        data: { locationId, value, isCanonical: true },
+      });
+      return;
+    }
+    await tx.locationAlias.create({
+      data: {
+        ownerId,
+        locationId,
+        value,
+        normalizedValue: normalizedName,
+        isCanonical: true,
+      },
+    });
+  };
   // Repair a missing canonical claim for callers that inserted Location
   // directly (and for a process straddling an upgrade deployment).
   if (!existing) {
@@ -29,17 +65,7 @@ export async function resolveLocation(
       where: { ownerId_normalizedName: { ownerId, normalizedName } },
       select: { id: true, name: true },
     });
-    if (existing) {
-      await tx.locationAlias.create({
-        data: {
-          ownerId,
-          locationId: existing.id,
-          value: existing.name,
-          normalizedValue: normalizedName,
-          isCanonical: true,
-        },
-      });
-    }
+    if (existing) await claimCanonical(existing.id, existing.name);
   }
   if (existing) {
     if (details.address || details.url) {
@@ -53,22 +79,16 @@ export async function resolveLocation(
     }
     return existing;
   }
-  return tx.location.create({
+  const created = await tx.location.create({
     data: {
       ownerId,
       name,
       normalizedName,
       address: details.address,
       url: details.url,
-      locationAliases: {
-        create: {
-          ownerId,
-          value: name,
-          normalizedValue: normalizedName,
-          isCanonical: true,
-        },
-      },
     },
     select: { id: true, name: true },
   });
+  await claimCanonical(created.id, created.name);
+  return created;
 }

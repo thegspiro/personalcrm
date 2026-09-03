@@ -328,7 +328,11 @@ somewhere confidently wrong. Aliases live in owner-scoped `LocationAlias` rows.
 Each stores the entered `value`, its case-and-whitespace-folded
 `normalizedValue`, and whether it is the canonical name. `(ownerId,
 normalizedValue)` is unique, so two places in one account cannot claim the same
-spelling while different owners remain isolated.
+spelling while different owners remain isolated. The alias's `ownerId` and its
+location's are two independent columns, and nothing in the schema ties them
+together, so `resolveLocation` requires the related location to belong to the
+caller as well: an imported or restored row whose two owners disagree is
+re-pointed at the right place rather than followed to the wrong one.
 The legacy JSON `Location.aliases` column is retained only as a preservation
 area for ambiguous imported claims; new reads and writes use the indexed table.
 

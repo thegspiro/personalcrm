@@ -16,7 +16,12 @@ import {
   removeAvatarFile,
   storeAvatar,
 } from "@/server/services/avatars";
-import { contactPrivacyWhere, privacyScope } from "@/server/privacy/filter";
+import {
+  contactPrivacyWhere,
+  privacyScope,
+  type PrivacyScope,
+} from "@/server/privacy/filter";
+import { tagVisibleWhere } from "@/server/queries/tags";
 import {
   type ActionResult,
   bool,
@@ -30,17 +35,33 @@ import {
   strList,
 } from "./helpers";
 
+/**
+ * Replace a contact's tags with the submitted set.
+ *
+ * Scoped by what the lock currently shows, not by ownership alone. A contact
+ * form loaded while unlocked keeps the ids of every tag it listed, and closing
+ * the lock in another tab does not empty that form: submitting it then carried
+ * a tag that exists only on private people onto a visible contact — writing a
+ * private-derived association from a locked session, and publishing the hidden
+ * tag's name, since one visible use is what puts it back in `listTags`.
+ *
+ * The scope is read by the caller rather than here, so the cookie read happens
+ * before the transaction opens rather than inside it.
+ */
 async function replaceTags(
   tx: Prisma.TransactionClient,
   ownerId: string,
+  scope: PrivacyScope,
   contactId: string,
   tagIds: string[],
 ) {
   const unique = [...new Set(tagIds)];
-  const owned = unique.length
-    ? await tx.tag.count({ where: { ownerId, id: { in: unique } } })
+  const usable = unique.length
+    ? await tx.tag.count({
+        where: { id: { in: unique }, ...tagVisibleWhere(ownerId, scope) },
+      })
     : 0;
-  if (owned !== unique.length) throw new InvalidTagError();
+  if (usable !== unique.length) throw new InvalidTagError();
   await tx.contactTag.deleteMany({ where: { contactId } });
   if (unique.length)
     await tx.contactTag.createMany({
@@ -87,6 +108,9 @@ export async function createContact(
   form: FormData,
 ): Promise<ActionResult<{ id: string }>> {
   const { ownerId } = await owner();
+  // Read before the transaction opens, so the cookie the lock lives in is not
+  // consulted with one held.
+  const scope = await privacyScope();
 
   const parsed = nameSchema.safeParse({
     firstName: str(form, "firstName"),
@@ -157,7 +181,7 @@ export async function createContact(
         created.id,
         form,
       );
-      await replaceTags(tx, ownerId, created.id, strList(form, "tagIds"));
+      await replaceTags(tx, ownerId, scope, created.id, strList(form, "tagIds"));
       // A new contact has no interactions, but this seeds nextTouchAt from their
       // creation date so a cadence starts counting immediately.
       await recomputeContactActivity(tx, [created.id]);
@@ -251,7 +275,7 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
       });
 
       await saveCustomFieldValuesOrThrow(tx, ownerId, "CONTACT", id, form);
-      await replaceTags(tx, ownerId, id, strList(form, "tagIds"));
+      await replaceTags(tx, ownerId, scope, id, strList(form, "tagIds"));
       // The cadence may have changed, so nextTouchAt has to be re-derived.
       await recomputeContactActivity(tx, [id]);
     });

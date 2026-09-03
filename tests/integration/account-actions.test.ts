@@ -2,7 +2,11 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { hashPassword, verifyPassword } from "@/server/auth/password";
 import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
 
-const state = vi.hoisted(() => ({ ownerId: "", secured: false }));
+const state = vi.hoisted(() => ({
+  ownerId: "",
+  secured: false,
+  securingFails: false,
+}));
 vi.mock("@/server/db/client", async () => ({
   prisma: (await import("./db")).prisma,
 }));
@@ -18,6 +22,7 @@ vi.mock("@/server/auth/session", () => ({
   revokeAllOtherSessions: vi.fn(),
   revokeOtherSession: vi.fn(),
   secureSessionsAfterPasswordChange: async () => {
+    if (state.securingFails) throw new Error("deadlock");
     state.secured = true;
   },
 }));
@@ -36,6 +41,7 @@ describe.skipIf(!hasTestDatabase)("account actions", () => {
     const user = await createTestUser();
     state.ownerId = user.id;
     state.secured = false;
+    state.securingFails = false;
     await prisma.user.update({
       where: { id: user.id },
       data: { passwordHash: await hashPassword("OldPassword1!") },
@@ -110,6 +116,42 @@ describe.skipIf(!hasTestDatabase)("account actions", () => {
     });
     expect(await verifyPassword("NewPassword2!", user.passwordHash)).toBe(true);
   });
+  it("does not leave the password changed when securing the sessions fails", async () => {
+    // Two commits meant a deadlock or a dropped connection in the second one
+    // left the new password in place with every other session still signed
+    // in — while the action reported failure, and the old password no longer
+    // worked to try again. One transaction, so the failure takes both back.
+    state.securingFails = true;
+    await expect(
+      changePassword(
+        form({
+          currentPassword: "OldPassword1!",
+          newPassword: "NewPassword2!",
+          confirmPassword: "NewPassword2!",
+        }),
+      ),
+    ).rejects.toThrow(/deadlock/);
+
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { id: state.ownerId },
+    });
+    expect(await verifyPassword("OldPassword1!", user.passwordHash)).toBe(true);
+    expect(await verifyPassword("NewPassword2!", user.passwordHash)).toBe(false);
+
+    // And the owner can still change it once the database is well again.
+    state.securingFails = false;
+    expect(
+      (await changePassword(
+        form({
+          currentPassword: "OldPassword1!",
+          newPassword: "NewPassword2!",
+          confirmPassword: "NewPassword2!",
+        }),
+      )).ok,
+    ).toBe(true);
+    expect(state.secured).toBe(true);
+  });
+
   it("keeps the whitespace a password was chosen with, as signing in does", async () => {
     // Sign-in reads the field raw. Trimming it here meant an account whose
     // password has a leading or trailing space could sign in and then fail to

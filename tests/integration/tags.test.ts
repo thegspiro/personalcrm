@@ -27,6 +27,7 @@ vi.mock("@/server/privacy/lock", () => ({
 
 const { createTag, deleteTag, mergeTag, setContactTag } =
   await import("@/server/actions/tags");
+const { createContact, updateContact } = await import("@/server/actions/contacts");
 const { listTags } = await import("@/server/queries/tags");
 const { listContacts } = await import("@/server/queries/contacts");
 
@@ -177,5 +178,54 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     state.unlocked = true;
     expect((await mergeTag(source.id, destination.id)).ok).toBe(true);
     expect(await prisma.contactTag.count({ where: { tagId: destination.id } })).toBe(2);
+  });
+
+  it("refuses a tag the lock is hiding on every write that takes its id", async () => {
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = true;
+    state.unlocked = true;
+    const secret = await prisma.contact.create({
+      data: { ownerId: owner.id, firstName: "Robin", isPrivate: true },
+    });
+    const hiddenTag = await prisma.tag.create({
+      data: {
+        ownerId: owner.id,
+        name: "Therapy",
+        slug: "therapy",
+        contacts: { create: { contactId: secret.id } },
+      },
+    });
+    const visible = await prisma.contact.create({
+      data: { ownerId: owner.id, firstName: "Dana" },
+    });
+
+    // A contact form rendered while unlocked keeps this id. Closing the lock
+    // in another tab does not empty that form, and submitting it attached a
+    // tag that exists only on someone private to someone visible — which both
+    // writes a private-derived association from a locked session and puts the
+    // hidden tag's name back into listTags through its new visible use.
+    state.unlocked = false;
+    expect((await listTags(owner.id)).map((tag) => tag.name)).toEqual([]);
+
+    const edit = new FormData();
+    edit.set("id", visible.id);
+    edit.set("firstName", "Dana");
+    edit.append("tagIds", hiddenTag.id);
+    expect((await updateContact(edit)).ok).toBe(false);
+
+    const add = new FormData();
+    add.set("firstName", "Sam");
+    add.append("tagIds", hiddenTag.id);
+    expect((await createContact(add)).ok).toBe(false);
+
+    expect((await setContactTag(visible.id, hiddenTag.id, true)).ok).toBe(false);
+    expect(await prisma.contactTag.count({ where: { tagId: hiddenTag.id } })).toBe(1);
+    expect(await prisma.contact.count({ where: { firstName: "Sam" } })).toBe(0);
+
+    // Unlocked it is an ordinary tag of the owner's again.
+    state.unlocked = true;
+    expect((await setContactTag(visible.id, hiddenTag.id, true)).ok).toBe(true);
+    expect(await prisma.contactTag.count({ where: { tagId: hiddenTag.id } })).toBe(2);
   });
 });

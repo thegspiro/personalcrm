@@ -3,7 +3,7 @@ import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createHash, randomBytes } from "node:crypto";
-import type { User } from "@prisma/client";
+import type { Prisma, User } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 
 export const SESSION_COOKIE = "pcrm_session";
@@ -77,21 +77,32 @@ export async function revokeAllOtherSessions(userId: string): Promise<number> {
   ).count;
 }
 
-/** Password changes retain this login, close its privacy unlock, and end every other login. */
+/**
+ * Password changes retain this login, close its privacy unlock, and end every
+ * other login.
+ *
+ * Takes an optional transaction client so a caller can commit this together
+ * with the new password hash. Split across two commits, a failure here leaves
+ * the password changed and every other session alive while the action reports
+ * failure — and the old password no longer works to try again.
+ */
 export async function secureSessionsAfterPasswordChange(
   userId: string,
+  tx?: Prisma.TransactionClient,
 ): Promise<void> {
   const tokenHash = await currentTokenHash();
   if (!tokenHash) return;
-  await prisma.$transaction([
-    prisma.session.deleteMany({
+  const run = async (client: Prisma.TransactionClient) => {
+    await client.session.deleteMany({
       where: { userId, tokenHash: { not: tokenHash } },
-    }),
-    prisma.session.updateMany({
+    });
+    await client.session.updateMany({
       where: { userId, tokenHash },
       data: { privacyUnlockedAt: null },
-    }),
-  ]);
+    });
+  };
+  if (tx) return run(tx);
+  await prisma.$transaction(run);
 }
 
 function isSecureContext(): boolean {

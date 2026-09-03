@@ -176,6 +176,28 @@ export async function updateLocation(form: FormData): Promise<ActionResult> {
     }
   }
 
+  // Changing the aliases is refused while locked, for the reason the rename
+  // above is: the collision check below asks the same question of the whole
+  // account, hidden places included. Keeping the canonical name unchanged
+  // walked straight past the rename guard, and then a guessed alias came back
+  // as "Another place already uses that name or alias" while a free one saved
+  // — the same oracle by a different field. Only a *change* is refused, so
+  // every other edit still saves with the aliases the form resubmits.
+  const submitted = new Set(aliases.map((alias) => alias.normalizedValue));
+  const stored = new Set(
+    existing.locationAliases
+      .filter((alias) => !alias.isCanonical)
+      .map((alias) => alias.normalizedValue),
+  );
+  const aliasesChanged =
+    submitted.size !== stored.size ||
+    [...submitted].some((value) => !stored.has(value));
+  if (aliasesChanged) {
+    const scope = await privacyScope();
+    if (scope.enabled && !scope.unlocked)
+      return fieldError("aliases", "Unlock to change a place's other names.");
+  }
+
   const claims = [
     normalizedName,
     ...aliases.map((alias) => alias.normalizedValue),

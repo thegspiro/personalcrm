@@ -231,8 +231,33 @@ same sentence.
 A rename onto a name already in use is **refused**, never merged: two real venues
 can be spelled alike, and folding one into the other would take a history with it.
 
+While the lock is closed, both a rename and a change to a place's alternate
+names are refused outright — every one, not only the ones that collide. Asking
+whether a name is taken is asking whether a hidden place answers to it, and the
+refusal itself was the answer. `updateLocation` compares the submitted aliases
+with the stored ones so only a *change* is held back: every other field stays
+editable, and a save that resubmits the aliases it was rendered with goes
+through.
+
 Every place a lookup can be reached from is behind an explicit button. See
 [privacy.md](privacy.md) for what is sent.
+
+### Tags — `actions/tags.ts`
+
+| Action | Notes |
+| --- | --- |
+| `createTag` | Name plus a `normalizeTagSlug` key, unique per owner. The key keeps letters and numbers in any script, so a name with no ASCII spelling is not refused as empty |
+| `renameTag` | Recomputes the key; a rename onto an existing one is refused rather than merged |
+| `mergeTag` | Moves the source's assignments onto the destination and deletes the source. Refused while locked if either tag is on someone private — the move would carry the hidden assignment |
+| `deleteTag` | Removes the tag; assignments go by cascade, contacts are untouched. Refused while locked on the same condition, since the cascade destroys the hidden assignment |
+| `setContactTag` | Assigns or unassigns one tag on one contact |
+
+Every one of these scopes by `ownerId`, and each that names a tag by id asks
+`tagVisibleWhere` rather than ownership alone — as do `createContact` and
+`updateContact` when they replace a contact's tags. A form rendered while
+unlocked keeps the ids it listed, and closing the lock in another tab does not
+empty it, so the write is the only place that check can be made. See
+[privacy.md](privacy.md) for what the predicate admits.
 
 ### Customization
 

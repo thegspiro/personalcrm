@@ -5,6 +5,7 @@ import { z } from "zod";
 import { normalizeTagSlug } from "@/lib/tags";
 import { prisma } from "@/server/db/client";
 import { contactPrivacyWhere, privacyScope } from "@/server/privacy/filter";
+import { tagVisibleWhere } from "@/server/queries/tags";
 import { fail, invalid, ok, owner, str, type ActionResult } from "./helpers";
 
 const tagName = z.string().trim().min(1, "A tag name is required.").max(96);
@@ -42,8 +43,12 @@ export async function setContactTag(
       where: { id: contactId, ownerId, ...contactPrivacyWhere(scope) },
       select: { id: true },
     }),
+    // The tag has to be one the lock is currently showing, not merely one the
+    // account owns. This takes an id straight off a page that may have been
+    // rendered before the lock closed, and a tag living only on private people
+    // is exactly what must not be assignable from a locked session.
     prisma.tag.findFirst({
-      where: { id: tagId, ownerId },
+      where: { id: tagId, ...tagVisibleWhere(ownerId, scope) },
       select: { id: true },
     }),
   ]);

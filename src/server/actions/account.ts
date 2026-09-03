@@ -108,11 +108,18 @@ export async function changePassword(form: FormData): Promise<ActionResult> {
   const strength = checkPasswordStrength(password);
   if (!strength.ok)
     return fieldError("newPassword", strength.problems.join(" "));
-  await prisma.user.update({
-    where: { id: ownerId },
-    data: { passwordHash: await hashPassword(password) },
+  // Hashed before the transaction opens: this is deliberately slow work, and
+  // it has no business holding a write lock on the row.
+  const passwordHash = await hashPassword(password);
+  // One commit for both. Revoking the other sessions in a second transaction
+  // meant a deadlock or a dropped connection there left the new password
+  // committed, every other session still signed in and this one still
+  // unlocked — with the action reporting failure and the old password no
+  // longer able to retry.
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: ownerId }, data: { passwordHash } });
+    await secureSessionsAfterPasswordChange(ownerId, tx);
   });
-  await secureSessionsAfterPasswordChange(ownerId);
   revalidatePath("/", "layout");
   return ok();
 }

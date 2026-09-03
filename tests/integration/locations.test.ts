@@ -446,6 +446,96 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       ).toBe("Corner Cafe");
     });
 
+    it("refuses every alias change while locked, so an alias cannot probe either", async () => {
+      const secret = await prisma.contact.create({
+        data: { ownerId: state.ownerId, firstName: "Secret", isPrivate: true },
+      });
+      const ada = await prisma.contact.create({
+        data: { ownerId: state.ownerId, firstName: "Ada" },
+      });
+      const hidden = await place(state.ownerId, "Quiet Bar");
+      const visible = await place(state.ownerId, "Corner Cafe");
+      await visit(hidden.id, [secret.id], { label: "Quiet Bar" });
+      await visit(visible.id, [ada.id]);
+      await prisma.locationAlias.create({
+        data: {
+          ownerId: state.ownerId,
+          locationId: hidden.id,
+          value: "The Snug",
+          normalizedValue: normalizeLocationName("The Snug"),
+          isCanonical: false,
+        },
+      });
+
+      // Leaving the canonical name alone walked straight past the rename
+      // guard, and the alias collision check then answered the very same
+      // question of the whole account, hidden places included: a guessed
+      // hidden name came back as a collision while a free one saved.
+      const onto = await updateLocation(
+        formFor({ id: visible.id, name: "Corner Cafe", aliases: "The Snug" }),
+      );
+      const free = await updateLocation(
+        formFor({ id: visible.id, name: "Corner Cafe", aliases: "Somewhere New" }),
+      );
+
+      expect(onto.ok).toBe(false);
+      expect(free.ok).toBe(false);
+      expect(onto.fieldErrors?.aliases).toBe(free.fieldErrors?.aliases);
+      expect(onto.fieldErrors?.aliases).toMatch(/unlock/i);
+      expect(
+        await prisma.locationAlias.count({
+          where: { locationId: visible.id, isCanonical: false },
+        }),
+      ).toBe(0);
+
+      // Unlocked, the collision is a real answer to a real question again.
+      state.unlocked = true;
+      const taken = await updateLocation(
+        formFor({ id: visible.id, name: "Corner Cafe", aliases: "The Snug" }),
+      );
+      expect(taken.ok).toBe(false);
+      expect(taken.fieldErrors?.aliases).toMatch(/already uses/i);
+      expect(
+        (await updateLocation(
+          formFor({ id: visible.id, name: "Corner Cafe", aliases: "Somewhere New" }),
+        )).ok,
+      ).toBe(true);
+    });
+
+    it("saves the rest of the panel while locked when the aliases are unchanged", async () => {
+      const ada = await prisma.contact.create({
+        data: { ownerId: state.ownerId, firstName: "Ada" },
+      });
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, [ada.id]);
+      await prisma.locationAlias.create({
+        data: {
+          ownerId: state.ownerId,
+          locationId: cafe.id,
+          value: "The Corner",
+          normalizedValue: normalizeLocationName("The Corner"),
+          isCanonical: false,
+        },
+      });
+
+      // The form resubmits the aliases it was rendered with on every save, so
+      // only a *change* may be refused — otherwise correcting a phone number
+      // while locked would fail for no reason the user could see.
+      const result = await updateLocation(
+        formFor({
+          id: cafe.id,
+          name: "Corner Cafe",
+          aliases: "The Corner",
+          city: "Arlington",
+        }),
+      );
+
+      expect(result).toMatchObject({ ok: true });
+      expect(
+        (await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } })).city,
+      ).toBe("Arlington");
+    });
+
     it("still edits everything except the name while locked", async () => {
       const ada = await prisma.contact.create({
         data: { ownerId: state.ownerId, firstName: "Ada" },
@@ -777,5 +867,63 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
         },
       }),
     ).rejects.toMatchObject({ code: "P2002" });
+  });
+
+  it("will not hand back a location the alias points at across accounts", async () => {
+    const stranger = await createTestUser();
+    const theirs = await prisma.location.create({
+      data: {
+        ownerId: stranger.id,
+        name: "Their Cafe",
+        normalizedName: normalizeLocationName("Their Cafe"),
+      },
+    });
+    // LocationAlias.ownerId and its location's ownerId are two independent
+    // foreign keys, so an import, a restore or a hand-repair can leave one
+    // account's alias pointing at another account's place. Nothing cascades
+    // to prevent it and the unique index does not span the relation.
+    await prisma.locationAlias.create({
+      data: {
+        ownerId: state.ownerId,
+        locationId: theirs.id,
+        value: "The Local",
+        normalizedValue: "the local",
+      },
+    });
+
+    const resolved = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "The Local", {
+        address: "1 Main St",
+        url: "https://example.test",
+      }),
+    );
+
+    // Accepting the alias on its own ownerId returned the stranger's place —
+    // and this call would then have written our address and URL onto it, and
+    // every interaction logged here would have hung off their row.
+    expect(resolved?.id).not.toBe(theirs.id);
+    expect(
+      await prisma.location.findUniqueOrThrow({ where: { id: resolved!.id } }),
+    ).toMatchObject({ ownerId: state.ownerId });
+    expect(
+      await prisma.location.findUniqueOrThrow({ where: { id: theirs.id } }),
+    ).toMatchObject({ address: null, url: null });
+
+    // The stale row is re-pointed rather than left beside a second claim on
+    // the same key — the unique index refuses that, and the constraint error
+    // would have come out of the save with nothing to show the user.
+    const claims = await prisma.locationAlias.findMany({
+      where: { ownerId: state.ownerId, normalizedValue: "the local" },
+      select: { locationId: true, isCanonical: true },
+    });
+    expect(claims).toEqual([
+      { locationId: resolved!.id, isCanonical: true },
+    ]);
+
+    // And the repaired place resolves by name from then on.
+    const again = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "the local"),
+    );
+    expect(again?.id).toBe(resolved!.id);
   });
 });
