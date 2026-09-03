@@ -220,6 +220,88 @@ describe.skipIf(!hasTestDatabase)("family overview", () => {
     expect(touched).not.toContain(secret.id);
   });
 
+  it("tiers a cousin apart from a sibling in the same generation band", async () => {
+    // The band both land in is generation 0; without a tier the page set them
+    // side by side, which is exactly the distinction it exists to draw.
+    const me = await person("Me");
+    const sister = await person("Sister");
+    const cousin = await person("Cousin");
+    const spouse = await person("Spouse");
+    await link(me.id, sister.id, "sibling");
+    await link(me.id, cousin.id, "cousin");
+    await link(me.id, spouse.id, "spouse");
+
+    const overview = await getFamilyOverview(ownerId, me.id);
+    const band = overview.bands.find((b) => b.generation === 0);
+    const tierOf = (id: string) => band?.people.find((p) => p.person.id === id)?.tier;
+
+    expect(tierOf(sister.id)).toBe("immediate");
+    expect(tierOf(spouse.id)).toBe("immediate");
+    expect(tierOf(cousin.id)).toBe("extended");
+    // The anchor has no link to itself, so nothing to be tiered by.
+    expect(tierOf(me.id)).toBeNull();
+  });
+
+  it("names the relative an untiered person was reached through", async () => {
+    const me = await person("Me");
+    const mum = await person("Mum");
+    const gran = await person("Gran");
+    await link(me.id, mum.id, "parent");
+    await link(mum.id, gran.id, "parent");
+
+    const overview = await getFamilyOverview(ownerId, me.id);
+    const entry = overview.bands
+      .flatMap((b) => b.people)
+      .find((p) => p.person.id === gran.id);
+
+    // Gran is nobody's recorded relative of the anchor's, so she carries no
+    // tier — only the fact that she hangs off Mum.
+    expect(entry?.tier).toBeNull();
+    expect(entry?.via).toEqual({ id: mum.id, name: "Mum" });
+
+    // Mum is linked directly, so there is nothing further to explain.
+    const mumEntry = overview.bands
+      .flatMap((b) => b.people)
+      .find((p) => p.person.id === mum.id);
+    expect(mumEntry?.tier).toBe("immediate");
+    expect(mumEntry?.via).toBeNull();
+  });
+
+  it("leaves someone with no path to the anchor both untiered and unattributed", async () => {
+    const me = await person("Me");
+    const mum = await person("Mum");
+    const outsider = await person("Outsider");
+    const theirKid = await person("Their kid");
+    await link(me.id, mum.id, "parent");
+    await link(theirKid.id, outsider.id, "parent");
+
+    const overview = await getFamilyOverview(ownerId, me.id);
+    const entry = overview.bands
+      .flatMap((b) => b.people)
+      .find((p) => p.person.id === outsider.id);
+
+    expect(entry).toBeDefined();
+    expect(entry?.tier).toBeNull();
+    expect(entry?.via).toBeNull();
+  });
+
+  it("takes the closest tier when someone is recorded two ways at once", async () => {
+    const me = await person("Me");
+    const both = await person("Both");
+    await link(me.id, both.id, "cousin");
+    await link(me.id, both.id, "sibling-in-law");
+
+    const overview = await getFamilyOverview(ownerId, me.id);
+    const entry = overview.bands
+      .flatMap((b) => b.people)
+      .find((p) => p.person.id === both.id);
+
+    // Extended comes before in-law in the display order, so that is the heading
+    // they belong under — not both, and not whichever was recorded first.
+    expect(entry?.links).toHaveLength(2);
+    expect(entry?.tier).toBe("extended");
+  });
+
   it("has nothing to anchor on when no family is recorded", async () => {
     await person("Alone");
 

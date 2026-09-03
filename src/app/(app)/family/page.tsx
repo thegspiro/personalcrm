@@ -70,6 +70,8 @@ export default async function FamilyPage({
       avatarPath: entry.person.avatarPath,
       isArchived: entry.person.isArchived,
       terms: entry.links.map((link) => link.term),
+      tier: entry.tier,
+      via: entry.via,
       householdNames: entry.householdNames,
     })),
   }));

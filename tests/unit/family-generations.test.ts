@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { pickAnchor, walkGenerations, type GenerationEdge } from "@/lib/family";
+import {
+  closestTier,
+  groupFamilyBand,
+  pickAnchor,
+  walkGenerations,
+  type GenerationEdge,
+} from "@/lib/family";
 
 /**
  * The banding behind `/family`.
@@ -34,9 +40,9 @@ describe("walkGenerations", () => {
 
     const bands = walkGenerations(edges, "me");
 
-    expect(bands.get("me")).toBe(0);
-    expect(bands.get("mum")).toBe(1);
-    expect(bands.get("gran")).toBe(2);
+    expect(bands.get("me")?.generation).toBe(0);
+    expect(bands.get("mum")?.generation).toBe(1);
+    expect(bands.get("gran")?.generation).toBe(2);
   });
 
   it("counts a grandchild two bands down", () => {
@@ -44,8 +50,8 @@ describe("walkGenerations", () => {
 
     const bands = walkGenerations(edges, "me");
 
-    expect(bands.get("kid")).toBe(-1);
-    expect(bands.get("grandkid")).toBe(-2);
+    expect(bands.get("kid")?.generation).toBe(-1);
+    expect(bands.get("grandkid")?.generation).toBe(-2);
   });
 
   it("keeps a spouse in the same band as their partner", () => {
@@ -53,7 +59,7 @@ describe("walkGenerations", () => {
 
     const bands = walkGenerations(edges, "me");
 
-    expect(bands.get("dad")).toBe(1);
+    expect(bands.get("dad")?.generation).toBe(1);
   });
 
   it("takes the shortest path, so a remarriage cannot drag someone off-band", () => {
@@ -70,10 +76,10 @@ describe("walkGenerations", () => {
 
     const bands = walkGenerations(edges, "me");
 
-    expect(bands.get("gran")).toBe(2);
-    expect(bands.get("step-grandad")).toBe(2);
-    expect(bands.get("uncle")).toBe(1);
-    expect(bands.get("cousin")).toBe(0);
+    expect(bands.get("gran")?.generation).toBe(2);
+    expect(bands.get("step-grandad")?.generation).toBe(2);
+    expect(bands.get("uncle")?.generation).toBe(1);
+    expect(bands.get("cousin")?.generation).toBe(0);
   });
 
   it("does not revisit the anchor, so a cycle cannot move it off zero", () => {
@@ -81,7 +87,7 @@ describe("walkGenerations", () => {
 
     const bands = walkGenerations(edges, "me");
 
-    expect(bands.get("me")).toBe(0);
+    expect(bands.get("me")?.generation).toBe(0);
   });
 
   it("leaves an unreachable person out entirely, for the caller to band at zero", () => {
@@ -94,7 +100,38 @@ describe("walkGenerations", () => {
   });
 
   it("bands an anchor with no links at all as themselves and nobody else", () => {
-    expect([...walkGenerations([], "me")]).toEqual([["me", 0]]);
+    expect([...walkGenerations([], "me")]).toEqual([["me", { generation: 0, via: null }]]);
+  });
+
+  it("names the relative each person was reached through", () => {
+    const edges = [...pair("mum", "me"), ...pair("gran", "mum")];
+
+    const bands = walkGenerations(edges, "me");
+
+    // The anchor came from nowhere; a direct link came through the anchor; and
+    // Gran hangs off Mum, which is the only thing the tree can honestly say
+    // about her without inventing "grandmother".
+    expect(bands.get("me")?.via).toBeNull();
+    expect(bands.get("mum")?.via).toBe("me");
+    expect(bands.get("gran")?.via).toBe("mum");
+  });
+
+  it("reports the shortest path's predecessor, not the last one tried", () => {
+    const edges = [
+      ...pair("mum", "me"),
+      ...pair("gran", "mum"),
+      ...spouses("gran", "grandad"),
+      ...pair("grandad", "uncle"),
+    ];
+
+    const bands = walkGenerations(edges, "me");
+
+    // Gran is reached through Mum, Grandad through Gran (they are married), and
+    // Uncle through Grandad — each hop records the step that actually reached
+    // it, so the tree can name the relative a person hangs off.
+    expect(bands.get("gran")?.via).toBe("mum");
+    expect(bands.get("grandad")?.via).toBe("gran");
+    expect(bands.get("uncle")?.via).toBe("grandad");
   });
 
   it("terminates on a family that loops back on itself", () => {
@@ -107,8 +144,108 @@ describe("walkGenerations", () => {
 
     const bands = walkGenerations(edges, "a");
 
-    expect(bands.get("a")).toBe(0);
-    expect(bands.get("b")).toBe(1);
+    expect(bands.get("a")?.generation).toBe(0);
+    expect(bands.get("b")?.generation).toBe(1);
+  });
+});
+
+describe("closestTier", () => {
+  it("takes the closest reading when someone is recorded more than one way", () => {
+    // A sister-in-law who is also a cousin belongs under the closer heading,
+    // not under both and not under whichever was recorded first.
+    expect(closestTier(["extended", "inlaw"])).toBe("extended");
+    expect(closestTier(["former", "immediate"])).toBe("immediate");
+    expect(closestTier(["chosen"])).toBe("chosen");
+  });
+
+  it("has nothing to say about someone with no direct link", () => {
+    expect(closestTier([])).toBeNull();
+  });
+});
+
+describe("groupFamilyBand", () => {
+  const sister = { id: "sister", tier: "immediate" as const, via: null };
+  const cousin = { id: "cousin", tier: "extended" as const, via: null };
+  const inlaw = { id: "inlaw", tier: "inlaw" as const, via: null };
+
+  it("keeps a cousin out of the group holding your sister", () => {
+    // The whole point: a generation is not a relationship, and banding alone
+    // set these three side by side.
+    const groups = groupFamilyBand([cousin, inlaw, sister], "Wren");
+
+    expect(groups.map((group) => group.label)).toEqual([
+      "Immediate family",
+      "Extended family",
+      "In-laws",
+    ]);
+    expect(groups[0].people).toEqual([sister]);
+    expect(groups[1].people).toEqual([cousin]);
+  });
+
+  it("orders tiers by closeness whatever order they arrived in", () => {
+    const chosen = { id: "chosen", tier: "chosen" as const, via: null };
+    const step = { id: "step", tier: "step" as const, via: null };
+    const former = { id: "former", tier: "former" as const, via: null };
+
+    const groups = groupFamilyBand([former, chosen, step, cousin, sister], null);
+
+    expect(groups.map((group) => group.label)).toEqual([
+      "Immediate family",
+      "Extended family",
+      "Step & half",
+      "Chosen family",
+      "Former family",
+    ]);
+  });
+
+  it("groups the untiered under the relative they were reached through", () => {
+    const gran = { id: "gran", tier: null, via: { id: "mum", name: "Mum" } };
+    const grandad = { id: "grandad", tier: null, via: { id: "mum", name: "Mum" } };
+
+    const groups = groupFamilyBand([gran, grandad], "Wren");
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].label).toBe("Through Mum");
+    expect(groups[0].people).toEqual([gran, grandad]);
+  });
+
+  it("keeps two connectors with the same name apart", () => {
+    // The bug this repository has already had once, in the anchor picker: a
+    // display name is not an identity, and merging these would file one
+    // person's relatives under the other.
+    const a = { id: "a", tier: null, via: { id: "sam-1", name: "Sam" } };
+    const b = { id: "b", tier: null, via: { id: "sam-2", name: "Sam" } };
+
+    const groups = groupFamilyBand([a, b], "Wren");
+
+    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => group.key)).toEqual(["via:sam-1", "via:sam-2"]);
+    expect(groups.every((group) => group.label === "Through Sam")).toBe(true);
+  });
+
+  it("puts recorded relationships ahead of inferred paths", () => {
+    const gran = { id: "gran", tier: null, via: { id: "mum", name: "Mum" } };
+
+    const groups = groupFamilyBand([gran, cousin], "Wren");
+
+    expect(groups.map((group) => group.label)).toEqual(["Extended family", "Through Mum"]);
+  });
+
+  it("says plainly when someone has no path to the anchor at all", () => {
+    const stranger = { id: "stranger", tier: null, via: null };
+
+    const groups = groupFamilyBand([stranger, sister], "Wren");
+
+    expect(groups.map((group) => group.label)).toEqual([
+      "Immediate family",
+      "Not linked to Wren",
+    ]);
+    // Anchorless trees still have to name the group.
+    expect(groupFamilyBand([stranger], null)[0].label).toBe("Not linked to the tree");
+  });
+
+  it("has no groups for an empty band", () => {
+    expect(groupFamilyBand([], "Wren")).toEqual([]);
   });
 });
 

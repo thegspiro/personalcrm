@@ -8,6 +8,7 @@ import {
   privacyScope,
 } from "@/server/privacy/filter";
 import {
+  closestTier,
   endedRole,
   familyMeta,
   pickAnchor,
@@ -15,6 +16,7 @@ import {
   type FamilyRole,
   type FamilyTier,
   type GenerationEdge,
+  type GenerationHop,
   FAMILY_TIER_ORDER,
 } from "@/lib/family";
 import {
@@ -292,6 +294,18 @@ export interface FamilyTreePerson {
   /** How they connect, phrased from the anchor's point of view. */
   links: FamilyLink[];
   householdNames: string[];
+  /**
+   * Closest tier among `links`, or null when the anchor has no direct link.
+   *
+   * A generation band is not a relationship: without this, a cousin, a
+   * sibling-in-law and a stepsister all sit beside your own sister.
+   */
+  tier: FamilyTier | null;
+  /**
+   * The relative the shortest path reached them through — set only when there
+   * is no direct link, which is the case the tree cannot tier.
+   */
+  via: { id: string; name: string } | null;
 }
 
 /**
@@ -331,7 +345,7 @@ export const getFamilyOverview = cache(
       delta: familyMeta(row.type)!.generation,
     }));
     const anchor = pickAnchor(graph, anchorId);
-    const generations = anchor ? walkGenerations(graph, anchor) : new Map<string, number>();
+    const hops = anchor ? walkGenerations(graph, anchor) : new Map<string, GenerationHop>();
 
     const householdNames = new Map<string, string[]>();
     for (const household of households) {
@@ -350,6 +364,8 @@ export const getFamilyOverview = cache(
           person: self,
           links: [],
           householdNames: householdNames.get(self.id) ?? [],
+          tier: null,
+          via: null,
         });
       }
     }
@@ -360,9 +376,21 @@ export const getFamilyOverview = cache(
       people.get(row.toContact.id)?.links.push(toLink(row));
     }
 
+    // Tier where the anchor recorded the relationship itself; otherwise the
+    // relative the walk arrived through. The two are exclusive by construction:
+    // a direct link is a one-step path, so anyone carrying a tier came through
+    // the anchor and has nothing further to explain.
+    for (const [id, entry] of people) {
+      entry.tier = closestTier(entry.links.map((link) => link.tier));
+      if (entry.tier !== null) continue;
+      const viaId = hops.get(id)?.via;
+      const viaPerson = viaId && viaId !== anchor ? people.get(viaId) : undefined;
+      entry.via = viaPerson ? { id: viaId!, name: displayName(viaPerson.person) } : null;
+    }
+
     const banded = new Map<number, FamilyTreePerson[]>();
     for (const [id, entry] of people) {
-      const generation = generations.get(id) ?? 0;
+      const generation = hops.get(id)?.generation ?? 0;
       const list = banded.get(generation);
       if (list) list.push(entry);
       else banded.set(generation, [entry]);

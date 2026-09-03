@@ -29,6 +29,14 @@ async function openPerson(page: Page, name: string) {
   await expect(page.getByRole("heading", { name, level: 2 })).toBeVisible();
 }
 
+/** A person's contact id, taken from the URL their page lives at. */
+async function idOf(page: Page, name: string): Promise<string> {
+  await openPerson(page, name);
+  const id = new URL(page.url()).pathname.split("/")[2];
+  if (!id) throw new Error(`no contact id in ${page.url()}`);
+  return id;
+}
+
 /** The Family card, identified by its add button rather than its title. */
 function familyCard(page: Page) {
   return page
@@ -128,6 +136,48 @@ test("the family page bands people by generation", async ({ page }) => {
 
   await expect(page.getByText(/parents' generation/i).first()).toBeVisible();
   await expect(page.getByText("Measured from here")).toBeVisible();
+});
+
+test("a band separates immediate family from cousins and exes", async ({ page }) => {
+  await ensureSignedIn(page);
+  // Everyone here lands in Idris's own generation: a sibling, a cousin, and the
+  // ex-spouse an earlier test re-typed. Banding by generation alone set all
+  // three side by side, which is the distinction the page exists to draw.
+  const cousin = `Bo ${suffix()}`;
+  const sibling = `Nell ${suffix()}`;
+  await addPerson(page, cousin);
+  await addPerson(page, sibling);
+  await linkRelative(page, SIBLING(), cousin, "Cousin");
+  await linkRelative(page, SIBLING(), sibling, "Sibling");
+
+  await page.goto(`/family?anchor=${await idOf(page, SIBLING())}`);
+
+  // The anchor's own band is the one holding the badge, which beats matching a
+  // heading whose possessive depends on how the stamped name happens to end.
+  const band = page.locator("section").filter({ hasText: "Measured from here" });
+
+  await expect(band.getByRole("heading", { name: "Immediate family" })).toBeVisible();
+  await expect(band.getByRole("heading", { name: "Extended family" })).toBeVisible();
+  await expect(band.getByRole("heading", { name: "Former family" })).toBeVisible();
+
+  // Each name sits under its own heading rather than in one undifferentiated
+  // list: the group is the <ul> that follows its heading.
+  const immediate = band.locator("div").filter({
+    has: page.getByRole("heading", { name: "Immediate family" }),
+  }).last();
+  await expect(immediate.getByRole("link", { name: new RegExp(sibling) })).toBeVisible();
+  await expect(immediate.getByRole("link", { name: new RegExp(cousin) })).toHaveCount(0);
+});
+
+test("someone with no direct link is filed under whoever reaches them", async ({ page }) => {
+  await ensureSignedIn(page);
+  // Wren is Idris's parent and Juno is Idris's child, so anchoring on Wren
+  // leaves Juno reachable only through Idris.
+  await page.goto(`/family?anchor=${await idOf(page, PARENT())}`);
+
+  await expect(
+    page.getByRole("heading", { name: `Through ${SIBLING()}` }).first(),
+  ).toBeVisible();
 });
 
 test("households group people explicitly", async ({ page }) => {

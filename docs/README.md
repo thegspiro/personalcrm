@@ -54,7 +54,7 @@ packaged as one container with the database built in.
 | Dashboard | `/` | Arrangeable widgets |
 | People | `/people` | Contacts, phone numbers and addresses, facts, dates, significant moments, gifts, debts, dietary needs |
 | Timeline | `/timeline` | Every interaction, unified |
-| Family | `/family` | Households, relationship graph, generation banding, suggestions; relatives can be linked and households renamed from the page itself |
+| Family | `/family` | Households, relationship graph, generation banding grouped by tier, suggestions; relatives can be linked and households renamed from the page itself |
 | Dating | `/dating` | Optional layer; pipeline, date log, flags, comparison |
 | Ideas | `/ideas` | Conversation starters, and plans — things to do with someone |
 | Follow-ups | `/tasks` | Due contact cadences and manual tasks in separate sections |
