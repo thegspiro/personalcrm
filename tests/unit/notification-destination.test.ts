@@ -254,11 +254,22 @@ describe("notification destinations", () => {
     // not this repository's: 192.0.2.1 hangs on one machine here and is
     // refused in 3ms on another. So one is looked for, and the check says so
     // rather than inventing a result when the environment offers none.
+    //
+    // The probe has to prove more than "stalls for a moment". What the check
+    // needs is that the dial is *still* on this address when the budget runs
+    // out, and the budget handed to the dial is what remains of the deadline
+    // after resolution — so it is shorter than the deadline, never longer. A
+    // 250ms probe guarding a 300ms deadline left 50ms of room, and CI found
+    // it: an address hung past the probe, was refused just before the
+    // deadline, and the second address was then tried entirely legitimately.
+    // Proving a stall several times the whole deadline leaves no such gap.
+    const DEADLINE_MS = 300;
+    const STALL_PROOF_MS = 6 * DEADLINE_MS;
     const net = await import("node:net");
     const stalls = async (address: string) =>
       await new Promise<boolean>((decide) => {
         const probe = net.connect({ host: address, port: 2525 });
-        const timer = setTimeout(() => { probe.destroy(); decide(true); }, 250);
+        const timer = setTimeout(() => { probe.destroy(); decide(true); }, STALL_PROOF_MS);
         const settle = (answer: boolean) => {
           clearTimeout(timer);
           probe.destroy();
@@ -301,7 +312,7 @@ describe("notification destinations", () => {
               { address: "127.0.0.1", family: 4 as const },
             ],
             isAdministrator: async () => true,
-            deadlineMs: 300,
+            deadlineMs: DEADLINE_MS,
           },
         ),
       ).rejects.toThrow(/deadline|timed out/i);
@@ -316,7 +327,7 @@ describe("notification destinations", () => {
     } finally {
       await new Promise<void>((done) => server.close(() => done()));
     }
-  }, 40_000);
+  }, 60_000);
 
   it("counts a stalled resolver against the delivery budget", async () => {
     // The budget used to start at the transport, so resolution was unbounded —
