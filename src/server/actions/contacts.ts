@@ -75,8 +75,9 @@ async function assertOwnedContact(
   ownerId: string,
   contactId: string,
 ): Promise<boolean> {
+  const scope = await privacyScope();
   const found = await prisma.contact.findFirst({
-    where: { id: contactId, ownerId },
+    where: { id: contactId, ownerId, ...contactPrivacyWhere(scope) },
     select: { id: true },
   });
   return Boolean(found);

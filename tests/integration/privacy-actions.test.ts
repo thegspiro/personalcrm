@@ -33,6 +33,9 @@ vi.mock("@/server/privacy/lock", () => ({
     retryAfterSeconds: 0,
   }),
   lock: vi.fn(),
+  // privacyScope() extends a live unlock on every protected read; without it
+  // in the mock every scoped query throws instead of being scoped.
+  recordProtectedReadActivity: async () => ({ ok: true, expiresAt: null }),
   requireUnlocked: vi.fn(),
   setPin: vi.fn(),
   unlock: async (pin: string) =>
@@ -41,6 +44,10 @@ vi.mock("@/server/privacy/lock", () => ({
 
 const { setPrivacyLockEnabled, updatePrivacyPreferences } = await import(
   "@/server/actions/privacy"
+);
+const { updateDebt, settleDebt, deleteDebt } = await import("@/server/actions/details");
+const { updateInteraction, deleteInteraction } = await import(
+  "@/server/actions/interactions"
 );
 
 function form(fields: Record<string, string>): FormData {
@@ -115,5 +122,104 @@ describe.skipIf(!hasTestDatabase)("privacy preference actions", () => {
 
     expect(result.ok).toBe(true);
     expect(await lockEnabled()).toBe(false);
+  });
+});
+
+describe.skipIf(!hasTestDatabase)("locked mutation privacy", () => {
+  beforeEach(async () => {
+    await reset();
+    const user = await createTestUser();
+    state.ownerId = user.id;
+    state.enabled = true;
+    state.unlocked = false;
+  });
+
+  async function contact(isPrivate = false) {
+    return prisma.contact.create({
+      data: { ownerId: state.ownerId, firstName: isPrivate ? "Private" : "Public", isPrivate },
+    });
+  }
+
+  function interactionForm(id: string, contactId: string, title: string) {
+    const data = form({ id, occurredAt: "2026-08-20T12:00:00.000Z", title });
+    data.append("contactIds", contactId);
+    return data;
+  }
+
+  it("blocks every mutation of a private row while locked and allows them unlocked", async () => {
+    const person = await contact();
+    const makeDebt = (description: string) =>
+      prisma.debt.create({
+        data: {
+          ownerId: state.ownerId,
+          contactId: person.id,
+          direction: "THEY_OWE_ME",
+          description,
+          incurredOn: new Date("2026-08-01T00:00:00.000Z"),
+          isPrivate: true,
+        },
+      });
+    const edited = await makeDebt("edit me");
+    const settled = await makeDebt("settle me");
+    const deleted = await makeDebt("delete me");
+
+    expect(await updateDebt(form({ id: edited.id, description: "changed", isPrivate: "true" }))).toMatchObject({ ok: false });
+    expect(await settleDebt(settled.id, new Date("2026-08-02T00:00:00.000Z"))).toMatchObject({ ok: false });
+    expect(await deleteDebt(deleted.id)).toMatchObject({ ok: false });
+
+    state.unlocked = true;
+    expect(await updateDebt(form({ id: edited.id, description: "changed", isPrivate: "true" }))).toEqual({ ok: true, data: undefined });
+    expect(await settleDebt(settled.id, new Date("2026-08-02T00:00:00.000Z"))).toEqual({ ok: true, data: undefined });
+    expect(await deleteDebt(deleted.id)).toEqual({ ok: true, data: undefined });
+  });
+
+  it.each(["participant", "mention"] as const)(
+    "blocks editing and deleting an interaction with a private %s, then allows both unlocked",
+    async (relation) => {
+      const publicPerson = await contact();
+      const privatePerson = await contact(true);
+      const makeInteraction = (title: string) =>
+        prisma.interaction.create({
+          data: {
+            ownerId: state.ownerId,
+            occurredAt: new Date("2026-08-20T12:00:00.000Z"),
+            title,
+            participants: {
+              create: [{ contactId: relation === "participant" ? privatePerson.id : publicPerson.id }],
+            },
+            mentions: {
+              create: relation === "mention" ? [{ contactId: privatePerson.id }] : [],
+            },
+          },
+        });
+      const edited = await makeInteraction("edit me");
+      const deleted = await makeInteraction("delete me");
+      const participantId = relation === "participant" ? privatePerson.id : publicPerson.id;
+
+      expect(await updateInteraction(interactionForm(edited.id, participantId, "changed"))).toMatchObject({ ok: false });
+      expect(await deleteInteraction(deleted.id)).toMatchObject({ ok: false });
+
+      state.unlocked = true;
+      expect(await updateInteraction(interactionForm(edited.id, participantId, "changed"))).toEqual({ ok: true, data: undefined });
+      expect(await deleteInteraction(deleted.id)).toEqual({ ok: true, data: undefined });
+    },
+  );
+
+  it("preserves cross-owner rejection while unlocked", async () => {
+    const other = await createTestUser();
+    const person = await prisma.contact.create({ data: { ownerId: other.id, firstName: "Other" } });
+    const debt = await prisma.debt.create({
+      data: {
+        ownerId: other.id,
+        contactId: person.id,
+        direction: "THEY_OWE_ME",
+        description: "not mine",
+        incurredOn: new Date("2026-08-01T00:00:00.000Z"),
+      },
+    });
+    state.unlocked = true;
+
+    expect(await settleDebt(debt.id, new Date("2026-08-02T00:00:00.000Z"))).toMatchObject({ ok: false });
+    expect(await deleteDebt(debt.id)).toMatchObject({ ok: false });
   });
 });
