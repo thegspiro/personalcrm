@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { normalizeTagSlug } from "@/lib/tags";
 import { prisma } from "@/server/db/client";
 import { contactPrivacyWhere, privacyScope } from "@/server/privacy/filter";
@@ -28,6 +29,16 @@ function refresh(contactId?: string) {
  * would not help. Both are held back until an unlock; assigning an existing
  * tag, which changes no name, stays available.
  */
+const TAKEN = "A tag with that name already exists.";
+
+/** The `(ownerId, slug)` unique key, met by a race rather than a check. */
+function isDuplicateSlug(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2002"
+  );
+}
+
 async function namespaceLocked(): Promise<boolean> {
   const scope = await privacyScope();
   return scope.enabled && !scope.unlocked;
@@ -44,8 +55,17 @@ export async function createTag(form: FormData): Promise<ActionResult> {
   const exists = await prisma.tag.findUnique({
     where: { ownerId_slug: { ownerId, slug } },
   });
-  if (exists) return fail("A tag with that name already exists.");
-  await prisma.tag.create({ data: { ownerId, name: parsed.data, slug } });
+  if (exists) return fail(TAKEN);
+  try {
+    await prisma.tag.create({ data: { ownerId, name: parsed.data, slug } });
+  } catch (error) {
+    // Two tabs, or two clients, can both pass the check above before either
+    // insert commits. The loser then met the unique key as a server error
+    // rather than the sentence the first click would have got, which is the
+    // same outcome by a different route and should read the same way.
+    if (isDuplicateSlug(error)) return fail(TAKEN);
+    throw error;
+  }
   refresh();
   return ok();
 }
@@ -107,9 +127,15 @@ export async function renameTag(form: FormData): Promise<ActionResult> {
     where: { ownerId, slug, NOT: { id } },
     select: { id: true },
   });
-  if (collision)
-    return fail("That name is already used. Merge the tags instead.");
-  await prisma.tag.update({ where: { id }, data: { name: parsed.data, slug } });
+  const RENAMED_ONTO = "That name is already used. Merge the tags instead.";
+  if (collision) return fail(RENAMED_ONTO);
+  try {
+    await prisma.tag.update({ where: { id }, data: { name: parsed.data, slug } });
+  } catch (error) {
+    // The same race as `createTag`, from the other direction.
+    if (isDuplicateSlug(error)) return fail(RENAMED_ONTO);
+    throw error;
+  }
   refresh();
   return ok();
 }

@@ -330,6 +330,38 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     expect(moved.map((join) => join.contactId)).toEqual([mine.id]);
   });
 
+  it("answers a lost name race with the ordinary message, not a server error", async () => {
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = false;
+    state.unlocked = true;
+
+    // Both requests pass the existence check before either insert commits —
+    // two tabs, or two clicks. The loser met the unique key as a thrown error
+    // rather than the sentence the winner's duplicate would have produced,
+    // which is the same outcome reached by a different route.
+    const name = new FormData();
+    name.set("name", "Climbing");
+    const [first, second] = await Promise.all([createTag(name), createTag(name)]);
+
+    expect([first.ok, second.ok].filter(Boolean)).toHaveLength(1);
+    const loser = first.ok ? second : first;
+    expect(loser.error).toMatch(/already exists/i);
+    expect(await prisma.tag.count({ where: { ownerId: owner.id } })).toBe(1);
+
+    // The same race from the other direction: renaming onto a name taken in
+    // between the check and the update.
+    const other = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Outdoors", slug: "outdoors" },
+    });
+    const rename = new FormData();
+    rename.set("id", other.id);
+    rename.set("name", "Climbing");
+    const renamed = await renameTag(rename);
+    expect(renamed.ok).toBe(false);
+    expect(renamed.error).toMatch(/already used/i);
+  });
+
   it("refuses a tag the lock is hiding on every write that takes its id", async () => {
     const owner = await createTestUser();
     state.ownerId = owner.id;

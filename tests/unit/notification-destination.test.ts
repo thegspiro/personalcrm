@@ -318,6 +318,43 @@ describe("notification destinations", () => {
     }
   }, 40_000);
 
+  it("counts a stalled resolver against the delivery budget", async () => {
+    // The budget used to start at the transport, so resolution was unbounded —
+    // and a slow answer then handed the transport a fresh full budget on top.
+    // A "total" deadline that begins after the first network round trip is not
+    // one, and the send could still outlive the lease it exists to fit inside.
+    const started = Date.now();
+    await expect(
+      deliverToChannel(channel("NTFY", { url: "https://slow.example/topic" }), "s", "b", {
+        resolve: () => new Promise(() => {}),
+        isAdministrator: async () => true,
+        deadlineMs: 300,
+      }),
+    ).rejects.toThrow(/deadline/i);
+    // Ended by the budget rather than by anything downstream.
+    expect(Date.now() - started).toBeLessThan(3_000);
+  }, 10_000);
+
+  it("hands the transport only what the budget has left", async () => {
+    // Resolution taking most of the budget must not reset it. The adapter is
+    // asked what it was given, so a fresh full budget here is visible.
+    const spent = 250;
+    const http = vi.fn(async ({ deadlineMs }: { deadlineMs: number }) => {
+      expect(deadlineMs).toBeLessThan(400 - spent + 120);
+      return { status: 200 };
+    });
+    await deliverToChannel(channel("NTFY", { url: "https://ntfy.example/topic" }), "s", "b", {
+      resolve: async () => {
+        await new Promise((settle) => setTimeout(settle, spent));
+        return [{ address: "93.184.216.34", family: 4 as const }];
+      },
+      http,
+      isAdministrator: async () => false,
+      deadlineMs: 400,
+    });
+    expect(http).toHaveBeenCalledOnce();
+  }, 10_000);
+
   it("enforces the channel owner's current role at delivery time", async () => {
     const resolve = async () => [{ address: "192.168.1.20", family: 4 as const }];
     const http = vi.fn(async () => ({ status: 200 }));

@@ -37,13 +37,29 @@ fi
 
 available_mb="$(df -Pm "${BACKUP_DIR}" | awk 'NR == 2 { print $4 }')"
 [[ "${available_mb}" =~ ^[0-9]+$ ]] || fail "could not determine free space in ${BACKUP_DIR}"
-# Both read as base ten. A setting written "08" passes every digit check and
-# then is an invalid octal literal to the shell's arithmetic — and because the
-# expression sits in an `if`, the error evaluates as false rather than stopping
-# the script, so the guard was skipped and the dump went ahead with the disk
-# nearly full. The one failure mode this check exists to prevent, reached by
-# writing the number with a leading zero.
-if (( 10#${available_mb} < 10#${MIN_FREE_MB} )); then
+# Compared as decimal strings, not as numbers.
+#
+# The shell's arithmetic has bitten this check twice. "08" is an invalid octal
+# literal, and because the expression sits in an `if` the error read as false
+# rather than stopping the script. Reading both in base ten fixed that and left
+# the other half: arithmetic is fixed width, so a minimum beyond its range
+# wraps — 9999999999999999999 made "100 < minimum" false as surely as the octal
+# error did. Both times the guard was skipped and the dump ran on a full disk,
+# which is the one thing it exists to prevent.
+#
+# Digit strings have neither failure. Leading zeroes go, then the shorter
+# number is the smaller one, and equal lengths compare left to right.
+lt() {
+    local a="$1" b="$2"
+    while [[ "${#a}" -gt 1 && "${a}" == 0* ]]; do a="${a#0}"; done
+    while [[ "${#b}" -gt 1 && "${b}" == 0* ]]; do b="${b#0}"; done
+    if [[ "${#a}" -ne "${#b}" ]]; then
+        [[ "${#a}" -lt "${#b}" ]]
+    else
+        [[ "${a}" < "${b}" ]]
+    fi
+}
+if lt "${available_mb}" "${MIN_FREE_MB}"; then
     fail "only ${available_mb} MiB is free in ${BACKUP_DIR}; ${MIN_FREE_MB} MiB is required"
 fi
 
@@ -101,9 +117,15 @@ if (untranslatable.length > 0) {
 }
 
 const socketPath = params.get("socket");
+// WHATWG keeps the square brackets around an IPv6 literal, because in a URL
+// they are delimiters separating the host from the port. The MariaDB client
+// wants the address itself, so `host="[2001:db8::1]"` fails to resolve — the
+// application connecting happily through the same URL while every scheduled
+// dump failed.
+const host = url.hostname.replace(/^\[|\]$/g, "");
 const where = socketPath
   ? [`socket="${esc(socketPath)}"`, "protocol=socket"]
-  : [`host="${esc(url.hostname)}"`, `port=${url.port || 3306}`, "protocol=tcp"];
+  : [`host="${esc(host)}"`, `port=${url.port || 3306}`, "protocol=tcp"];
 
 const tls = [];
 const ca = params.get("sslcert");

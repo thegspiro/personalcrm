@@ -298,23 +298,51 @@ export async function deliverToChannel(
   });
   const administrative = await isAdministrator(channel.ownerId);
   const resolveDns = dependencies.resolve ?? resolveHostname;
-  const deadlineMs = dependencies.deadlineMs ?? DELIVERY_DEADLINE_MS;
+  // The budget starts here, not at the transport. Resolution is a network
+  // round trip like any other, and starting the clock after it meant a
+  // resolver that stalled was unbounded — and then handed the transport a
+  // fresh full budget on top, so the "total" deadline was nothing of the kind
+  // and the send could still outlive the lease it was supposed to fit inside.
+  const startedAt = Date.now();
+  const budgetMs = dependencies.deadlineMs ?? DELIVERY_DEADLINE_MS;
+  const remaining = () => budgetMs - (Date.now() - startedAt);
+  /** Resolution, held to the same clock as everything after it. */
+  const withinBudget = async <T,>(work: Promise<T>): Promise<T> => {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        work,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("Channel delivery exceeded its deadline.")),
+            Math.max(1, remaining()),
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 
   if (channel.kind === "EMAIL") {
     if (typeof config.host !== "string" || typeof config.to !== "string" || typeof config.from !== "string") {
       throw new Error("Email channel requires host, from, and to.");
     }
-    const addresses = await validateDestination(config.host, administrative, resolveDns);
+    const addresses = await withinBudget(
+      validateDestination(config.host, administrative, resolveDns),
+    );
     await (dependencies.smtp ?? defaultSmtp)(config, addresses, {
       from: config.from, to: config.to, subject, text: body,
-    }, deadlineMs);
+    }, Math.max(1, remaining()));
     return;
   }
 
   const rawUrl = typeof config.url === "string" ? config.url : null;
   if (!rawUrl) throw new Error(`${channel.kind} channel requires a URL.`);
   const url = new URL(rawUrl);
-  const addresses = await validateDestination(url.hostname, administrative, resolveDns);
+  const addresses = await withinBudget(
+    validateDestination(url.hostname, administrative, resolveDns),
+  );
   const headers: Record<string, string> = { "content-type": "application/json" };
   const token = typeof config.token === "string" && config.token !== "" ? config.token : null;
   if (token) {
@@ -323,7 +351,8 @@ export async function deliverToChannel(
   }
   const payload = channel.kind === "DISCORD" ? { content: `${subject}\n${body}` } : { title: subject, message: body };
   const response = await (dependencies.http ?? defaultHttp)({
-    url, addresses, headers, body: JSON.stringify(payload), deadlineMs,
+    url, addresses, headers, body: JSON.stringify(payload),
+    deadlineMs: Math.max(1, remaining()),
   });
   if (response.status >= 300 && response.status < 400) {
     throw new Error(`Channel redirected (HTTP ${response.status}), which is not followed. Configure the address it points at.`);
