@@ -3,17 +3,19 @@ import { getUserContext } from "@/server/user/context";
 import { listTermsByKind } from "@/server/taxonomy/queries";
 import { ContactForm } from "@/components/contacts/contact-form";
 import { fieldsFor } from "@/server/queries/custom-fields";
+import { listTags } from "@/server/queries/tags";
 
 export const metadata: Metadata = { title: "Add someone" };
 export const dynamic = "force-dynamic";
 
 export default async function NewContactPage() {
   const { user, prefs } = await getUserContext();
-  const [terms, customFields] = await Promise.all([
+  const [terms, customFields, tags] = await Promise.all([
     listTermsByKind(user.id, ["CONTACT_CATEGORY", "MEETING_SOURCE"]),
     // No category picked yet, so only unscoped fields show; the rest appear
     // once they have been sorted into a category and the page is re-rendered.
     fieldsFor(user.id, "CONTACT", null),
+    listTags(user.id),
   ]);
 
   return (
@@ -29,6 +31,7 @@ export default async function NewContactPage() {
         meetingSources={terms.MEETING_SOURCE}
         defaultCadenceDays={prefs.defaultCadenceDays}
         customFields={customFields}
+        tags={tags}
       />
     </div>
   );

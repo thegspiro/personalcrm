@@ -67,7 +67,7 @@ every account that never switched the lock on, which is unlocked by definition.
 > database.
 
 **Counts are filtered too.** A total that shifts when you unlock is itself a
-disclosure.
+disclosure. Tag queries apply the same contact scope: while locked, tags used only by private contacts are omitted and usage totals count visible contacts only.
 
 The Places directory derives its visits, people, rankings and last-visited
 dates only from interactions admitted by `interactionPrivacyWhere`. A place
