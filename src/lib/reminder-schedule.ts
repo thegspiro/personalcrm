@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { calendarDateInTz, diffPlainDays, plainDateKey, type PlainDate } from "./dates";
+import { formatDailyDigest } from "./digest-formatter";
 
 export type SchedulingPolicy = "IMPORTANT_DATE_OFFSET" | "OVERDUE_CADENCE" | "INCOMPLETE_TASK_DUE" | "DAILY_DIGEST";
 
@@ -7,6 +8,8 @@ export interface ReminderMessage {
   subject: string;
   body: string;
 }
+
+export { formatDailyDigest } from "./digest-formatter";
 
 export function localClock(instant: Date, timezone: string): PlainDate & { hour: number } {
   const date = calendarDateInTz(instant, timezone);
@@ -82,8 +85,10 @@ export function taskMessage(title: string, person: string | null, dueDay: PlainD
 
 export function digestMessage(cadenceCount: number, taskCount: number): ReminderMessage {
   const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
-  return {
-    subject: "Your Personal CRM daily digest",
-    body: `${plural(cadenceCount, "cadence reminder")} and ${plural(taskCount, "due task")} need attention today.`,
-  };
+  return formatDailyDigest({
+    sections: [{
+      heading: "Due today",
+      entries: [`${plural(cadenceCount, "cadence reminder")} and ${plural(taskCount, "due task")} need attention today.`],
+    }],
+  });
 }

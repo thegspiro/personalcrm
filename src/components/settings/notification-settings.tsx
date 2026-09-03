@@ -313,10 +313,10 @@ function ChannelCard({ channel }: { channel: RedactedChannel }) {
             variant="outline"
             size="sm"
             onClick={() =>
-              void run(() => sendTestNotification(channel.id), "Test message sent")
+              void run(() => sendTestNotification(channel.id), "Sample digest sent")
             }
           >
-            Send a test
+            Send sample digest
           </Button>
           <Button
             type="button"

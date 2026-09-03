@@ -411,9 +411,13 @@ Nothing is lost by saying nothing there. The check before the send is the one
 that matters: the name is resolved, every answer inspected and the connection
 pinned to it, so a destination a member may not reach is never sent to. It
 merely takes until a delivery to say so, on the row — which is already where an
-unresolvable name reported. The **Send a test** button answers a member with
-one sentence whichever way it failed, for the same reason; an administrator,
-who is allowed a non-public destination anyway, is told what actually happened.
+unresolvable name reported. The **Send sample digest** button sends a deterministic, clearly fictional
+digest and never reads contacts, tasks, important dates, or current digest
+counts. It answers a member with one sentence whichever way it failed, for the
+same reason; an administrator, who is allowed a non-public destination anyway,
+is told what actually happened. Success means the configured transport accepted
+the payload. It cannot guarantee that a mail provider, notification service,
+operating system, or recipient device will ultimately display it.
 
 ### Private contacts and the send
 

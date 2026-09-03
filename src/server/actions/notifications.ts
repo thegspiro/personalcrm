@@ -289,7 +289,7 @@ const COOLDOWN_MS = 30_000;
 const lastTestAt = new Map<string, number>();
 
 /**
- * Send a fixed message, to prove the channel is reachable.
+ * Send a fixed fictional digest, to prove the transport accepts the payload.
  *
  * Separate from saving on purpose. Verifying before storing is right for the
  * AI key — one global value, where a bad key means silent nothingness — and
@@ -315,7 +315,7 @@ export async function sendTestNotification(id: string): Promise<ActionResult> {
   lastTestAt.set(ownerId, Date.now());
 
   try {
-    // Fixed copy, no interpolation. Settings stays reachable while the privacy
+    // Synthetic copy, no database-derived interpolation. Settings stays reachable while the privacy
     // lock is closed, so this is the one button there that could otherwise put
     // a private person's name on the wire.
     await deliverToChannel(channel, TEST_NOTIFICATION_SUBJECT, TEST_NOTIFICATION_BODY);

@@ -375,7 +375,11 @@ account's channels are its own and `owner()` scoping is the whole guard. The
 other two store an `AppSetting`, which belongs to the *installation* and has no
 owner to scope by — which is why they need a role check and this does not.
 
-`sendTestNotification` is separate from saving on purpose. Verifying before
+`sendTestNotification` is separate from saving on purpose. It sends a clearly
+labelled fictional daily digest through the production formatter, without
+reading CRM records or creating a `ReminderLog`. Success means the selected
+transport accepted the payload, not that a recipient device is guaranteed to
+display it. Verifying before
 storing is right for the AI key — one global value, where a bad key means
 silent nothingness — and wrong for a row: a Gotify box down for ten minutes
 must not stop you recording its address. It sends fixed copy with nothing

@@ -79,8 +79,8 @@ test("a channel that cannot be reached says so rather than failing silently", as
   await addForm.getByRole("button", { name: "Add channel" }).click();
 
   const card = page.locator("section").filter({ hasText: name });
-  await card.getByRole("button", { name: "Send a test" }).click();
-  await expect(page.getByText(/Test message sent/)).toBeHidden();
+  await card.getByRole("button", { name: "Send sample digest" }).click();
+  await expect(page.getByText(/Sample digest sent/)).toBeHidden();
 
   page.once("dialog", (dialog) => dialog.accept());
   await card.getByRole("button", { name: "Delete" }).click();

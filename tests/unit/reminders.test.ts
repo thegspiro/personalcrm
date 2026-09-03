@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dueOccurrence, effectiveReminderDays, parseReminderDays } from "@/lib/reminders";
-import { dailyOccurrence, digestIsDue, digestMessage, importantDateMessage, localClock, reminderDedupKey } from "@/lib/reminder-schedule";
+import { dailyOccurrence, digestIsDue, digestMessage, formatDailyDigest, importantDateMessage, localClock, reminderDedupKey } from "@/lib/reminder-schedule";
 
 describe("reminder policies", () => {
   it("keeps account default, custom, and disabled distinct", () => {
@@ -84,7 +84,20 @@ describe("reminder wording", () => {
   });
 
   it("counts in the digest without mangling the singular", () => {
-    expect(digestMessage(1, 0).body).toBe("1 cadence reminder and 0 due tasks need attention today.");
-    expect(digestMessage(2, 1).body).toBe("2 cadence reminders and 1 due task need attention today.");
+    expect(digestMessage(1, 0).body).toContain("- 1 cadence reminder and 0 due tasks need attention today.");
+    expect(digestMessage(2, 1).body).toContain("- 2 cadence reminders and 1 due task need attention today.");
+  });
+
+  it("keeps digest section order and truncation stable", () => {
+    const message = formatDailyDigest({
+      date: { year: 2030, month: 6, day: 15 },
+      maxEntriesPerSection: 2,
+      sections: [
+        { heading: "First", entries: ["one", "two", "three"] },
+        { heading: "Second", entries: ["four"] },
+      ],
+    });
+    expect(message.body).toContain("First\n- one\n- two\n- …and 1 more\n\nSecond\n- four");
+    expect(message.body).not.toContain("three");
   });
 });
