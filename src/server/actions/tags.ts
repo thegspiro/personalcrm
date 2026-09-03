@@ -140,11 +140,12 @@ export async function setContactTag(
       // is the order the contact-save paths take too, so the two cannot
       // deadlock against each other.
       if ((await lockContact(tx, ownerId, contactId)) !== 1) return false;
-      const contact = await tx.contact.findFirst({
-        where: { id: contactId, ownerId, ...contactPrivacyWhere(scope) },
-        select: { id: true },
-      });
-      if (!contact) return false;
+      // The visibility question is a locking read too, so it belongs up here
+      // with the others and ahead of the consistent read below. Every locking
+      // read that can *wait* has to come before the transaction takes its read
+      // view: waiting on a row and then finding it changed since that view is
+      // MariaDB 11's error 1020, not a row count. See `lockTags`.
+      //
       // The tag has to be one the lock is currently showing, not merely one the
       // account owns: this takes an id straight off a page that may have been
       // rendered before the lock closed, and a tag living only on private
@@ -152,6 +153,11 @@ export async function setContactTag(
       // Asked of held rows rather than of the snapshot, so an assignment
       // committed by another tab a moment ago is part of the answer.
       if (!(await lockedTagsUsable(tx, ownerId, scope, [tagId]))) return false;
+      const contact = await tx.contact.findFirst({
+        where: { id: contactId, ownerId, ...contactPrivacyWhere(scope) },
+        select: { id: true },
+      });
+      if (!contact) return false;
       if (assigned)
         await tx.contactTag.upsert({
           where: { contactId_tagId: { contactId, tagId } },
