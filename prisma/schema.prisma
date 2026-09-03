@@ -75,6 +75,7 @@ model User {
   dietaryNeeds         DietaryNeed[]
   households           Household[]
   familyDismissals     FamilySuggestionDismissal[]
+  happenings           Happening[]
 }
 
 model Session {
@@ -155,6 +156,7 @@ enum TaxonomyKind {
   GIFT_OCCASION
   LIFE_EVENT_TYPE
   PLAN_CATEGORY
+  HAPPENING_TYPE
 }
 
 model TaxonomyTerm {
@@ -191,6 +193,7 @@ model TaxonomyTerm {
   dateEntries             DateEntry[]       @relation("DateActivityType")
   plans                   Plan[]            @relation("PlanCategory")
   gifts                   Gift[]            @relation("GiftOccasion")
+  happenings              Happening[]       @relation("HappeningType")
 
   @@unique([ownerId, kind, slug])
   @@index([ownerId, kind, sortOrder])
@@ -257,6 +260,7 @@ model Contact {
   importantDates          ImportantDate[]
   lifeEvents              LifeEvent[]
   lifeEventParticipations LifeEventParticipant[]
+  happenings              Happening[]
   ideas                   Idea[]
   tasks                   Task[]
   gifts                   Gift[]
@@ -434,9 +438,9 @@ model Location {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  interactions Interaction[]
-  plans        Plan[]
+  owner           User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  interactions    Interaction[]
+  plans           Plan[]
   locationAliases LocationAlias[]
 
   @@unique([ownerId, normalizedName])
@@ -698,11 +702,90 @@ model Task {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  owner   User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  owner     User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact   Contact?   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  /// Set when this task is the "ask how it went" follow-up for a happening.
+  happening Happening? @relation("HappeningFollowUp")
 
   @@index([ownerId, completedAt, dueDate])
   @@index([contactId])
+}
+
+/// How much of their day something takes up, for deciding whether to ask them
+/// along to anything else.
+///
+/// An enum rather than a taxonomy because the code branches on it: it picks the
+/// badge, groups and orders the dashboard widget, and answers "who is
+/// unavailable this week". What *kind* of thing it is stays a HAPPENING_TYPE
+/// term the user can rename and add to.
+enum AvailabilityImpact {
+  NONE
+  BUSY
+  AWAY
+}
+
+/// Something going on in someone else's life that you are not part of.
+///
+/// The fifth kind of dated thing here, and deliberately none of the other four.
+/// A Plan is something you do *with* them, so it carries a cost, a checklist
+/// and a link, and it ends by becoming an Interaction. A LifeEvent is their
+/// history and keeps forever. An ImportantDate recurs and wants a yearly
+/// notification. A Task is your errand. "She is in Portugal from the 12th" is
+/// none of those: one-off, near-future, and finished the moment it passes.
+///
+/// It earns the table by being useful twice. Before, it stops you inviting
+/// someone who is away. After, it is the thing you meant to ask about.
+///
+/// Field names deliberately match LifeEvent — `date`, `precision`, `endDate`,
+/// `endPrecision` — so the partial-date form reader, the range validator and
+/// the range formatter are the same code rather than a second copy that drifts.
+///
+/// Carries no `isPrivate` of its own, like LifeEvent, Plan and Task: the anchor
+/// contact is the marker, and the queries filter through it.
+model Happening {
+  id        String  @id @default(cuid())
+  ownerId   String
+  contactId String
+  typeId    String?
+
+  title  String  @db.VarChar(191)
+  notes  String? @db.Text
+  /// Where you heard it — "mentioned at dinner", "saw it on Instagram".
+  /// Informal information is mostly secondhand, and how you came by it is what
+  /// tells you whether to raise it and how confidently.
+  source String? @db.VarChar(191)
+
+  date         DateTime       @db.Date
+  precision    DatePrecision  @default(DAY)
+  /// Set when it spans days, e.g. a trip. Null means the one day.
+  endDate      DateTime?      @db.Date
+  endPrecision DatePrecision?
+
+  availability AvailabilityImpact @default(NONE)
+  /// Heard secondhand, or not firm yet. A marker you add rather than a third
+  /// enum value, so an unmarked row claims nothing either way.
+  isTentative  Boolean            @default(false)
+
+  /// The "ask how it went" task, when one was wanted. The pointer lives here
+  /// rather than on Task so nothing existing gained a column, and SetNull means
+  /// deleting the task by hand leaves this row intact.
+  followUpTaskId String?   @unique
+  /// Dismissed from the "just wrapped up" list. A timestamp rather than a
+  /// delete: acknowledging is a status change, and those destroy nothing.
+  acknowledgedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact      Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  type         TaxonomyTerm? @relation("HappeningType", fields: [typeId], references: [id], onDelete: SetNull)
+  followUpTask Task?         @relation("HappeningFollowUp", fields: [followUpTaskId], references: [id], onDelete: SetNull)
+
+  @@index([contactId, date])
+  @@index([ownerId, date])
+  @@index([ownerId, endDate])
+  @@index([typeId])
 }
 
 enum GiftStatus {

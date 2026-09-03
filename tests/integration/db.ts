@@ -37,6 +37,7 @@ const TABLES = [
   "LifeEventParticipant",
   "LifeEvent",
   "Idea",
+  "Happening",
   "Task",
   "Gift",
   "Debt",
