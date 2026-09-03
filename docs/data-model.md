@@ -5,7 +5,7 @@ schema rather than in prose.
 
 - **Engine:** MariaDB (Prisma `mysql` provider), `utf8mb4`
 - **Source of truth:** [`prisma/schema.prisma`](../prisma/schema.prisma)
-- **Tables:** 36 · **Enums:** 21 · **Migrations:** 15
+- **Tables:** 37 · **Enums:** 21 · **Migrations:** 18
 - **Primary keys:** `cuid()` strings unless the table is a join table (composite)
   or a per-user singleton (`UserPreference`, `DashboardLayout` key on `userId`).
 
@@ -38,7 +38,7 @@ The account. The first one created by the first-run wizard is `ADMIN`.
 > has no powers a member lacks — see [first-run.md](first-run.md#adding-other-people-to-the-instance).
 
 | Column | Type | Notes |
-| --- | --- | --- |
+| ------------------------- | --------------- | ------------------------------------------------------------------------------------------- |
 | `id` | `cuid` | PK |
 | `email` | `varchar(191)` | Unique |
 | `name` | `varchar(191)` | |
@@ -59,7 +59,7 @@ Database-backed sessions. The cookie (`pcrm_session`) holds a random 32-byte
 token; only its SHA-256 hash is stored.
 
 | Column | Type | Notes |
-| --- | --- | --- |
+| ------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `id` | `cuid` | PK |
 | `userId` | `cuid` | → `User`, cascade |
 | `tokenHash` | `varchar(191)` | Unique |
@@ -76,7 +76,7 @@ Indexes: `userId`, `expiresAt` (the expiry sweep at boot).
 One row per user, PK is `userId`.
 
 | Column | Type | Default | Notes |
-| --- | --- | --- | --- |
+| ----------------------- | ------------- | ------------------ | ------------------------------------------------------------------ |
 | `theme` | `varchar(16)` | `system` | |
 | `accent` | `varchar(24)` | `violet` | |
 | `density` | `varchar(16)` | `comfortable` | |
@@ -87,7 +87,7 @@ One row per user, PK is `userId`.
 | `digestEnabled` | `bool` | `true` | Enables one daily digest per configured channel |
 | `privacyLockEnabled` | `bool` | `false` | The lock switch |
 | `hideDating` | `bool` | `false` | Removes the dating module from nav and dashboard entirely |
-| `blurPrivateNotes` | `bool` | `true` | Shoulder-surfing layer *after* the lock is open |
+| `blurPrivateNotes`      | `bool`        | `true`             | Shoulder-surfing layer _after_ the lock is open                    |
 | `onboardingCompletedAt` | `datetime?` | — | When the welcome flow was finished or skipped |
 
 ### `AppSetting`
@@ -107,7 +107,7 @@ Backs every "type" field in the app. Renaming, recolouring, reordering or
 adding a type is a row edit, not a migration.
 
 | Column | Type | Notes |
-| --- | --- | --- |
+| --------------- | -------------- | ------------------------------------------------------------------------------------------------------ |
 | `id` | `cuid` | PK |
 | `ownerId` | `cuid` | → `User`, cascade |
 | `kind` | `TaxonomyKind` | Which list this term belongs to |
@@ -127,7 +127,7 @@ Unique: `(ownerId, kind, slug)`. Indexes: `(ownerId, kind, sortOrder)`,
 `TaxonomyKind` values (11 shown in Settings, plus `PLAN_CATEGORY`):
 
 | Kind | What it names |
-| --- | --- |
+| --------------------- | ---------------------------------------------------------------- |
 | `CONTACT_CATEGORY` | How you group people |
 | `INTERACTION_TYPE` | The kinds of moments you log |
 | `FACT_CATEGORY` | How things you know are grouped |
@@ -158,7 +158,7 @@ enforced alternative.
 The centre of the model.
 
 | Column | Type | Notes |
-| --- | --- | --- |
+| ----------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `id` / `ownerId` | `cuid` | |
 | `firstName` | `varchar(120)` | The only required name field |
 | `lastName` / `nickname` | `varchar(120)?` | |
@@ -212,7 +212,7 @@ no constraint behind it.
 
 No `ownerId` and no `isPrivate`: it exists only beneath a contact, and a phone
 number is not separately hideable from the person it belongs to. Ownership and
-the privacy lock are therefore enforced on the *contact* in every action, which
+the privacy lock are therefore enforced on the _contact_ in every action, which
 is why each one looks the row up through `contact: { ownerId, ...
 contactPrivacyWhere(scope) }` rather than by id alone.
 
@@ -246,7 +246,7 @@ privacy lock is closed, private-only tags are omitted and counts include visible
 The people graph. **Reciprocal rows are always created in pairs.**
 
 | Column | Type | Notes |
-| --- | --- | --- |
+| ------------------------------- | ------------- | --------------------------------------------------------------------------- |
 | `ownerId` | `cuid` | |
 | `fromContactId` / `toContactId` | `cuid` | Both cascade |
 | `typeId` | `cuid` | → `TaxonomyTerm` (`RELATIONSHIP_TYPE`), **cascade** |
@@ -278,7 +278,7 @@ such control: a sibling does not stop being one.
 Something you did with someone. Multi-participant by design.
 
 | Column | Type | Notes |
-| --- | --- | --- |
+| ----------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ownerId` | `cuid` | |
 | `typeId` | `cuid?` | → `INTERACTION_TYPE`, `SET NULL` |
 | `occurredAt` | `datetime` | Backdating is a first-class case |
@@ -320,12 +320,17 @@ historical text while their optional `locationId` points at the canonical place
 
 `osmType` (`N`/`W`/`R`) and `osmId` record the OpenStreetMap object an optional
 address lookup matched, and are written only by that lookup. Deliberately
-*not* Nominatim's own `place_id`: that is internal to a single instance and does
+_not_ Nominatim's own `place_id`: that is internal to a single instance and does
 not survive a reimport, so it would decay into a reference to nothing. `osmId`
 is a `BIGINT` because OSM ids are past 2^32. `latitude`/`longitude` come from
 the same lookup and are stored as a pair or not at all — half a pair places
-somewhere confidently wrong. `aliases` remains unwritten; see
-[known gaps](README.md#known-gaps).
+somewhere confidently wrong. Aliases live in owner-scoped `LocationAlias` rows.
+Each stores the entered `value`, its case-and-whitespace-folded
+`normalizedValue`, and whether it is the canonical name. `(ownerId,
+normalizedValue)` is unique, so two places in one account cannot claim the same
+spelling while different owners remain isolated.
+The legacy JSON `Location.aliases` column is retained only as a preservation
+area for ambiguous imported claims; new reads and writes use the indexed table.
 
 ### `Fact`
 
@@ -349,7 +354,7 @@ would invent a day; future one-time values at those precisions still appear in
 Coming up and retain their partial display.
 
 | Column | Type | Notes |
-| --- | --- | --- |
+| -------------------- | ---------------- | --------------------------------------------------------------------- |
 | `label` | `varchar(191)` | |
 | `date` | `date` | Anchor |
 | `precision` | `DatePrecision` | |
@@ -409,11 +414,11 @@ Something to **do** with someone, as opposed to something to **say** to them.
 The distinction against `Idea` is the whole reason it is its own table: an idea
 is a sentence you meant to say, a plan is an outing, and a plan needs what a
 plan has — where it is, what it costs, a link to the listing, when you mean to
-go. They also end differently. An idea is used when you *say* it; a plan when
-you *do* it.
+go. They also end differently. An idea is used when you _say_ it; a plan when
+you _do_ it.
 
 | Column | Type | Notes |
-| --- | --- | --- |
+| ---------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `contactId` | `cuid?` | Null = something you would do with anyone, not saved against one person |
 | `title` | `varchar(191)` | |
 | `categoryId` | `cuid?` | → `TaxonomyTerm` (`PLAN_CATEGORY`), `SET NULL` — so a place, a film, a show and whatever else you invent live in one list you control |
@@ -448,7 +453,7 @@ Both directions. `direction`: `OUTGOING` | `INCOMING`; `status`: `IDEA` |
 Money — or a thing — that has moved and not come back.
 
 | Column | Type | Notes |
-| --- | --- | --- |
+| ------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `direction` | `DebtDirection` | `THEY_OWE_ME` \| `I_OWE_THEM` |
 | `description` | `varchar(191)` | |
 | `amountCents` | `int?` | **Null on purpose.** Between neighbours what is lent is usually a drill, a stepladder, a casserole dish. Items are listed alongside the balance but never folded into it |
@@ -540,7 +545,7 @@ User-defined fields on four entities (`CustomFieldEntity`: `CONTACT`,
 ### `CustomFieldValue`
 
 | Column | Type | Notes |
-| --- | --- | --- |
+| -------------- | ------------------- | ------------------------------------------------------- |
 | `definitionId` | `cuid` | → definition, cascade |
 | `entityType` | `CustomFieldEntity` | |
 | `entityId` | `varchar(64)` | **Not a foreign key** — it points at one of four tables |
@@ -658,7 +663,7 @@ already sent and cannot start it re-sending.
 ## Enum reference
 
 | Enum | Values |
-| --- | --- |
+| ------------------------- | ------------------------------------------------------------------------------- |
 | `UserRole` | `ADMIN`, `MEMBER` |
 | `TaxonomyKind` | 12 values — see [Taxonomies](#taxonomies) |
 | `DateRecurrence` | `NONE`, `ANNUAL`, `MONTHLY` |
@@ -690,7 +695,7 @@ nobody gave.
 ## Delete behaviour at a glance
 
 | Deleting… | Takes with it | Leaves behind |
-| --- | --- | --- |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | A `User` | Everything they own, by cascade | — |
 | A `Contact` | Methods, addresses, tags, facts, dates, life events, gifts, debts, dietary needs, flags, ideas, plans, tasks, household memberships, relationships (both halves), participations, romantic profile, date entries, and its avatar file | `CustomFieldValue` rows — **swept explicitly** by the action |
 | An `Interaction` | Participants, its `DateEntry` | `Fact.sourceInteractionId`, `Idea.usedInInteractionId` and `Plan.usedInInteractionId` set to null |
@@ -705,9 +710,9 @@ Applied automatically at container start (`prisma migrate deploy`, ordered by
 the `init-migrate` s6 oneshot).
 
 | Migration | What it did |
-| --- | --- |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `20260824021753_init` | The foundation — 26 tables: accounts, taxonomies, contacts, activity, dating layer, custom fields, notifications |
-| `20260824084606_add_life_events_and_date_precision` | Adds `LifeEvent` and `DatePrecision`. **Hand-edited**: backfills `MONTH_DAY` from the old `birthYearKnown` / `yearKnown` booleans *before* dropping them — Prisma's generated diff would have dropped them outright and lost the distinction |
+| `20260824084606_add_life_events_and_date_precision` | Adds `LifeEvent` and `DatePrecision`. **Hand-edited**: backfills `MONTH_DAY` from the old `birthYearKnown` / `yearKnown` booleans _before_ dropping them — Prisma's generated diff would have dropped them outright and lost the distinction                                                                                                                                                                                                             |
 | `20260824115630_add_privacy_lock_and_retrospective` | `isPrivate` on `Contact`/`Fact`/`Interaction`, PIN and backoff columns on `User`, `Session.privacyUnlockedAt`, privacy preferences, `RomanticProfile.retrospective` |
 | `20260824130123_add_households` | `Household`, `HouseholdMember` |
 | `20260824130913_add_family_suggestion_dismissals` | `FamilySuggestionDismissal` |

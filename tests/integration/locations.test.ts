@@ -1,7 +1,11 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
 
-const state = vi.hoisted(() => ({ ownerId: "", enabled: true, unlocked: false }));
+const state = vi.hoisted(() => ({
+  ownerId: "",
+  enabled: true,
+  unlocked: false,
+}));
 
 vi.mock("@/server/db/client", async () => {
   const { prisma: client } = await import("./db");
@@ -32,14 +36,17 @@ vi.mock("@/server/privacy/lock", () => ({
   recordProtectedReadActivity: async () => ({ ok: false }) as const,
 }));
 
-const { getLocation, listContactLocations, listLocationOptions, listLocations } = await import(
-  "@/server/queries/locations"
-);
-const { normalizeLocationName, resolveLocation } = await import(
-  "@/server/services/locations"
-);
+const {
+  getLocation,
+  listContactLocations,
+  listLocationOptions,
+  listLocations,
+} = await import("@/server/queries/locations");
+const { normalizeLocationName, resolveLocation } =
+  await import("@/server/services/locations");
 const { buildTimeline } = await import("@/server/queries/timeline");
-const { setLocationArchived, updateLocation } = await import("@/server/actions/locations");
+const { setLocationArchived, updateLocation } =
+  await import("@/server/actions/locations");
 
 const TZ = "America/New_York";
 
@@ -79,15 +86,21 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
         locationId,
         location: options.label ?? "Corner Cafe",
         isPrivate: options.isPrivate ?? false,
-        participants: { create: contactIds.map((contactId) => ({ contactId })) },
+        participants: {
+          create: contactIds.map((contactId) => ({ contactId })),
+        },
       },
     });
   }
 
   it("withholds private visits and visits with a private participant, counts included", async () => {
     const [ada, grace, secret] = await Promise.all([
-      prisma.contact.create({ data: { ownerId: state.ownerId, firstName: "Ada" } }),
-      prisma.contact.create({ data: { ownerId: state.ownerId, firstName: "Grace" } }),
+      prisma.contact.create({
+        data: { ownerId: state.ownerId, firstName: "Ada" },
+      }),
+      prisma.contact.create({
+        data: { ownerId: state.ownerId, firstName: "Grace" },
+      }),
       prisma.contact.create({
         data: { ownerId: state.ownerId, firstName: "Secret", isPrivate: true },
       }),
@@ -111,7 +124,9 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
     const detail = await getLocation(state.ownerId, cafe.id);
     expect(detail?.interactions).toHaveLength(2);
     const seen = new Set(
-      detail?.interactions.flatMap((row) => row.participants.map((p) => p.contact.id)),
+      detail?.interactions.flatMap((row) =>
+        row.participants.map((p) => p.contact.id),
+      ),
     );
     expect(seen).toEqual(new Set([ada.id, grace.id]));
     expect(seen.has(secret.id)).toBe(false);
@@ -123,8 +138,12 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
     const [unlocked] = await listLocations(state.ownerId);
     expect(unlocked.visitCount).toBe(4);
     expect(unlocked.peopleCount).toBe(3);
-    expect((await getLocation(state.ownerId, cafe.id))?.interactions).toHaveLength(4);
-    expect(await listContactLocations(state.ownerId, secret.id)).toHaveLength(1);
+    expect(
+      (await getLocation(state.ownerId, cafe.id))?.interactions,
+    ).toHaveLength(4);
+    expect(await listContactLocations(state.ownerId, secret.id)).toHaveLength(
+      1,
+    );
   });
 
   it("hides a place entirely when every visit to it is withheld", async () => {
@@ -169,7 +188,10 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
 
     state.unlocked = true;
     const unlocked = await listLocationOptions(state.ownerId);
-    expect(unlocked.map((row) => row.name).sort()).toEqual(["Corner Cafe", "Quiet Bar"]);
+    expect(unlocked.map((row) => row.name).sort()).toEqual([
+      "Corner Cafe",
+      "Quiet Bar",
+    ]);
   });
 
   it("still resolves a hidden place by name rather than duplicating it", async () => {
@@ -186,7 +208,9 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       resolveLocation(tx, state.ownerId, "quiet bar"),
     );
     expect(resolved?.id).toBe(hidden.id);
-    expect(await prisma.location.count({ where: { ownerId: state.ownerId } })).toBe(1);
+    expect(
+      await prisma.location.count({ where: { ownerId: state.ownerId } }),
+    ).toBe(1);
   });
 
   it("filters the timeline on the place, not just the label that was typed", async () => {
@@ -198,14 +222,20 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
     // the query had already admitted it on `normalizedName`.
     await visit(cafe.id, [], { label: " Corner   Cafe " });
 
-    const byName = await buildTimeline(state.ownerId, TZ, { location: "Corner Cafe" });
+    const byName = await buildTimeline(state.ownerId, TZ, {
+      location: "Corner Cafe",
+    });
     expect(byName).toHaveLength(2);
 
     // Case folding has to agree with the normalizer the rows were written with.
-    expect(await buildTimeline(state.ownerId, TZ, { location: "corner cafe" })).toHaveLength(2);
+    expect(
+      await buildTimeline(state.ownerId, TZ, { location: "corner cafe" }),
+    ).toHaveLength(2);
 
     // The id filter never compares strings at all.
-    expect(await buildTimeline(state.ownerId, TZ, { locationId: cafe.id })).toHaveLength(2);
+    expect(
+      await buildTimeline(state.ownerId, TZ, { locationId: cafe.id }),
+    ).toHaveLength(2);
   });
 
   it("scopes by place id when a freed-up name has been reused", async () => {
@@ -229,7 +259,9 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
 
     // Filtering by name alone cannot tell them apart, which is why the place
     // page links with the id as well.
-    expect(await buildTimeline(state.ownerId, TZ, { location: "Corner Cafe" })).toHaveLength(2);
+    expect(
+      await buildTimeline(state.ownerId, TZ, { location: "Corner Cafe" }),
+    ).toHaveLength(2);
     const scoped = await buildTimeline(state.ownerId, TZ, {
       locationId: second.id,
       location: "Corner Cafe",
@@ -256,7 +288,9 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
     });
 
     // A gift carries no location; filtering by a place must not sweep it in.
-    const filtered = await buildTimeline(state.ownerId, TZ, { locationId: cafe.id });
+    const filtered = await buildTimeline(state.ownerId, TZ, {
+      locationId: cafe.id,
+    });
     expect(filtered.every((entry) => entry.kind === "interaction")).toBe(true);
     expect(filtered).toHaveLength(1);
   });
@@ -291,7 +325,9 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       );
 
       expect(result.ok).toBe(true);
-      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      const saved = await prisma.location.findUniqueOrThrow({
+        where: { id: cafe.id },
+      });
       expect(saved.city).toBe("Arlington");
       expect(saved.country).toBe("United States");
       expect(saved.phone).toBe("+1 555 0100");
@@ -303,14 +339,20 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       const cafe = await place(state.ownerId, "Corner Cafe");
       await visit(cafe.id, [], { label: "corner cafe" });
 
-      const result = await updateLocation(formFor({ id: cafe.id, name: "The Corner Cafe" }));
+      const result = await updateLocation(
+        formFor({ id: cafe.id, name: "The Corner Cafe" }),
+      );
       expect(result.ok).toBe(true);
 
-      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      const saved = await prisma.location.findUniqueOrThrow({
+        where: { id: cafe.id },
+      });
       expect(saved.name).toBe("The Corner Cafe");
       expect(saved.normalizedName).toBe("the corner cafe");
       // The history keeps the words that were used at the time.
-      const [logged] = await prisma.interaction.findMany({ where: { ownerId: state.ownerId } });
+      const [logged] = await prisma.interaction.findMany({
+        where: { ownerId: state.ownerId },
+      });
       expect(logged.location).toBe("corner cafe");
     });
 
@@ -321,16 +363,21 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       await visit(cafe.id, []);
       await visit(bar.id, []);
 
-      const result = await updateLocation(formFor({ id: bar.id, name: "Corner Cafe" }));
+      const result = await updateLocation(
+        formFor({ id: bar.id, name: "Corner Cafe" }),
+      );
 
       // Two real venues can share a spelling, and folding one into the other
       // would take a history with it. The user is told, not obeyed.
       expect(result.ok).toBe(false);
       expect(result.fieldErrors?.name).toBeTruthy();
-      expect(await prisma.location.count({ where: { ownerId: state.ownerId } })).toBe(2);
-      expect((await prisma.location.findUniqueOrThrow({ where: { id: bar.id } })).name).toBe(
-        "Quiet Bar",
-      );
+      expect(
+        await prisma.location.count({ where: { ownerId: state.ownerId } }),
+      ).toBe(2);
+      expect(
+        (await prisma.location.findUniqueOrThrow({ where: { id: bar.id } }))
+          .name,
+      ).toBe("Quiet Bar");
     });
 
     it("refuses every rename while locked, so a name cannot probe for a hidden place", async () => {
@@ -348,9 +395,13 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       // Renaming onto a hidden place's exact name used to answer "you already
       // have a different place with that name", which confirmed it exists —
       // while asking for it directly deliberately says only "not found".
-      const onto = await updateLocation(formFor({ id: visible.id, name: "Quiet Bar" }));
+      const onto = await updateLocation(
+        formFor({ id: visible.id, name: "Quiet Bar" }),
+      );
       // A name nothing is using at all.
-      const free = await updateLocation(formFor({ id: visible.id, name: "Somewhere New" }));
+      const free = await updateLocation(
+        formFor({ id: visible.id, name: "Somewhere New" }),
+      );
 
       // Identical answers: the refusal cannot be used to tell the two apart,
       // which is the whole point. Softer wording would not have helped — the
@@ -360,9 +411,10 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       expect(onto.fieldErrors?.name).toBe(free.fieldErrors?.name);
       expect(onto.fieldErrors?.name).toMatch(/unlock/i);
 
-      expect((await prisma.location.findUniqueOrThrow({ where: { id: visible.id } })).name).toBe(
-        "Corner Cafe",
-      );
+      expect(
+        (await prisma.location.findUniqueOrThrow({ where: { id: visible.id } }))
+          .name,
+      ).toBe("Corner Cafe");
     });
 
     it("still edits everything except the name while locked", async () => {
@@ -379,9 +431,10 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       );
 
       expect(result.ok).toBe(true);
-      expect((await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } })).city).toBe(
-        "Arlington",
-      );
+      expect(
+        (await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } }))
+          .city,
+      ).toBe("Arlington");
     });
 
     it("will not edit a place the lock is hiding, and says only 'not found'", async () => {
@@ -391,7 +444,9 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       const hidden = await place(state.ownerId, "Quiet Bar");
       await visit(hidden.id, [secret.id]);
 
-      const result = await updateLocation(formFor({ id: hidden.id, name: "Renamed" }));
+      const result = await updateLocation(
+        formFor({ id: hidden.id, name: "Renamed" }),
+      );
 
       // Scoping by owner alone would let a locked session edit — or, by the
       // difference between two error messages, confirm the existence of — a
@@ -399,9 +454,10 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       expect(result.ok).toBe(false);
       expect(result.error).toBe("That place wasn't found.");
       expect(result.fieldErrors).toBeUndefined();
-      expect((await prisma.location.findUniqueOrThrow({ where: { id: hidden.id } })).name).toBe(
-        "Quiet Bar",
-      );
+      expect(
+        (await prisma.location.findUniqueOrThrow({ where: { id: hidden.id } }))
+          .name,
+      ).toBe("Quiet Bar");
     });
 
     it("will not edit another account's place", async () => {
@@ -415,11 +471,14 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
         },
       });
 
-      const result = await updateLocation(formFor({ id: theirs.id, name: "Mine Now" }));
-      expect(result.ok).toBe(false);
-      expect((await prisma.location.findUniqueOrThrow({ where: { id: theirs.id } })).name).toBe(
-        "Their Cafe",
+      const result = await updateLocation(
+        formFor({ id: theirs.id, name: "Mine Now" }),
       );
+      expect(result.ok).toBe(false);
+      expect(
+        (await prisma.location.findUniqueOrThrow({ where: { id: theirs.id } }))
+          .name,
+      ).toBe("Their Cafe");
     });
 
     it("archiving hides a place from the lists but keeps its page and history", async () => {
@@ -430,7 +489,10 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       const cafe = await place(state.ownerId, "Corner Cafe");
       await visit(cafe.id, [ada.id]);
 
-      expect((await setLocationArchived(formFor({ id: cafe.id, archived: "true" }))).ok).toBe(true);
+      expect(
+        (await setLocationArchived(formFor({ id: cafe.id, archived: "true" })))
+          .ok,
+      ).toBe(true);
 
       expect(await listLocations(state.ownerId)).toEqual([]);
       expect(await listLocationOptions(state.ownerId)).toEqual([]);
@@ -461,7 +523,9 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
         }),
       );
 
-      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      const saved = await prisma.location.findUniqueOrThrow({
+        where: { id: cafe.id },
+      });
       expect(saved.osmType).toBe("W");
       expect(saved.osmId).toBe(123456789n);
       expect(saved.city).toBe("Arlington");
@@ -486,10 +550,17 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       );
       // A coarser second candidate — a town, say — carries no OSM object.
       await updateLocation(
-        formFor({ id: cafe.id, name: "Corner Cafe", lookupApplied: "1", city: "Arlington" }),
+        formFor({
+          id: cafe.id,
+          name: "Corner Cafe",
+          lookupApplied: "1",
+          city: "Arlington",
+        }),
       );
 
-      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      const saved = await prisma.location.findUniqueOrThrow({
+        where: { id: cafe.id },
+      });
       // Left as `undefined` these kept their old values, so the map link — which
       // prefers the OSM object — opened the place you had just replaced.
       expect(saved.osmType).toBeNull();
@@ -510,7 +581,10 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       );
 
       expect(result.ok).toBe(false);
-      expect((await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } })).address).toBeNull();
+      expect(
+        (await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } }))
+          .address,
+      ).toBeNull();
     });
 
     it("refuses an OSM id that would not fit the column", async () => {
@@ -551,7 +625,9 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       );
 
       expect(result.ok).toBe(true);
-      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      const saved = await prisma.location.findUniqueOrThrow({
+        where: { id: cafe.id },
+      });
       expect(saved.phone).toBe("+1 555 0100");
       expect(saved.notes).toBe("Ask for the corner table.");
       expect(saved.osmId).toBe(123456789n);
@@ -563,14 +639,24 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       const cafe = await place(state.ownerId, "Corner Cafe");
       await visit(cafe.id, []);
       await updateLocation(
-        formFor({ id: cafe.id, name: "Corner Cafe", lookupApplied: "1", osmType: "N", osmId: "7" }),
+        formFor({
+          id: cafe.id,
+          name: "Corner Cafe",
+          lookupApplied: "1",
+          osmType: "N",
+          osmId: "7",
+        }),
       );
 
       // No lookup this time, so identity is not the subject of the save and
       // must survive it.
-      await updateLocation(formFor({ id: cafe.id, name: "Corner Cafe", phone: "+1 555 0100" }));
+      await updateLocation(
+        formFor({ id: cafe.id, name: "Corner Cafe", phone: "+1 555 0100" }),
+      );
 
-      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      const saved = await prisma.location.findUniqueOrThrow({
+        where: { id: cafe.id },
+      });
       expect(saved.osmId).toBe(7n);
       expect(saved.osmType).toBe("N");
       expect(saved.phone).toBe("+1 555 0100");
@@ -582,10 +668,17 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       await visit(cafe.id, []);
 
       await updateLocation(
-        formFor({ id: cafe.id, name: "Corner Cafe", lookupApplied: "1", latitude: "38.8809" }),
+        formFor({
+          id: cafe.id,
+          name: "Corner Cafe",
+          lookupApplied: "1",
+          latitude: "38.8809",
+        }),
       );
 
-      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      const saved = await prisma.location.findUniqueOrThrow({
+        where: { id: cafe.id },
+      });
       expect(saved.latitude).toBeNull();
       expect(saved.longitude).toBeNull();
     });
@@ -609,7 +702,51 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
     // ...but the same spelling in another account is not, and resolution must
     // scope by owner rather than trusting the normalized name to be unique.
     expect(theirs?.id).not.toBe(mine?.id);
-    expect(await prisma.location.count({ where: { ownerId: state.ownerId } })).toBe(1);
-    expect(await prisma.location.count({ where: { ownerId: stranger.id } })).toBe(1);
+    expect(
+      await prisma.location.count({ where: { ownerId: state.ownerId } }),
+    ).toBe(1);
+    expect(
+      await prisma.location.count({ where: { ownerId: stranger.id } }),
+    ).toBe(1);
+  });
+
+  it("resolves normalized aliases without crossing owners and rejects competing claims", async () => {
+    const stranger = await createTestUser();
+    const mine = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "Northside Cafe"),
+    );
+    const theirs = await prisma.$transaction((tx) =>
+      resolveLocation(tx, stranger.id, "Other Cafe"),
+    );
+    await prisma.locationAlias.createMany({
+      data: [
+        {
+          ownerId: state.ownerId,
+          locationId: mine!.id,
+          value: "The Local",
+          normalizedValue: "the local",
+        },
+        {
+          ownerId: stranger.id,
+          locationId: theirs!.id,
+          value: "The Local",
+          normalizedValue: "the local",
+        },
+      ],
+    });
+    const resolved = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "  THE   LOCAL "),
+    );
+    expect(resolved?.id).toBe(mine?.id);
+    await expect(
+      prisma.locationAlias.create({
+        data: {
+          ownerId: state.ownerId,
+          locationId: mine!.id,
+          value: "the local",
+          normalizedValue: "the local",
+        },
+      }),
+    ).rejects.toMatchObject({ code: "P2002" });
   });
 });
