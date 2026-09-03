@@ -68,9 +68,13 @@ export function AddRelative({
           <ContactPicker
             name="toContactId"
             label="Who"
+            contacts={contacts}
             // Someone cannot be their own relative, and the action rejects it —
             // better not to offer the option than to explain the refusal.
-            contacts={contacts.filter((contact) => contact.id !== subjectId)}
+            // Excluded rather than filtered out of `contacts`, so a person
+            // picked here *before* being named above is dropped rather than
+            // left as a hidden value behind a chip that has disappeared.
+            excludeIds={subjectId ? [subjectId] : undefined}
             multiple={false}
             required
           />

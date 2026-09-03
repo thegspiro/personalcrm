@@ -38,6 +38,14 @@
 - **Suggestion and link forms no longer share HTML ids.** With more than one
   card open, each "is their…" label pointed at the first select on the page
   rather than its own, so tapping a label could focus the wrong card's control.
+- **An over-long household name comes back as a message, not a crash.** The
+  name field is 191 characters wide and nothing checked, so a longer paste was
+  refused by the database rather than by the form. The same now goes for a
+  member's role. Found by a review bot on the pull request.
+- **Picking the same person on both halves of "Add a relative" no longer jams
+  the form.** Choosing someone as "Who" and then naming them as the subject
+  left their id submitted behind a chip that had already vanished, so a form
+  that looked empty failed on save. They are now dropped from the other picker.
 - **Less private data reaches the browser.** Household members were serialised
   into the page payload carrying `isPrivate`, `lastInteractionAt` and
   `nextTouchAt`, none of which the page draws — and which offline caching could

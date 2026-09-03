@@ -7,7 +7,7 @@ import { cn, displayName, initialsOf } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Icon } from "@/components/nav/icon";
 import { termColorClasses } from "@/lib/format";
-import { generationLabel, groupFamilyBand, type FamilyTier } from "@/lib/family";
+import { generationLabel } from "@/lib/family";
 
 export interface TreePerson {
   id: string;
@@ -18,16 +18,23 @@ export interface TreePerson {
   isArchived: boolean;
   /** How they relate to the anchor, when there is a direct link. */
   terms: Array<{ label: string; icon: string | null; color: string | null }>;
-  /** Closest tier among those links; null when the anchor has no direct link. */
-  tier: FamilyTier | null;
-  /** The relative the shortest path came through, when there is no direct link. */
-  via: { id: string; name: string } | null;
   householdNames: string[];
 }
 
+/**
+ * One generation, already split into the groups it reads as.
+ *
+ * Grouped on the server rather than here: the split orders its "Through …"
+ * groups by name, and a locale-sensitive comparison that runs both in the
+ * server render and again at hydration can disagree with itself.
+ */
 export interface TreeBand {
   generation: number;
-  people: TreePerson[];
+  /** Everyone in the band, anchor included — what the count in the header says. */
+  count: number;
+  /** Rendered above the groups, since nobody is their own relative. */
+  anchor: TreePerson | null;
+  groups: Array<{ key: string; label: string; people: TreePerson[] }>;
 }
 
 /**
@@ -101,18 +108,11 @@ export function FamilyTree({
       ) : null}
 
       {bands.map((band) => {
-        // The anchor roots its own band rather than joining a group inside it:
-        // there is no link from someone to themselves for a tier to come from.
-        const anchor = band.people.find((person) => person.id === anchorId);
-        const groups = groupFamilyBand(
-          band.people.filter((person) => person.id !== anchorId),
-          anchorName,
-        );
         // Headings only where they separate something. A band of nothing but
         // immediate family — your parents, usually — reads better without one.
         // Any other lone group is worth naming: "Extended family" and "Through
         // Mum" both say something the cards themselves do not.
-        const showHeadings = groups.length > 1 || groups[0]?.key !== "tier:immediate";
+        const showHeadings = band.groups.length > 1 || band.groups[0]?.key !== "tier:immediate";
 
         return (
           <section key={band.generation} className="min-w-0 rounded-xl border border-border bg-card">
@@ -121,18 +121,18 @@ export function FamilyTree({
                 {generationLabel(band.generation, anchorName)}
               </h3>
               <span className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                {band.people.length}
+                {band.count}
               </span>
             </div>
 
             <div className="grid grid-cols-[minmax(0,1fr)] gap-3 p-3">
-              {anchor ? (
+              {band.anchor ? (
                 <ul className="grid gap-2 sm:grid-cols-2">
-                  <PersonCard person={anchor} isAnchor />
+                  <PersonCard person={band.anchor} isAnchor />
                 </ul>
               ) : null}
 
-              {groups.map((group) => (
+              {band.groups.map((group) => (
                 <div key={group.key} className="grid grid-cols-[minmax(0,1fr)] gap-2">
                   {showHeadings ? (
                     <h4 className="truncate px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">

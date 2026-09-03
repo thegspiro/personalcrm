@@ -3,7 +3,7 @@ import { getUserContext } from "@/server/user/context";
 import { getFamilyOverview } from "@/server/queries/family";
 import { CONTACT_OPTIONS_CAP, listContactOptions } from "@/server/queries/contacts";
 import { listTerms } from "@/server/taxonomy/queries";
-import { familyMeta } from "@/lib/family";
+import { familyMeta, groupFamilyBand } from "@/lib/family";
 import { applyCap } from "@/lib/list-cap";
 import { displayName } from "@/lib/utils";
 import { ListCapNotice } from "@/components/ui/list-cap-notice";
@@ -27,6 +27,20 @@ export const dynamic = "force-dynamic";
  * loud, beats a page that scrolls for a minute.
  */
 const SUGGESTION_CAP = 24;
+
+/**
+ * A band member as the tree actually draws them.
+ *
+ * `tier` and `via` decide which group someone lands in and are of no use once
+ * that is settled, so they stop at the server rather than riding along in the
+ * payload the browser receives — and, on a cacheable page, is written to disk.
+ */
+function forDisplay<T extends { tier: unknown; via: unknown }>(person: T) {
+  const { tier: _tier, via: _via, ...rest } = person;
+  void _tier;
+  void _via;
+  return rest;
+}
 
 export default async function FamilyPage({
   searchParams,
@@ -60,7 +74,10 @@ export default async function FamilyPage({
     .filter((term) => familyMeta(term) !== null)
     .map((term) => ({ id: term.id, label: term.label, icon: term.icon, color: term.color }));
 
-  const bands = overview.bands.map((band) => ({
+  const anchorId = overview.anchor?.id ?? null;
+  const anchorName = overview.anchor ? displayName(overview.anchor) : null;
+
+  const banded = overview.bands.map((band) => ({
     generation: band.generation,
     people: band.people.map((entry) => ({
       id: entry.person.id,
@@ -70,11 +87,37 @@ export default async function FamilyPage({
       avatarPath: entry.person.avatarPath,
       isArchived: entry.person.isArchived,
       terms: entry.links.map((link) => link.term),
+      householdNames: entry.householdNames,
       tier: entry.tier,
       via: entry.via,
-      householdNames: entry.householdNames,
     })),
   }));
+
+  // Grouped here rather than in the tree component, which is a client one.
+  // `groupFamilyBand` orders its "Through …" groups with `localeCompare`, and
+  // the server's default locale need not match the browser's: the same names
+  // can order one way in the server-rendered HTML and another during
+  // hydration, which React resolves by throwing the subtree away. Sorting once,
+  // on the server, removes the question — and keeps the grouping off the wire.
+  const bands = banded.map((band) => {
+    // The anchor roots its own band rather than joining a group inside it:
+    // there is no link from someone to themselves for a tier to come from.
+    const anchor = band.people.find((person) => person.id === anchorId) ?? null;
+    const groups = groupFamilyBand(
+      band.people.filter((person) => person.id !== anchorId),
+      anchorName,
+    );
+    return {
+      generation: band.generation,
+      count: band.people.length,
+      anchor: anchor ? forDisplay(anchor) : null,
+      groups: groups.map((group) => ({
+        key: group.key,
+        label: group.label,
+        people: group.people.map(forDisplay),
+      })),
+    };
+  });
 
   // Mapped down rather than passed through: `FamilyPerson` also carries
   // `isPrivate`, `lastInteractionAt` and `nextTouchAt`, and everything handed
@@ -110,7 +153,7 @@ export default async function FamilyPage({
     termLabel: suggestion.termLabel,
   }));
 
-  const hasFamily = bands.some((band) => band.people.length > 0);
+  const hasFamily = banded.some((band) => band.people.length > 0);
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
@@ -143,9 +186,9 @@ export default async function FamilyPage({
       {hasFamily ? (
         <FamilyTree
           bands={bands}
-          anchorId={overview.anchor?.id ?? null}
-          anchorName={overview.anchor ? displayName(overview.anchor) : null}
-          anchorOptions={bands
+          anchorId={anchorId}
+          anchorName={anchorName}
+          anchorOptions={banded
             .flatMap((band) => band.people)
             .map((person) => ({ id: person.id, name: displayName(person) }))
             .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))}

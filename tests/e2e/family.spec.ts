@@ -261,3 +261,37 @@ test("two people can be linked from the family page itself", async ({ page }) =>
   await openPerson(page, cousin);
   await expect(familyCard(page).getByRole("link", { name: new RegExp(PARENT()) })).toBeVisible();
 });
+
+test("naming someone as the subject clears them from the other picker", async ({ page }) => {
+  await ensureSignedIn(page);
+  const other = `Tam ${suffix()}`;
+  await addPerson(page, other);
+
+  await page.goto("/family");
+  const card = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Link two people" }) });
+  await card.getByRole("button", { name: "Link two people" }).click();
+
+  const whose = card.getByRole("group", { name: "Whose relative", exact: true });
+  const who = card.getByRole("group", { name: "Who", exact: true });
+
+  // The second picker first, then the same person as the subject — the order
+  // that used to leave a hidden id behind a chip that had already disappeared,
+  // so the form looked empty and refused on submit.
+  await who.getByLabel("Search people").fill(PARENT());
+  await who.getByRole("button", { name: new RegExp(PARENT()) }).click();
+  await whose.getByLabel("Search people").fill(PARENT());
+  await whose.getByRole("button", { name: new RegExp(PARENT()) }).click();
+
+  await expect(who.getByRole("button", { name: new RegExp(PARENT()) })).toHaveCount(0);
+
+  // And the form still saves, rather than failing on a value nothing shows.
+  await card.getByLabel("They are this person's…").selectOption({ label: "Cousin" });
+  await who.getByLabel("Search people").fill(other);
+  await who.getByRole("button", { name: new RegExp(other) }).click();
+  await card.getByRole("button", { name: "Link", exact: true }).click();
+
+  await openPerson(page, other);
+  await expect(familyCard(page).getByRole("link", { name: new RegExp(PARENT()) })).toBeVisible();
+});

@@ -61,7 +61,13 @@ export function Households({
       form={(close) => (
         <form action={add(createHousehold, close, "Household created")} className="grid gap-2.5">
           <Field label="Name" htmlFor="household-name">
-            <Input id="household-name" name="name" required placeholder="The Whitfields" />
+            <Input
+              id="household-name"
+              name="name"
+              required
+              maxLength={191}
+              placeholder="The Whitfields"
+            />
           </Field>
           <ContactPicker name="memberIds" label="Who's in it" contacts={contacts} />
           <Field label="Notes (optional)" htmlFor="household-notes">
@@ -167,6 +173,7 @@ function HouseholdCard({
               id={`household-name-${household.id}`}
               name="name"
               required
+              maxLength={191}
               defaultValue={household.name}
             />
           </Field>
@@ -197,7 +204,7 @@ function HouseholdCard({
             required
           />
           <Field label="Their role here (optional)" htmlFor={`role-${household.id}`}>
-            <Input id={`role-${household.id}`} name="role" placeholder="Eldest" />
+            <Input id={`role-${household.id}`} name="role" maxLength={96} placeholder="Eldest" />
           </Field>
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
