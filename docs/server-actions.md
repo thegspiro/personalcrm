@@ -163,7 +163,15 @@ already established the lock is open.
 `endRelationshipLink`.
 
 Suggestions are never written without a press. `endRelationshipLink` re-types
-both halves to their `former` counterparts; it never deletes.
+both halves to their `former` counterparts; it never deletes. `updateHousehold`
+is reached from the rename control on each household card on `/family`; it
+rejects a name already taken by another household of the same owner, which is
+what the `@@unique([ownerId, name])` constraint would otherwise surface as a
+raw database error.
+
+Linking two relatives from `/family` goes through `createRelationship` in
+`actions/details.ts` — the same action the contact page uses — rather than a
+second write path, so both halves of a pair are still written together.
 
 ### Dating — `actions/dating.ts`
 

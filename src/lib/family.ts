@@ -156,3 +156,79 @@ export function generationLabel(generation: number, anchorName?: string | null):
 function possessive(name: string): string {
   return name.endsWith("s") ? `${name}'` : `${name}'s`;
 }
+
+/**
+ * One recorded family edge, reduced to what the graph walk needs.
+ *
+ * Kept structural rather than Prisma-shaped so the banding logic can be
+ * exercised without a database — it is the part of `/family` most likely to
+ * produce a wrong answer that still looks plausible on screen.
+ */
+export interface GenerationEdge {
+  fromId: string;
+  toId: string;
+  /** Generation of `toId` relative to `fromId`; positive is older. */
+  delta: number;
+}
+
+/**
+ * Whose point of view the generations are measured from.
+ *
+ * With no explicit pick it is whoever has the most recorded family links,
+ * which in a personal CRM is almost always the middle of the family you care
+ * about. Ties break on id so the page does not reshuffle between renders.
+ *
+ * A `preferred` id that has no outgoing links is ignored rather than honoured:
+ * anchoring on someone the walk cannot leave puts everyone else in their own
+ * band and says nothing.
+ */
+export function pickAnchor(edges: GenerationEdge[], preferred?: string | null): string | null {
+  const degree = new Map<string, number>();
+  for (const edge of edges) degree.set(edge.fromId, (degree.get(edge.fromId) ?? 0) + 1);
+  if (preferred && degree.has(preferred)) return preferred;
+
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [id, count] of degree) {
+    if (count > bestCount || (count === bestCount && best !== null && id.localeCompare(best) < 0)) {
+      best = id;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+/**
+ * Breadth-first generation assignment from an anchor.
+ *
+ * Each edge carries its own generation delta, so "Gran is Mum's parent" lands
+ * two bands above you without needing to know anything about family structure.
+ * BFS means the shortest path wins, which keeps a cousin marriage or a
+ * remarriage from dragging someone into a nonsensical band.
+ *
+ * Anyone with no path to the anchor is simply absent from the result; the
+ * caller bands them at their own generation 0 rather than dropping them.
+ */
+export function walkGenerations(edges: GenerationEdge[], anchor: string): Map<string, number> {
+  const out = new Map<string, number>([[anchor, 0]]);
+  const adjacency = new Map<string, GenerationEdge[]>();
+  for (const edge of edges) {
+    const list = adjacency.get(edge.fromId);
+    if (list) list.push(edge);
+    else adjacency.set(edge.fromId, [edge]);
+  }
+
+  const queue = [anchor];
+  // Index rather than `shift()`: shifting re-indexes the whole array on every
+  // step, which is quadratic on a large family for no benefit.
+  for (let head = 0; head < queue.length; head += 1) {
+    const current = queue[head];
+    const base = out.get(current)!;
+    for (const edge of adjacency.get(current) ?? []) {
+      if (out.has(edge.toId)) continue;
+      out.set(edge.toId, base + edge.delta);
+      queue.push(edge.toId);
+    }
+  }
+  return out;
+}

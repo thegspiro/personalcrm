@@ -28,6 +28,7 @@ export function ContactPicker({
   multiple = true,
   required,
   className,
+  onSelectionChange,
 }: {
   name: string;
   label?: string;
@@ -36,6 +37,13 @@ export function ContactPicker({
   multiple?: boolean;
   required?: boolean;
   className?: string;
+  /**
+   * Told about the current selection whenever it changes, including the reset
+   * back to the defaults. For a form where one picker narrows another — "who
+   * is this person's relative" cannot offer that same person — the selection
+   * has to be readable outside the picker.
+   */
+  onSelectionChange?: (ids: string[]) => void;
 }) {
   const defaultsKey = [...new Set(defaultSelected)].join("\0");
   const intendedDefaults = React.useMemo(
@@ -56,6 +64,19 @@ export function ContactPicker({
     form.addEventListener("reset", restoreDefaults);
     return () => form.removeEventListener("reset", restoreDefaults);
   }, [intendedDefaults]);
+
+  // Held in a ref so a caller passing a fresh inline closure on every render
+  // does not re-fire the callback on every render along with it. The ref is
+  // updated in an effect rather than during render, which is both the rule and
+  // the reason for it: a render can be thrown away and restarted, and a write
+  // that happened during one of those is a write nothing asked for.
+  const notify = React.useRef(onSelectionChange);
+  React.useEffect(() => {
+    notify.current = onSelectionChange;
+  });
+  React.useEffect(() => {
+    notify.current?.(selected);
+  }, [selected]);
 
   const byId = React.useMemo(
     () => new Map(contacts.map((contact) => [contact.id, contact])),

@@ -157,14 +157,24 @@ export async function listContacts(
   return { items, total };
 }
 
+/**
+ * How many people a picker draws before it stops.
+ *
+ * Exported so a caller that wants to *say* it ran out can over-fetch by one and
+ * hand the result to `applyCap` — a full picker and a truncated one look
+ * identical otherwise, and "they aren't in the list" reads as "I never added
+ * them".
+ */
+export const CONTACT_OPTIONS_CAP = 500;
+
 /** Lightweight list for pickers and the command palette. */
-export const listContactOptions = cache(async (ownerId: string) => {
+export const listContactOptions = cache(async (ownerId: string, take = CONTACT_OPTIONS_CAP) => {
   const scope = await privacyScope();
   return prisma.contact.findMany({
     where: { ownerId, isArchived: false, ...contactPrivacyWhere(scope) },
     select: { id: true, firstName: true, lastName: true, nickname: true, avatarPath: true },
     orderBy: [{ lastInteractionAt: { sort: "desc", nulls: "last" } }, { firstName: "asc" }],
-    take: 500,
+    take,
   });
 });
 

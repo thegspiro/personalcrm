@@ -10,8 +10,11 @@ import {
 import {
   endedRole,
   familyMeta,
+  pickAnchor,
+  walkGenerations,
   type FamilyRole,
   type FamilyTier,
+  type GenerationEdge,
   FAMILY_TIER_ORDER,
 } from "@/lib/family";
 import {
@@ -92,6 +95,12 @@ async function loadFamilyEdges(ownerId: string) {
       type: { select: { id: true, label: true, icon: true, color: true, metadata: true } },
       toContact: { select: PERSON_SELECT },
     },
+    // Ordered explicitly because the suggester walks these rows in the order it
+    // receives them, and which side a suggestion is phrased from — "Ada, maybe
+    // Gran's grandchild" or the reverse — follows from that. Without an order
+    // the database is free to return them however it likes, and the page draws
+    // a capped window over the result.
+    orderBy: { id: "asc" },
   });
 
   return rows.filter((row) => familyMeta(row.type) !== null);
@@ -179,7 +188,7 @@ async function loadSuggestions(
     if (role && !byRole.has(role)) byRole.set(role, { id: term.id, label: term.label });
   }
 
-  return suggestions.flatMap((suggestion) => {
+  const cards = suggestions.flatMap((suggestion) => {
     const subject = people.get(suggestion.subjectId);
     const person = people.get(suggestion.personId);
     // A suggestion whose endpoint the viewer cannot see is not shown at all —
@@ -188,6 +197,18 @@ async function loadSuggestions(
     const term = byRole.get(suggestion.role) ?? null;
     return [{ ...suggestion, subject, person, termId: term?.id ?? null, termLabel: term?.label ?? null }];
   });
+
+  // The suggester walks its index in insertion order, so the cards come back in
+  // whatever order the rows happened to arrive in — and reshuffle whenever an
+  // unrelated link is added. `/family` caps this list, so an unstable order
+  // does not merely look untidy: it changes which suggestions are reachable at
+  // all. Sort by the names actually printed on the card.
+  return cards.sort(
+    (a, b) =>
+      displayName(a.subject).localeCompare(displayName(b.subject)) ||
+      displayName(a.person).localeCompare(displayName(b.person)) ||
+      a.personId.localeCompare(b.personId),
+  );
 }
 
 export interface ContactFamily {
@@ -304,17 +325,13 @@ export const getFamilyOverview = cache(
       }),
     ]);
 
-    const degree = new Map<string, number>();
-    for (const row of rows) {
-      degree.set(row.fromContactId, (degree.get(row.fromContactId) ?? 0) + 1);
-    }
-
-    let anchor = anchorId;
-    if (!anchor || !degree.has(anchor)) {
-      anchor = [...degree.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
-    }
-
-    const generations = anchor ? walkGenerations(rows, anchor) : new Map<string, number>();
+    const graph: GenerationEdge[] = rows.map((row) => ({
+      fromId: row.fromContactId,
+      toId: row.toContact.id,
+      delta: familyMeta(row.type)!.generation,
+    }));
+    const anchor = pickAnchor(graph, anchorId);
+    const generations = anchor ? walkGenerations(graph, anchor) : new Map<string, number>();
 
     const householdNames = new Map<string, string[]>();
     for (const household of households) {
@@ -373,38 +390,6 @@ export const getFamilyOverview = cache(
     };
   },
 );
-
-/**
- * Breadth-first generation assignment from an anchor.
- *
- * Each edge carries its own generation delta, so "Gran is Mum's parent" lands
- * two bands above you without needing to know anything about family structure.
- * BFS means the shortest path wins, which keeps a cousin marriage or a
- * remarriage from dragging someone into a nonsensical band.
- */
-function walkGenerations(rows: FamilyRow[], anchor: string): Map<string, number> {
-  const out = new Map<string, number>([[anchor, 0]]);
-  const adjacency = new Map<string, Array<{ to: string; delta: number }>>();
-  for (const row of rows) {
-    const meta = familyMeta(row.type)!;
-    const list = adjacency.get(row.fromContactId);
-    const edge = { to: row.toContact.id, delta: meta.generation };
-    if (list) list.push(edge);
-    else adjacency.set(row.fromContactId, [edge]);
-  }
-
-  const queue = [anchor];
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    const base = out.get(current)!;
-    for (const edge of adjacency.get(current) ?? []) {
-      if (out.has(edge.to)) continue;
-      out.set(edge.to, base + edge.delta);
-      queue.push(edge.to);
-    }
-  }
-  return out;
-}
 
 /** Household names for the "add to a household" picker on a contact page. */
 export async function listHouseholdOptions(

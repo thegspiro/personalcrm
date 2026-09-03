@@ -4,19 +4,20 @@ import * as React from "react";
 import Link from "next/link";
 import { displayName, initialsOf } from "@/lib/utils";
 import { Icon } from "@/components/nav/icon";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { ContactPicker, type PickerContact } from "@/components/form/contact-picker";
 import { SectionCard, SectionEmpty } from "@/components/contacts/section-card";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import {
   addHouseholdMember,
   createHousehold,
   deleteHousehold,
   removeHouseholdMember,
+  updateHousehold,
 } from "@/server/actions/family";
 
 export interface HouseholdCardItem {
@@ -24,7 +25,13 @@ export interface HouseholdCardItem {
   name: string;
   notes: string | null;
   members: Array<{
-    person: { id: string; firstName: string; lastName: string | null; nickname?: string | null };
+    person: {
+      id: string;
+      firstName: string;
+      lastName: string | null;
+      nickname?: string | null;
+      avatarPath?: string | null;
+    };
     role: string | null;
   }>;
 }
@@ -87,7 +94,9 @@ function HouseholdCard({
 }) {
   const run = useAction();
   const add = useAddAction();
+  const edit = useEditAction();
   const [adding, setAdding] = React.useState(false);
+  const [editing, setEditing] = React.useState(false);
   const memberIds = new Set(household.members.map((m) => m.person.id));
 
   return (
@@ -104,10 +113,33 @@ function HouseholdCard({
           variant="ghost"
           size="sm"
           className="shrink-0"
-          onClick={() => setAdding((v) => !v)}
+          onClick={() => {
+            setEditing(false);
+            setAdding((v) => !v);
+          }}
           aria-expanded={adding}
+          // Named per household: a column of identical "Add someone" buttons
+          // tells a screen-reader user nothing about which one they are in.
+          aria-label={adding ? `Cancel adding to ${household.name}` : `Add someone to ${household.name}`}
         >
           {adding ? "Cancel" : "Add someone"}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="shrink-0"
+          // "Edit", not "Rename": an accessible name starting with "Rename"
+          // contains the word "name", which makes a by-label lookup for the
+          // household's own Name field ambiguous — it matched this button too.
+          aria-label={editing ? `Cancel editing ${household.name}` : `Edit ${household.name}`}
+          aria-expanded={editing}
+          onClick={() => {
+            setAdding(false);
+            setEditing((v) => !v);
+          }}
+        >
+          <Icon name="Pencil" className="size-3.5" />
         </Button>
         <Button
           type="button"
@@ -123,6 +155,33 @@ function HouseholdCard({
           <span aria-hidden>×</span>
         </Button>
       </div>
+
+      {editing ? (
+        <form
+          action={edit(updateHousehold, () => setEditing(false), "Household updated")}
+          className="mt-2.5 grid gap-2.5 border-t border-border/70 pt-2.5"
+        >
+          <input type="hidden" name="id" value={household.id} />
+          <Field label="Name" htmlFor={`household-name-${household.id}`}>
+            <Input
+              id={`household-name-${household.id}`}
+              name="name"
+              required
+              defaultValue={household.name}
+            />
+          </Field>
+          <Field label="Notes (optional)" htmlFor={`household-notes-${household.id}`}>
+            <Textarea
+              id={`household-notes-${household.id}`}
+              name="notes"
+              rows={2}
+              defaultValue={household.notes ?? ""}
+              placeholder="Sunday lunches"
+            />
+          </Field>
+          <SubmitButton size="sm">Save</SubmitButton>
+        </form>
+      ) : null}
 
       {adding ? (
         <form
@@ -156,6 +215,9 @@ function HouseholdCard({
                   className="flex min-w-0 items-center gap-1.5"
                 >
                   <Avatar className="size-5 shrink-0">
+                    {member.person.avatarPath ? (
+                      <AvatarImage src={member.person.avatarPath} alt="" />
+                    ) : null}
                     <AvatarFallback className="text-[10px]">
                       {initialsOf(member.person.firstName, member.person.lastName)}
                     </AvatarFallback>
@@ -198,11 +260,12 @@ export function FamilyEmpty() {
       <Icon name="Users" className="mx-auto size-6 text-muted-foreground" />
       <p className="mt-2 text-sm font-medium">No family recorded yet</p>
       <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
-        Open someone in{" "}
+        Link two people with <strong className="font-medium">Add a relative</strong> above, or open
+        someone in{" "}
         <Link href="/people" className="underline">
           People
         </Link>{" "}
-        and link a parent, sibling or partner. Once a couple of links exist, the rest of the
+        and add a parent, sibling or partner there. Once a couple of links exist, the rest of the
         family gets suggested for you.
       </p>
     </div>

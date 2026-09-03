@@ -1,20 +1,20 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn, displayName, initialsOf } from "@/lib/utils";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Icon } from "@/components/nav/icon";
 import { termColorClasses } from "@/lib/format";
 import { generationLabel } from "@/lib/family";
 
 export interface TreePerson {
   id: string;
-  /** The person the generations are measured from. */
-  isAnchor?: boolean;
   firstName: string;
   lastName: string | null;
   nickname?: string | null;
+  avatarPath?: string | null;
   isArchived: boolean;
   /** How they relate to the anchor, when there is a direct link. */
   terms: Array<{ label: string; icon: string | null; color: string | null }>;
@@ -40,26 +40,45 @@ export interface TreeBand {
  */
 export function FamilyTree({
   bands,
+  anchorId,
   anchorName,
   anchorOptions = [],
 }: {
   bands: TreeBand[];
+  /**
+   * Whose point of view the generations are measured from.
+   *
+   * The id, not the name. Matching the selected option by display name picked
+   * the wrong person whenever two of them shared one — two cousins called Sam,
+   * or anybody recorded twice under a nickname — and the picker then claimed
+   * the tree was rooted on someone it was not.
+   */
+  anchorId: string | null;
   anchorName: string | null;
   /** Everyone in the tree, so it can be re-rooted on any of them. */
   anchorOptions?: Array<{ id: string; name: string }>;
 }) {
   const router = useRouter();
+  const [rerooting, startTransition] = React.useTransition();
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
-      {anchorName && anchorOptions.length > 1 ? (
+      {anchorId && anchorOptions.length > 1 ? (
         <label className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span className="shrink-0">Generations measured from</span>
           <select
-            defaultValue={anchorOptions.find((o) => o.name === anchorName)?.id}
-            onChange={(event) => router.push(`/family?anchor=${event.target.value}`)}
+            // Keyed on the server's answer so going back or forward resets the
+            // control to the anchor the page is actually rendered for; an
+            // uncontrolled select keeps whatever was last chosen otherwise.
+            key={anchorId}
+            defaultValue={anchorId}
+            onChange={(event) => {
+              const next = event.target.value;
+              startTransition(() => router.push(`/family?anchor=${encodeURIComponent(next)}`));
+            }}
             aria-label="Measure generations from"
-            className="h-9 w-full min-w-0 flex-1 basis-40 rounded-lg border border-input bg-card px-2 text-sm"
+            disabled={rerooting}
+            className="h-9 w-full min-w-0 flex-1 basis-40 rounded-lg border border-input bg-card px-2 text-sm disabled:opacity-60"
           >
             {anchorOptions.map((option) => (
               <option key={option.id} value={option.id}>
@@ -73,9 +92,9 @@ export function FamilyTree({
       {bands.map((band) => (
         <section key={band.generation} className="min-w-0 rounded-xl border border-border bg-card">
           <div className="flex items-center gap-2 border-b border-border/70 px-4 py-2.5">
-            <h2 className="truncate text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <h3 className="truncate text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {generationLabel(band.generation, anchorName)}
-            </h2>
+            </h3>
             <span className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
               {band.people.length}
             </span>
@@ -88,6 +107,7 @@ export function FamilyTree({
                   className="flex min-w-0 items-start gap-2 rounded-lg border border-border/70 px-3 py-2 transition-colors hover:bg-muted/50"
                 >
                   <Avatar className="size-8 shrink-0">
+                    {person.avatarPath ? <AvatarImage src={person.avatarPath} alt="" /> : null}
                     <AvatarFallback className="text-[11px]">
                       {initialsOf(person.firstName, person.lastName)}
                     </AvatarFallback>
@@ -101,7 +121,7 @@ export function FamilyTree({
                     >
                       {displayName(person)}
                     </p>
-                    {person.isAnchor ? (
+                    {person.id === anchorId ? (
                       <span className="mt-1 inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
                         Measured from here
                       </span>

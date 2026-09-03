@@ -156,3 +156,58 @@ test("households group people explicitly", async ({ page }) => {
     .filter({ has: page.getByRole("button", { name: "Add to a household" }) });
   await expect(card.getByText(name)).toBeVisible();
 });
+
+test("a household can be renamed without losing anyone in it", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto("/family");
+
+  const households = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "New household" }) });
+  const name = `House ${suffix()}`;
+  const renamed = `${name} upstairs`;
+
+  await households.getByRole("button", { name: `Edit ${name}`, exact: true }).click();
+  await households.getByLabel("Name", { exact: true }).fill(renamed);
+  // Stamped, because both projects run against the same instance and the
+  // desktop pass would otherwise match the note the mobile pass left behind.
+  const note = `Sunday lunches, ${suffix()}.`;
+  await households.getByLabel("Notes (optional)").fill(note);
+  await households.getByRole("button", { name: "Save" }).click();
+
+  await expect(households.getByRole("heading", { name: renamed })).toBeVisible();
+  await expect(households.getByText(note)).toBeVisible();
+  // Renaming the group is not a change to who is in it.
+  await expect(households.getByRole("link", { name: new RegExp(SIBLING()) })).toBeVisible();
+  await expect(households.getByRole("link", { name: new RegExp(PARTNER()) })).toBeVisible();
+});
+
+test("two people can be linked from the family page itself", async ({ page }) => {
+  await ensureSignedIn(page);
+  const cousin = `Rui ${suffix()}`;
+  await addPerson(page, cousin);
+
+  await page.goto("/family");
+  const card = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Link two people" }) });
+  await card.getByRole("button", { name: "Link two people" }).click();
+
+  const whose = card.getByRole("group", { name: "Whose relative", exact: true });
+  await whose.getByLabel("Search people").fill(PARENT());
+  await whose.getByRole("button", { name: new RegExp(PARENT()) }).click();
+
+  await card.getByLabel("They are this person's…").selectOption({ label: "Cousin" });
+
+  const who = card.getByRole("group", { name: "Who", exact: true });
+  await who.getByLabel("Search people").fill(cousin);
+  await who.getByRole("button", { name: new RegExp(cousin) }).click();
+
+  await card.getByRole("button", { name: "Link", exact: true }).click();
+
+  // Written through the same action the contact page uses, so both halves land.
+  await openPerson(page, PARENT());
+  await expect(familyCard(page).getByRole("link", { name: new RegExp(cousin) })).toBeVisible();
+  await openPerson(page, cousin);
+  await expect(familyCard(page).getByRole("link", { name: new RegExp(PARENT()) })).toBeVisible();
+});
