@@ -53,6 +53,24 @@ export interface DeliveryDependencies {
 const DELIVERY_DEADLINE_MS = 60_000;
 
 const defaultHttp: HttpAdapter = ({ url, addresses, headers, body, deadlineMs }) => new Promise((resolve, reject) => {
+  // One settling point for every way this can end, because there are more of
+  // them than `end` and `error`. A server that sends headers and then resets
+  // or truncates the body emits neither on the request: the socket simply
+  // closes. Clearing the deadline there without settling — which is what the
+  // first version of this did — left the promise pending for ever, holding the
+  // scheduler pass open behind it and letting the lease expire into exactly
+  // the duplicate delivery the deadline exists to prevent.
+  let settled = false;
+  let deadline: NodeJS.Timeout | undefined;
+  const settle = (outcome: () => void) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(deadline);
+    outcome();
+  };
+  const succeed = (status: number) => settle(() => resolve({ status }));
+  const abandon = (error: Error) => settle(() => reject(error));
+
   const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
     method: "POST",
     headers,
@@ -84,23 +102,24 @@ const defaultHttp: HttpAdapter = ({ url, addresses, headers, body, deadlineMs })
         : callback(null, addresses[0].address, addresses[0].family),
   }, (response) => {
     response.resume();
-    response.once("end", () => {
-      clearTimeout(deadline);
-      resolve({ status: response.statusCode ?? 0 });
-    });
+    response.once("end", () => succeed(response.statusCode ?? 0));
+    response.once("error", abandon);
+    response.once("aborted", () =>
+      abandon(new Error("Channel cut the response short.")));
   });
   request.once("timeout", () => request.destroy(new Error("Channel request timed out.")));
   // The wall clock, independent of the socket: `timeout` above only fires on
   // inactivity, so it never ends a response that keeps trickling.
-  const deadline = setTimeout(
+  deadline = setTimeout(
     () => request.destroy(new Error("Channel request exceeded its deadline.")),
     deadlineMs,
   );
-  request.once("close", () => clearTimeout(deadline));
-  request.once("error", (error) => {
-    clearTimeout(deadline);
-    reject(error);
-  });
+  request.once("error", abandon);
+  // Last resort. The socket is gone and nothing above settled, so the delivery
+  // ended without an answer; saying so is the only outcome that lets the row
+  // be retried rather than waited on for ever.
+  request.once("close", () =>
+    abandon(new Error("Channel closed the connection before the response finished.")));
   request.end(body);
 });
 

@@ -65,13 +65,56 @@ if (!/^mysql:$|^mariadb:$/.test(url.protocol)) throw new Error("DATABASE_URL mus
 const esc = (value) => value.replaceAll("\\", "\\\\").replaceAll("\n", "\\n").replaceAll('"', '\\"');
 const db = decodeURIComponent(url.pathname.replace(/^\//, ""));
 if (!db) throw new Error("DATABASE_URL must name a database");
+
+// The application connects with the whole URL; this file has to reproduce the
+// parts of it that decide *how* the connection is made. Reading only user,
+// password, host and port and then forcing TCP meant a URL naming a socket, or
+// requiring TLS, produced a dump that either could not connect at all or
+// connected less safely than the app does — while the app itself carried on
+// working, so nothing said the nightly backup had stopped.
+const params = url.searchParams;
+// Pool sizing and timeouts say nothing about how or where to connect, so they
+// are simply not the dump's business.
+const poolOnly = new Set([
+  "connection_limit", "pool_timeout", "connect_timeout", "socket_timeout",
+]);
+const translated = new Set(["socket", "sslcert", "sslaccept"]);
+const untranslatable = [...params.keys()].filter(
+  (key) => !poolOnly.has(key) && !translated.has(key),
+);
+// Refused rather than ignored. Silently dropping, say, a client identity would
+// mean the dump connects on weaker terms than the application — the failure
+// this whole file exists to avoid. Only the names are printed; no value from
+// the URL reaches the log.
+if (untranslatable.length > 0) {
+  throw new Error(
+    `DATABASE_URL carries connection options the backup cannot reproduce: ${untranslatable.join(", ")}. ` +
+    "It will not connect on weaker terms than the application, so it stops here. " +
+    "See docs/backup.md for what is supported.",
+  );
+}
+
+const socketPath = params.get("socket");
+const where = socketPath
+  ? [`socket="${esc(socketPath)}"`, "protocol=socket"]
+  : [`host="${esc(url.hostname)}"`, `port=${url.port || 3306}`, "protocol=tcp"];
+
+const tls = [];
+const ca = params.get("sslcert");
+if (ca) tls.push(`ssl-ca="${esc(ca)}"`);
+const accept = params.get("sslaccept");
+if (accept === "accept_invalid_certs") tls.push("ssl-verify-server-cert=0");
+else if (accept === "strict" || (ca && !accept)) tls.push("ssl-verify-server-cert=1");
+else if (accept) {
+  throw new Error(`DATABASE_URL sslaccept="${accept}" is not one this backup understands.`);
+}
+
 const config = [
   "[client]",
   `user="${esc(decodeURIComponent(url.username))}"`,
   `password="${esc(decodeURIComponent(url.password))}"`,
-  `host="${esc(url.hostname)}"`,
-  `port=${url.port || 3306}`,
-  "protocol=tcp",
+  ...where,
+  ...tls,
   "[personalcrm-backup]",
   `database="${esc(db)}"`,
   "",

@@ -59,6 +59,16 @@ account during startup, because `/run` belongs to root and the backup does not
 run as root; `BACKUP_RUNTIME_DIR` points it elsewhere, at a path you have made
 writable by that account.
 
+The dump connects the way the application does, not merely to the same host.
+A `socket=` in `DATABASE_URL` is used as a socket rather than forced onto TCP,
+and `sslcert=` becomes `ssl-ca` with server-certificate verification on unless
+`sslaccept=accept_invalid_certs` says otherwise. Pool sizing and timeouts —
+`connection_limit`, `pool_timeout`, `connect_timeout`, `socket_timeout` — say
+nothing about how to connect and are ignored. Any other connection option,
+`sslidentity` and `sslpassword` among them, makes the backup **stop with a
+message naming it** rather than connect on weaker terms than the application;
+the names are printed, never the values.
+
 > **Backups are not encrypted.** SQL dumps can contain every private note and
 > stored application secret. Files are mode `0600`, but anyone with host/root
 > access can read them. Encrypt the host backup or destination and restrict

@@ -163,6 +163,39 @@ describe("notification destinations", () => {
     }
   });
 
+  it("fails a response that is cut off after its headers", async () => {
+    // The server promises 1024 bytes, sends seven, and closes the connection
+    // *gracefully*. That distinction is the whole finding: a reset surfaces as
+    // ECONNRESET on the request and would have been caught anyway, while a
+    // clean FIN mid-body emits neither `end` nor an error — only `close`.
+    // Clearing the deadline there without settling, which the first version of
+    // the deadline fix did, left this promise pending for ever: the scheduler
+    // pass held open, the lease expiring into the duplicate delivery the
+    // deadline exists to prevent. Verified against both shapes.
+    const { createServer } = await import("node:http");
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-length": "1024" });
+      response.write("partial");
+      response.socket?.end();
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      await expect(
+        deliverToChannel(channel("WEBHOOK", { url: `http://127.0.0.1:${port}/` }), "s", "b", {
+          resolve: async () => [{ address: "127.0.0.1", family: 4 as const }],
+          isAdministrator: async () => true,
+          // Far longer than this test may take, so a pass here is the promise
+          // settling on its own rather than the deadline rescuing it.
+          deadlineMs: 30_000,
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await new Promise<void>((done) => server.close(() => done()));
+    }
+  }, 10_000);
+
   it("enforces the channel owner's current role at delivery time", async () => {
     const resolve = async () => [{ address: "192.168.1.20", family: 4 as const }];
     const http = vi.fn(async () => ({ status: 200 }));

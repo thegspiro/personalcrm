@@ -127,7 +127,12 @@ export async function listLocationOptions(ownerId: string) {
     select: {
       id: true,
       name: true,
-      locationAliases: { select: { value: true } },
+      // Owner-filtered like every other read of this relation: the alias's
+      // ownerId and its location's are two independent columns, so an import
+      // or a restore can leave one account's alias hanging off another
+      // account's place, and an unfiltered include hands its value straight to
+      // quick-add matching.
+      locationAliases: { where: { ownerId }, select: { value: true } },
     },
     // By name, not by recency: a "most recently visited" order derived from
     // unfiltered visits is a signal that shifts when the lock opens.
@@ -170,7 +175,7 @@ export async function getLocation(ownerId: string, id: string) {
         },
         orderBy: { occurredAt: "desc" },
       },
-      locationAliases: { orderBy: { value: "asc" } },
+      locationAliases: { where: { ownerId }, orderBy: { value: "asc" } },
       plans: {
         where: visiblePlan,
         include: {

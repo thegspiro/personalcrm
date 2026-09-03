@@ -427,6 +427,71 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       ).toBe(0);
     });
 
+    it("refuses an alias that is another place's canonical name, claim row or not", async () => {
+      state.unlocked = true;
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      const bar = await place(state.ownerId, "Quiet Bar");
+      await visit(cafe.id, []);
+      await visit(bar.id, []);
+      // The bar has no canonical alias row — an import, a half-applied fix, a
+      // process straddling the upgrade. The alias table is derived from
+      // Location rather than authoritative over it, so asking only the alias
+      // table saw no conflict and let the cafe claim "Quiet Bar" as an alias.
+      // resolveLocation consults aliases first, so every later mention of the
+      // bar's own name would have been filed against the cafe.
+      expect(
+        await prisma.locationAlias.count({ where: { locationId: bar.id } }),
+      ).toBe(0);
+
+      const result = await updateLocation(
+        formFor({ id: cafe.id, name: "Corner Cafe", aliases: "Quiet Bar" }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.fieldErrors?.aliases).toBeTruthy();
+      expect(
+        await prisma.locationAlias.count({
+          where: { ownerId: state.ownerId, normalizedValue: "quiet bar" },
+        }),
+      ).toBe(0);
+
+      // The bar's own name still resolves to the bar.
+      const resolved = await prisma.$transaction((tx) =>
+        resolveLocation(tx, state.ownerId, "Quiet Bar"),
+      );
+      expect(resolved?.id).toBe(bar.id);
+    });
+
+    it("does not read an alias that belongs to another account", async () => {
+      state.unlocked = true;
+      const stranger = await createTestUser();
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, []);
+      // Two independent foreign keys, so an import or a restore can leave a
+      // stranger's alias hanging off our place. An unfiltered include handed
+      // its value to quick-add matching and rendered it into the editor.
+      await prisma.locationAlias.create({
+        data: {
+          ownerId: stranger.id,
+          locationId: cafe.id,
+          value: "Their Private Name",
+          normalizedValue: "their private name",
+          isCanonical: false,
+        },
+      });
+
+      const options = await listLocationOptions(state.ownerId);
+      const mine = options.find((option) => option.id === cafe.id);
+      expect(mine?.locationAliases.map((alias) => alias.value) ?? []).not.toContain(
+        "Their Private Name",
+      );
+
+      const page = await getLocation(state.ownerId, cafe.id);
+      expect(
+        (page?.locationAliases ?? []).map((alias) => alias.value),
+      ).not.toContain("Their Private Name");
+    });
+
     it("refuses a rename onto another place rather than merging them", async () => {
       state.unlocked = true;
       const cafe = await place(state.ownerId, "Corner Cafe");

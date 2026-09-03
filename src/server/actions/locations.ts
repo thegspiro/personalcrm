@@ -88,7 +88,14 @@ async function visibleLocation(ownerId: string, id: string) {
   const scope = await privacyScope();
   return prisma.location.findFirst({
     where: { id, ...locationVisibleWhere(ownerId, scope) },
-    select: { id: true, normalizedName: true, locationAliases: true },
+    select: {
+      id: true,
+      normalizedName: true,
+      // Owner-filtered for the same reason the queries are: a cross-owner row
+      // must not decide whether this account's aliases changed, nor be
+      // rendered back into the editor.
+      locationAliases: { where: { ownerId } },
+    },
   });
 }
 
@@ -227,15 +234,29 @@ export async function updateLocation(form: FormData): Promise<ActionResult> {
     normalizedName,
     ...aliases.map((alias) => alias.normalizedValue),
   ];
-  const conflictingAlias = await prisma.locationAlias.findFirst({
-    where: {
-      ownerId,
-      normalizedValue: { in: claims },
-      locationId: { not: id },
-    },
-    select: { id: true },
-  });
-  if (conflictingAlias)
+  // Both namespaces are asked, for the reason the rename guard above gives:
+  // the alias table is derived from the Location table rather than
+  // authoritative over it. A place whose canonical claim is missing — an
+  // import, a half-applied fix, a process straddling the upgrade — is
+  // invisible to the alias lookup, so its name could be claimed here as
+  // somebody else's alias. `resolveLocation` consults aliases first, so every
+  // later mention of that place's own name would then be filed against the
+  // wrong one.
+  const [conflictingAlias, conflictingName] = await Promise.all([
+    prisma.locationAlias.findFirst({
+      where: {
+        ownerId,
+        normalizedValue: { in: claims },
+        locationId: { not: id },
+      },
+      select: { id: true },
+    }),
+    prisma.location.findFirst({
+      where: { ownerId, normalizedName: { in: claims }, id: { not: id } },
+      select: { id: true },
+    }),
+  ]);
+  if (conflictingAlias || conflictingName)
     return fieldError(
       "aliases",
       "Another place already uses that name or alias.",

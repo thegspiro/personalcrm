@@ -83,8 +83,13 @@ export function EditPlaceSheet({
     }
     setError(undefined);
     setFieldErrors({});
-    setOpen(false);
-    await run(async () => ({ ok: true }), "Place saved");
+    // Closed once the refreshed row has rendered, not the moment the action
+    // returns. Every field in this sheet is uncontrolled and mounts from
+    // `place`, so closing early and reopening inside the refresh window
+    // brought back the aliases as they were before the save — and saving that
+    // form again removed the one just added. The same deferred close every
+    // other editor uses.
+    await run(async () => ({ ok: true }), "Place saved", () => setOpen(false));
   }
 
   async function lookUp(formEl: HTMLFormElement) {
