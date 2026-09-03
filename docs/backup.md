@@ -43,7 +43,7 @@ covers SQL dumps only, not uploads or `secrets.json`.
 Run an extra backup at any time:
 
 ```bash
-docker exec personalcrm /command/s6-setuidgid abc /etc/s6-overlay/scripts/backup-now
+docker exec personalcrm s6-setuidgid abc /etc/s6-overlay/scripts/backup-now
 ```
 
 The service and manual command run as the `PUID`/`PGID`-backed `abc` account, so
@@ -113,7 +113,7 @@ The scheduled dump above is the supported way to do this, and it can be run at
 any moment without waiting for `BACKUP_TIME`:
 
 ```bash
-docker exec personalcrm /command/s6-setuidgid abc /etc/s6-overlay/scripts/backup-now
+docker exec personalcrm s6-setuidgid abc /etc/s6-overlay/scripts/backup-now
 ```
 
 `--single-transaction` is what makes that consistent without locking — for the

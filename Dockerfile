@@ -124,6 +124,13 @@ RUN set -eux; \
     tar -C / -Jxpf s6-arch.tar.xz; \
     rm -f s6-noarch.tar.xz s6-arch.tar.xz
 
+# s6 puts its own tools on PATH for the services it supervises, and a
+# `docker exec` gets this PATH instead. Without /command on it, running the
+# on-demand backup from outside fails: first because s6-setuidgid is not
+# found, and then — named by its absolute path — because the execline script
+# it is cannot find `ifelse`. Both are here.
+ENV PATH="/command:${PATH}"
+
 WORKDIR /app
 
 # Next's standalone bundle: server.js plus only the modules it actually traced.
