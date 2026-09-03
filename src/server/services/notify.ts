@@ -123,9 +123,19 @@ const defaultHttp: HttpAdapter = ({ url, addresses, headers, body, deadlineMs })
   request.end(body);
 });
 
-/** Connect to the validated answers in turn, so one dead address is not fatal. */
+/**
+ * Connect to the validated answers in turn, so one dead address is not fatal.
+ *
+ * The fallback listener is removed the moment a socket connects, and anything
+ * that settles after the first answer is destroyed rather than handed back.
+ * Left attached, a socket that failed *during the SMTP exchange* — long after
+ * this resolved — re-entered `attempt` and opened the next address: a
+ * connection nobody was waiting for and nobody would close, accumulating a
+ * file descriptor per failed delivery and per retry of it.
+ */
 function connectToOne(addresses: ResolvedAddress[], port: number): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
+    let settled = false;
     const attempt = (index: number) => {
       const socket = net.connect({
         host: addresses[index].address,
@@ -133,11 +143,23 @@ function connectToOne(addresses: ResolvedAddress[], port: number): Promise<net.S
         family: addresses[index].family,
       });
       socket.setTimeout(15_000, () => socket.destroy(new Error("Channel connection timed out.")));
-      socket.once("error", (error) => {
+      const onError = (error: Error) => {
+        if (settled) return;
         if (index + 1 < addresses.length) attempt(index + 1);
-        else reject(error);
-      });
+        else {
+          settled = true;
+          reject(error);
+        }
+      };
+      socket.once("error", onError);
       socket.once("connect", () => {
+        // A late arrival from an earlier attempt has nobody to go to.
+        if (settled) {
+          socket.destroy();
+          return;
+        }
+        settled = true;
+        socket.off("error", onError);
         socket.setTimeout(0);
         resolve(socket);
       });
@@ -149,6 +171,9 @@ function connectToOne(addresses: ResolvedAddress[], port: number): Promise<net.S
 const defaultSmtp: SmtpAdapter = async (config, addresses, mail, deadlineMs) => {
   const host = config.host as string;
   const port = typeof config.port === "number" ? config.port : 587;
+  // The socket nodemailer is actually talking on, so the deadline can end the
+  // exchange rather than merely stop waiting for it.
+  let live: net.Socket | undefined;
   const transport = nodemailer.createTransport({
     host,
     port,
@@ -169,7 +194,17 @@ const defaultSmtp: SmtpAdapter = async (config, addresses, mail, deadlineMs) => 
     // hands the socket back already opened and so never sees this phase.
     getSocket: (_options: SMTPTransport.Options, callback: (error: Error | null, value?: { connection: net.Socket }) => void) => {
       connectToOne(addresses, port).then(
-        (connection) => callback(null, { connection }),
+        (connection) => {
+          // Held so the deadline below can end the session outright. Closing
+          // the transport is not enough: for a non-pooled transport it does
+          // transport-level cleanup only and leaves the per-message
+          // connection running, so the send could still be delivered after
+          // the scheduler had recorded a failure and queued a retry — the
+          // duplicate the deadline exists to prevent, arriving by the very
+          // mechanism meant to stop it.
+          live = connection;
+          callback(null, { connection });
+        },
         (error: Error) => callback(error),
       );
     },
@@ -177,16 +212,16 @@ const defaultSmtp: SmtpAdapter = async (config, addresses, mail, deadlineMs) => 
   // The same wall-clock bound as the HTTP path, for the same reason: every
   // nodemailer timeout above fires on silence, so a server that answers each
   // command slowly but never stops can still outlive the scheduler's lease.
-  // Closing the transport ends the session and frees the socket.
   let deadline: NodeJS.Timeout | undefined;
   try {
     await Promise.race([
       transport.sendMail(mail),
       new Promise<never>((_resolve, reject) => {
-        deadline = setTimeout(
-          () => reject(new Error("Channel delivery exceeded its deadline.")),
-          deadlineMs,
-        );
+        deadline = setTimeout(() => {
+          // Destroy first, so nothing is in flight once this rejects.
+          live?.destroy();
+          reject(new Error("Channel delivery exceeded its deadline."));
+        }, deadlineMs);
       }),
     ]);
   } finally {

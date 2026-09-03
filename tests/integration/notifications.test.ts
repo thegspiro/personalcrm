@@ -386,6 +386,33 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     ).toBe(true);
   });
 
+  it("saves a name whatever it resolves to, so the form cannot enumerate DNS", async () => {
+    // Refusing a name that resolves somewhere non-public — while a name that
+    // resolves nowhere saved cleanly — answered the question the boundary
+    // exists to protect: an internal host and a spelling nobody registered
+    // could be told apart from an ordinary account. The two must look the
+    // same here, and the delivery-time block is what actually stops the send.
+    state.role = "MEMBER";
+    const internal = await createChannel(
+      form({ kind: "NTFY", name: "Guess", url: "https://nas.corp.example/topic" }),
+    );
+    const nowhere = await createChannel(
+      form({ kind: "NTFY", name: "Nowhere", url: "https://unresolvable.example.com/other" }),
+    );
+
+    expect(internal.ok).toBe(true);
+    expect(nowhere.ok).toBe(true);
+    expect(await prisma.notificationChannel.count()).toBe(2);
+
+    // A literal address is a different matter: refusing it tells its author
+    // only what they just typed, so it stays refused on the field.
+    const literal = await createChannel(
+      form({ kind: "NTFY", name: "Direct", url: "http://10.0.0.5/hook" }),
+    );
+    expect(literal.ok).toBe(false);
+    expect(literal.fieldErrors).toMatchObject({ url: expect.any(String) });
+  });
+
   it("saves a destination that does not resolve, and refuses to send to it", async () => {
     // Saving must not depend on DNS answering. A name is unresolvable for
     // reasons that say nothing about where it points — the resolver is down,

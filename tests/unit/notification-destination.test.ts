@@ -196,6 +196,52 @@ describe("notification destinations", () => {
     }
   }, 10_000);
 
+  it("ends the SMTP session at the deadline rather than leaving it running", async () => {
+    // Rejecting is not enough. Closing a non-pooled transport does
+    // transport-level cleanup only and leaves the per-message connection
+    // alive, so the send could still be delivered *after* the scheduler had
+    // recorded a failure and queued a retry — the duplicate the deadline
+    // exists to prevent, arriving by the mechanism meant to stop it.
+    const { createServer } = await import("node:net");
+    const live = new Set<import("node:net").Socket>();
+    const server = createServer((socket) => {
+      live.add(socket);
+      // Read, or this side never notices the close: a socket with no data
+      // listener stays paused and emits neither `end` nor `close`, which made
+      // an earlier version of this test fail against a working fix.
+      socket.resume();
+      socket.on("close", () => live.delete(socket));
+      // A greeting, then silence: the session is open and nodemailer waits.
+      socket.write("220 slow.example ESMTP\r\n");
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      await expect(
+        deliverToChannel(
+          channel("EMAIL", {
+            host: "smtp.example", port, from: "crm@example.com", to: "me@example.com",
+          }),
+          "s", "b",
+          {
+            resolve: async () => [{ address: "127.0.0.1", family: 4 as const }],
+            isAdministrator: async () => true,
+            deadlineMs: 300,
+          },
+        ),
+      ).rejects.toThrow(/deadline/i);
+
+      // The socket is gone, not merely unwatched. Without the destroy the
+      // server still holds an open connection here.
+      await new Promise((settle) => setTimeout(settle, 100));
+      expect(live.size).toBe(0);
+    } finally {
+      for (const socket of live) socket.destroy();
+      await new Promise<void>((done) => server.close(() => done()));
+    }
+  }, 15_000);
+
   it("enforces the channel owner's current role at delivery time", async () => {
     const resolve = async () => [{ address: "192.168.1.20", family: 4 as const }];
     const http = vi.fn(async () => ({ status: 200 }));

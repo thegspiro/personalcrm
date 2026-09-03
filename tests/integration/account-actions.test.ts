@@ -11,6 +11,9 @@ vi.mock("@/server/db/client", async () => ({
   prisma: (await import("./db")).prisma,
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers({ "x-forwarded-for": "203.0.113.7" }),
+}));
 vi.mock("@/server/user/context", () => ({
   getUserContext: async () => ({
     user: { id: state.ownerId },
@@ -29,6 +32,8 @@ vi.mock("@/server/auth/session", () => ({
 
 const { changePassword, updateDisplayName, updateEmail } =
   await import("@/server/actions/account");
+// In-process counters, so they outlive a test unless cleared.
+const { resetLoginAttempts } = await import("@/server/auth/login-throttle");
 const form = (values: Record<string, string>) => {
   const data = new FormData();
   Object.entries(values).forEach(([key, value]) => data.set(key, value));
@@ -42,6 +47,7 @@ describe.skipIf(!hasTestDatabase)("account actions", () => {
     state.ownerId = user.id;
     state.secured = false;
     state.securingFails = false;
+    resetLoginAttempts();
     await prisma.user.update({
       where: { id: user.id },
       data: { passwordHash: await hashPassword("OldPassword1!") },
@@ -116,6 +122,56 @@ describe.skipIf(!hasTestDatabase)("account actions", () => {
     });
     expect(await verifyPassword("NewPassword2!", user.passwordHash)).toBe(true);
   });
+  it("says which field is wrong instead of highlighting nothing", async () => {
+    // Both schemas are bare strings, so their issues carry an empty path and
+    // `invalid()` drops those — the form said to check the highlighted fields
+    // and highlighted none, with no word about the length or the syntax.
+    const long = await updateEmail(
+      form({ email: `${"a".repeat(190)}@example.com`, currentPassword: "OldPassword1!" }),
+    );
+    expect(long.ok).toBe(false);
+    expect(long.fieldErrors?.email).toMatch(/191/);
+
+    const malformed = await updateEmail(
+      form({ email: "not-an-email", currentPassword: "OldPassword1!" }),
+    );
+    expect(malformed.ok).toBe(false);
+    expect(malformed.fieldErrors?.email).toBeTruthy();
+
+    const blank = await updateDisplayName(form({ name: "   " }));
+    expect(blank.ok).toBe(false);
+    expect(blank.fieldErrors?.name).toBeTruthy();
+  });
+
+  it("throttles guesses at the current password, as signing in is throttled", async () => {
+    // Reauthentication stands between a stolen session and the two changes
+    // that make the theft permanent. Ungated it took unlimited guesses, each
+    // costing a bcrypt comparison, so it was also a way to spend the machine.
+    const wrong = form({
+      currentPassword: "WrongPassword1!",
+      newPassword: "NewPassword2!",
+      confirmPassword: "NewPassword2!",
+    });
+    let throttled: string | undefined;
+    for (let attempt = 0; attempt < 12 && !throttled; attempt += 1) {
+      const result = await changePassword(wrong);
+      expect(result.ok).toBe(false);
+      const message = result.fieldErrors?.currentPassword;
+      if (message && /again|attempts/i.test(message)) throttled = message;
+    }
+    expect(throttled).toBeTruthy();
+
+    // The real password is refused too while the backoff stands, so the gate
+    // is not merely cosmetic.
+    expect(
+      (await changePassword(form({
+        currentPassword: "OldPassword1!",
+        newPassword: "NewPassword2!",
+        confirmPassword: "NewPassword2!",
+      }))).fieldErrors?.currentPassword,
+    ).toMatch(/again|attempts/i);
+  });
+
   it("does not leave the password changed when securing the sessions fails", async () => {
     // Two commits meant a deadlock or a dropped connection in the second one
     // left the new password in place with every other session still signed

@@ -205,58 +205,74 @@ export const listContactOptions = cache(async (ownerId: string) => {
   });
 });
 
-const DETAIL_INCLUDE = {
-  category: true,
-  tags: { include: { tag: true }, orderBy: { tag: { name: "asc" } } },
-  meetingSource: true,
-  methods: {
-    include: { type: true },
-    orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }],
-  },
-  // Ordered explicitly: without it the rows come back in whatever order the
-  // database happens to return, so they reshuffle between renders.
-  addresses: { orderBy: [{ label: "asc" }, { id: "asc" }] },
-  facts: {
-    include: { category: true },
-    orderBy: [{ importance: "desc" }, { createdAt: "desc" }],
-  },
-  importantDates: { include: { type: true }, orderBy: { date: "asc" } },
-  lifeEvents: {
-    include: { type: true, participants: { include: { contact: true } } },
-    orderBy: [{ date: "desc" }],
-  },
-  lifeEventParticipations: {
-    include: {
-      lifeEvent: {
-        include: { type: true, participants: { include: { contact: true } } },
-      },
+/**
+ * Everything the profile page shows, for one owner.
+ *
+ * A function rather than a constant because the tag join needs the owner:
+ * `ContactTag.contactId` and `Tag.id` are independent foreign keys with
+ * nothing tying their owners together, so an import or a restore can join this
+ * account's contact to another account's tag. Unfiltered, that tag's name was
+ * rendered on the profile and its join id handed to the edit form — which
+ * replaces every join on save, so the foreign association became this
+ * account's to destroy.
+ */
+const detailInclude = (ownerId: string) =>
+  ({
+    category: true,
+    tags: {
+      where: { tag: { ownerId } },
+      include: { tag: true },
+      orderBy: { tag: { name: "asc" } },
     },
-  },
-  ideas: { orderBy: [{ status: "asc" }, { createdAt: "desc" }] },
-  tasks: { orderBy: [{ completedAt: "asc" }, { dueDate: "asc" }] },
-  gifts: { include: { occasion: true }, orderBy: { createdAt: "desc" } },
-  debts: { orderBy: [{ settledOn: "asc" }, { incurredOn: "desc" }] },
-  dietaryNeeds: { orderBy: { createdAt: "asc" } },
-  relationsFrom: {
-    include: {
-      type: true,
-      toContact: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          avatarPath: true,
-          isPrivate: true,
+    meetingSource: true,
+    methods: {
+      include: { type: true },
+      orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }],
+    },
+    // Ordered explicitly: without it the rows come back in whatever order the
+    // database happens to return, so they reshuffle between renders.
+    addresses: { orderBy: [{ label: "asc" }, { id: "asc" }] },
+    facts: {
+      include: { category: true },
+      orderBy: [{ importance: "desc" }, { createdAt: "desc" }],
+    },
+    importantDates: { include: { type: true }, orderBy: { date: "asc" } },
+    lifeEvents: {
+      include: { type: true, participants: { include: { contact: true } } },
+      orderBy: [{ date: "desc" }],
+    },
+    lifeEventParticipations: {
+      include: {
+        lifeEvent: {
+          include: { type: true, participants: { include: { contact: true } } },
         },
       },
     },
-  },
-  romanticProfile: { include: { stage: true, source: true } },
-  flags: { orderBy: [{ kind: "asc" }, { severity: "desc" }] },
-} satisfies Prisma.ContactInclude;
+    ideas: { orderBy: [{ status: "asc" }, { createdAt: "desc" }] },
+    tasks: { orderBy: [{ completedAt: "asc" }, { dueDate: "asc" }] },
+    gifts: { include: { occasion: true }, orderBy: { createdAt: "desc" } },
+    debts: { orderBy: [{ settledOn: "asc" }, { incurredOn: "desc" }] },
+    dietaryNeeds: { orderBy: { createdAt: "asc" } },
+    relationsFrom: {
+      include: {
+        type: true,
+        toContact: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            avatarPath: true,
+            isPrivate: true,
+          },
+        },
+      },
+    },
+    romanticProfile: { include: { stage: true, source: true } },
+    flags: { orderBy: [{ kind: "asc" }, { severity: "desc" }] },
+  }) satisfies Prisma.ContactInclude;
 
 export type ContactDetail = Prisma.ContactGetPayload<{
-  include: typeof DETAIL_INCLUDE;
+  include: ReturnType<typeof detailInclude>;
 }>;
 
 export const getContact = cache(
@@ -264,7 +280,7 @@ export const getContact = cache(
     const scope = await privacyScope();
     const contact = await prisma.contact.findFirst({
       where: { id, ownerId, ...contactPrivacyWhere(scope) },
-      include: DETAIL_INCLUDE,
+      include: detailInclude(ownerId),
     });
     if (!contact) return null;
 
@@ -272,7 +288,7 @@ export const getContact = cache(
     // otherwise ordinary person stays hidden.
     if (!scope.unlocked) {
       // The same rule as `lifeEventPrivacyWhere`, applied in memory because
-      // DETAIL_INCLUDE has already fetched the row: an event stays hidden when
+      // detailInclude has already fetched the row: an event stays hidden when
       // any participant is private, not only when the anchor contact is.
       contact.lifeEvents = contact.lifeEvents.filter((event) =>
         event.participants.every(
@@ -291,7 +307,7 @@ export const getContact = cache(
       contact.relationsFrom = contact.relationsFrom.filter(
         (relation) => !relation.toContact.isPrivate,
       );
-      // DETAIL_INCLUDE fetches the whole row, so a where-fragment elsewhere
+      // detailInclude fetches the whole row, so a where-fragment elsewhere
       // would not help here: without this the private debt is serialised into
       // the page payload even though the section never renders it.
       contact.debts = contact.debts.filter((debt) => !debt.isPrivate);

@@ -29,6 +29,7 @@ const { createTag, deleteTag, mergeTag, renameTag, setContactTag } =
   await import("@/server/actions/tags");
 const { createContact, updateContact } = await import("@/server/actions/contacts");
 const { listTags } = await import("@/server/queries/tags");
+const { getContact } = await import("@/server/queries/contacts");
 const { listContacts } = await import("@/server/queries/contacts");
 
 describe.skipIf(!hasTestDatabase)("contact tags", () => {
@@ -268,6 +269,32 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     expect(used.error).toBe(empty.error);
     expect(used.error).toMatch(/not found/i);
     expect(await prisma.tag.count({ where: { ownerId: stranger.id } })).toBe(2);
+  });
+
+  it("does not show a contact a tag that belongs to another account", async () => {
+    const owner = await createTestUser();
+    const stranger = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = false;
+    state.unlocked = true;
+    const mine = await prisma.contact.create({
+      data: { ownerId: owner.id, firstName: "Dana" },
+    });
+    const theirs = await prisma.tag.create({
+      data: { ownerId: stranger.id, name: "Their Label", slug: "their-label" },
+    });
+    // ContactTag.contactId and Tag.id are independent foreign keys with
+    // nothing tying their owners together, so an import or a restore can join
+    // one account's contact to another's tag. Unfiltered, the profile rendered
+    // that name and the edit form was handed its join id — and saving replaces
+    // every join, so the foreign association became this account's to destroy.
+    await prisma.contactTag.create({
+      data: { contactId: mine.id, tagId: theirs.id },
+    });
+
+    const detail = await getContact(owner.id, mine.id);
+    expect(detail).not.toBeNull();
+    expect(detail?.tags.map((join) => join.tag.name) ?? []).toEqual([]);
   });
 
   it("refuses a tag the lock is hiding on every write that takes its id", async () => {

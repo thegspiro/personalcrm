@@ -384,14 +384,22 @@ validated answer set while the original hostname remains in use for HTTP Host,
 TLS SNI and certificate verification. DNS therefore cannot change the address
 between the safety check and the connection. Redirects remain refused.
 
-The two checks differ in one way. Saving is refused for a name that resolves
-somewhere a member may not reach, but not for one that does not resolve at
-all: a name is unresolvable for reasons that say nothing about where it points
-— the resolver is down, the machine is offline, the host is internal and not
-in DNS yet — and refusing those would make configuring a channel depend on the
-network being up. Nothing is lost by allowing them, because the check before
-the send is the one that matters, and there an unresolvable name is a failure
-recorded on the row rather than a message sent somewhere it should not go.
+The two checks differ in one way: **saving asks DNS nothing.** An address typed
+in directly is still refused on the field, because telling its author that
+`10.0.0.5` is not allowed reveals only what they just wrote. A *hostname* is
+simply saved. Resolving one at save time and refusing it for pointing
+somewhere non-public answered a question the member could not otherwise ask —
+`nas.corp` and a spelling nobody has ever registered gave observably different
+answers, so the form became a way to enumerate internal DNS from an ordinary
+account, through the boundary's own error message.
+
+Nothing is lost by saying nothing there. The check before the send is the one
+that matters: the name is resolved, every answer inspected and the connection
+pinned to it, so a destination a member may not reach is never sent to. It
+merely takes until a delivery to say so, on the row — which is already where an
+unresolvable name reported. The **Send a test** button answers a member with
+one sentence whichever way it failed, for the same reason; an administrator,
+who is allowed a non-public destination anyway, is told what actually happened.
 
 ### Private contacts and the send
 
@@ -483,6 +491,15 @@ have no account behind them — necessary, because a throttle that only fired fo
 real accounts would answer the question the login error carefully refuses to:
 whether that address is one of ours. Both the refusal and the rejection read
 the same for an address that has never existed.
+
+**Confirming your current password is throttled by the same counter.**
+Changing the sign-in address or the password asks for the current one first,
+and that check is what stands between a stolen session and a theft made
+permanent — so it is gated exactly as the front door is, keyed the same way and
+reserved before the comparison rather than after it. A correct password clears
+the count. Ungated it took unlimited guesses, each costing a full password
+comparison, which also made it a way for one member of a shared instance to
+spend the machine.
 
 **It lives in the process, not in a table.** This started as a database table
 and five rounds of review took it apart, every time over the same tension.
