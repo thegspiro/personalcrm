@@ -55,34 +55,55 @@ async function replaceTags(
   contactId: string,
   tagIds: string[],
 ) {
-  const unique = [...new Set(tagIds)];
-  if (unique.length) {
-    // Held for the rest of the transaction before they are counted, because
-    // counting alone left a gap: another tab deleting a submitted tag between
-    // the count and the insert met the foreign key as a P2003, which nothing
-    // here translates — so an ordinary tag deletion elsewhere turned a whole
-    // contact save into a server error and rolled it back, rather than the
-    // field error an unusable tag is supposed to produce. Owner-scoped, so a
-    // tag belonging to another account is simply not returned; the visibility
-    // question is then asked of rows that cannot move.
-    const locked = await tx.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM Tag
-      WHERE ownerId = ${ownerId} AND id IN (${Prisma.join(unique)})
-      FOR UPDATE
-    `;
-    if (locked.length !== unique.length) throw new InvalidTagError();
-  }
-  const usable = unique.length
+  const usable = tagIds.length
     ? await tx.tag.count({
-        where: { id: { in: unique }, ...tagVisibleWhere(ownerId, scope) },
+        where: { id: { in: tagIds }, ...tagVisibleWhere(ownerId, scope) },
       })
     : 0;
-  if (usable !== unique.length) throw new InvalidTagError();
+  if (usable !== tagIds.length) throw new InvalidTagError();
   await tx.contactTag.deleteMany({ where: { contactId } });
-  if (unique.length)
+  if (tagIds.length)
     await tx.contactTag.createMany({
-      data: unique.map((tagId) => ({ contactId, tagId })),
+      data: tagIds.map((tagId) => ({ contactId, tagId })),
     });
+}
+
+/**
+ * Hold the submitted tags for the transaction, as its very first statement.
+ *
+ * Counting them and then inserting left a gap: another tab deleting one in
+ * between met the foreign key as a P2003, which nothing here translates, so an
+ * ordinary tag deletion elsewhere turned a whole contact save into a server
+ * error and rolled back the contact, its custom fields and its avatar with it.
+ * Held, the tag cannot go anywhere and the save keeps it.
+ *
+ * *First*, though, is not a stylistic preference. A locking read taken after
+ * the transaction has already established a read view — after the contact row
+ * is written, say — and which then waits on the very delete it is guarding
+ * against, comes back as "Record has changed since last read" (MariaDB error
+ * 1020) instead of as a row count. That turned one server error into another,
+ * on MariaDB 11 but not on 10.11, so it appeared only in CI. Nothing has been
+ * read when this runs, so there is no view for the lock to disagree with,
+ * which is also why the tag actions have always taken theirs first.
+ *
+ * Owner-scoped, so a tag belonging to another account is simply not returned
+ * and gets the same answer without anything of theirs being read. Returns the
+ * deduplicated ids, so the caller counts and writes each exactly once.
+ */
+async function lockSubmittedTags(
+  tx: Prisma.TransactionClient,
+  ownerId: string,
+  tagIds: string[],
+): Promise<string[]> {
+  const unique = [...new Set(tagIds)];
+  if (!unique.length) return unique;
+  const locked = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM Tag
+    WHERE ownerId = ${ownerId} AND id IN (${Prisma.join(unique)})
+    FOR UPDATE
+  `;
+  if (locked.length !== unique.length) throw new InvalidTagError();
+  return unique;
 }
 
 class InvalidTagError extends Error {}
@@ -161,6 +182,9 @@ export async function createContact(
   let contact: { id: string };
   try {
     contact = await prisma.$transaction(async (tx) => {
+      // Before the contact row, so the lock is the transaction's first
+      // statement — see `lockSubmittedTags`.
+      const tagIds = await lockSubmittedTags(tx, ownerId, strList(form, "tagIds"));
       const created = await tx.contact.create({
         data: {
           ownerId,
@@ -197,7 +221,7 @@ export async function createContact(
         created.id,
         form,
       );
-      await replaceTags(tx, ownerId, scope, created.id, strList(form, "tagIds"));
+      await replaceTags(tx, ownerId, scope, created.id, tagIds);
       // A new contact has no interactions, but this seeds nextTouchAt from their
       // creation date so a cadence starts counting immediately.
       await recomputeContactActivity(tx, [created.id]);
@@ -257,6 +281,8 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
 
   try {
     await prisma.$transaction(async (tx) => {
+      // First, as in `createContact` and for the same reason.
+      const tagIds = await lockSubmittedTags(tx, ownerId, strList(form, "tagIds"));
       await tx.contact.update({
         where: { id },
         data: {
@@ -291,7 +317,7 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
       });
 
       await saveCustomFieldValuesOrThrow(tx, ownerId, "CONTACT", id, form);
-      await replaceTags(tx, ownerId, scope, id, strList(form, "tagIds"));
+      await replaceTags(tx, ownerId, scope, id, tagIds);
       // The cadence may have changed, so nextTouchAt has to be re-derived.
       await recomputeContactActivity(tx, [id]);
     });
