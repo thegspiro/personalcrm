@@ -16,7 +16,11 @@ INSERT INTO Contact (id, ownerId, firstName, lastName, summary, isFavorite, isAr
 VALUES ('backup-smoke-contact', 'backup-smoke-user', 'Ada', 'Restore', 'quotes: '' and unicode: café', 1, 0, 0, 1, 'DAY', 'DAY', 'UNKNOWN', NOW(), NOW());
 SQL
 
-docker exec "${container}" s6-setuidgid abc /etc/s6-overlay/scripts/backup-now
+# By absolute path: s6-overlay puts its tools on PATH for the services it
+# supervises, and `docker exec` gets the image PATH instead, where they are
+# not. /command is where they live — every script in the image names it in
+# its shebang.
+docker exec "${container}" /command/s6-setuidgid abc /etc/s6-overlay/scripts/backup-now
 backup="$(find "${RUNNER_TEMP}/config/backups" -maxdepth 1 -name 'personalcrm-*.sql.gz' -type f | sort | tail -1)"
 test -n "${backup}"
 test "$(stat -c '%u:%g' "${backup}")" = "1001:1001"
