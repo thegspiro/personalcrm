@@ -277,6 +277,8 @@ model Contact {
   relationsFrom           Relationship[]              @relation("RelationshipFrom")
   relationsTo             Relationship[]              @relation("RelationshipTo")
 
+  /// Referenced by `ContactTag`'s composite key; see the note there.
+  @@unique([ownerId, id])
   @@index([ownerId, isArchived, lastName])
   @@index([ownerId, isArchived, firstName])
   @@index([ownerId, nextTouchAt])
@@ -329,19 +331,30 @@ model Tag {
   owner    User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   contacts ContactTag[]
 
+  /// Referenced by `ContactTag`'s composite key; see the note there.
+  @@unique([ownerId, id])
   @@unique([ownerId, slug])
   @@index([ownerId, name])
 }
 
+/// The owner is carried on the row itself so both foreign keys can include it.
+/// Two independent keys — one to a contact, one to a tag — say nothing about
+/// each other, so nothing at the database level stopped a row joining one
+/// account's person to another account's tag. An import or a restore could
+/// make one, and every read then needed a predicate remembering to check.
+/// Referencing `(ownerId, id)` on both sides makes the two owners the same
+/// column, so a mismatch cannot be stored at all.
 model ContactTag {
+  ownerId   String
   contactId String
   tagId     String
 
-  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [ownerId, tagId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([contactId, tagId])
   @@index([tagId])
+  @@index([ownerId, tagId])
 }
 
 model Relationship {
@@ -443,6 +456,8 @@ model Location {
   plans           Plan[]
   locationAliases LocationAlias[]
 
+  /// Referenced by `LocationAlias`'s composite key; see the note on `ContactTag`.
+  @@unique([ownerId, id])
   @@unique([ownerId, normalizedName])
   @@index([ownerId, isArchived, name])
 }
@@ -459,10 +474,13 @@ model LocationAlias {
   createdAt       DateTime @default(now())
 
   owner    User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  /// Composite, so an alias cannot point at another account's place; see the
+  /// note on `ContactTag`.
+  location Location @relation(fields: [ownerId, locationId], references: [ownerId, id], onDelete: Cascade)
 
   @@unique([ownerId, normalizedValue])
   @@index([locationId])
+  @@index([ownerId, locationId])
 }
 
 /// A person discussed during an interaction but not present. Keeping this

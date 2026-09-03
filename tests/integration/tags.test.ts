@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Prisma } from "@prisma/client";
-import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
+import { asARestoreWould, createTestUser, hasTestDatabase, prisma, reset } from "./db";
 
 const state = vi.hoisted(() => ({
   ownerId: "",
@@ -188,8 +188,8 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     ]);
     await prisma.contactTag.createMany({
       data: [
-        { contactId: visible.id, tagId: source.id },
-        { contactId: secret.id, tagId: source.id },
+        { ownerId: owner.id, contactId: visible.id, tagId: source.id },
+        { ownerId: owner.id, contactId: secret.id, tagId: source.id },
       ],
     });
 
@@ -298,7 +298,12 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     expect(await prisma.tag.count({ where: { ownerId: stranger.id } })).toBe(2);
   });
 
-  it("does not show a contact a tag that belongs to another account", async () => {
+  it("cannot store a tag assignment that crosses accounts", async () => {
+    // This used to be a filtering test: `ContactTag` carried two foreign keys
+    // with nothing tying their owners together, so an import or a restore
+    // could join one account's contact to another's tag, and every read had to
+    // remember to exclude it. The row is refused by the database now, so the
+    // property is checked where it is enforced rather than at each reader.
     const owner = await createTestUser();
     const stranger = await createTestUser();
     state.ownerId = owner.id;
@@ -310,18 +315,39 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     const theirs = await prisma.tag.create({
       data: { ownerId: stranger.id, name: "Their Label", slug: "their-label" },
     });
-    // ContactTag.contactId and Tag.id are independent foreign keys with
-    // nothing tying their owners together, so an import or a restore can join
-    // one account's contact to another's tag. Unfiltered, the profile rendered
-    // that name and the edit form was handed its join id — and saving replaces
-    // every join, so the foreign association became this account's to destroy.
-    await prisma.contactTag.create({
-      data: { contactId: mine.id, tagId: theirs.id },
-    });
 
+    // Whichever owner the row claims, one of the two composite keys refuses it.
+    for (const ownerId of [owner.id, stranger.id]) {
+      await expect(
+        prisma.contactTag.create({
+          data: { ownerId, contactId: mine.id, tagId: theirs.id },
+        }),
+      ).rejects.toMatchObject({ code: "P2003" });
+    }
+    expect(await prisma.contactTag.count()).toBe(0);
+
+    // And the ordinary case is untouched.
+    const legitimate = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Mine", slug: "mine" },
+    });
+    await prisma.contactTag.create({
+      data: { ownerId: owner.id, contactId: mine.id, tagId: legitimate.id },
+    });
     const detail = await getContact(owner.id, mine.id);
-    expect(detail).not.toBeNull();
-    expect(detail?.tags.map((join) => join.tag.name) ?? []).toEqual([]);
+    expect(detail?.tags.map((join) => join.tag.name) ?? []).toEqual(["Mine"]);
+
+    // A restore can still bring one in, because a dump disables foreign-key
+    // checks — so the reader's own predicate still has to hold. Unfiltered, the
+    // profile rendered the stranger's tag name and the edit form was handed its
+    // join id, and saving replaces every join, so a foreign association became
+    // this account's to destroy.
+    await asARestoreWould((tx) =>
+      tx.contactTag.create({
+        data: { ownerId: owner.id, contactId: mine.id, tagId: theirs.id },
+      }),
+    );
+    const afterRestore = await getContact(owner.id, mine.id);
+    expect(afterRestore?.tags.map((join) => join.tag.name) ?? []).toEqual(["Mine"]);
   });
 
   it("does not carry another account's person through a tag merge", async () => {
@@ -338,15 +364,26 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
       prisma.tag.create({ data: { ownerId: owner.id, name: "Climbing", slug: "climbing" } }),
       prisma.tag.create({ data: { ownerId: owner.id, name: "Outdoors", slug: "outdoors" } }),
     ]);
-    // Independent foreign keys again: this account's tag joined to another
-    // account's person. Copying that row onto the destination would make this
-    // account the author of a cross-owner association it cannot see.
-    await prisma.contactTag.createMany({
-      data: [
-        { contactId: mine.id, tagId: source.id },
-        { contactId: theirs.id, tagId: source.id },
-      ],
+    // The cross-owner half of this case can no longer be built: the row that
+    // joined this account's tag to another account's person is refused by the
+    // database, whichever owner it claims. What is left to check is that the
+    // merge carries this account's own assignment and nothing else.
+    await expect(
+      prisma.contactTag.create({
+        data: { ownerId: owner.id, contactId: theirs.id, tagId: source.id },
+      }),
+    ).rejects.toMatchObject({ code: "P2003" });
+    await prisma.contactTag.create({
+      data: { ownerId: owner.id, contactId: mine.id, tagId: source.id },
     });
+    // Restored past the constraint, as a dump can: copying this row onto the
+    // destination would make this account the author of a cross-owner
+    // association it cannot see, so the merge has to leave it alone.
+    await asARestoreWould((tx) =>
+      tx.contactTag.create({
+        data: { ownerId: owner.id, contactId: theirs.id, tagId: source.id },
+      }),
+    );
 
     expect((await mergeTag(source.id, destination.id)).ok).toBe(true);
 
@@ -401,11 +438,25 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     const theirs = await prisma.contact.create({
       data: { ownerId: stranger.id, firstName: "Nobody" },
     });
-    // One imported row joining this account's tag to a person it does not own.
-    // "On nobody" has to mean nobody of *this* account's, or the tag vanishes
-    // while locked on the strength of someone its owner cannot see — and
-    // becomes unusable in every write path with it.
-    await prisma.contactTag.create({ data: { contactId: theirs.id, tagId: tag.id } });
+    // This once carried an imported row joining the tag to a person this
+    // account does not own, to prove "on nobody" meant nobody of *this*
+    // account's. The database refuses that row now — asserted where the
+    // constraint is, in "cannot store a tag assignment that crosses accounts"
+    // — so what remains here is the plain case: a tag on nobody stays listed
+    // while locked, which is what makes its first assignment possible.
+    await expect(
+      prisma.contactTag.create({
+        data: { ownerId: owner.id, contactId: theirs.id, tagId: tag.id },
+      }),
+    ).rejects.toMatchObject({ code: "P2003" });
+    // Restored past it, the tag must still count as "on nobody" — or it
+    // vanishes while locked on the strength of someone its owner cannot see,
+    // and becomes unusable in every write path with it.
+    await asARestoreWould((tx) =>
+      tx.contactTag.create({
+        data: { ownerId: owner.id, contactId: theirs.id, tagId: tag.id },
+      }),
+    );
 
     state.unlocked = false;
     expect((await listTags(owner.id)).map((row) => row.name)).toEqual(["Cycling"]);
@@ -480,7 +531,7 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
       data: { ownerId: owner.id, name: "Colleagues", slug: "colleagues" },
     });
     await prisma.contactTag.create({
-      data: { contactId: contact.id, tagId: source.id },
+      data: { ownerId: owner.id, contactId: contact.id, tagId: source.id },
     });
     state.duringPrivacyRead = async () => {
       await prisma.tag.delete({ where: { id: destination.id } });
@@ -681,7 +732,7 @@ describe.skipIf(!hasTestDatabase)("tag writes against a concurrent tab", () => {
     state.duringPrivacyRead = async () => {
       held = await holdUncommitted((tx) =>
         tx.contactTag.create({
-          data: { contactId: hidden.id, tagId: source.id },
+          data: { ownerId: owner.id, contactId: hidden.id, tagId: source.id },
         }),
       );
     };
@@ -720,7 +771,9 @@ describe.skipIf(!hasTestDatabase)("tag writes against a concurrent tab", () => {
     let held: Awaited<ReturnType<typeof holdUncommitted>>;
     state.duringPrivacyRead = async () => {
       held = await holdUncommitted((tx) =>
-        tx.contactTag.create({ data: { contactId: hidden.id, tagId: tag.id } }),
+        tx.contactTag.create({
+          data: { ownerId: owner.id, contactId: hidden.id, tagId: tag.id },
+        }),
       );
     };
 
@@ -756,7 +809,9 @@ describe.skipIf(!hasTestDatabase)("tag writes against a concurrent tab", () => {
     let held: Awaited<ReturnType<typeof holdUncommitted>>;
     state.duringPrivacyRead = async () => {
       held = await holdUncommitted((tx) =>
-        tx.contactTag.create({ data: { contactId: hidden.id, tagId: tag.id } }),
+        tx.contactTag.create({
+          data: { ownerId: owner.id, contactId: hidden.id, tagId: tag.id },
+        }),
       );
     };
 
@@ -809,6 +864,49 @@ describe.skipIf(!hasTestDatabase)("tag writes against a concurrent tab", () => {
 
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.error).toBe("Contact or tag not found.");
+  });
+
+  it("refuses a contact save whose tag became private-only after the check", async () => {
+    // The assignment path's twin: a contact save decides tag visibility too,
+    // and decided it from the transaction's snapshot. A tag on nobody is
+    // usable while locked because it discloses nobody, and an unlocked tab
+    // making it private-only in the gap turns the save into a disclosure —
+    // the tag's name goes back on show through its new visible use.
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = true;
+    state.unlocked = false;
+    const hidden = await prisma.contact.create({
+      data: { ownerId: owner.id, firstName: "Wren", isPrivate: true },
+    });
+    const tag = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Choir", slug: "choir" },
+    });
+
+    let held: Awaited<ReturnType<typeof holdUncommitted>>;
+    state.duringPrivacyRead = async () => {
+      held = await holdUncommitted((tx) =>
+        tx.contactTag.create({
+          data: { ownerId: owner.id, contactId: hidden.id, tagId: tag.id },
+        }),
+      );
+    };
+
+    const form = new FormData();
+    form.set("firstName", "Ash");
+    form.append("tagIds", tag.id);
+    const saving = createContact(form);
+    await releaseAfterItBlocks(() => held.release());
+    await held!.settled;
+    const result = await saving;
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toBe(
+      "One or more tags are unavailable.",
+    );
+    expect(
+      await prisma.contactTag.count({ where: { tagId: tag.id } }),
+    ).toBe(1);
   });
 
   it("reports an unavailable tag rather than failing the whole contact save", async () => {

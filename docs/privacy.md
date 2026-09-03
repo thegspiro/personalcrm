@@ -419,9 +419,17 @@ Nothing is lost by saying nothing there. The check before the send is the one
 that matters: the name is resolved, every answer inspected and the connection
 pinned to it, so a destination a member may not reach is never sent to. It
 merely takes until a delivery to say so, on the row — which is already where an
-unresolvable name reported. The **Send a test** button answers a member with
-one sentence whichever way it failed, for the same reason; an administrator,
-who is allowed a non-public destination anyway, is told what actually happened.
+unresolvable name reported.
+
+The **Send a test** button draws the same line, but around the part that
+actually leaks rather than around the whole button. Everything up to the
+destination check is answered with one sentence whichever way it failed, so a
+refusal and a name nobody has registered still cannot be told apart. Once the
+address has been shown to be public the reason is given in full — a member is
+refused any other kind of address, so repeating "connection refused" or
+"HTTP 401" says nothing about the network the member did not supply, and that
+is where the detail was worth having. An administrator, who is allowed a
+non-public destination anyway, is told what happened either way.
 
 ### Private contacts and the send
 

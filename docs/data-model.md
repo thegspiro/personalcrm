@@ -237,6 +237,22 @@ through the contact.
 Free-form labels. `Tag` is unique per `(ownerId, slug)`; `ContactTag` is the
 join table with composite PK `(contactId, tagId)`, cascading from both sides.
 
+`ContactTag` also carries `ownerId`, and both its foreign keys include it —
+`(ownerId, contactId)` → `Contact(ownerId, id)` and `(ownerId, tagId)` →
+`Tag(ownerId, id)`. Two keys naming only `Contact.id` and `Tag.id` say nothing
+about each other, so a row could pair one account's person with another
+account's tag, and every reader had to remember an owner predicate to exclude
+it. Sharing the owner column makes the two owners the same value, so the
+mismatch cannot be stored. `LocationAlias` references `Location(ownerId, id)`
+for the same reason.
+
+This does not make the readers' predicates redundant. `mariadb-dump` writes
+`SET FOREIGN_KEY_CHECKS=0`, so restoring a dump taken before these keys existed
+can still load a cross-owner row — the constraint governs what the application
+and ordinary writes can do, not what a restore can carry in. The integration
+suite creates such rows through that same route (`asARestoreWould`) to keep the
+readers honest.
+
 Names normalize to lowercase ASCII hyphenated slugs. Renaming preserves assignments;
 merging deduplicates assignments into the destination before deleting the source; deleting
 a tag removes only join rows, never contacts. All operations are owner-scoped. While the
@@ -329,11 +345,15 @@ somewhere confidently wrong. Aliases live in owner-scoped `LocationAlias` rows.
 Each stores the entered `value`, its case-and-whitespace-folded
 `normalizedValue`, and whether it is the canonical name. `(ownerId,
 normalizedValue)` is unique, so two places in one account cannot claim the same
-spelling while different owners remain isolated. The alias's `ownerId` and its
-location's are two independent columns, and nothing in the schema ties them
-together, so `resolveLocation` requires the related location to belong to the
-caller as well: an imported or restored row whose two owners disagree is
-re-pointed at the right place rather than followed to the wrong one.
+spelling while different owners remain isolated. The alias references
+`Location(ownerId, id)`, so its owner and its location's are the same column and
+a cross-owner claim cannot be written. `resolveLocation` still checks, because a
+restore can load one past the constraint: it reads the alias's `locationId`
+alone and fetches the location owner-scoped, so a claim pointing somewhere this
+account does not own reads as no claim and is re-pointed at the right place
+rather than followed to the wrong one. Reading it through the relation is what
+it must not do — the schema marks that relation required, so a row the
+constraint would have refused makes Prisma throw rather than return null.
 The legacy JSON `Location.aliases` column is retained only as a preservation
 area for ambiguous imported claims; new reads and writes use the indexed table.
 

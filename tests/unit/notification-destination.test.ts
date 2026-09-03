@@ -14,6 +14,52 @@ const channel = (kind: string, config: Record<string, unknown>) => ({
 }) as never;
 
 describe("notification destinations", () => {
+  it("tags failures past the destination boundary, and only those", async () => {
+    // What a member may be told turns on this: up to the boundary a refusal
+    // and a name that does not resolve must look alike, or the test button is
+    // an internal DNS lookup service. Past it the address has already been
+    // shown to be public, so the reason says nothing the member did not supply.
+    const { ReachedDestinationError } = await import("@/server/services/notify");
+    const publicAnswer = [{ address: "93.184.216.34", family: 4 as const }];
+
+    // Refused at the boundary: not tagged.
+    const refused = await deliverToChannel(
+      channel("WEBHOOK", { url: "https://hook.example/path" }), "s", "b",
+      {
+        resolve: async () => [{ address: "10.0.0.8", family: 4 as const }],
+        isAdministrator: async () => false,
+      },
+    ).catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(Error);
+    expect(refused).not.toBeInstanceOf(ReachedDestinationError);
+
+    // The transport failing afterwards: tagged, with its reason intact.
+    const transportFailed = await deliverToChannel(
+      channel("WEBHOOK", { url: "https://hook.example/path" }), "s", "b",
+      {
+        resolve: async () => publicAnswer,
+        isAdministrator: async () => false,
+        http: async () => {
+          throw new Error("connect ECONNREFUSED");
+        },
+      },
+    ).catch((error: unknown) => error);
+    expect(transportFailed).toBeInstanceOf(ReachedDestinationError);
+    expect((transportFailed as Error).message).toMatch(/ECONNREFUSED/);
+
+    // And a status the endpoint itself chose.
+    const refusedByEndpoint = await deliverToChannel(
+      channel("WEBHOOK", { url: "https://hook.example/path" }), "s", "b",
+      {
+        resolve: async () => publicAnswer,
+        isAdministrator: async () => false,
+        http: async () => ({ status: 401 }),
+      },
+    ).catch((error: unknown) => error);
+    expect(refusedByEndpoint).toBeInstanceOf(ReachedDestinationError);
+    expect((refusedByEndpoint as Error).message).toMatch(/HTTP 401/);
+  });
+
   it("rejects mixed public/private DNS answers for a member", async () => {
     const resolve = vi.fn(async () => [
       { address: "93.184.216.34", family: 4 as const },
