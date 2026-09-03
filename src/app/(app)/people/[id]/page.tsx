@@ -31,6 +31,7 @@ import { FactsSection } from "@/components/contacts/sections/facts";
 import { GiftsSection } from "@/components/contacts/sections/gifts";
 import { IdeasSection } from "@/components/contacts/sections/ideas";
 import { LifeEventsSection } from "@/components/contacts/sections/life-events";
+import { HappeningsSection } from "@/components/contacts/sections/happenings";
 import { RelationshipsSection } from "@/components/contacts/sections/relationships";
 import { TasksSection } from "@/components/contacts/sections/tasks";
 import { MilestonesSummary } from "@/components/contacts/milestones-summary";
@@ -44,6 +45,7 @@ import { getUpcomingDates } from "@/server/queries/dashboard";
 import { UpcomingDatesWidget } from "@/components/dashboard/widgets";
 import { isBirthdayImportantDate, projectContactBirthday } from "@/server/queries/birthdays";
 import { listContactLocations } from "@/server/queries/locations";
+import { listContactHappenings } from "@/server/queries/happenings";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -89,6 +91,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     reciprocity,
     upcomingDates,
     locations,
+    happenings,
   ] = await Promise.all([
     listTermsByKind(user.id, [
       "INTERACTION_TYPE",
@@ -101,6 +104,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
       "DATING_STAGE",
       "DATE_ACTIVITY_TYPE",
       "PLAN_CATEGORY",
+      "HAPPENING_TYPE",
       "MEETING_SOURCE",
     ]),
     buildTimeline(user.id, timezone, { contactId: id, take: 40 }),
@@ -116,6 +120,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     getReciprocity(user.id, id, timezone),
     getUpcomingDates(user.id, timezone, 366, 100, id),
     listContactLocations(user.id, id),
+    listContactHappenings(user.id, id, timezone),
   ]);
 
   // Definitions come back once; the saved values for every logged date come
@@ -490,6 +495,33 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           events={lifeEvents}
           types={terms.LIFE_EVENT_TYPE}
           contacts={contactOptions}
+        />
+
+        <HappeningsSection
+          contactId={contact.id}
+          happenings={happenings.map((happening) => ({
+            id: happening.id,
+            title: happening.title,
+            date: happening.date,
+            precision: happening.precision,
+            endDate: happening.endDate,
+            endPrecision: happening.endPrecision,
+            typeId: happening.type?.id ?? null,
+            notes: happening.notes,
+            source: happening.source,
+            availability: happening.availability,
+            isTentative: happening.isTentative,
+            hasFollowUp: happening.hasFollowUp,
+            phase: happening.phase,
+            type: happening.type
+              ? {
+                  label: happening.type.label,
+                  icon: happening.type.icon,
+                  color: happening.type.color,
+                }
+              : null,
+          }))}
+          types={terms.HAPPENING_TYPE}
         />
 
         <TasksSection

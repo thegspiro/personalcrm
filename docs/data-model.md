@@ -124,7 +124,7 @@ adding a type is a row edit, not a migration.
 Unique: `(ownerId, kind, slug)`. Indexes: `(ownerId, kind, sortOrder)`,
 `inverseTermId`.
 
-`TaxonomyKind` values (11 shown in Settings, plus `PLAN_CATEGORY`):
+`TaxonomyKind` values (12 shown in Settings, plus `PLAN_CATEGORY`):
 
 | Kind | What it names |
 | --------------------- | ---------------------------------------------------------------- |
@@ -140,6 +140,7 @@ Unique: `(ownerId, kind, slug)`. Indexes: `(ownerId, kind, sortOrder)`,
 | `DATING_STAGE` | The columns of the dating pipeline |
 | `DATE_ACTIVITY_TYPE` | What you did on a date |
 | `PLAN_CATEGORY` | Kinds of thing to do — a place, a film, a show, something to try |
+| `HAPPENING_TYPE` | What someone has on — a trip, a deadline, visitors staying |
 
 Defaults live in [`src/server/taxonomy/defaults.ts`](../src/server/taxonomy/defaults.ts)
 and are provisioned per account at signup **and backfilled on every boot**, so a
@@ -402,6 +403,45 @@ the join that lets one marriage, move, birth, reunion, or bereavement appear in
 every selected person's history. `contactId` remains the compatibility anchor;
 the migration backfills it into the participant join without changing dates or
 duplicating events.
+
+### `Happening`
+
+Informal calendar information: a one-off, near-future thing going on in someone
+else's life. "She is in Portugal from the 12th" — recorded so you neither invite
+her to something she will miss, nor forget to ask how it went.
+
+The fifth dated thing here, and deliberately none of the other four. A `Plan` is
+something you do *with* them, so it carries a cost, a checklist and a link, and
+it ends by becoming an `Interaction`. A `LifeEvent` is their history and keeps
+for ever. An `ImportantDate` recurs and wants a yearly notification. A `Task` is
+your errand. This is ephemeral and finished the moment it passes.
+
+Field names match `LifeEvent` — `date`, `precision`, `endDate`, `endPrecision` —
+so the partial-date form reader, the range validator and the range formatter are
+the same code rather than a second copy that drifts. `precision` matters more
+here than anywhere: a trip recorded as "October" must not be followed up on
+October 2nd, so every comparison runs against `precisionRange`, never the stored
+anchor.
+
+| Column | Why |
+| --- | --- |
+| `availability` | `AvailabilityImpact` — `NONE`, `BUSY`, `AWAY`. An enum, not a taxonomy, because the code branches on it: the badge, the widget's grouping, and "who is unavailable this week" |
+| `isTentative` | Heard secondhand or not firm yet. A marker rather than a third confidence value, so an unmarked row claims nothing either way |
+| `source` | Where you heard it — "mentioned at dinner". Informal information is mostly secondhand, and its provenance is what tells you how confidently to raise it |
+| `followUpTaskId` | The optional "ask how it went" `Task`, due the day after the *end of the precision range*. The pointer lives here so `Task` gained no column; `SET NULL` means deleting the task by hand leaves the happening intact |
+| `acknowledgedAt` | Dismissed from the dashboard's follow-up list. A timestamp, not a delete |
+
+Carries no `isPrivate`, like `LifeEvent`, `Plan` and `Task`: the anchor contact
+is the marker, and the queries filter through `viaContactPrivacyWhere`. It is
+therefore absent from `countPrivateRows`, and offline-cache eligibility is
+unchanged.
+
+The follow-up is an ordinary `Task` on purpose. It then rides the tasks page,
+the open-tasks widget, the daily digest and the `INCOMPLETE_TASK_DUE` reminder
+policy, instead of needing a new `ReminderEntity` and a second delivery ledger
+to reach the same phone. An *incomplete* follow-up is removed when the box is
+cleared or the happening deleted; a *completed* one always survives — asking how
+the trip went is a thing that happened.
 
 ### `Household`
 
@@ -721,7 +761,7 @@ nobody gave.
 | Deleting… | Takes with it | Leaves behind |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | A `User` | Everything they own, by cascade | — |
-| A `Contact` | Methods, addresses, tags, facts, dates, life events, gifts, debts, dietary needs, flags, ideas, plans, tasks, household memberships, relationships (both halves), participations, romantic profile, date entries, and its avatar file | `CustomFieldValue` rows — **swept explicitly** by the action |
+| A `Contact` | Methods, addresses, tags, facts, dates, life events, happenings, gifts, debts, dietary needs, flags, ideas, plans, tasks, household memberships, relationships (both halves), participations, romantic profile, date entries, and its avatar file | `CustomFieldValue` rows — **swept explicitly** by the action |
 | An `Interaction` | Participants, its `DateEntry` | `Fact.sourceInteractionId`, `Idea.usedInInteractionId` and `Plan.usedInInteractionId` set to null |
 | A `TaxonomyTerm` | `Relationship` rows of that type (cascade) — which is why deleting a term still in use is blocked; other references are `SET NULL` | The records themselves |
 | A `Session` | Nothing | The unlock state dies with it |
@@ -753,6 +793,7 @@ the `init-migrate` s6 oneshot).
 | `20260901120000_add_login_attempt_throttle` | Added `LoginAttempt`, a durable store for sign-in backoff counters. Superseded three commits later — see below |
 | `20260901191500_drop_login_attempt_table` | Drops it again. Both halves of its key came from whoever was knocking, which made it a store an attacker chose the size of; bounding it meant dropping records, and dropping records meant the throttle could be switched off by filling it. Sign-in throttling now lives in the process serving the request, in a structure of fixed size. The table held only ephemeral counters, so nothing is lost but whatever backoff was in flight at the upgrade |
 | `20260902120000_add_reminder_policy_and_dedup_key` | Adds and backfills an explicit scheduling policy and SHA-256 durable deduplication key for every existing reminder ledger row before making the key required and unique per owner. **Hand-edited**: the backfill computes the very key the application does — byte for byte, so pre-upgrade rows are found by the scheduler's lookup rather than blocking their reminders for ever — the policy column's default exists only for the backfill and is dropped afterwards, and rows whose channel was since deleted fold in their own id, because the delivery key they derive from lets any number of `NULL` channels coexist |
+| `20260903120000_add_happenings` | Adds `Happening` and `AvailabilityImpact`, and appends `HAPPENING_TYPE` to `TaxonomyKind`. Purely additive: no column is re-expressed, so there is nothing to backfill before a drop. The enum `MODIFY` appends a value without reordering the existing ones, so no stored `TaxonomyTerm.kind` changes meaning |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).

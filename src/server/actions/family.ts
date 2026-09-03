@@ -20,6 +20,15 @@ import {
  * wrong guess about someone's family is worse than no guess at all.
  */
 
+/**
+ * Bounded to the column widths, so an over-long paste comes back as a form
+ * error rather than a database rejection thrown out of the action. The forms
+ * mirror these with `maxLength`, which stops it happening in the first place
+ * without being the thing relied on — a server action is a public POST.
+ */
+const NAME_MAX = 191;
+const ROLE_MAX = 96;
+
 function touch(contactIds: Array<string | null | undefined> = []) {
   revalidatePath("/");
   revalidatePath("/family");
@@ -33,6 +42,7 @@ export async function createHousehold(form: FormData): Promise<ActionResult<{ id
   const scope = await privacyScope();
   const name = str(form, "name");
   if (!name) return fail("Give the household a name.");
+  if (name.length > NAME_MAX) return fail("That household name is too long.");
 
   const memberIds = [...new Set(strList(form, "memberIds"))];
   const members = memberIds.length
@@ -80,6 +90,7 @@ export async function updateHousehold(form: FormData): Promise<ActionResult> {
   const name = str(form, "name");
   if (!id) return fail("Not found.");
   if (!name) return fail("Give the household a name.");
+  if (name.length > NAME_MAX) return fail("That household name is too long.");
 
   const household = await prisma.household.findFirst({
     where: { id, ownerId, ...householdPrivacyWhere(await privacyScope()) },
@@ -123,6 +134,8 @@ export async function addHouseholdMember(form: FormData): Promise<ActionResult> 
   const householdId = str(form, "householdId");
   const contactId = str(form, "contactId");
   if (!householdId || !contactId) return fail("Pick someone to add.");
+  const role = str(form, "role");
+  if (role && role.length > ROLE_MAX) return fail("That role is too long.");
 
   const [household, contact] = await Promise.all([
     prisma.household.findFirst({
@@ -141,10 +154,10 @@ export async function addHouseholdMember(form: FormData): Promise<ActionResult> 
     create: {
       householdId,
       contactId,
-      role: str(form, "role") ?? null,
+      role: role ?? null,
       sortOrder: household._count.members,
     },
-    update: { role: str(form, "role") ?? null },
+    update: { role: role ?? null },
   });
 
   touch([contactId]);

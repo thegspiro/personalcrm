@@ -118,6 +118,7 @@ list, because a person missing from the form would be silently dropped on save.
 | Facts | `createFact`, `updateFact`, `deleteFact` |
 | Important dates | `createImportantDate`, `updateImportantDate`, `deleteImportantDate` |
 | Significant moments (`LifeEvent`) | `createLifeEvent`, `updateLifeEvent`, `deleteLifeEvent` |
+| Going on in their life (`Happening`) | `createHappening`, `updateHappening`, `acknowledgeHappening`, `deleteHappening` |
 | Ideas | `createIdea`, `updateIdea`, `setIdeaStatus`, `deleteIdea` |
 | Plans | `createPlan`, `updatePlan`, `setPlanStatus`, `deletePlan` |
 | Tasks | `createTask`, `updateTask`, `setTaskDone`, `deleteTask` |
@@ -131,6 +132,17 @@ actions where the ownership check is indirect: each looks its row up through
 `contact: { ownerId, ...contactPrivacyWhere(scope) }`. Passing an id alone
 would be a way back into a private contact's phone number using an id
 remembered from an unlocked session.
+
+The happening actions each write inside a `$transaction` with
+`syncFollowUpTask`, because the "ask how it went" reminder is an ordinary
+`Task`: creating, re-dating or standing one down has to land with the dates it
+was derived from, or an edit leaves a task asking about a trip that no longer
+exists. They revalidate `/tasks` as well as the profile whenever one was
+touched. `acknowledgeHappening` only stamps `acknowledgedAt` — it is what
+dismisses a finished happening from the dashboard, and it destroys nothing.
+
+An *incomplete* follow-up is deleted when the box is cleared or the happening
+removed. A *completed* one always survives: it records that you did ask.
 
 `setPrimaryContactMethod` is separate from `updateContactMethod` on purpose. As
 a checkbox it would be written on every save, so ticking it on a second row
@@ -183,7 +195,15 @@ already established the lock is open.
 `endRelationshipLink`.
 
 Suggestions are never written without a press. `endRelationshipLink` re-types
-both halves to their `former` counterparts; it never deletes.
+both halves to their `former` counterparts; it never deletes. `updateHousehold`
+is reached from the rename control on each household card on `/family`; it
+rejects a name already taken by another household of the same owner, which is
+what the `@@unique([ownerId, name])` constraint would otherwise surface as a
+raw database error.
+
+Linking two relatives from `/family` goes through `createRelationship` in
+`actions/details.ts` — the same action the contact page uses — rather than a
+second write path, so both halves of a pair are still written together.
 
 ### Dating — `actions/dating.ts`
 
