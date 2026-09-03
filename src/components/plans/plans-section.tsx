@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
-import { useAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { DateField } from "@/components/form/date-field";
 import { TermChips, type TermOption } from "@/components/form/term-select";
 import {
@@ -227,18 +227,18 @@ export function PlansSection({
   defaultOpen?: boolean;
 }) {
   const run = useAction();
+  const add = useAddAction();
+  const edit = useEditAction();
 
-  function add(close: () => void) {
-    return async (form: FormData) => {
-      if (contactId) form.set("contactId", contactId);
-      await run(() => createPlan(form), "Saved", close);
-    };
+  function create(form: FormData) {
+    if (contactId) form.set("contactId", contactId);
+    return createPlan(form);
   }
 
-  function edit(plan: PlanItem, close: () => void) {
-    return async (form: FormData) => {
+  function update(plan: PlanItem) {
+    return (form: FormData) => {
       form.set("id", plan.id);
-      await run(() => updatePlan(form), "Saved", close);
+      return updatePlan(form);
     };
   }
 
@@ -250,7 +250,7 @@ export function PlansSection({
       defaultOpen={defaultOpen}
       addLabel="Add something to do"
       form={(close) => (
-        <form action={add(close)} className="grid gap-2.5">
+        <form action={add(create, close, "Saved")} className="grid gap-2.5">
           <PlanFields
             formId="plan-new"
             categories={categories}
@@ -273,7 +273,7 @@ export function PlansSection({
             deleteLabel="Delete plan"
             editLabel="Edit plan"
             editForm={(close) => (
-              <form action={edit(plan, close)} className="grid gap-2.5">
+              <form action={edit(update(plan), close, "Saved")} className="grid gap-2.5">
                 <PlanFields
                   formId={`plan-${plan.id}`}
                   categories={categories}
