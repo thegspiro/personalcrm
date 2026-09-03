@@ -31,8 +31,9 @@ packaged as one container with the database built in.
 
 ## The shape of it in one page
 
-- **One container.** MariaDB is bundled; s6-overlay orders preflight →
-  permissions → database → migrations → app. Set `DATABASE_URL` and the bundled
+- **One container.** MariaDB is bundled; s6-overlay orders permissions →
+  preflight → database → migrations, then starts the app and daily backup scheduler. Set `DATABASE_URL` and the
+  bundled
   server never starts. Everything persistent is in `/config`.
 - **No API layer.** Pages are server components querying Prisma directly;
   mutations are server actions. The only route handlers are `GET /api/health`
@@ -72,7 +73,6 @@ Documented so nobody assumes a feature works:
 
 | Gap | State |
 | --- | --- |
-| **Nightly backups** | `/config/backups` is created at boot and nothing writes to it — see [backup.md](backup.md) |
 | **Account management** | Your name is set once in the welcome wizard and never again. There is no change-password, no email edit, no password reset and no session list — so a session you want to end early can only be ended by deleting its row |
 | **Sign-in throttling degrades at capacity** | The limiter holds a fixed number of counters, so at capacity admitting one means discarding another, and a determined flood can aim that at a particular counter to reset it. It costs tens of thousands of requests to buy back a handful of guesses — far more than the forwarded-address bypass below, which costs one — and tightening the eviction rule instead starts refusing pairs nobody has seen. Written up in [privacy.md](privacy.md#sign-in-throttling) |
 | **Sign-in throttling trusts the forwarded address, and is per process** | Repeated wrong passwords back off per address-and-client pair, but the client half is whatever the request presents as `X-Forwarded-For` and nothing verifies it. Counters live in the process, so they reset when the container restarts and each replica keeps its own. It stops one client grinding a password list; it does not stop one that varies the header, and volumetric defence belongs at the proxy. See [privacy.md](privacy.md#sign-in-throttling) |

@@ -1,0 +1,80 @@
+#!/command/with-contenv bash
+# Produce one consistent, compressed MariaDB backup and publish it atomically.
+set -euo pipefail
+source /etc/s6-overlay/scripts/common.sh
+
+BACKUP_DIR="${BACKUP_DIR:-/config/backups}"
+RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
+MIN_FREE_MB="${BACKUP_MIN_FREE_MB:-512}"
+LOCK_FILE="${BACKUP_DIR}/.backup.lock"
+credentials=""
+temporary=""
+
+log() { printf '[backup] %s\n' "$*"; }
+fail() { printf '[backup] ERROR: %s\n' "$*" >&2; exit 1; }
+cleanup() {
+    [[ -n "${temporary}" ]] && rm -f -- "${temporary}"
+    [[ -n "${credentials}" ]] && rm -f -- "${credentials}"
+}
+trap cleanup EXIT HUP INT TERM
+
+[[ "${RETENTION_DAYS}" =~ ^[1-9][0-9]*$ ]] || fail "BACKUP_RETENTION_DAYS must be a positive integer"
+[[ "${MIN_FREE_MB}" =~ ^[0-9]+$ ]] || fail "BACKUP_MIN_FREE_MB must be a non-negative integer"
+mkdir -p "${BACKUP_DIR}"
+umask 077
+exec 9>"${LOCK_FILE}"
+if ! flock -n 9; then
+    fail "another backup is already running"
+fi
+
+available_mb="$(df -Pm "${BACKUP_DIR}" | awk 'NR == 2 { print $4 }')"
+[[ "${available_mb}" =~ ^[0-9]+$ ]] || fail "could not determine free space in ${BACKUP_DIR}"
+if (( available_mb < MIN_FREE_MB )); then
+    fail "only ${available_mb} MiB is free in ${BACKUP_DIR}; ${MIN_FREE_MB} MiB is required"
+fi
+
+export_runtime_env
+credentials="$(mktemp "${BACKUP_DIR}/.mariadb-client.XXXXXX")"
+# Parse rather than echoing DATABASE_URL: the credential never appears in argv
+# or logs. The option file exists only for this run and is mode 0600.
+node - "${credentials}" <<'NODE'
+const fs = require("node:fs");
+const target = process.argv[2];
+const url = new URL(process.env.DATABASE_URL);
+if (!/^mysql:$|^mariadb:$/.test(url.protocol)) throw new Error("DATABASE_URL must use mysql:// or mariadb://");
+const esc = (value) => value.replaceAll("\\", "\\\\").replaceAll("\n", "\\n").replaceAll('"', '\\"');
+const db = decodeURIComponent(url.pathname.replace(/^\//, ""));
+if (!db) throw new Error("DATABASE_URL must name a database");
+const config = [
+  "[client]",
+  `user="${esc(decodeURIComponent(url.username))}"`,
+  `password="${esc(decodeURIComponent(url.password))}"`,
+  `host="${esc(url.hostname)}"`,
+  `port=${url.port || 3306}`,
+  "protocol=tcp",
+  "[personalcrm-backup]",
+  `database="${esc(db)}"`,
+  "",
+].join("\n");
+fs.writeFileSync(target, config, { mode: 0o600 });
+NODE
+
+database="$(sed -n 's/^database="\(.*\)"$/\1/p' "${credentials}")"
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+final="${BACKUP_DIR}/personalcrm-${timestamp}.sql.gz"
+temporary="${final}.partial.$$"
+log "starting consistent dump to ${final}"
+if ! mariadb-dump --defaults-extra-file="${credentials}" \
+        --single-transaction --quick --routines --events --triggers --hex-blob \
+        --databases "${database}" | gzip -c > "${temporary}"; then
+    fail "dump failed; incomplete output was removed"
+fi
+[[ -s "${temporary}" ]] || fail "dump produced an empty file"
+mv -f -- "${temporary}" "${final}"
+temporary=""
+log "published ${final} ($(du -h "${final}" | awk '{print $1}'))"
+
+# Retention runs only after a successful publication. A failed or full-disk run
+# never sacrifices an older known-good backup.
+find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'personalcrm-*.sql.gz' \
+    -mtime "+${RETENTION_DAYS}" -print -delete | sed 's/^/[backup] expired /'

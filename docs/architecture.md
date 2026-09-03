@@ -175,7 +175,7 @@ well as a runtime one.
 s6-overlay orders a chain of oneshots before the app is allowed to serve:
 
 ```
-init-perms  →  init-preflight  →  init-mariadb  →  svc-mariadb  →  init-db-ready  →  init-migrate  →  svc-app
+init-perms → init-preflight → init-mariadb → svc-mariadb → init-db-ready → init-migrate → svc-app + svc-backup
 ```
 
 | Step | Does |
@@ -187,6 +187,7 @@ init-perms  →  init-preflight  →  init-mariadb  →  svc-mariadb  →  init-
 | `init-db-ready` | Waits for the socket |
 | `init-migrate` | `prisma migrate deploy` |
 | `svc-app` | `node server.js` (Next standalone) |
+| `svc-backup` | Daily consistent `mariadb-dump`, starting only after migrations; atomic publication, overlap lock, disk guard, and retention |
 
 Because the secrets file is generated once and reused, sessions and the database
 survive an image replacement — upgrading is `docker pull` and restart.

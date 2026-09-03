@@ -83,6 +83,22 @@ describe("checkEnvironment", () => {
     expect(check({ ...ok, DATABASE_URL: "" }).errors).toEqual([]);
   });
 
+  it("validates backup scheduling, retention, and free-space settings", () => {
+    expect(
+      check({ ...ok, BACKUP_TIME: "23:59", BACKUP_RETENTION_DAYS: "7", BACKUP_MIN_FREE_MB: "0" })
+        .errors,
+    ).toEqual([]);
+    for (const env of [
+      { BACKUP_TIME: "24:00" },
+      { BACKUP_TIME: "2:00" },
+      { BACKUP_RETENTION_DAYS: "0" },
+      { BACKUP_RETENTION_DAYS: "1.5" },
+      { BACKUP_MIN_FREE_MB: "-1" },
+    ]) {
+      expect(check({ ...ok, ...env }).errors.join(" ")).toMatch(/BACKUP_/);
+    }
+  });
+
   it("rejects a non-numeric PORT", () => {
     expect(check({ ...ok, PORT: "threethousand" }).errors.join(" ")).toMatch(/PORT/);
     expect(check({ ...ok, PORT: "3000" }).errors).toEqual([]);

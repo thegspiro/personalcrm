@@ -741,6 +741,6 @@ Every table and column in the schema is now read and written by application
 code. `UserPreference.digestHour`/`digestEnabled` drive the daily digest and
 `Contact.avatarPath` is set by the avatar upload, both as of the same release.
 
-`/config/backups` is likewise created at boot but nothing writes to it — the
-nightly dump described in the README is not implemented. Back up `/config`
-yourself.
+`/config/backups` receives daily consistent database dumps from the container.
+They are not encrypted and do not contain uploads or `secrets.json`, so back up
+all of `/config` separately.

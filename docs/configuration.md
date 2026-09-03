@@ -17,6 +17,9 @@ Everything the app reads from its environment, and everything it keeps on disk.
 | `PORT` / `HOSTNAME` | `3000` / `0.0.0.0` | No | Set in the image |
 | `APP_VERSION` | `dev` | No | Reported by `/api/health` |
 | `UPLOADS_DIR` | `/config/uploads` | No | Server-only avatar storage. For a bare install, set this to a persistent directory writable by the app. A path inside `public/` or the `.next/` build output is refused, symlinks followed — everything there is served as a static asset to anyone who knows the name — so an upload fails and is logged rather than published |
+| `BACKUP_TIME` | `02:00` | No | Daily automatic dump time in 24-hour `HH:MM`, interpreted in `TZ` |
+| `BACKUP_RETENTION_DAYS` | `30` | No | Completed SQL dumps strictly older than this many days are deleted after a successful backup |
+| `BACKUP_MIN_FREE_MB` | `512` | No | Refuse to start a dump when `/config/backups` has less than this many MiB free; `0` disables the starting-space guard |
 
 ### Optional assisted reading
 
@@ -53,11 +56,12 @@ Provider, base URL and model are configured in Settings (stored in
 | `db/` | MariaDB data directory | **Yes** |
 | `uploads/` | Contact avatars, stored under random server-generated names and served only through the authenticated, privacy-filtered avatar endpoint | **Yes** |
 | `secrets.json` | `authSecret` + `dbPassword`, mode `0600` | **Yes — without it the database is unreadable** |
-| `backups/` | Created at boot; **nothing writes here yet** (see [Known gaps](README.md#known-gaps)) | — |
+| `backups/` | Daily atomic, gzip-compressed MariaDB dumps; mode `0600`, retained for 30 days by default | **Yes, but dumps are not encrypted and omit uploads/secrets** |
 | `logs/` | MariaDB error log | No |
 | `cache/` | Scratch | No |
 
-Back up the whole folder. `secrets.json` is generated once and reused, which is
+Back up the whole folder. Automatic dump files are plaintext and may contain private records; encrypt the
+backup destination. `secrets.json` is generated once and reused, which is
 why sessions and the database survive an image upgrade — losing it while keeping
 `db/` leaves you with a database nobody can log into.
 
