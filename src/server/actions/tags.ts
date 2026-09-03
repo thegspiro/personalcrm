@@ -31,11 +31,30 @@ function refresh(contactId?: string) {
  */
 const TAKEN = "A tag with that name already exists.";
 
+/** A tag this account does not have, or no longer has. */
+const NOT_FOUND = "Tag not found.";
+
 /** The `(ownerId, slug)` unique key, met by a race rather than a check. */
 function isDuplicateSlug(error: unknown): boolean {
   return (
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2002"
+  );
+}
+
+/**
+ * A tag that existed when this action looked and did not when it wrote.
+ *
+ * Every write here reads first, and another tab can delete the row in
+ * between: an update then raises P2025 and an insert referencing it P2003.
+ * Both escaped as server errors on what is, from the person's point of view,
+ * simply a tag that is no longer there — the same outcome the read would have
+ * reported a moment later, and it should read the same way.
+ */
+function isVanishedTag(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    (error.code === "P2025" || error.code === "P2003")
   );
 }
 
@@ -91,13 +110,19 @@ export async function setContactTag(
       select: { id: true },
     }),
   ]);
-  if (!contact || !tag) return fail("Contact or tag not found.");
+  const MISSING = "Contact or tag not found.";
+  if (!contact || !tag) return fail(MISSING);
   if (assigned)
-    await prisma.contactTag.upsert({
-      where: { contactId_tagId: { contactId, tagId } },
-      create: { contactId, tagId },
-      update: {},
-    });
+    try {
+      await prisma.contactTag.upsert({
+        where: { contactId_tagId: { contactId, tagId } },
+        create: { contactId, tagId },
+        update: {},
+      });
+    } catch (error) {
+      if (isVanishedTag(error)) return fail(MISSING);
+      throw error;
+    }
   else await prisma.contactTag.deleteMany({ where: { contactId, tagId } });
   refresh(contactId);
   return ok();
@@ -107,7 +132,7 @@ export async function renameTag(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
   const id = str(form, "id");
   const parsed = tagName.safeParse(str(form, "name"));
-  if (!id) return fail("Tag not found.");
+  if (!id) return fail(NOT_FOUND);
   if (!parsed.success) return invalid(parsed.error);
   const slug = normalizeTagSlug(parsed.data);
   if (!slug) return fail("Use at least one letter or number.");
@@ -122,7 +147,7 @@ export async function renameTag(form: FormData): Promise<ActionResult> {
     where: { id, ...tagVisibleWhere(ownerId, scope) },
     select: { id: true },
   });
-  if (!tag) return fail("Tag not found.");
+  if (!tag) return fail(NOT_FOUND);
   const collision = await prisma.tag.findFirst({
     where: { ownerId, slug, NOT: { id } },
     select: { id: true },
@@ -134,6 +159,7 @@ export async function renameTag(form: FormData): Promise<ActionResult> {
   } catch (error) {
     // The same race as `createTag`, from the other direction.
     if (isDuplicateSlug(error)) return fail(RENAMED_ONTO);
+    if (isVanishedTag(error)) return fail(NOT_FOUND);
     throw error;
   }
   refresh();
@@ -180,10 +206,35 @@ export async function mergeTag(
   const tags = await prisma.tag.count({
     where: { ownerId, id: { in: [sourceId, destinationId] } },
   });
-  if (tags !== 2) return fail("Tag not found.");
+  if (tags !== 2) return fail(NOT_FOUND);
   if (await touchesHiddenContacts(ownerId, [sourceId, destinationId]))
     return fail("Unlock to merge a tag that is on someone private.");
-  await prisma.$transaction(async (tx) => {
+  const merged = await prisma.$transaction(async (tx) => {
+    // Both rows are locked, not merely counted again, and the count above is
+    // no substitute: it ran before the transaction opened, and a repeatable
+    // read would answer from a snapshot even if it ran inside.
+    //
+    // Another tab deleting the destination in that window did not fail
+    // loudly. `createMany` with `skipDuplicates` is `INSERT IGNORE` on
+    // MariaDB, and `INSERT IGNORE` demotes a foreign-key violation to a
+    // warning and drops the row — so every assignment was silently discarded
+    // and the source tag then deleted on top, taking the tag off people who
+    // had it and reporting success. Deleting the *source* in that window was
+    // merely noisy: `delete` raised P2025, which escaped as a server error
+    // rather than the sentence a tag that is no longer there deserves.
+    //
+    // `FOR UPDATE` is a current read rather than a snapshot one, so it sees a
+    // delete that committed after this transaction began, and it holds both
+    // rows until the merge commits, so one cannot commit during it. InnoDB
+    // takes the locks in index order, which is the primary key here and so
+    // the same order whichever tag is the source — two merges of the same
+    // pair queue rather than deadlock.
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM Tag
+      WHERE ownerId = ${ownerId} AND id IN (${sourceId}, ${destinationId})
+      FOR UPDATE
+    `;
+    if (locked.length !== 2) return false;
     const assignments = await tx.contactTag.findMany({
       // Scoped by the contact's owner, not merely the tag's. The two are
       // independent foreign keys, so an import or a restore can join this
@@ -203,7 +254,9 @@ export async function mergeTag(
         skipDuplicates: true,
       });
     await tx.tag.delete({ where: { id: sourceId } });
+    return true;
   });
+  if (!merged) return fail(NOT_FOUND);
   refresh();
   return ok();
 }
@@ -218,12 +271,12 @@ export async function deleteTag(id: string): Promise<ActionResult> {
     where: { id, ownerId },
     select: { id: true },
   });
-  if (!tag) return fail("Tag not found.");
+  if (!tag) return fail(NOT_FOUND);
   // The assignments go with it by cascade, private ones included.
   if (await touchesHiddenContacts(ownerId, [id]))
     return fail("Unlock to delete a tag that is on someone private.");
   const result = await prisma.tag.deleteMany({ where: { id, ownerId } });
-  if (!result.count) return fail("Tag not found.");
+  if (!result.count) return fail(NOT_FOUND);
   refresh();
   return ok();
 }

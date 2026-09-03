@@ -25,10 +25,14 @@ Two design decisions carry the whole thing:
 never client state. A client cannot claim to be unlocked, and the unlock dies
 with the session rather than lingering after sign-out.
 
-A password change is also a privacy boundary: it revokes every other session
-and clears `privacyUnlockedAt` on the current session. The current session is
-preserved so a successful credential change does not strand the person who
-made it. Session settings expose device metadata and database IDs only; raw
+A password change is also a privacy boundary: it revokes every other session,
+re-keys the current one, and clears `privacyUnlockedAt` on it. The current
+session is preserved so a successful credential change does not strand the
+person who made it — but preserved is not left alone: the row's `tokenHash` is
+replaced with a freshly generated token and the response sets the new cookie.
+Revoking the *other* rows would otherwise miss the case the change is usually
+made for, since a stolen cookie holds this session's token rather than a
+different one. Session settings expose device metadata and database IDs only; raw
 cookie tokens and their stored hashes never enter the page payload.
 
 An unlock lasts **15 minutes of inactivity** (`IDLE_TIMEOUT_MS`). “Activity” is

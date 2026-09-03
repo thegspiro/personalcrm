@@ -172,10 +172,14 @@ export async function changePassword(form: FormData): Promise<ActionResult> {
   // committed, every other session still signed in and this one still
   // unlocked — with the action reporting failure and the old password no
   // longer able to retry.
-  await prisma.$transaction(async (tx) => {
+  const applyRotatedCookie = await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: ownerId }, data: { passwordHash } });
-    await secureSessionsAfterPasswordChange(ownerId, tx);
+    return secureSessionsAfterPasswordChange(ownerId, tx);
   });
+  // After the commit, never inside it. The re-keyed token only exists once the
+  // transaction holding it lands, and a rollback that had already rewritten
+  // the cookie would sign this browser out of an unchanged account.
+  await applyRotatedCookie();
   revalidatePath("/", "layout");
   return ok();
 }

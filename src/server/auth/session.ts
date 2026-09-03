@@ -78,31 +78,64 @@ export async function revokeAllOtherSessions(userId: string): Promise<number> {
 }
 
 /**
- * Password changes retain this login, close its privacy unlock, and end every
+ * Password changes re-key this login, close its privacy unlock, and end every
  * other login.
  *
- * Takes an optional transaction client so a caller can commit this together
- * with the new password hash. Split across two commits, a failure here leaves
- * the password changed and every other session alive while the action reports
- * failure — and the old password no longer works to try again.
+ * Re-keying is what makes the rest of it worth anything. Deleting the other
+ * rows ends the sessions holding a *different* token — but a stolen cookie is
+ * a copy of this one, so it hashes to the same value, resolves to the same
+ * row, and was therefore the single session the sweep was careful to keep.
+ * Changing the password to get an intruder out left them signed in. The
+ * surviving row is given a freshly generated token instead, which retires
+ * every copy of the old cookie, this browser's included; the response then
+ * carries the new one so the owner stays signed in.
+ *
+ * The expiry is reset with it, because the cookie has to be rewritten anyway
+ * and a password just confirmed is as good a proof of presence as a login.
+ *
+ * The database work takes an optional transaction client so a caller can
+ * commit it together with the new password hash. Split across two commits, a
+ * failure here leaves the password changed and every other session alive
+ * while the action reports failure — and the old password no longer works to
+ * try again.
+ *
+ * The cookie is not written here but by the callback this returns, which the
+ * caller invokes *after* the transaction commits. Written inside it, a
+ * rollback would leave the browser holding a token no row has — signing the
+ * owner out of an account whose password did not change.
  */
 export async function secureSessionsAfterPasswordChange(
   userId: string,
   tx?: Prisma.TransactionClient,
-): Promise<void> {
+): Promise<() => Promise<void>> {
+  const unchanged = async () => {};
   const tokenHash = await currentTokenHash();
-  if (!tokenHash) return;
+  if (!tokenHash) return unchanged;
+  const token = randomBytes(32).toString("base64url");
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
   const run = async (client: Prisma.TransactionClient) => {
     await client.session.deleteMany({
       where: { userId, tokenHash: { not: tokenHash } },
     });
-    await client.session.updateMany({
+    return client.session.updateMany({
       where: { userId, tokenHash },
-      data: { privacyUnlockedAt: null },
+      data: { tokenHash: hashSessionToken(token), privacyUnlockedAt: null, expiresAt },
     });
   };
-  if (tx) return run(tx);
-  await prisma.$transaction(run);
+  const { count } = tx ? await run(tx) : await prisma.$transaction(run);
+  // Nothing was re-keyed: the cookie belongs to someone else's session, or to
+  // one already expired and swept. Handing this browser the unused token would
+  // match no row and sign it out.
+  if (count === 0) return unchanged;
+  return async () => {
+    (await cookies()).set(SESSION_COOKIE, token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: isSecureContext(),
+      path: "/",
+      expires: expiresAt,
+    });
+  };
 }
 
 function isSecureContext(): boolean {

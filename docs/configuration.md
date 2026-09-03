@@ -71,7 +71,10 @@ why sessions and the database survive an image upgrade — losing it while keepi
 Account name, email, password, and active sessions are managed under **Settings
 → Account**. Email and password changes require the current password. Changing
 the password keeps the requesting session, revokes all other sessions, and
-closes the requesting session's privacy unlock. Password recovery remains
+closes the requesting session's privacy unlock. The session that is kept is
+issued a new token and a new cookie, so a copied cookie — which carries the
+same token as the session it was copied from, and so is not an "other" session
+at all — stops working too. Password recovery remains
 disabled until the installation has a trusted delivery or administrator-assisted
 mechanism; no environment variable enables an unsafe token-in-logs fallback.
 

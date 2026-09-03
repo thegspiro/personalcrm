@@ -5,9 +5,31 @@ const state = vi.hoisted(() => ({
   ownerId: "",
   enabled: false,
   unlocked: true,
+  // Fires once inside the next privacy read, then clears itself. `mergeTag`
+  // and `deleteTag` consult the lock after they have established that the
+  // tags exist and before they touch anything, so this is the window another
+  // tab commits into — and the only place a test can stand in it.
+  duringPrivacyRead: null as null | (() => Promise<void>),
+  // Fires once immediately before the next write, then clears itself. Every
+  // write in this module reads first, and the window a concurrent delete lands
+  // in is between that read and the write — which no seam in the action's own
+  // dependencies sits inside, because they are all consulted before the read.
+  beforeWrite: null as null | (() => Promise<void>),
 }));
+const WRITES = ["create", "createMany", "update", "updateMany", "upsert", "delete", "deleteMany"];
 vi.mock("@/server/db/client", async () => ({
-  prisma: (await import("./db")).prisma,
+  prisma: (await import("./db")).prisma.$extends({
+    query: {
+      async $allOperations({ operation, args, query }) {
+        const interleaved = state.beforeWrite;
+        if (interleaved && WRITES.includes(operation)) {
+          state.beforeWrite = null;
+          await interleaved();
+        }
+        return query(args);
+      },
+    },
+  }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/server/user/context", () => ({
@@ -18,10 +40,12 @@ vi.mock("@/server/user/context", () => ({
   }),
 }));
 vi.mock("@/server/privacy/lock", () => ({
-  getPrivacyState: async () => ({
-    enabled: state.enabled,
-    unlocked: state.unlocked,
-  }),
+  getPrivacyState: async () => {
+    const interleaved = state.duringPrivacyRead;
+    state.duringPrivacyRead = null;
+    if (interleaved) await interleaved();
+    return { enabled: state.enabled, unlocked: state.unlocked };
+  },
   recordProtectedReadActivity: async () => ({ ok: true, expiresAt: null }),
 }));
 
@@ -35,6 +59,8 @@ const { listContacts } = await import("@/server/queries/contacts");
 describe.skipIf(!hasTestDatabase)("contact tags", () => {
   beforeEach(async () => {
     await reset();
+    state.duringPrivacyRead = null;
+    state.beforeWrite = null;
   });
   afterAll(async () => {
     await prisma.$disconnect();
@@ -436,5 +462,105 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     state.unlocked = true;
     expect((await setContactTag(visible.id, hiddenTag.id, true)).ok).toBe(true);
     expect(await prisma.contactTag.count({ where: { tagId: hiddenTag.id } })).toBe(2);
+  });
+
+  it("keeps the source tag when the destination is deleted mid-merge", async () => {
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = false;
+    state.unlocked = true;
+    const contact = await prisma.contact.create({
+      data: { ownerId: owner.id, firstName: "Robin" },
+    });
+    const source = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Work", slug: "work" },
+    });
+    const destination = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Colleagues", slug: "colleagues" },
+    });
+    await prisma.contactTag.create({
+      data: { contactId: contact.id, tagId: source.id },
+    });
+    state.duringPrivacyRead = async () => {
+      await prisma.tag.delete({ where: { id: destination.id } });
+    };
+
+    expect((await mergeTag(source.id, destination.id)).ok).toBe(false);
+    // The refusal is the small half. `createMany` with `skipDuplicates` is
+    // `INSERT IGNORE` on MariaDB, which demotes the foreign-key violation to a
+    // warning and drops the row — so the assignments went nowhere, the source
+    // was deleted on top of them, and the merge reported success while the tag
+    // simply came off this person.
+    expect(await prisma.tag.count({ where: { id: source.id } })).toBe(1);
+    expect(
+      await prisma.contactTag.count({
+        where: { contactId: contact.id, tagId: source.id },
+      }),
+    ).toBe(1);
+  });
+
+  it("answers 'not found' when the source is deleted mid-merge", async () => {
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = false;
+    state.unlocked = true;
+    const source = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Gym", slug: "gym" },
+    });
+    const destination = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Sport", slug: "sport" },
+    });
+    state.duringPrivacyRead = async () => {
+      await prisma.tag.delete({ where: { id: source.id } });
+    };
+
+    // P2025 out of the delete, which escaped the action as a server error
+    // rather than the sentence a tag that is no longer there deserves.
+    const result = await mergeTag(source.id, destination.id);
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toBe("Tag not found.");
+    expect(await prisma.tag.count({ where: { id: destination.id } })).toBe(1);
+  });
+  it("answers 'not found' when a tag is deleted between the check and the rename", async () => {
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = false;
+    state.unlocked = true;
+    const tag = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Book club", slug: "book-club" },
+    });
+    state.beforeWrite = async () => {
+      await prisma.tag.delete({ where: { id: tag.id } });
+    };
+
+    const form = new FormData();
+    form.set("id", tag.id);
+    form.set("name", "Reading group");
+    // P2025 out of the update, escaping as a server error on a tag that is
+    // simply no longer there — the answer the read a moment later would give.
+    const result = await renameTag(form);
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toBe("Tag not found.");
+  });
+
+  it("answers 'not found' when a tag is deleted between the check and the assignment", async () => {
+    const owner = await createTestUser();
+    state.ownerId = owner.id;
+    state.enabled = false;
+    state.unlocked = true;
+    const contact = await prisma.contact.create({
+      data: { ownerId: owner.id, firstName: "Sam" },
+    });
+    const tag = await prisma.tag.create({
+      data: { ownerId: owner.id, name: "Neighbours", slug: "neighbours" },
+    });
+    state.beforeWrite = async () => {
+      await prisma.tag.delete({ where: { id: tag.id } });
+    };
+
+    // P2003 out of the upsert this time, for the same reason.
+    const result = await setContactTag(contact.id, tag.id, true);
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toBe("Contact or tag not found.");
   });
 });

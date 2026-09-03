@@ -59,7 +59,10 @@ choose an owner. `updateDisplayName` changes the navigation/profile label.
 current password, and relies on the database uniqueness constraint. Password
 changes reuse the signup strength and bcrypt helpers, preserve the current
 session, revoke every other session, and clear `privacyUnlockedAt` on the
-preserved session. Individual and bulk revocation predicates include `userId`
+preserved session — which is also re-keyed, so copies of its cookie stop
+resolving. `secureSessionsAfterPasswordChange` returns the callback that writes
+the new cookie, and `changePassword` invokes it after the transaction commits;
+writing it inside would leave the browser holding a token a rollback removed. Individual and bulk revocation predicates include `userId`
 and explicitly exclude the current token hash.
 
 ### Contacts — `actions/contacts.ts`

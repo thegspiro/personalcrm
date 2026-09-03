@@ -2,12 +2,20 @@ import { createHash } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
 
-const state = vi.hoisted(() => ({ token: "current-token" }));
+const state = vi.hoisted(() => ({
+  token: "current-token",
+  written: null as null | { name: string; value: string; options: Record<string, unknown> },
+}));
 vi.mock("@/server/db/client", async () => ({
   prisma: (await import("./db")).prisma,
 }));
 vi.mock("next/headers", () => ({
-  cookies: async () => ({ get: () => ({ value: state.token }) }),
+  cookies: async () => ({
+    get: () => ({ value: state.token }),
+    set: (name: string, value: string, options: Record<string, unknown>) => {
+      state.written = { name, value, options };
+    },
+  }),
 }));
 const {
   listSessions,
@@ -24,6 +32,8 @@ describe.skipIf(!hasTestDatabase)("account session controls", () => {
   let otherId: string;
   beforeEach(async () => {
     await reset();
+    state.token = "current-token";
+    state.written = null;
     ownerId = (await createTestUser()).id;
     const stranger = await createTestUser();
     currentId = (
@@ -83,14 +93,33 @@ describe.skipIf(!hasTestDatabase)("account session controls", () => {
       await prisma.session.findUnique({ where: { id: currentId } }),
     ).not.toBeNull();
   });
-  it("password security preserves current, revokes others, and invalidates its privacy unlock", async () => {
-    await secureSessionsAfterPasswordChange(ownerId);
+  it("password security re-keys this login, revokes the others, and closes its unlock", async () => {
+    const applyRotatedCookie = await secureSessionsAfterPasswordChange(ownerId);
+    await applyRotatedCookie();
     expect(
       await prisma.session.findUnique({ where: { id: otherId } }),
     ).toBeNull();
-    expect(
-      (await prisma.session.findUniqueOrThrow({ where: { id: currentId } }))
-        .privacyUnlockedAt,
-    ).toBeNull();
+    const survivor = await prisma.session.findUniqueOrThrow({
+      where: { id: currentId },
+    });
+    expect(survivor.privacyUnlockedAt).toBeNull();
+    // The row kept for this browser is where the whole point lives. A stolen
+    // copy of the cookie hashes to the value below, and sweeping the *other*
+    // rows never touched it: changing the password to evict an intruder left
+    // them holding a session that still resolved.
+    expect(survivor.tokenHash).not.toBe(hash(state.token));
+    expect(state.written?.name).toBe("pcrm_session");
+    expect(hash(state.written?.value ?? "")).toBe(survivor.tokenHash);
+    expect(state.written?.options.httpOnly).toBe(true);
+    expect(state.written?.options.path).toBe("/");
+  });
+
+  it("writes no cookie when the request's cookie re-keys nothing", async () => {
+    state.token = "belongs-to-no-session";
+    const applyRotatedCookie = await secureSessionsAfterPasswordChange(ownerId);
+    await applyRotatedCookie();
+    // Handing this browser a token no row carries would sign it out of an
+    // account whose password had just been changed successfully.
+    expect(state.written).toBeNull();
   });
 });

@@ -87,8 +87,9 @@ export function AccountSettings({
       <section className="rounded-xl border bg-card p-4">
         <h3 className="text-sm font-semibold">Password</h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          Changing it signs out every other device and closes the privacy unlock
-          on this device. This device stays signed in.
+          Changing it signs out every other device, replaces the session token
+          on this one, and closes the privacy unlock here. This device stays
+          signed in.
         </p>
         <form
           action={submit(changePassword, () => {}, "Password changed")}

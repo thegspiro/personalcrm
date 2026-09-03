@@ -99,9 +99,48 @@ describe("checkEnvironment", () => {
     }
   });
 
+  it("rejects settings that are set but blank, which no consumer treats as unset", () => {
+    // A trim-then-truthiness guard read these as absent and validated nothing,
+    // while the shell's `:-` default fires on empty and never on blank: the
+    // scheduler and backup-now receive the blank, refuse it, and are restarted
+    // for the life of the container — after preflight called the configuration
+    // usable.
+    for (const env of [
+      { BACKUP_TIME: "   " },
+      { BACKUP_RETENTION_DAYS: " " },
+      { BACKUP_MIN_FREE_MB: "\t" },
+    ]) {
+      expect(check({ ...ok, ...env }).errors.join(" ")).toMatch(/BACKUP_/);
+    }
+    // Empty really is unset, because that is what `:-` substitutes on.
+    expect(
+      check({ ...ok, BACKUP_TIME: "", BACKUP_RETENTION_DAYS: "", BACKUP_MIN_FREE_MB: "" })
+        .errors,
+    ).toEqual([]);
+    // And padding around a good value is fine, because both scripts trim.
+    expect(check({ ...ok, BACKUP_TIME: " 02:00 " }).errors).toEqual([]);
+  });
+
+  it("rejects a DATABASE_URL that is blank or padded, which common.sh does not trim", () => {
+    // `using_external_database` tests only for non-empty and the value reaches
+    // the driver exactly as set, so either of these turns the bundled MariaDB
+    // off in favour of a database nothing can connect to. `new URL` catches
+    // neither: it strips surrounding spaces before parsing.
+    expect(check({ ...ok, DATABASE_URL: "  " }).errors.join(" ")).toMatch(/DATABASE_URL/);
+    expect(
+      check({ ...ok, DATABASE_URL: " mysql://u:p@host:3306/db" }).errors.join(" "),
+    ).toMatch(/whitespace/);
+    expect(check({ ...ok, DATABASE_URL: "mysql://u:p@host:3306/db\n" }).errors.join(" ")).toMatch(
+      /whitespace/,
+    );
+  });
+
   it("rejects a non-numeric PORT", () => {
     expect(check({ ...ok, PORT: "threethousand" }).errors.join(" ")).toMatch(/PORT/);
     expect(check({ ...ok, PORT: "3000" }).errors).toEqual([]);
+    // Blank is the one of these that genuinely is as good as unset: `parseInt`
+    // skips leading whitespace and the standalone server falls back to 3000.
+    expect(check({ ...ok, PORT: "  " }).errors).toEqual([]);
   });
 
   it("refuses to boot when /config cannot be written", () => {

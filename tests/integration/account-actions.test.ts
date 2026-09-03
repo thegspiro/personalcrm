@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   ownerId: "",
   secured: false,
   securingFails: false,
+  cookieRotated: false,
 }));
 vi.mock("@/server/db/client", async () => ({
   prisma: (await import("./db")).prisma,
@@ -24,9 +25,16 @@ vi.mock("@/server/user/context", () => ({
 vi.mock("@/server/auth/session", () => ({
   revokeAllOtherSessions: vi.fn(),
   revokeOtherSession: vi.fn(),
+  // Returns the callback that writes the re-keyed cookie, exactly as the real
+  // one does. The action must invoke it after the transaction commits, not
+  // inside: a rollback that had already rewritten the cookie would sign this
+  // browser out of an account whose password did not change.
   secureSessionsAfterPasswordChange: async () => {
     if (state.securingFails) throw new Error("deadlock");
     state.secured = true;
+    return async () => {
+      state.cookieRotated = true;
+    };
   },
 }));
 
@@ -47,6 +55,7 @@ describe.skipIf(!hasTestDatabase)("account actions", () => {
     state.ownerId = user.id;
     state.secured = false;
     state.securingFails = false;
+    state.cookieRotated = false;
     resetLoginAttempts();
     await prisma.user.update({
       where: { id: user.id },
@@ -117,6 +126,9 @@ describe.skipIf(!hasTestDatabase)("account actions", () => {
     );
     expect(result.ok).toBe(true);
     expect(state.secured).toBe(true);
+    // The surviving session is re-keyed, so the cookie has to be rewritten —
+    // and only once the transaction carrying the new token has committed.
+    expect(state.cookieRotated).toBe(true);
     const user = await prisma.user.findUniqueOrThrow({
       where: { id: state.ownerId },
     });
@@ -187,6 +199,8 @@ describe.skipIf(!hasTestDatabase)("account actions", () => {
         }),
       ),
     ).rejects.toThrow(/deadlock/);
+    // Nothing was committed, so nothing may have been written to the browser.
+    expect(state.cookieRotated).toBe(false);
 
     const user = await prisma.user.findUniqueOrThrow({
       where: { id: state.ownerId },
