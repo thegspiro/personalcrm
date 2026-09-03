@@ -83,8 +83,43 @@ describe("reminder wording", () => {
       .toBe("Birthday for Sam Jones was 3 days ago (2026-08-30).");
   });
 
-  it("counts in the digest without mangling the singular", () => {
-    expect(digestMessage(1, 0).body).toBe("1 cadence reminder and 0 due tasks need attention today.");
-    expect(digestMessage(2, 1).body).toBe("2 cadence reminders and 1 due task need attention today.");
+  it("formats digest sections in deterministic date and text order", () => {
+    expect(digestMessage([
+      { kind: "TASK", title: "Write card", contactName: "Zoe", date: { year: 2026, month: 9, day: 3 } },
+      { kind: "CADENCE", contactName: "Alex", date: { year: 2026, month: 9, day: 1 } },
+      { kind: "IMPORTANT_DATE", label: "Birthday", contactName: "Sam", date: { year: 2026, month: 9, day: 9 } },
+      { kind: "TASK", title: "Book table", contactName: null, date: today },
+    ], today).body).toBe([
+      "Important dates",
+      "- Birthday — Sam (upcoming: 2026-09-09)",
+      "",
+      "Keep in touch",
+      "- Alex (overdue: 2026-09-01)",
+      "",
+      "Tasks",
+      "- Book table (due today: 2026-09-02)",
+      "- Write card — Zoe (upcoming: 2026-09-03)",
+    ].join("\n"));
+  });
+
+  it("keeps a useful empty state without empty headings", () => {
+    expect(digestMessage([], today).body).toBe("Nothing needs your attention today.");
+  });
+
+  it("bounds entries at item boundaries and reveals only the remaining count", () => {
+    const items = Array.from({ length: 4 }, (_, index) => ({
+      kind: "TASK" as const,
+      title: `Task ${index + 1}`,
+      contactName: `Person ${index + 1}`,
+      date: today,
+    }));
+    expect(digestMessage(items, today, 2).body).toBe([
+      "Tasks",
+      "- Task 1 — Person 1 (due today: 2026-09-02)",
+      "- Task 2 — Person 2 (due today: 2026-09-02)",
+      "",
+      "… and 2 more items.",
+    ].join("\n"));
+    expect(digestMessage(items, today, 2).body).not.toContain("Person 3");
   });
 });

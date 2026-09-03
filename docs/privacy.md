@@ -356,7 +356,15 @@ discovered:
 | Task | The task's title | `Book the dentist` |
 | | The contact's name, if the task is for someone | `Dana Whitfield` |
 | | The due date | `2026-09-02` |
-| Daily digest | How many cadences and tasks are due — counts only, no names | `2 cadence reminders and 1 due task` |
+| Daily digest | Important-date labels and eligible contact names | `Anniversary — Dana Whitfield` |
+| | Keep-in-touch contact names | `Dana Whitfield` |
+| | Task titles and the contact name, when present | `Book the dentist — Dana Whitfield` |
+| | Local due or occurrence dates and whether each item is overdue, due today, or upcoming | `upcoming: 2026-09-14` |
+
+Digest entries are bounded and ordered deterministically. If more items are due
+than fit, the message reports only how many remain; it does not expose their
+names or titles. An empty digest says that nothing needs attention instead of
+including empty headings.
 
 That goes to whatever host the channel names, on the hour, with no preview and
 no confirmation step. A retry after a failure re-reads the record and sends

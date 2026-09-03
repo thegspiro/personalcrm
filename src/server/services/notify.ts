@@ -52,6 +52,31 @@ export interface DeliveryDependencies {
  */
 const DELIVERY_DEADLINE_MS = 60_000;
 
+// Conservative payload budgets: ntfy's default message ceiling is 4 KiB,
+// Discord allows 2,000 content characters, and self-hosted Gotify/webhook/SMTP
+// limits vary. Staying below these bounds avoids a transport accepting a
+// partial digest. Truncation always removes whole lines (digest item bounds).
+const BODY_BYTE_LIMIT: Record<ChannelKind, number> = {
+  NTFY: 4_000,
+  DISCORD: 1_800,
+  GOTIFY: 16_000,
+  WEBHOOK: 64_000,
+  EMAIL: 100_000,
+};
+const TRUNCATED_NOTICE = "… Message truncated; open Personal CRM for the remaining items.";
+
+export function bodyForChannel(kind: ChannelKind, body: string): string {
+  const limit = BODY_BYTE_LIMIT[kind];
+  if (Buffer.byteLength(body, "utf8") <= limit) return body;
+  const kept: string[] = [];
+  for (const line of body.split("\n")) {
+    const candidate = [...kept, line, TRUNCATED_NOTICE].join("\n");
+    if (Buffer.byteLength(candidate, "utf8") > limit) break;
+    kept.push(line);
+  }
+  return [...kept, TRUNCATED_NOTICE].join("\n");
+}
+
 const defaultHttp: HttpAdapter = ({ url, addresses, headers, body, deadlineMs }) => new Promise((resolve, reject) => {
   // One settling point for every way this can end, because there are more of
   // them than `end` and `error`. A server that sends headers and then resets
@@ -285,6 +310,7 @@ export async function deliverToChannel(
   body: string,
   dependencies: DeliveryDependencies = {},
 ): Promise<void> {
+  body = bodyForChannel(channel.kind as ChannelKind, body);
   const resolved = resolveChannelSecrets({ kind: channel.kind as ChannelKind, config: channel.config });
   if (!resolved.ok) {
     throw new Error(
