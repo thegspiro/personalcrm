@@ -42,8 +42,14 @@ if (( available_mb < MIN_FREE_MB )); then
 fi
 
 export_runtime_env
-mkdir -p "${CREDENTIAL_DIR}"
-chmod 700 "${CREDENTIAL_DIR}"
+# init-perms creates and hands over the default directory at boot, because
+# /run belongs to root and this script runs as the unprivileged account. A
+# custom BACKUP_RUNTIME_DIR is the operator's to make writable, so say which
+# path is the problem rather than failing on a bare permission error.
+if ! mkdir -p "${CREDENTIAL_DIR}" 2>/dev/null; then
+    fail "cannot create ${CREDENTIAL_DIR}; set BACKUP_RUNTIME_DIR to a directory this account can write"
+fi
+chmod 700 "${CREDENTIAL_DIR}" 2>/dev/null || true
 # Belt and braces: /run is tmpfs in every image this ships in, but that is a
 # property of the runtime rather than something this script can insist on, and
 # a sweep costs nothing. Anything left by a run that was killed goes now.

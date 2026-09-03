@@ -54,8 +54,10 @@ arguments or logs. That file lives under `/run` — volatile storage, not the
 `/config` volume the dumps are published on — so a run killed outright, or a
 host that loses power, cannot leave the password sitting next to the backups
 for a host-level sync job to copy. Each run also sweeps anything an earlier
-one left behind. Override the directory with `BACKUP_RUNTIME_DIR` if `/run` is
-unwritable in your setup.
+one left behind. The directory is created and handed to the `PUID`/`PGID`
+account during startup, because `/run` belongs to root and the backup does not
+run as root; `BACKUP_RUNTIME_DIR` points it elsewhere, at a path you have made
+writable by that account.
 
 > **Backups are not encrypted.** SQL dumps can contain every private note and
 > stored application secret. Files are mode `0600`, but anyone with host/root

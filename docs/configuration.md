@@ -20,7 +20,7 @@ Everything the app reads from its environment, and everything it keeps on disk.
 | `BACKUP_TIME` | `02:00` | No | Daily automatic dump time in 24-hour `HH:MM`, interpreted in `TZ` |
 | `BACKUP_RETENTION_DAYS` | `30` | No | Completed SQL dumps strictly older than this many days are deleted after a successful backup |
 | `BACKUP_MIN_FREE_MB` | `512` | No | Refuse to start a dump when `/config/backups` has less than this many MiB free; `0` disables the starting-space guard |
-| `BACKUP_RUNTIME_DIR` | `/run/personalcrm` | No | Where the short-lived MariaDB option file holding the database password is written. Deliberately volatile and never the `/config` volume the dumps are published on, so a killed run cannot leave the credential beside them. Change it only if `/run` is unwritable |
+| `BACKUP_RUNTIME_DIR` | `/run/personalcrm` | No | Where the short-lived MariaDB option file holding the database password is written. Deliberately volatile and never the `/config` volume the dumps are published on, so a killed run cannot leave the credential beside them. The default is created and handed to the `PUID`/`PGID` account at boot; if you point this elsewhere, that directory must already be writable by it, since the backup does not run as root |
 
 ### Optional assisted reading
 
