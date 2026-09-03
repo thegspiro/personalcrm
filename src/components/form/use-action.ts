@@ -16,10 +16,19 @@ import type { ActionResult } from "@/server/actions/helpers";
  * the edit. Running the refresh as a transition makes its completion
  * observable, and closing then is closing onto the row as it now is.
  *
- * The refresh is started from an effect rather than inside the action. A form
- * action already runs as a transition, and a transition started inside it
- * joins it; an action that then waited on that refresh would be waiting on
- * itself, and the form would stay pending for good.
+ * The refresh is started from an effect rather than inside the action, and
+ * the action never waits for it: a transition started inside a pending
+ * action joins it, so an action that waited for that refresh would be
+ * waiting on itself, and the form would stay pending for good.
+ *
+ * The form still stays pending until the refresh lands, without anyone
+ * waiting. React renders every pending transition together; the refresh
+ * suspends that render until its data arrives; and the update that ends the
+ * form's pending state is part of it. A submit button reading the form's
+ * status is therefore disabled from the click until the refreshed row has
+ * rendered — and the editor closes in that same commit, before it is
+ * painted, so there is no frame in which it is open with a live button. The
+ * plan-checklist spec slows a refresh and checks exactly that.
  */
 export function useAction() {
   const router = useRouter();
@@ -35,7 +44,13 @@ export function useAction() {
     startTransition(() => router.refresh());
   }, [requested, router, startTransition]);
 
-  React.useEffect(() => {
+  // A layout effect, not a passive one: the commit that lands the refresh
+  // also ends the form's pending state, and a passive effect runs only after
+  // that commit has been painted — one frame with the editor still open over
+  // the refreshed row and its Save button live. Closing from a layout effect
+  // re-renders before the paint, so that frame never exists; the plan
+  // checklist spec caught it on a slow runner.
+  React.useLayoutEffect(() => {
     // The pending render is what proves a refresh was in flight; without
     // waiting for it, the effect that starts the transition and this one
     // run in the same commit, before anything has been fetched.
@@ -110,8 +125,8 @@ export function useAddAction() {
  * once the refreshed row has rendered. An editor sits over the row it edits,
  * and that row carries the record as it was until the refresh lands; closing
  * onto it and reopening in that window showed, and could save back, the
- * version before the edit. The form stays pending for the wait, so it cannot
- * be submitted twice either.
+ * version before the edit. The form stays pending for the wait (see
+ * useAction), so it cannot be submitted twice either.
  */
 export function useEditAction() {
   const run = useAction();
