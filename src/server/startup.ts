@@ -38,4 +38,36 @@ export async function runStartupTasks(): Promise<void> {
     console.error("[startup] session cleanup failed:", error);
   }
 
+  await reportSchemaRepairs();
+}
+
+/**
+ * Say out loud what the same-owner-keys migration had to remove.
+ *
+ * A migration cannot write to the container log, and rows deleted silently are
+ * not something an operator should have to read a diff to discover. The
+ * migration leaves the counts behind only when there was something to remove,
+ * so on every healthy installation this finds nothing and says nothing. The
+ * row is cleared once reported, so it is said once rather than at every boot.
+ */
+const SCHEMA_REPAIR_KEY = "schemaRepair.sameOwnerJoinKeys";
+
+async function reportSchemaRepairs(): Promise<void> {
+  try {
+    const record = await prisma.appSetting.findUnique({
+      where: { key: SCHEMA_REPAIR_KEY },
+    });
+    if (!record) return;
+    const counts = record.value as { contactTags?: number; locationAliases?: number };
+    console.warn(
+      `[startup] the same-owner key migration removed ${counts.contactTags ?? 0} tag ` +
+        `assignment(s) and ${counts.locationAliases ?? 0} place alias(es) that joined ` +
+        "records belonging to different accounts. The application cannot create such a " +
+        "row; they came from an import or a restore, and nothing could see them. See " +
+        "docs/data-model.md.",
+    );
+    await prisma.appSetting.delete({ where: { key: SCHEMA_REPAIR_KEY } });
+  } catch (error) {
+    console.error("[startup] could not report schema repairs:", error);
+  }
 }

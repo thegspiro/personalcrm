@@ -21,7 +21,7 @@ import {
   privacyScope,
   type PrivacyScope,
 } from "@/server/privacy/filter";
-import { tagVisibleWhere } from "@/server/queries/tags";
+import { lockedTagsUsable } from "@/server/queries/tags";
 import {
   type ActionResult,
   bool,
@@ -55,16 +55,17 @@ async function replaceTags(
   contactId: string,
   tagIds: string[],
 ) {
-  const usable = tagIds.length
-    ? await tx.tag.count({
-        where: { id: { in: tagIds }, ...tagVisibleWhere(ownerId, scope) },
-      })
-    : 0;
-  if (usable !== tagIds.length) throw new InvalidTagError();
+  // Ownership and existence are settled by `lockSubmittedTags`; what is left
+  // is whether the lock is currently showing them, asked of the assignments
+  // this transaction holds rather than of its snapshot — see `lockedTagsUsable`.
+  if (!(await lockedTagsUsable(tx, ownerId, scope, tagIds)))
+    throw new InvalidTagError();
   await tx.contactTag.deleteMany({ where: { contactId } });
   if (tagIds.length)
     await tx.contactTag.createMany({
-      data: tagIds.map((tagId) => ({ contactId, tagId })),
+      // One owner on the row, referenced by both foreign keys, so the contact
+      // and the tag cannot belong to different accounts.
+      data: tagIds.map((tagId) => ({ ownerId, contactId, tagId })),
     });
 }
 

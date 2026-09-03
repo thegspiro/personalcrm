@@ -279,6 +279,24 @@ const defaultSmtp: SmtpAdapter = async (config, addresses, mail, deadlineMs) => 
   }
 };
 
+/**
+ * A failure that happened after the destination was confirmed public.
+ *
+ * Everything up to and including `validateDestination` can say something about
+ * names this account should not be able to probe: whether one resolves at all,
+ * and whether it resolves inside the network. Everything after it is talking
+ * to an address that has already been shown to be public — for a member, by
+ * construction, since a member is refused any other kind. So a failure carried
+ * in this wrapper can be repeated to whoever asked without turning the button
+ * into a lookup service, and `testFailureMessage` is what decides to.
+ */
+export class ReachedDestinationError extends Error {
+  constructor(readonly reason: unknown) {
+    super(reason instanceof Error ? reason.message : "That didn't work.");
+    this.name = "ReachedDestinationError";
+  }
+}
+
 export async function deliverToChannel(
   channel: NotificationChannel,
   subject: string,
@@ -318,6 +336,17 @@ export async function deliverToChannel(
     }
   };
 
+  /** Everything past the boundary, tagged so its reason may be repeated. */
+  const afterValidation = async <T,>(work: Promise<T>): Promise<T> => {
+    try {
+      return await work;
+    } catch (error) {
+      throw error instanceof ReachedDestinationError
+        ? error
+        : new ReachedDestinationError(error);
+    }
+  };
+
   const isAdministrator = dependencies.isAdministrator ?? (async (ownerId: string) => {
     const user = await prisma.user.findUnique({ where: { id: ownerId }, select: { role: true } });
     return user?.role === "ADMIN";
@@ -335,9 +364,11 @@ export async function deliverToChannel(
     const addresses = await withinBudget(
       validateDestination(config.host, administrative, resolveDns),
     );
-    await (dependencies.smtp ?? defaultSmtp)(config, addresses, {
-      from: config.from, to: config.to, subject, text: body,
-    }, Math.max(1, remaining()));
+    await afterValidation(
+      (dependencies.smtp ?? defaultSmtp)(config, addresses, {
+        from: config.from, to: config.to, subject, text: body,
+      }, Math.max(1, remaining())),
+    );
     return;
   }
 
@@ -354,12 +385,18 @@ export async function deliverToChannel(
     else headers.authorization = `Bearer ${token}`;
   }
   const payload = channel.kind === "DISCORD" ? { content: `${subject}\n${body}` } : { title: subject, message: body };
-  const response = await (dependencies.http ?? defaultHttp)({
-    url, addresses, headers, body: JSON.stringify(payload),
-    deadlineMs: Math.max(1, remaining()),
-  });
+  const response = await afterValidation(
+    (dependencies.http ?? defaultHttp)({
+      url, addresses, headers, body: JSON.stringify(payload),
+      deadlineMs: Math.max(1, remaining()),
+    }),
+  );
   if (response.status >= 300 && response.status < 400) {
-    throw new Error(`Channel redirected (HTTP ${response.status}), which is not followed. Configure the address it points at.`);
+    throw new ReachedDestinationError(
+      new Error(`Channel redirected (HTTP ${response.status}), which is not followed. Configure the address it points at.`),
+    );
   }
-  if (response.status < 200 || response.status >= 300) throw new Error(`Channel returned HTTP ${response.status}.`);
+  if (response.status < 200 || response.status >= 300) {
+    throw new ReachedDestinationError(new Error(`Channel returned HTTP ${response.status}.`));
+  }
 }

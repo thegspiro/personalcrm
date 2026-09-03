@@ -99,7 +99,11 @@ RUN set -eux; \
         mariadb-client \
         tzdata \
         procps \
-        gzip; \
+        gzip \
+        # A DATABASE_URL carrying a mutual-TLS client identity gives it as a
+        # PKCS#12 bundle, which the MariaDB client will not read; the backup
+        # unpacks it into the PEM pair the client wants.
+        openssl; \
     # The image ships no database of its own — /config/db is created on first run.
     rm -rf /var/lib/mysql /etc/mysql/mariadb.conf.d/50-server.cnf; \
     # PAM auth is never used here and its setuid helper cannot be chowned in an

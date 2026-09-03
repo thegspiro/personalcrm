@@ -64,10 +64,19 @@ A `socket=` in `DATABASE_URL` is used as a socket rather than forced onto TCP,
 and `sslcert=` becomes `ssl-ca` with server-certificate verification on unless
 `sslaccept=accept_invalid_certs` says otherwise. Pool sizing and timeouts —
 `connection_limit`, `pool_timeout`, `connect_timeout`, `socket_timeout` — say
-nothing about how to connect and are ignored. Any other connection option,
-`sslidentity` and `sslpassword` among them, makes the backup **stop with a
-message naming it** rather than connect on weaker terms than the application;
-the names are printed, never the values.
+nothing about how to connect and are ignored. Any other connection option makes
+the backup **stop with a message naming it** rather than connect on weaker
+terms than the application; the names are printed, never the values.
+
+A client identity for mutual TLS works too. Prisma takes `sslidentity=` as a
+PKCS#12 bundle and the MariaDB client will not read one, so the backup unpacks
+it into the certificate and key the client wants, using `sslpassword=` if the
+bundle has one. Both PEM files are written mode `0600` beside the option file in
+the volatile runtime directory and deleted with it when the run ends; the
+passphrase reaches `openssl` through a file rather than its command line,
+because arguments are readable from `/proc`. A bundle that cannot be opened
+stops the run and names the file, so a wrong `sslpassword` is a message rather
+than a backup that quietly connects without the identity.
 
 > **Backups are not encrypted.** SQL dumps can contain every private note and
 > stored application secret. Files are mode `0600`, but anyone with host/root

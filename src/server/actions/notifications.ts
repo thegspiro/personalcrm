@@ -15,7 +15,7 @@ import {
 } from "@/lib/notification-channels";
 import { configOf, mergeChannelSecrets, resolveChannelSecrets } from "@/server/notifications/config";
 import net from "node:net";
-import { deliverToChannel } from "@/server/services/notify";
+import { ReachedDestinationError, deliverToChannel } from "@/server/services/notify";
 import { isPublicAddress } from "@/server/services/notification-destination";
 
 /**
@@ -136,13 +136,19 @@ function literalAddressError(hostname: string): string | null {
 async function testFailureMessage(error: unknown): Promise<string> {
   const detail = error instanceof Error ? error.message : "That didn't work.";
   // Administrators may reach non-public addresses, so nothing is withheld from
-  // them and the real reason is far more useful than a shrug. For everyone
-  // else the answer is the same sentence however it failed: a boundary refusal
-  // and a name that does not exist must not be told apart, or the test button
-  // becomes the oracle the save form just stopped being. The cost is real —
-  // a member debugging their own reachable endpoint loses the detail — and it
-  // is the smaller of the two.
-  return (await isAdmin()) ? detail : "That channel could not be reached.";
+  // them and the real reason is far more useful than a shrug.
+  if (await isAdmin()) return detail;
+  // For everyone else the line is drawn at the destination boundary rather
+  // than around the whole button. Up to it, a boundary refusal and a name that
+  // does not exist must not be told apart, or the test becomes the internal
+  // DNS oracle the save form just stopped being. Past it, the address has
+  // already been shown to be public — a member is refused any other kind — so
+  // repeating why it failed says nothing about the network that the member did
+  // not supply. That is where the detail was worth having anyway: a wrong
+  // token, a refused connection, an endpoint answering 500.
+  return error instanceof ReachedDestinationError
+    ? detail
+    : "That channel could not be reached.";
 }
 
 function kindFrom(form: FormData): ChannelKind | null {
