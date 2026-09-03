@@ -17,6 +17,10 @@ Everything the app reads from its environment, and everything it keeps on disk.
 | `PORT` / `HOSTNAME` | `3000` / `0.0.0.0` | No | Set in the image |
 | `APP_VERSION` | `dev` | No | Reported by `/api/health` |
 | `UPLOADS_DIR` | `/config/uploads` | No | Server-only avatar storage. For a bare install, set this to a persistent directory writable by the app. A path inside `public/` or the `.next/` build output is refused, symlinks followed — everything there is served as a static asset to anyone who knows the name — so an upload fails and is logged rather than published |
+| `BACKUP_TIME` | `02:00` | No | Daily automatic dump time in 24-hour `HH:MM`, interpreted in `TZ`. On the day the clocks go forward the configured hour may not exist — `02:00` does not, in `America/New_York` — and the run moves to the first hour that does. A repeated hour in autumn takes the first of the two |
+| `BACKUP_RETENTION_DAYS` | `30` | No | Completed SQL dumps strictly older than this many days are deleted after a successful backup |
+| `BACKUP_MIN_FREE_MB` | `512` | No | Refuse to start a dump when `/config/backups` has less than this many MiB free; `0` disables the starting-space guard. Compared as a decimal string, so neither a leading zero nor a value beyond the shell's arithmetic range can turn the guard off |
+| `BACKUP_RUNTIME_DIR` | `/run/personalcrm` | No | Where the short-lived MariaDB option file holding the database password is written. Deliberately volatile and never the `/config` volume the dumps are published on, so a killed run cannot leave the credential beside them. The default is created and handed to the `PUID`/`PGID` account at boot; if you point this elsewhere, that directory must already be writable by it, since the backup does not run as root |
 
 ### Optional assisted reading
 
@@ -53,15 +57,26 @@ Provider, base URL and model are configured in Settings (stored in
 | `db/` | MariaDB data directory | **Yes** |
 | `uploads/` | Contact avatars, stored under random server-generated names and served only through the authenticated, privacy-filtered avatar endpoint | **Yes** |
 | `secrets.json` | `authSecret` + `dbPassword`, mode `0600` | **Yes — without it the database is unreadable** |
-| `backups/` | Created at boot; **nothing writes here yet** (see [Known gaps](README.md#known-gaps)) | — |
+| `backups/` | Daily atomic, gzip-compressed MariaDB dumps; mode `0600`, retained for 30 days by default | **Yes, but dumps are not encrypted and omit uploads/secrets** |
 | `logs/` | MariaDB error log | No |
 | `cache/` | Scratch | No |
 
-Back up the whole folder. `secrets.json` is generated once and reused, which is
+Back up the whole folder. Automatic dump files are plaintext and may contain private records; encrypt the
+backup destination. `secrets.json` is generated once and reused, which is
 why sessions and the database survive an image upgrade — losing it while keeping
 `db/` leaves you with a database nobody can log into.
 
 ## Per-account settings (not environment)
+
+Account name, email, password, and active sessions are managed under **Settings
+→ Account**. Email and password changes require the current password. Changing
+the password keeps the requesting session, revokes all other sessions, and
+closes the requesting session's privacy unlock. The session that is kept is
+issued a new token and a new cookie, so a copied cookie — which carries the
+same token as the session it was copied from, and so is not an "other" session
+at all — stops working too. Password recovery remains
+disabled until the installation has a trusted delivery or administrator-assisted
+mechanism; no environment variable enables an unsafe token-in-logs fallback.
 
 These live in the database and are edited in **Settings**, not in the container
 config:

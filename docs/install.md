@@ -69,14 +69,13 @@ migrations run at every container start.
 | --- | --- |
 | `db/` | MariaDB data directory |
 | `uploads/` | Contact avatars. Keep this persistent and back it up with the database |
-| `backups/` | Reserved for database dumps — nothing writes here yet, see [backup.md](backup.md) |
+| `backups/` | Daily compressed database dumps (02:00 in `TZ`, 30-day retention by default); plaintext, so encrypt the destination |
 | `logs/` | MariaDB error log |
 | `cache/` | Next.js cache — safe to delete |
 | `secrets.json` | Generated on first boot: session signing key and database password |
 
 `secrets.json` is created once and reused, which is what lets sessions and the
-database survive an image upgrade. Back up the whole folder — see
-[backup.md](backup.md).
+database survive an image upgrade. Back up the whole folder — automatic database dumps do not include uploads or secrets. See [backup.md](backup.md) for scheduling, retention, encryption limitations, and restore steps.
 
 ## Next
 

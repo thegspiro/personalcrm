@@ -23,6 +23,11 @@ usermod -a -G "${GROUP_NAME}" abc 2>/dev/null || true
 
 mkdir -p /config/db /config/uploads /config/backups /config/logs /config/cache
 mkdir -p /run/mysqld
+# The backup writes its MariaDB option file — which holds the database
+# password — here rather than beside the dumps, so a killed run cannot leave a
+# credential on the /config volume. It has to be created by root: the backup
+# runs as the unprivileged account, and /run is not writable by it.
+mkdir -p /run/personalcrm
 
 # Recursive chown on every boot is slow once /config/db is large, so only fix
 # ownership when the top-level directory is actually wrong.
@@ -34,5 +39,7 @@ else
     chown "${PUID}:${PGID}" /config/db /config/uploads /config/backups /config/logs /config/cache
 fi
 chown -R "${PUID}:${PGID}" /run/mysqld
+chown "${PUID}:${PGID}" /run/personalcrm
+chmod 700 /run/personalcrm
 
 echo "[init-perms] running as uid=${PUID} gid=${PGID}, TZ=${TZ:-Etc/UTC}"

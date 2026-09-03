@@ -591,6 +591,33 @@ describe("places and the sentence about them", () => {
     expect(result.notes).toBe("she got the promotion");
   });
 
+  it("matches an alias that carries a comma of its own", () => {
+    // The note boundary is the first comma, so an accepted alias containing
+    // one could never be found: quick add missed the known place entirely and
+    // proposed a brand new one called "Washington".
+    const withComma: ParseLocation[] = [
+      ...LOCATIONS,
+      { id: "l-dc", name: "Union Station", locationAliases: [{ value: "Washington, D.C." }] },
+    ];
+    const result = parse("Dinner at Washington, D.C.", CONTACTS, withComma);
+    expect(result.place?.location?.id).toBe("l-dc");
+    expect(result.place?.matchedText).toBe("Washington, D.C.");
+    expect(result.notes).toBeFalsy();
+  });
+
+  it("does not let a comma-bearing alias reach into the commentary", () => {
+    // The widened search is only for a name that spans the boundary itself,
+    // and it still has to *start* before it. A venue named in the note is
+    // commentary, exactly as before.
+    const withComma: ParseLocation[] = [
+      ...LOCATIONS,
+      { id: "l-dc", name: "Union Station", locationAliases: [{ value: "Washington, D.C." }] },
+    ];
+    const result = parse("Coffee with Sarah, then Washington, D.C.", CONTACTS, withComma);
+    expect(result.place).toBeNull();
+    expect(result.notes).toBe("then Washington, D.C.");
+  });
+
   it("reports the words that were typed, not the tidy name", () => {
     // `Interaction.location` keeps the wording used at the time; the canonical
     // name lives on the place. Handing back the tidy one would have rewritten

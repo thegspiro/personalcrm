@@ -296,6 +296,9 @@ jobs:
           docker logs personalcrm-ci >&2
           exit 1
 
+      - name: Backup and restore representative data
+        run: .github/scripts/backup-restore-smoke.sh personalcrm-ci
+
       - name: Container logs
         if: always()
         run: docker logs personalcrm-ci 2>&1 | tail -100 || true
