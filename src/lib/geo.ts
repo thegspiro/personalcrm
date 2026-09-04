@@ -15,8 +15,6 @@
 /** How distances read. Stored on `UserPreference.distanceUnit`. */
 export type Unit = "mi" | "km";
 
-export const UNITS: readonly Unit[] = ["mi", "km"];
-
 export function isUnit(value: unknown): value is Unit {
   return value === "mi" || value === "km";
 }
