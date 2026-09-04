@@ -108,7 +108,8 @@ export function NotificationSettings({
           Important dates keep their own timing — a week before, on the day, or whatever you set.
         </p>
         <p className="mt-2 text-xs text-muted-foreground">
-          Messages can carry a date or task label, a person&rsquo;s name, and when it is due.
+          Messages, including the daily digest, can carry names, task titles, date labels,
+          and due or occurrence dates.
           Choose where that goes accordingly: an ntfy or webhook URL can point at a box on your
           own network, but email travels through a mail relay whose logs keep the contents.
         </p>
@@ -192,9 +193,10 @@ function DigestSettings({ digest }: { digest: DigestPreference }) {
     <section className="rounded-xl border border-border bg-card p-4">
       <h3 className="text-sm font-semibold">Daily digest</h3>
       <p className="mt-1 text-xs text-muted-foreground">
-        One message a day to every channel, with separate dated summaries for today and overdue,
-        tomorrow, and the following day. It counts important dates, keep-in-touch cadences, and
-        tasks; individual reminders still follow their own schedule.
+        One message a day to every channel, listing important dates, people you are due to
+        reach out to, and tasks that have fallen due — plus what is coming in the next
+        two days. It can contain their names, titles, labels, and dates. The individual
+        reminders above are sent either way, on their own schedule.
       </p>
       <form action={submit(updateDigest, () => {}, "Saved")} className="mt-3 grid gap-2.5">
         <label className="flex items-center gap-2 text-sm">

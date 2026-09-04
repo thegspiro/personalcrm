@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
+import { asARestoreWould, createTestUser, hasTestDatabase, prisma, reset } from "./db";
 
 const state = vi.hoisted(() => ({
   ownerId: "",
@@ -238,6 +238,37 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
     ).toHaveLength(2);
   });
 
+  it("does not render or search a place belonging to another account", async () => {
+    state.unlocked = true;
+    const stranger = await createTestUser();
+    const theirs = await prisma.location.create({
+      data: {
+        ownerId: stranger.id,
+        name: "Their Secret Bar",
+        normalizedName: normalizeLocationName("Their Secret Bar"),
+      },
+    });
+    // `Interaction.place` is the one reference that keeps a single-column key:
+    // it clears on delete, and MariaDB will not accept a SET NULL composite
+    // key while `ownerId` is NOT NULL. So this row is writable, and the
+    // reader's own predicate is the whole defence.
+    await visit(theirs.id, [], { label: "somewhere" });
+
+    const entries = await buildTimeline(state.ownerId, TZ, {});
+    expect(entries).toHaveLength(1);
+    expect(entries[0].placeId).toBeNull();
+    expect(entries[0].placeName).toBeNull();
+
+    // Neither route into the query may match on it: free-text search over the
+    // place name, nor the normalized-name filter the place page links with.
+    expect(
+      await buildTimeline(state.ownerId, TZ, { search: "Secret Bar" }),
+    ).toHaveLength(0);
+    expect(
+      await buildTimeline(state.ownerId, TZ, { location: "Their Secret Bar" }),
+    ).toHaveLength(0);
+  });
+
   it("scopes by place id when a freed-up name has been reused", async () => {
     state.unlocked = true;
     const first = await place(state.ownerId, "Corner Cafe");
@@ -462,23 +493,33 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       expect(resolved?.id).toBe(bar.id);
     });
 
-    it("does not read an alias that belongs to another account", async () => {
+    it("cannot store an alias that belongs to another account", async () => {
+      // This used to check the readers: two independent foreign keys let an
+      // import or a restore leave a stranger's alias hanging off our place, and
+      // an unfiltered include handed its value to quick-add matching and
+      // rendered it into the editor. The alias now references
+      // `Location(ownerId, id)`, so the row itself is refused and the property
+      // holds for every reader at once rather than for the ones that remembered.
       state.unlocked = true;
       const stranger = await createTestUser();
       const cafe = await place(state.ownerId, "Corner Cafe");
       await visit(cafe.id, []);
-      // Two independent foreign keys, so an import or a restore can leave a
-      // stranger's alias hanging off our place. An unfiltered include handed
-      // its value to quick-add matching and rendered it into the editor.
-      await prisma.locationAlias.create({
-        data: {
-          ownerId: stranger.id,
-          locationId: cafe.id,
-          value: "Their Private Name",
-          normalizedValue: "their private name",
-          isCanonical: false,
-        },
-      });
+
+      const foreign = {
+        ownerId: stranger.id,
+        locationId: cafe.id,
+        value: "Their Private Name",
+        normalizedValue: "their private name",
+        isCanonical: false,
+      };
+      await expect(
+        prisma.locationAlias.create({ data: foreign }),
+      ).rejects.toMatchObject({ code: "P2003" });
+
+      // A restore can still bring one in, so the readers' own predicates still
+      // have to hold: an unfiltered include handed this value to quick-add
+      // matching and rendered it into the editor.
+      await asARestoreWould((tx) => tx.locationAlias.create({ data: foreign }));
 
       const options = await listLocationOptions(state.ownerId);
       const mine = options.find((option) => option.id === cafe.id);
@@ -1040,18 +1081,19 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
         normalizedName: normalizeLocationName("Their Cafe"),
       },
     });
-    // LocationAlias.ownerId and its location's ownerId are two independent
-    // foreign keys, so an import, a restore or a hand-repair can leave one
-    // account's alias pointing at another account's place. Nothing cascades
-    // to prevent it and the unique index does not span the relation.
-    await prisma.locationAlias.create({
-      data: {
-        ownerId: state.ownerId,
-        locationId: theirs.id,
-        value: "The Local",
-        normalizedValue: "the local",
-      },
-    });
+    // The alias now references `Location(ownerId, id)`, so the application
+    // cannot make this row — but a restore can, because a dump disables
+    // foreign-key checks. That is the case this guard is left in for.
+    await asARestoreWould((tx) =>
+      tx.locationAlias.create({
+        data: {
+          ownerId: state.ownerId,
+          locationId: theirs.id,
+          value: "The Local",
+          normalizedValue: "the local",
+        },
+      }),
+    );
 
     const resolved = await prisma.$transaction((tx) =>
       resolveLocation(tx, state.ownerId, "The Local", {

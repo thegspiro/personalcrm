@@ -14,6 +14,7 @@ import {
   getUpcomingDates,
   getUpcomingInteractions,
 } from "@/server/queries/dashboard";
+import { getHappeningsDigest } from "@/server/queries/happenings";
 import { QuickAddWidget } from "@/components/dashboard/quick-add";
 import { fieldsFor } from "@/server/queries/custom-fields";
 import { offlineCacheable } from "@/server/privacy/offline";
@@ -22,6 +23,7 @@ import { SetupChecklist } from "@/components/onboarding/setup-checklist";
 import { needsSetupChecklist } from "@/lib/setup-checklist";
 import {
   DatingPipelineWidget,
+  HappeningsWidget,
   IdeasWidget,
   OverdueWidget,
   RecentWidget,
@@ -71,6 +73,7 @@ export default async function HomePage() {
     interactionTypes,
     overdue,
     upcomingDates,
+    happenings,
     recent,
     upcomingInteractions,
     tasks,
@@ -92,6 +95,13 @@ export default async function HomePage() {
           settingFor("upcoming-dates", "limit", 8),
         )
       : [],
+    enabled.has("happenings")
+      ? getHappeningsDigest(user.id, timezone, {
+          windowDays: settingFor("happenings", "windowDays", 21),
+          lookBackDays: settingFor("happenings", "lookBackDays", 14),
+          limit: settingFor("happenings", "limit", 8),
+        })
+      : { ahead: [], justEnded: [] },
     enabled.has("recent-interactions")
       ? getRecentInteractions(user.id, settingFor("recent-interactions", "limit", 8))
       : [],
@@ -122,6 +132,7 @@ export default async function HomePage() {
     ),
     overdue: <OverdueWidget contacts={overdue} />,
     "upcoming-dates": <UpcomingDatesWidget dates={upcomingDates} />,
+    happenings: <HappeningsWidget digest={happenings} />,
     "recent-interactions": (
       <>
         <UpcomingInteractionsWidget

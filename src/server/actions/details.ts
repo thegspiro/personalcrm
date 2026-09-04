@@ -24,7 +24,14 @@ import {
   validAllergyCombination,
 } from "@/lib/dietary";
 import { parseReminderDays } from "@/lib/reminders";
+import { AVAILABILITY_IMPACTS, type AvailabilityImpact } from "@/lib/happenings";
+import {
+  deleteFollowUpTask,
+  happeningDatesOf,
+  syncFollowUpTask,
+} from "@/server/services/happenings";
 import { planChecklistSchema } from "@/lib/plan-checklist";
+import { PLAN_MINUTE_MAX, parsePlanDuration, parsePlanMinute } from "@/lib/plan-time";
 import {
   type ActionResult,
   bool,
@@ -364,7 +371,11 @@ export async function updateLifeEvent(form: FormData): Promise<ActionResult> {
     } });
     await tx.lifeEventParticipant.deleteMany({ where: { lifeEventId: id } });
     await tx.lifeEventParticipant.createMany({
-      data: requestedContactIds.map((participantId) => ({ lifeEventId: id, contactId: participantId })),
+      data: requestedContactIds.map((participantId) => ({
+        ownerId,
+        lifeEventId: id,
+        contactId: participantId,
+      })),
     });
   });
 
@@ -386,6 +397,215 @@ export async function deleteLifeEvent(id: string): Promise<ActionResult> {
   if (!existing) return fail("Not found.");
   await prisma.lifeEvent.delete({ where: { id } });
   [existing.contactId, ...existing.participants.map((p) => p.contactId)].forEach(touch);
+  return ok();
+}
+
+// --- happenings ------------------------------------------------------------
+
+/**
+ * Informal calendar information: what someone else has on.
+ *
+ * The follow-up task is written in the same transaction as the happening, so an
+ * edit can never leave a task asking about dates the happening no longer has.
+ * `/tasks` is revalidated whenever one was touched.
+ */
+
+const AVAILABILITY_ERROR = "That isn't one of the availability options.";
+
+function availabilityFromForm(form: FormData): AvailabilityImpact | null {
+  const raw = str(form, "availability") ?? "NONE";
+  return (AVAILABILITY_IMPACTS as readonly string[]).includes(raw)
+    ? (raw as AvailabilityImpact)
+    : null;
+}
+
+export async function createHappening(form: FormData): Promise<ActionResult<{ id: string }>> {
+  const { ownerId } = await owner();
+  const contactId = str(form, "contactId");
+  const title = str(form, "title");
+  const when = partialDate(form, "date");
+  if (!contactId || !title || !when) return fail("A title and a date are required.");
+  if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
+
+  const end = partialDate(form, "endDate");
+  if (
+    !isValidPartialDateRange(
+      { date: plainDateFromDb(when.date), precision: when.precision },
+      end ? { date: plainDateFromDb(end.date), precision: end.precision } : null,
+    )
+  ) {
+    return fieldError("endDate", "End date must not be before the start date.");
+  }
+
+  const availability = availabilityFromForm(form);
+  if (!availability) return fail(AVAILABILITY_ERROR);
+
+  const type = await termFromForm(ownerId, form, "typeId", "HAPPENING_TYPE");
+  if (!type.ok) return fail(UNKNOWN_TERM);
+
+  const wantsFollowUp = bool(form, "followUp");
+
+  const created = await prisma.$transaction(async (tx) => {
+    const happening = await tx.happening.create({
+      data: {
+        ownerId,
+        contactId,
+        typeId: type.id,
+        title,
+        notes: str(form, "notes") ?? null,
+        source: str(form, "source") ?? null,
+        date: when.date,
+        precision: when.precision,
+        endDate: end?.date ?? null,
+        endPrecision: end?.precision ?? null,
+        availability,
+        isTentative: bool(form, "isTentative"),
+      },
+    });
+
+    const followUpTaskId = await syncFollowUpTask(
+      tx,
+      { ...happeningDatesOf(happening), id: happening.id, ownerId, contactId, title, followUpTaskId: null },
+      wantsFollowUp,
+    );
+    if (followUpTaskId) {
+      await tx.happening.update({ where: { id: happening.id }, data: { followUpTaskId } });
+    }
+    return happening;
+  });
+
+  touch(contactId);
+  if (wantsFollowUp) revalidatePath("/tasks");
+  return ok({ id: created.id });
+}
+
+export async function updateHappening(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  if (!id) return fail("Missing happening.");
+
+  const scope = await privacyScope();
+  const existing = await prisma.happening.findFirst({
+    where: { id, ownerId, ...viaContactPrivacyWhere(scope) },
+    select: {
+      contactId: true,
+      followUpTaskId: true,
+      date: true,
+      precision: true,
+      endDate: true,
+      endPrecision: true,
+    },
+  });
+  if (!existing) return fail("Not found.");
+
+  const title = str(form, "title");
+  const when = partialDate(form, "date");
+  if (!title || !when) return fail("A title and a date are required.");
+
+  const end = partialDate(form, "endDate");
+  if (
+    !isValidPartialDateRange(
+      { date: plainDateFromDb(when.date), precision: when.precision },
+      end ? { date: plainDateFromDb(end.date), precision: end.precision } : null,
+    )
+  ) {
+    return fieldError("endDate", "End date must not be before the start date.");
+  }
+
+  const availability = availabilityFromForm(form);
+  if (!availability) return fail(AVAILABILITY_ERROR);
+
+  const type = await termFromForm(ownerId, form, "typeId", "HAPPENING_TYPE");
+  if (!type.ok) return fail(UNKNOWN_TERM);
+
+  const wantsFollowUp = bool(form, "followUp");
+
+  // Re-dating makes it something to ask about again. Without this, moving a
+  // trip you had already dismissed to a later date left it dismissed for good:
+  // the follow-up prompt would never come back, because the digest only offers
+  // happenings that have not been acknowledged.
+  const reDated =
+    existing.date.getTime() !== when.date.getTime() ||
+    existing.precision !== when.precision ||
+    (existing.endDate?.getTime() ?? null) !== (end?.date.getTime() ?? null) ||
+    existing.endPrecision !== (end?.precision ?? null);
+
+  await prisma.$transaction(async (tx) => {
+    const updated = await tx.happening.update({
+      where: { id },
+      data: {
+        typeId: type.id,
+        title,
+        notes: str(form, "notes") ?? null,
+        source: str(form, "source") ?? null,
+        date: when.date,
+        precision: when.precision,
+        endDate: end?.date ?? null,
+        endPrecision: end?.precision ?? null,
+        availability,
+        isTentative: bool(form, "isTentative"),
+        ...(reDated ? { acknowledgedAt: null } : {}),
+      },
+    });
+
+    const followUpTaskId = await syncFollowUpTask(
+      tx,
+      {
+        ...happeningDatesOf(updated),
+        id,
+        ownerId,
+        contactId: existing.contactId,
+        title,
+        followUpTaskId: existing.followUpTaskId,
+      },
+      wantsFollowUp,
+    );
+    if (followUpTaskId !== existing.followUpTaskId) {
+      await tx.happening.update({ where: { id }, data: { followUpTaskId } });
+    }
+  });
+
+  touch(existing.contactId);
+  if (wantsFollowUp || existing.followUpTaskId) revalidatePath("/tasks");
+  return ok();
+}
+
+/**
+ * Dismiss a finished happening from the "just wrapped up" list.
+ *
+ * A timestamp rather than a delete: you asked how the trip went, which is worth
+ * keeping. Nothing else about the row changes.
+ */
+export async function acknowledgeHappening(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const scope = await privacyScope();
+  const existing = await prisma.happening.findFirst({
+    where: { id, ownerId, ...viaContactPrivacyWhere(scope) },
+    select: { contactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  await prisma.happening.update({ where: { id }, data: { acknowledgedAt: new Date() } });
+  touch(existing.contactId);
+  return ok();
+}
+
+export async function deleteHappening(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const scope = await privacyScope();
+  const existing = await prisma.happening.findFirst({
+    where: { id, ownerId, ...viaContactPrivacyWhere(scope) },
+    select: { contactId: true, followUpTaskId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  await prisma.$transaction(async (tx) => {
+    await tx.happening.delete({ where: { id } });
+    await deleteFollowUpTask(tx, ownerId, existing.followUpTaskId);
+  });
+
+  touch(existing.contactId);
+  if (existing.followUpTaskId) revalidatePath("/tasks");
   return ok();
 }
 
@@ -512,7 +732,15 @@ async function planFields(ownerId: string, form: FormData) {
   const checklist = planChecklistSchema.safeParse(checklistValue);
   if (!checklist.success) return null;
 
+  const startMinute = parsePlanMinute(str(form, "plannedStartTime"));
+  if (!startMinute.ok) return null;
+  if (startMinute.value !== null && startMinute.value > PLAN_MINUTE_MAX) return null;
+
+  const duration = parsePlanDuration(str(form, "plannedDurationMinutes"));
+  if (!duration.ok) return null;
+
   const cost = num(form, "estimatedCost");
+  const plannedFor = plainDate(form, "plannedFor") ?? null;
   return {
     categoryId,
     location: str(form, "location") ?? null,
@@ -521,7 +749,13 @@ async function planFields(ownerId: string, form: FormData) {
     estimatedCostCents: cost === undefined ? null : Math.round(cost * 100),
     notes: str(form, "notes") ?? null,
     checklist: checklist.data as Prisma.InputJsonValue,
-    plannedFor: plainDate(form, "plannedFor") ?? null,
+    plannedFor,
+    // A time on nothing is not a time. Dropping it rather than refusing the
+    // save keeps clearing the day from becoming an error the user has to go
+    // and understand, and leaves nothing behind to surface later as an hour
+    // against a plan with no date.
+    plannedStartMinute: plannedFor ? startMinute.value : null,
+    plannedDurationMinutes: plannedFor ? duration.value : null,
   };
 }
 
@@ -534,7 +768,7 @@ export async function createPlan(form: FormData): Promise<ActionResult<{ id: str
   if (contactId && !(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
 
   const fields = await planFields(ownerId, form);
-  if (!fields) return fail("Invalid category or checklist.");
+  if (!fields) return fail("Check the category, checklist and time.");
 
   const created = await prisma.$transaction(async (tx) => {
     const place = await resolveLocation(tx, ownerId, fields.location ?? undefined, {
@@ -565,7 +799,7 @@ export async function updatePlan(form: FormData): Promise<ActionResult> {
   if (!title) return fail("What do you want to do?");
 
   const fields = await planFields(ownerId, form);
-  if (!fields) return fail("Invalid category or checklist.");
+  if (!fields) return fail("Check the category, checklist and time.");
 
   await prisma.$transaction(async (tx) => {
     const place = await resolveLocation(tx, ownerId, fields.location ?? undefined, {

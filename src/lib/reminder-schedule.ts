@@ -8,19 +8,6 @@ export interface ReminderMessage {
   body: string;
 }
 
-export interface DigestBucket {
-  date: PlainDate;
-  importantDateCount: number;
-  cadenceCount: number;
-  taskCount: number;
-}
-
-export interface DigestMessageInput {
-  today: DigestBucket;
-  tomorrow: DigestBucket;
-  followingDay: DigestBucket;
-}
-
 export function localClock(instant: Date, timezone: string): PlainDate & { hour: number } {
   const date = calendarDateInTz(instant, timezone);
   const hour = Number(new Intl.DateTimeFormat("en-US", {
@@ -93,16 +80,56 @@ export function taskMessage(title: string, person: string | null, dueDay: PlainD
   };
 }
 
-export function digestMessage(input: DigestMessageInput): ReminderMessage {
-  const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
-  const line = (label: string, bucket: DigestBucket) =>
-    `${label} — ${plainDateKey(bucket.date)}: ${plural(bucket.importantDateCount, "important date")}, ${plural(bucket.cadenceCount, "cadence reminder")}, and ${plural(bucket.taskCount, "task")}.`;
+export type DigestItem =
+  | { kind: "IMPORTANT_DATE"; label: string; contactName: string; date: PlainDate }
+  | { kind: "CADENCE"; contactName: string; date: PlainDate }
+  | { kind: "TASK"; title: string; contactName: string | null; date: PlainDate };
+
+/** Kept deliberately small enough for the most restrictive supported push channel. */
+export const DIGEST_ENTRY_LIMIT = 20;
+
+function digestEntry(item: DigestItem, today: PlainDate): string {
+  const days = diffPlainDays(today, item.date);
+  const timing = days < 0 ? "overdue" : days === 0 ? "due today" : "upcoming";
+  const detail = item.kind === "IMPORTANT_DATE"
+    ? `${item.label} — ${item.contactName}`
+    : item.kind === "CADENCE"
+      ? item.contactName
+      : `${item.title}${item.contactName ? ` — ${item.contactName}` : ""}`;
+  return `- ${detail} (${timing}: ${plainDateKey(item.date)})`;
+}
+
+/**
+ * Format only the already-authorised fields supplied by the scheduler. Group
+ * order is fixed; entries are ordered by date, then their visible text.
+ */
+export function digestMessage(items: DigestItem[], today: PlainDate, limit = DIGEST_ENTRY_LIMIT): ReminderMessage {
+  const kindOrder: DigestItem["kind"][] = ["IMPORTANT_DATE", "CADENCE", "TASK"];
+  const headings: Record<DigestItem["kind"], string> = {
+    IMPORTANT_DATE: "Important dates",
+    CADENCE: "Keep in touch",
+    TASK: "Tasks",
+  };
+  const sorted = [...items].sort((a, b) => {
+    const kind = kindOrder.indexOf(a.kind) - kindOrder.indexOf(b.kind);
+    if (kind) return kind;
+    const date = compareDigestDates(a.date, b.date);
+    return date || digestEntry(a, today).localeCompare(digestEntry(b, today), "en");
+  });
+  const shown = sorted.slice(0, Math.max(0, limit));
+  const sections = kindOrder.flatMap((kind) => {
+    const entries = shown.filter((item) => item.kind === kind);
+    return entries.length ? [`${headings[kind]}\n${entries.map((item) => digestEntry(item, today)).join("\n")}`] : [];
+  });
+  const hidden = sorted.length - shown.length;
   return {
     subject: "Your Personal CRM daily digest",
-    body: [
-      line("Today / overdue", input.today),
-      line("Tomorrow", input.tomorrow),
-      line("Following day", input.followingDay),
-    ].join("\n"),
+    body: sections.length === 0
+      ? "Nothing needs your attention today."
+      : `${sections.join("\n\n")}${hidden > 0 ? `\n\n… and ${hidden} more ${hidden === 1 ? "item" : "items"}.` : ""}`,
   };
+}
+
+function compareDigestDates(a: PlainDate, b: PlainDate): number {
+  return plainDateKey(a).localeCompare(plainDateKey(b));
 }

@@ -34,19 +34,27 @@ export async function resolveLocation(
       where: {
         ownerId_normalizedValue: { ownerId, normalizedValue: normalizedName },
       },
-      // The alias's own ownerId and its location's are two independent foreign
-      // keys, so an imported, restored or hand-repaired row can carry one
-      // account's alias against another account's place. Accepting it on the
-      // alias's owner alone would hand back that foreign location — and this
-      // function then attaches interactions to it, and writes `details` onto
-      // its address and URL. The location has to be ours too.
-      select: { location: { select: { id: true, name: true, ownerId: true } } },
+      // The id only, never the relation. `LocationAlias` references
+      // `Location(ownerId, id)`, so the application cannot write an alias
+      // against another account's place — but a restore can, since a dump
+      // disables foreign-key checks. Selecting through the relation then hands
+      // Prisma a null for a field its schema says is required, and the whole
+      // call throws instead of falling back: a row that used to be handled
+      // became a crash in every save that mentions the name.
+      select: { locationId: true },
     }),
   ]);
-  const claimed = existingAlias?.location ?? null;
-  const usable = claimed?.ownerId === ownerId;
-  let existing: { id: string; name: string } | null =
-    canonical ?? (claimed && usable ? { id: claimed.id, name: claimed.name } : null);
+  // Fetched separately and owner-scoped, so a claim pointing somewhere this
+  // account does not own reads as no claim at all rather than handing back a
+  // foreign location — which this function would then attach interactions to,
+  // and write `details` onto its address and URL.
+  const claimed = existingAlias
+    ? await tx.location.findFirst({
+        where: { id: existingAlias.locationId, ownerId },
+        select: { id: true, name: true },
+      })
+    : null;
+  let existing: { id: string; name: string } | null = canonical ?? claimed;
   // The key is claimed in our own namespace but points somewhere this name
   // does not belong — another account's place, or one of ours that is not the
   // place actually called this. Every write below has to re-point that row
@@ -55,7 +63,8 @@ export async function resolveLocation(
   // a failed save with nothing to show for it. Claiming it is the repair; the
   // row is ours, and where it points is the part that is wrong.
   const claimIsStale =
-    claimed !== null && (!usable || (canonical !== null && claimed.id !== canonical.id));
+    existingAlias !== null &&
+    (claimed === null || (canonical !== null && claimed.id !== canonical.id));
   const claimCanonical = async (locationId: string, value: string) => {
     if (claimIsStale) {
       await tx.locationAlias.update({

@@ -356,7 +356,22 @@ discovered:
 | Task | The task's title | `Book the dentist` |
 | | The contact's name, if the task is for someone | `Dana Whitfield` |
 | | The due date | `2026-09-02` |
-| Daily digest | Counts of important dates, cadences, and tasks in dated sections for today/overdue, tomorrow, and the following day — no names or titles | `Tomorrow — 2026-09-03: 1 important date, 2 cadence reminders, and 1 task.` |
+| Daily digest | Important-date labels and eligible contact names | `Anniversary — Dana Whitfield` |
+| | Keep-in-touch contact names | `Dana Whitfield` |
+| | Task titles and the contact name, when present | `Book the dentist — Dana Whitfield` |
+| | Each entry's date, and whether it is overdue, due today or upcoming | `(upcoming: 2026-09-04)` |
+
+Digest entries are bounded and ordered deterministically. If more items are due
+than fit, the message reports only how many remain; it does not expose their
+names or titles. An empty digest says that nothing needs attention instead of
+including empty headings.
+
+The digest reaches two days further than any individual reminder does, so a
+name can appear there before that person's own reminder is owed. It is the same
+account, the same channels and the same lock — a contact hidden by the privacy
+lock is excluded from the look-ahead exactly as it is from the rest — but it is
+worth stating plainly: switching the digest on means names travel up to two
+days earlier than the reminder schedule alone would send them.
 
 That goes to whatever host the channel names, on the hour, with no preview and
 no confirmation step. A retry after a failure re-reads the record and sends
@@ -411,9 +426,17 @@ Nothing is lost by saying nothing there. The check before the send is the one
 that matters: the name is resolved, every answer inspected and the connection
 pinned to it, so a destination a member may not reach is never sent to. It
 merely takes until a delivery to say so, on the row — which is already where an
-unresolvable name reported. The **Send a test** button answers a member with
-one sentence whichever way it failed, for the same reason; an administrator,
-who is allowed a non-public destination anyway, is told what actually happened.
+unresolvable name reported.
+
+The **Send a test** button draws the same line, but around the part that
+actually leaks rather than around the whole button. Everything up to the
+destination check is answered with one sentence whichever way it failed, so a
+refusal and a name nobody has registered still cannot be told apart. Once the
+address has been shown to be public the reason is given in full — a member is
+refused any other kind of address, so repeating "connection refused" or
+"HTTP 401" says nothing about the network the member did not supply, and that
+is where the detail was worth having. An administrator, who is allowed a
+non-public destination anyway, is told what happened either way.
 
 ### Private contacts and the send
 

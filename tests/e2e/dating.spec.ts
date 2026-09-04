@@ -246,3 +246,26 @@ test("converting to a friend keeps the history", async ({ page }) => {
   await page.goto("/dating");
   await expect(page.getByText(personName())).toHaveCount(0);
 });
+
+test("the actions menu puts someone back in the pipeline", async ({ page }) => {
+  await ensureSignedIn(page);
+  // Picks up where the conversion above left off: they are an ordinary contact
+  // again, which is the state the menu item is offered in.
+  await page.goto(contactUrl);
+
+  await page.getByRole("button", { name: "Contact actions" }).click();
+  await page.getByRole("menuitem", { name: "Dating or interested" }).click();
+
+  // The dating sections come back, and so does everything logged against them.
+  await expect(page.getByRole("button", { name: "Log a date" })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Add a flag" })).toHaveCount(1);
+
+  // Already romantic, so the way in is gone — leaving is the dating section's
+  // own control, and two controls for one flag would drift apart.
+  await page.getByRole("button", { name: "Contact actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "Dating or interested" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  await page.goto("/dating");
+  await expect(page.locator("li").filter({ hasText: personName() }).first()).toBeVisible();
+});

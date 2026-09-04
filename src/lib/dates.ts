@@ -99,6 +99,28 @@ export function zonedStartOfDay(date: PlainDate, timeZone: string): Date {
   return new Date(start ?? naive - offsets[1]);
 }
 
+/**
+ * The instant a local wall-clock minute of `date` falls on in `timeZone`.
+ *
+ * Built on `zonedStartOfDay` rather than repeating its search, so the two agree
+ * about where a day begins. Both daylight-saving transitions are then decided
+ * by the arithmetic, deliberately and in the way calendar apps settle them:
+ *
+ *  * Clocks jump forward, so a local time in the skipped hour never happens —
+ *    02:30 on a spring-forward day lands on 03:30, an hour of real time after
+ *    the day started, which is what "two and a half hours in" means.
+ *  * Clocks roll back, so a local time in the repeated hour happens twice —
+ *    01:30 takes the first, matching `zonedStartOfDay`'s own earliest-candidate
+ *    rule.
+ *
+ * A minute outside 0-1439 is not rejected here: it is simply that many minutes
+ * from the day's start, so a caller that means "the end of the day" can say
+ * 1440. Storage validates the range instead.
+ */
+export function zonedTimeOfDay(date: PlainDate, minute: number, timeZone: string): Date {
+  return new Date(zonedStartOfDay(date, timeZone).getTime() + minute * 60_000);
+}
+
 export function startOfDayInTz(instant: Date, timeZone: string): Date {
   return zonedStartOfDay(calendarDateInTz(instant, timeZone), timeZone);
 }

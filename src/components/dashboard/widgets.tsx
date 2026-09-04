@@ -6,10 +6,13 @@ import { Icon } from "@/components/nav/icon";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatPartialDate } from "@/lib/date-precision";
+import { formatPartialDate, formatPartialRange } from "@/lib/date-precision";
 import { relativeInstant, termColorClasses } from "@/lib/format";
 import type { PlainDate } from "@/lib/dates";
 import type { DashboardStats, OverdueContact, UpcomingDate } from "@/server/queries/dashboard";
+import type { HappeningDigest, HappeningDigestEntry } from "@/server/queries/happenings";
+import { AVAILABILITY_BADGES } from "@/lib/happenings";
+import { AcknowledgeHappeningButton } from "./happening-actions";
 
 export function WidgetShell({
   title,
@@ -426,6 +429,89 @@ export function UpcomingInteractionsWidget({
           </li>
         ))}
       </ul>
+    </WidgetShell>
+  );
+}
+
+/**
+ * What the people you know have on — ahead of time, and just afterwards.
+ *
+ * Two lists in one card because they are two halves of the same habit: check
+ * before you invite someone, and ask once they are back. Splitting them into
+ * separate widgets would let a user enable the half that only pays off with
+ * the other.
+ */
+export function HappeningsWidget({ digest }: { digest: HappeningDigest }) {
+  const { ahead, justEnded } = digest;
+
+  const when = (entry: HappeningDigestEntry) =>
+    formatPartialRange(entry.date, entry.precision, entry.endDate, entry.endPrecision, {
+      short: true,
+    });
+
+  return (
+    <WidgetShell title="In their world" icon="CalendarHeart" testId="happenings-widget">
+      {ahead.length === 0 && justEnded.length === 0 ? (
+        <Empty>Nothing recorded about what people have on.</Empty>
+      ) : (
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
+          {ahead.length > 0 ? (
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
+              <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                Coming up
+              </p>
+              <ul className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
+                {ahead.map((entry) => {
+                  const badge = AVAILABILITY_BADGES[entry.availability];
+                  return (
+                    <li key={entry.id} className="px-1 py-1">
+                      <Link href={`/people/${entry.contact.id}`} className="group block min-w-0">
+                        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                          <span className="min-w-0 truncate text-sm group-hover:underline">
+                            {entry.title}
+                          </span>
+                          {badge ? <Badge variant="muted">{badge}</Badge> : null}
+                          {entry.isTentative ? <Badge variant="muted">Maybe</Badge> : null}
+                          {entry.phase === "ongoing" ? <Badge variant="muted">Now</Badge> : null}
+                        </div>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {displayName(entry.contact)} · {when(entry)}
+                        </p>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+
+          {justEnded.length > 0 ? (
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
+              <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                Ask how it went
+              </p>
+              <ul className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
+                {justEnded.map((entry) => (
+                  <li key={entry.id} className="flex min-w-0 items-center gap-2 px-1 py-1">
+                    <Link href={`/people/${entry.contact.id}`} className="group min-w-0 flex-1">
+                      <span className="block truncate text-sm group-hover:underline">
+                        {entry.title}
+                      </span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {displayName(entry.contact)} · ended {when(entry)}
+                      </span>
+                    </Link>
+                    <AcknowledgeHappeningButton
+                      id={entry.id}
+                      label={`Dismiss ${entry.title}`}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      )}
     </WidgetShell>
   );
 }

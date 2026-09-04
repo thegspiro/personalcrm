@@ -26,6 +26,11 @@ import {
   type PlanChecklistItem,
 } from "@/lib/plan-checklist";
 import {
+  formatPlanDuration,
+  formatPlanTime,
+  planMinuteToInput,
+} from "@/lib/plan-time";
+import {
   createPlan,
   deletePlan,
   setPlanStatus,
@@ -54,6 +59,8 @@ export interface PlanItem {
   notes: string | null;
   checklist: unknown;
   plannedFor: PlainDate | null;
+  plannedStartMinute: number | null;
+  plannedDurationMinutes: number | null;
   categoryId: string | null;
   category: { label: string; icon: string | null; color: string | null } | null;
   contact: { id: string; firstName: string; lastName: string | null } | null;
@@ -74,6 +81,17 @@ export interface PlanPerson {
  * to a different person is not a correction, and the plan's own contact is
  * what scopes it on their page.
  */
+/** Rough lengths, so "set aside" is one tap rather than arithmetic. */
+const PLAN_DURATIONS = [
+  { minutes: 30, label: "30 minutes" },
+  { minutes: 60, label: "1 hour" },
+  { minutes: 90, label: "1½ hours" },
+  { minutes: 120, label: "2 hours" },
+  { minutes: 180, label: "3 hours" },
+  { minutes: 240, label: "Most of an evening" },
+  { minutes: 480, label: "Most of a day" },
+] as const;
+
 function PlanFields({
   formId,
   categories,
@@ -159,6 +177,39 @@ function PlanFields({
           defaultValue={plan?.plannedFor ? plainDateKey(plan.plannedFor) : undefined}
           hint="Optional — leave it empty and it just sits on the list."
         />
+        {/* Only meaningful alongside a day, and the action drops it when there
+            isn't one. Deliberately not disabled while the day is empty:
+            DateField reports a date being picked but not being cleared, so a
+            disabled state here would latch on and lock the field. */}
+        <div className="grid min-w-0 gap-2.5 sm:grid-cols-2">
+          <Field
+            label="Start time"
+            htmlFor={`${formId}-plannedStartTime`}
+            hint="Only used once a day is set."
+          >
+            <Input
+              id={`${formId}-plannedStartTime`}
+              name="plannedStartTime"
+              type="time"
+              defaultValue={planMinuteToInput(plan?.plannedStartMinute)}
+            />
+          </Field>
+          <Field label="Set aside" htmlFor={`${formId}-plannedDurationMinutes`}>
+            <select
+              id={`${formId}-plannedDurationMinutes`}
+              name="plannedDurationMinutes"
+              defaultValue={String(plan?.plannedDurationMinutes ?? "")}
+              className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+            >
+              <option value="">However long it takes</option>
+              {PLAN_DURATIONS.map((option) => (
+                <option key={option.minutes} value={option.minutes}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
         <div className="grid min-w-0 gap-2.5 sm:grid-cols-2">
           <Field label="Venue" htmlFor={`${formId}-location`}>
             <Input id={`${formId}-location`} name="location" defaultValue={plan?.location ?? ""} placeholder="Alamo Drafthouse" />
@@ -324,9 +375,13 @@ export function PlansSection({
                   ) : null}
                   {plan.plannedFor ? (
                     <span>
-                      {formatPartialDate(plan.plannedFor, "DAY", {
-                        short: true,
-                      })}
+                      {[
+                        formatPartialDate(plan.plannedFor, "DAY", { short: true }),
+                        formatPlanTime(plan.plannedStartMinute),
+                        formatPlanDuration(plan.plannedDurationMinutes),
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </span>
                   ) : null}
                   {formatMoney(plan.estimatedCostCents, plan.currency) ? (

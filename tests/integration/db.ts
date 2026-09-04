@@ -37,6 +37,7 @@ const TABLES = [
   "LifeEventParticipant",
   "LifeEvent",
   "Idea",
+  "Happening",
   "Task",
   "Gift",
   "Debt",
@@ -97,6 +98,35 @@ export async function createTestUser() {
   });
   await prisma.$transaction((tx) => provisionTaxonomies(tx, user.id));
   return user;
+}
+
+/**
+ * Write rows the schema forbids, the way a restore does.
+ *
+ * Every foreign key into `Contact`, `Tag` and `Location` names `(ownerId, id)`,
+ * so the database refuses a row that spans two accounts and the application
+ * cannot make one. That is
+ * not the same as making the readers' owner predicates dead code:
+ * `mariadb-dump` emits `SET FOREIGN_KEY_CHECKS=0`, so restoring a dump taken
+ * before those keys existed — the documented recovery path — can still bring
+ * such a row in. The checks that use this are what keep the readers honest
+ * about it.
+ *
+ * One interactive transaction, because the setting is per-connection and the
+ * client pools: split across two calls it can land on a connection that never
+ * saw it.
+ */
+export async function asARestoreWould<T>(
+  write: (tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]) => Promise<T>,
+): Promise<T> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS=0");
+    try {
+      return await write(tx);
+    } finally {
+      await tx.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS=1");
+    }
+  });
 }
 
 export function daysAgo(n: number, from: Date = new Date()): Date {

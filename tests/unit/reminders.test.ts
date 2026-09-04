@@ -83,23 +83,43 @@ describe("reminder wording", () => {
       .toBe("Birthday for Sam Jones was 3 days ago (2026-08-30).");
   });
 
-  it("labels all three digest buckets with explicit dates and correct plurals", () => {
-    expect(digestMessage({
-      today: { date: today, importantDateCount: 1, cadenceCount: 1, taskCount: 0 },
-      tomorrow: { date: { year: 2026, month: 9, day: 3 }, importantDateCount: 2, cadenceCount: 0, taskCount: 1 },
-      followingDay: { date: { year: 2026, month: 9, day: 4 }, importantDateCount: 0, cadenceCount: 2, taskCount: 2 },
-    }).body).toBe([
-      "Today / overdue — 2026-09-02: 1 important date, 1 cadence reminder, and 0 tasks.",
-      "Tomorrow — 2026-09-03: 2 important dates, 0 cadence reminders, and 1 task.",
-      "Following day — 2026-09-04: 0 important dates, 2 cadence reminders, and 2 tasks.",
+  it("formats digest sections in deterministic date and text order", () => {
+    expect(digestMessage([
+      { kind: "TASK", title: "Write card", contactName: "Zoe", date: { year: 2026, month: 9, day: 3 } },
+      { kind: "CADENCE", contactName: "Alex", date: { year: 2026, month: 9, day: 1 } },
+      { kind: "IMPORTANT_DATE", label: "Birthday", contactName: "Sam", date: { year: 2026, month: 9, day: 9 } },
+      { kind: "TASK", title: "Book table", contactName: null, date: today },
+    ], today).body).toBe([
+      "Important dates",
+      "- Birthday — Sam (upcoming: 2026-09-09)",
+      "",
+      "Keep in touch",
+      "- Alex (overdue: 2026-09-01)",
+      "",
+      "Tasks",
+      "- Book table (due today: 2026-09-02)",
+      "- Write card — Zoe (upcoming: 2026-09-03)",
     ].join("\n"));
   });
 
-  it("renders empty buckets and crosses month and year boundaries", () => {
-    expect(digestMessage({
-      today: { date: { year: 2026, month: 12, day: 31 }, importantDateCount: 0, cadenceCount: 0, taskCount: 0 },
-      tomorrow: { date: { year: 2027, month: 1, day: 1 }, importantDateCount: 0, cadenceCount: 0, taskCount: 0 },
-      followingDay: { date: { year: 2027, month: 1, day: 2 }, importantDateCount: 0, cadenceCount: 0, taskCount: 0 },
-    }).body).toContain("Tomorrow — 2027-01-01: 0 important dates, 0 cadence reminders, and 0 tasks.");
+  it("keeps a useful empty state without empty headings", () => {
+    expect(digestMessage([], today).body).toBe("Nothing needs your attention today.");
+  });
+
+  it("bounds entries at item boundaries and reveals only the remaining count", () => {
+    const items = Array.from({ length: 4 }, (_, index) => ({
+      kind: "TASK" as const,
+      title: `Task ${index + 1}`,
+      contactName: `Person ${index + 1}`,
+      date: today,
+    }));
+    expect(digestMessage(items, today, 2).body).toBe([
+      "Tasks",
+      "- Task 1 — Person 1 (due today: 2026-09-02)",
+      "- Task 2 — Person 2 (due today: 2026-09-02)",
+      "",
+      "… and 2 more items.",
+    ].join("\n"));
+    expect(digestMessage(items, today, 2).body).not.toContain("Person 3");
   });
 });
