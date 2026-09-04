@@ -11,6 +11,7 @@ import {
   plainDateKey,
   plainDateToDb,
   todayInTz,
+  zonedStartOfDay,
   type PlainDate,
 } from "@/lib/dates";
 import { dueOccurrence, effectiveReminderDays, type ReminderPolicy } from "@/lib/reminders";
@@ -142,46 +143,109 @@ function taskWhere(user: Pick<ScheduledUser, "id">, schedule: Schedule) {
   };
 }
 
+/**
+ * How far past today the digest looks. Standalone reminders are unaffected:
+ * each still fires on its own policy, on its own day.
+ */
+const DIGEST_LOOKAHEAD_DAYS = 2;
+
+/**
+ * The digest reads wider than any delivery policy does, so it gets its own
+ * where-fragments rather than reusing `cadenceWhere` and `taskWhere`.
+ *
+ * Those two decide what is *owed* — widening them would send every reminder
+ * two days early, which is the opposite of what a look-ahead is for. Seeing an
+ * item here must never be able to create its standalone candidate, so the two
+ * reads are kept deliberately apart even though they overlap.
+ */
+function digestCadenceWhere(user: Pick<ScheduledUser, "id">, schedule: Schedule, through: PlainDate) {
+  return {
+    ownerId: user.id,
+    ...visibleContact(schedule.locked),
+    // The last instant of the final local day, so a cadence due that evening
+    // is included, the way `cadenceWhere` reads its own day.
+    nextTouchAt: { lte: new Date(zonedStartOfDay(addPlainDays(through, 1), schedule.timezone).getTime() - 1) },
+  };
+}
+
+function digestTaskWhere(user: Pick<ScheduledUser, "id">, schedule: Schedule, through: PlainDate) {
+  return {
+    ownerId: user.id,
+    completedAt: null,
+    dueDate: { lte: plainDateToDb(through) },
+    ...taskContactWhere(user, schedule),
+  };
+}
+
 /** Selects only fields that are permitted to leave the server in a digest. */
-async function digestItemsForUser(db: Db, user: Pick<ScheduledUser, "id">, schedule: Schedule, now: Date): Promise<DigestItem[]> {
+async function digestItemsForUser(db: Db, user: Pick<ScheduledUser, "id">, schedule: Schedule): Promise<DigestItem[]> {
+  const through = addPlainDays(schedule.today, DIGEST_LOOKAHEAD_DAYS);
   const [dates, cadence, tasks] = await Promise.all([
     db.importantDate.findMany({
       where: { ownerId: user.id, contact: { ownerId: user.id, ...visibleContact(schedule.locked) } },
       select: {
-        label: true, date: true, recurrence: true, reminderDaysBefore: true,
+        id: true, label: true, date: true, recurrence: true, reminderDaysBefore: true,
         contact: { select: { firstName: true, lastName: true } },
       },
     }),
     db.contact.findMany({
-      where: cadenceWhere(user, schedule, now),
+      where: digestCadenceWhere(user, schedule, through),
       select: { firstName: true, lastName: true, nextTouchAt: true },
     }),
     db.task.findMany({
-      where: taskWhere(user, schedule),
+      where: digestTaskWhere(user, schedule, through),
       select: { title: true, dueDate: true, contact: { select: { firstName: true, lastName: true } } },
     }),
   ]);
   const items: DigestItem[] = [];
-  for (const date of dates) {
-    for (const offset of effectiveReminderDays(reminderPolicy(date.reminderDaysBefore))) {
-      const occurrence = dueOccurrence(plainDateFromDb(date.date), date.recurrence, schedule.today, offset);
-      if (occurrence) items.push({
-        kind: "IMPORTANT_DATE", label: date.label, contactName: personName(date.contact), date: occurrence,
-      });
+  // An important date enters the digest on the days its own reminder policy
+  // would speak, not on a flat two-day window: a birthday a week out is worth
+  // knowing about precisely because its policy says a week. The look-ahead
+  // adds the next two days' worth of those, so a reminder that will arrive
+  // tomorrow is previewed today rather than being the first you hear of it.
+  // Nested with the look-ahead day outermost so the earliest day that reaches
+  // an occurrence is the one recorded: a policy is stored as written, so
+  // offsets are not necessarily ascending, and `[0, 1]` would otherwise file a
+  // reminder owed today as tomorrow's preview.
+  const seen = new Set<string>();
+  for (let ahead = 0; ahead <= DIGEST_LOOKAHEAD_DAYS; ahead++) {
+    for (const date of dates) {
+      for (const offset of effectiveReminderDays(reminderPolicy(date.reminderDaysBefore))) {
+        const occurrence = dueOccurrence(
+          plainDateFromDb(date.date), date.recurrence, addPlainDays(schedule.today, ahead), offset,
+        );
+        if (!occurrence) continue;
+        // Two offsets on two different days can name the same occurrence.
+        // Keyed by row id, not by what is displayed: two people with the same
+        // name sharing a birthday are two entries, not one.
+        const key = `${date.id}\u0000${plainDateKey(occurrence)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        items.push({
+          kind: "IMPORTANT_DATE", label: date.label, contactName: personName(date.contact),
+          date: occurrence, preview: ahead > 0,
+        });
+      }
     }
   }
   for (const contact of cadence) {
-    if (contact.nextTouchAt) items.push({
-      kind: "CADENCE", contactName: personName(contact),
-      date: calendarDateInTz(contact.nextTouchAt, schedule.timezone),
-    });
+    if (contact.nextTouchAt) {
+      const due = calendarDateInTz(contact.nextTouchAt, schedule.timezone);
+      items.push({
+        kind: "CADENCE", contactName: personName(contact),
+        date: due, preview: diffPlainDays(schedule.today, due) > 0,
+      });
+    }
   }
   for (const task of tasks) {
-    if (task.dueDate) items.push({
-      kind: "TASK", title: task.title,
-      contactName: task.contact ? personName(task.contact) : null,
-      date: plainDateFromDb(task.dueDate),
-    });
+    if (task.dueDate) {
+      const due = plainDateFromDb(task.dueDate);
+      items.push({
+        kind: "TASK", title: task.title,
+        contactName: task.contact ? personName(task.contact) : null,
+        date: due, preview: diffPlainDays(schedule.today, due) > 0,
+      });
+    }
   }
   return items;
 }
@@ -247,7 +311,7 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
   }
 
   if (user.preference.digestEnabled && digestIsDue(now, schedule.timezone, user.preference.digestHour)) {
-    const digestItems = await digestItemsForUser(db, user, schedule, now);
+    const digestItems = await digestItemsForUser(db, user, schedule);
     candidates.push({
       entityType: "DIGEST",
       entityId: user.id,
@@ -359,7 +423,7 @@ async function currentMessage(
       // candidate would wait for it; so does the retry, keeping its row and
       // its key rather than sending early or being cancelled outright.
       if (!digestIsDue(now, schedule.timezone, user.preference.digestHour)) return NOT_YET;
-      return digestMessage(await digestItemsForUser(db, user, schedule, now), schedule.today);
+      return digestMessage(await digestItemsForUser(db, user, schedule), schedule.today);
     }
     default:
       return null;

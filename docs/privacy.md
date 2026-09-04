@@ -359,12 +359,19 @@ discovered:
 | Daily digest | Important-date labels and eligible contact names | `Anniversary — Dana Whitfield` |
 | | Keep-in-touch contact names | `Dana Whitfield` |
 | | Task titles and the contact name, when present | `Book the dentist — Dana Whitfield` |
-| | Local due or occurrence dates and whether each item is overdue, due today, or upcoming | `upcoming: 2026-09-14` |
+| | Each entry's date, and whether it is overdue, due today or upcoming | `(upcoming: 2026-09-04)` |
 
 Digest entries are bounded and ordered deterministically. If more items are due
 than fit, the message reports only how many remain; it does not expose their
 names or titles. An empty digest says that nothing needs attention instead of
 including empty headings.
+
+The digest reaches two days further than any individual reminder does, so a
+name can appear there before that person's own reminder is owed. It is the same
+account, the same channels and the same lock — a contact hidden by the privacy
+lock is excluded from the look-ahead exactly as it is from the rest — but it is
+worth stating plainly: switching the digest on means names travel up to two
+days earlier than the reminder schedule alone would send them.
 
 That goes to whatever host the channel names, on the hour, with no preview and
 no confirmation step. A retry after a failure re-reads the record and sends

@@ -791,10 +791,25 @@ is dropped rather than sent stale.
 Cadence rows use `Contact.nextTouchAt` falling on or before the end of the
 owner's local day — the same reading as the overdue count and the People
 filter — task rows use an incomplete task's due date, and digest rows use the
-user's local calendar date. Digest scheduling uses `UserPreference.timezone`,
-`digestHour`, and `digestEnabled`, all three editable under Settings →
-Reminders; a late hourly pass catches up once, including after a skipped
-spring-forward hour, while the daily key suppresses a repeated fall-back hour.
+user's local calendar date.
+
+A digest reaches two days past today: cadences whose `nextTouchAt` falls before
+the end of that third local day, incomplete tasks due on or before it, and
+important-date occurrences whose own `reminderDaysBefore` policy would speak on
+any of the three days. Each entry is labelled overdue, due today or upcoming
+from its date, and carries whether its *reminder* is owed today or is being
+previewed. Those are not the same thing — a date warned about a week ahead is
+owed today for an occurrence still a week out — so the 20-entry cap ranks on
+the reminder day, not the occurrence date, and trims the look-ahead rather than
+work already owed. The wider read has its own where-fragments rather than reusing
+the standalone policies': appearing in the look-ahead must never be able to
+send an individual reminder early, so the query that decides what is *owed* is
+kept separate from the one that decides what is *shown*. Digest scheduling uses
+`UserPreference.timezone`, `digestHour`, and `digestEnabled`, all three editable
+under Settings → Reminders; a late hourly pass catches up once, including after
+a skipped spring-forward hour, while the daily key suppresses a repeated
+fall-back hour. A same-day retry rebuilds the whole list under current
+ownership, archive, privacy-lock, and task-contact rules.
 
 `channelId` is `SET NULL`, so deleting a channel keeps the record of what was
 already sent and cannot start it re-sending.
