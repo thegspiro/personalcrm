@@ -110,6 +110,8 @@ test("a place can be put on the map by hand, and read back as a distance", async
   await page.goto("/people");
   await page.getByRole("link", { name: new RegExp(person()) }).first().click();
   const nearby = page.locator("section").filter({ hasText: "Places near them" });
-  await expect(nearby.getByRole("link", { name: new RegExp(venue()) })).toBeVisible();
-  await expect(nearby.getByText(/km$/)).toBeVisible();
+  // Exact, because the row carries two links to the same place: its name and
+  // the map pin, whose accessible name is "Open <place> on a map".
+  await expect(nearby.getByRole("link", { name: venue(), exact: true })).toBeVisible();
+  await expect(nearby.getByText(/^0\.\d km$/)).toBeVisible();
 });
