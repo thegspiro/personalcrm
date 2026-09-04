@@ -929,6 +929,57 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       expect(saved.phone).toBe("+1 555 0100");
     });
 
+    it("places a venue by hand, since lookup is off in the shipped state", async () => {
+      // Without this there is no way to give a place coordinates at all unless
+      // the optional lookup is switched on — and every distance in the app
+      // would be unreachable for anyone who never turns it on.
+      state.unlocked = true;
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, []);
+
+      await updateLocation(
+        formFor({
+          id: cafe.id,
+          name: "Corner Cafe",
+          latitude: "53.8008",
+          longitude: "-1.5491",
+        }),
+      );
+
+      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      expect(Number(saved.latitude)).toBeCloseTo(53.8008, 4);
+      expect(Number(saved.longitude)).toBeCloseTo(-1.5491, 4);
+    });
+
+    it("drops an OSM reference once the coordinates it came with are gone", async () => {
+      state.unlocked = true;
+      const cafe = await place(state.ownerId, "Corner Cafe");
+      await visit(cafe.id, []);
+      await updateLocation(
+        formFor({
+          id: cafe.id,
+          name: "Corner Cafe",
+          lookupApplied: "1",
+          latitude: "38.8809",
+          longitude: "-77.0355",
+          osmType: "N",
+          osmId: "7",
+        }),
+      );
+
+      // Clearing the coordinates by hand must take the reference with them:
+      // `mapLinkFor` prefers it, so a reference left behind would go on opening
+      // the venue this place used to be.
+      await updateLocation(
+        formFor({ id: cafe.id, name: "Corner Cafe", latitude: "", longitude: "" }),
+      );
+
+      const saved = await prisma.location.findUniqueOrThrow({ where: { id: cafe.id } });
+      expect(saved.latitude).toBeNull();
+      expect(saved.osmType).toBeNull();
+      expect(saved.osmId).toBeNull();
+    });
+
     it("ignores half a coordinate pair rather than placing it wrongly", async () => {
       state.unlocked = true;
       const cafe = await place(state.ownerId, "Corner Cafe");
@@ -949,6 +1000,90 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       expect(saved.latitude).toBeNull();
       expect(saved.longitude).toBeNull();
     });
+  });
+
+  it("carries a lookup's locality and coordinates onto a place it creates", async () => {
+    // Before this, `resolveLocation` took only an address and a URL, so an
+    // accepted candidate flowing through a plan or a date save had its city and
+    // its coordinates dropped on the floor — and the place could never be
+    // measured from anywhere.
+    const created = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "Northside Cafe", {
+        address: "12 Vicar Lane",
+        city: "Leeds",
+        region: "West Yorkshire",
+        country: "United Kingdom",
+        latitude: "53.7997",
+        longitude: "-1.5492",
+        osmType: "N",
+        osmId: "987654321098",
+      }),
+    );
+
+    const saved = await prisma.location.findUniqueOrThrow({ where: { id: created!.id } });
+    expect(saved.city).toBe("Leeds");
+    expect(saved.region).toBe("West Yorkshire");
+    expect(saved.country).toBe("United Kingdom");
+    expect(Number(saved.latitude)).toBeCloseTo(53.7997, 4);
+    expect(saved.osmType).toBe("N");
+    expect(saved.osmId).toBe(987654321098n);
+  });
+
+  it("fills coordinates in but never moves a place that already has them", async () => {
+    const first = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "Corner Cafe", {
+        latitude: "53.7997",
+        longitude: "-1.5492",
+      }),
+    );
+
+    // Typing the venue's name into an interaction is evidence of *which* place
+    // is meant, not of where it is. Overwriting here would let a stray save
+    // move a place the user had geocoded deliberately on its own page.
+    await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "corner cafe", {
+        latitude: "48.8566",
+        longitude: "2.3522",
+        city: "Paris",
+      }),
+    );
+
+    const saved = await prisma.location.findUniqueOrThrow({ where: { id: first!.id } });
+    expect(Number(saved.latitude)).toBeCloseTo(53.7997, 4);
+    // Text still overwrites when it is given, exactly as it always has.
+    expect(saved.city).toBe("Paris");
+  });
+
+  it("refuses half a coordinate pair rather than placing a prime-meridian guess", async () => {
+    const created = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "Half Cafe", { latitude: "53.7997" }),
+    );
+    const saved = await prisma.location.findUniqueOrThrow({ where: { id: created!.id } });
+    expect(saved.latitude).toBeNull();
+    expect(saved.longitude).toBeNull();
+  });
+
+  it("leaves a place exactly as it was for the callers that pass no details", async () => {
+    // The backward-compatibility guarantee: six call sites pass nothing beyond
+    // a name, and widening the parameter must not have changed any of them.
+    const created = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "Plain Cafe", {
+        address: "12 Vicar Lane",
+        city: "Leeds",
+        latitude: "53.7997",
+        longitude: "-1.5492",
+      }),
+    );
+
+    const again = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "Plain Cafe"),
+    );
+    expect(again?.id).toBe(created?.id);
+
+    const saved = await prisma.location.findUniqueOrThrow({ where: { id: created!.id } });
+    expect(saved.address).toBe("12 Vicar Lane");
+    expect(saved.city).toBe("Leeds");
+    expect(Number(saved.latitude)).toBeCloseTo(53.7997, 4);
   });
 
   it("resolves the same name to one place per owner, never across owners", async () => {

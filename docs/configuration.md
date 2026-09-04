@@ -83,7 +83,7 @@ config:
 
 | Where | What |
 | --- | --- |
-| `UserPreference` | Theme, accent, density, **timezone**, week start, default cadence, digest hour, privacy lock switch, hide-dating, blur-private-notes |
+| `UserPreference` | Theme, accent, density, **timezone**, week start, default cadence, digest hour, privacy lock switch, hide-dating, blur-private-notes, home base and distance unit |
 | `DashboardLayout` | Which home-screen widgets are on, in what order, with what row counts |
 | `TaxonomyTerm` | Every type list in the app — labels, colours, icons, order |
 | `CustomFieldDefinition` | User-defined fields on contacts, dating profiles, interactions and dates |
@@ -91,3 +91,9 @@ config:
 
 The account timezone is the one to get right: every cadence, every "overdue",
 every date parse in quick add is anchored to it rather than to the server clock.
+
+The home base (Settings → Places) is optional and entirely local: only its
+coordinates are used, they are never sent anywhere, and an account that leaves it
+blank simply never sees a distance. `distanceUnit` is `mi` or `km` and defaults
+to `mi`, matching the other shipped defaults rather than guessing from the
+timezone.

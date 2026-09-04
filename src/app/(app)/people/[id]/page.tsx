@@ -44,7 +44,11 @@ import { displayName } from "@/lib/utils";
 import { getUpcomingDates } from "@/server/queries/dashboard";
 import { UpcomingDatesWidget } from "@/components/dashboard/widgets";
 import { isBirthdayImportantDate, projectContactBirthday } from "@/server/queries/birthdays";
-import { listContactLocations } from "@/server/queries/locations";
+import { listContactLocations, listLocationsNear } from "@/server/queries/locations";
+import { originsFor } from "@/server/queries/origins";
+import { getGeoStatus } from "@/server/geo/config";
+import { pointOf, withDistance } from "@/lib/geo";
+import { NearbyPlaces } from "@/components/locations/nearby-places";
 import { listContactHappenings } from "@/server/queries/happenings";
 import Link from "next/link";
 
@@ -97,6 +101,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     upcomingDates,
     locations,
     happenings,
+    geoStatus,
+    origins,
   ] = await Promise.all([
     listTermsByKind(user.id, [
       "INTERACTION_TYPE",
@@ -126,7 +132,26 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     getUpcomingDates(user.id, timezone, 366, 100, id),
     listContactLocations(user.id, id),
     listContactHappenings(user.id, id, timezone),
+    getGeoStatus(),
+    originsFor(user.id, id),
   ]);
+
+  // Measured from the person, not from home: standing on their page, "how far
+  // is that from her" is the question a plan raises. Annotated here rather than
+  // inside `listPlans` only because the origin is fetched in the same batch.
+  const placedPlans = withDistance(
+    plans,
+    origins.contact,
+    origins.unit,
+    (plan) => pointOf(plan.place),
+  );
+
+  // Only asked once this person actually has a placed address, so an account
+  // that has never used any of this pays for nothing and sees nothing.
+  const nearby = await listLocationsNear(user.id, origins.contact, {
+    unit: origins.unit,
+    take: 5,
+  });
 
   // Definitions come back once; the saved values for every logged date come
   // back in a single query, so the edit forms are not N round trips.
@@ -377,6 +402,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
         <AddressesSection
           contactId={contact.id}
+          lookupEnabled={geoStatus.enabled && geoStatus.usable}
+          isPrivate={contact.isPrivate}
           addresses={contact.addresses.map((address) => ({
             id: address.id,
             label: address.label,
@@ -387,6 +414,24 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             postalCode: address.postalCode,
             country: address.country,
             notes: address.notes,
+            // Serialised here, at the boundary: `osmId` is a `BIGINT` and the
+            // coordinates are `Decimal`, and neither survives the crossing into
+            // a client component — it throws at render rather than arriving
+            // wrong, so this is the last place it can be caught.
+            latitude: address.latitude === null ? null : String(address.latitude),
+            longitude: address.longitude === null ? null : String(address.longitude),
+            osmType: address.osmType,
+            osmId: address.osmId === null ? null : String(address.osmId),
+          }))}
+        />
+
+        <NearbyPlaces
+          places={nearby.map((place) => ({
+            id: place.id,
+            name: place.name,
+            city: place.city,
+            mapHref: place.mapHref,
+            distance: place.distance,
           }))}
         />
 
@@ -437,10 +482,11 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
         <PlansSection
           contactId={contact.id}
           categories={terms.PLAN_CATEGORY}
-          plans={plans.map((plan) => ({
+          plans={placedPlans.map((plan) => ({
             id: plan.id,
             title: plan.title,
             status: plan.status,
+            distance: plan.distance,
             location: plan.location,
             address: plan.address,
             url: plan.url,

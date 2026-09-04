@@ -6,6 +6,9 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import { normalizeLocationName } from "@/lib/locations";
 import { locationVisibleWhere } from "@/server/queries/locations";
+// A "use server" module may only export async functions, so the candidate
+// shape and its mapper live beside the provider table rather than here.
+import type { GeoCandidateView } from "@/server/geo/providers";
 import { privacyScope } from "@/server/privacy/filter";
 import {
   type ActionResult,
@@ -262,18 +265,33 @@ export async function updateLocation(form: FormData): Promise<ActionResult> {
       "Another place already uses that name or alias.",
     );
 
+  // Where the place is, when the save says anything about it.
+  //
   // A lookup the user accepted rides along with the save rather than writing on
   // its own. Accepting used to submit only the candidate and close the panel,
   // which silently threw away any name, phone or note typed beforehand.
+  //
+  // Coordinates can also be typed straight in, which is the only way to place
+  // anything at all on the shipped configuration — address lookup is off by
+  // default, and without this every distance in the app would be dead on
+  // arrival for anyone who never switches it on.
+  //
+  // Presence, not value, decides whether identity is the subject of this save:
+  // a form that does not carry the coordinate fields leaves what is stored
+  // alone, so a panel that only edits a phone number cannot silently unplace a
+  // venue. Present-but-empty clears it, which is how a bad match is undone.
   let identity: LocationIdentity = {};
-  if (str(form, "lookupApplied")) {
+  const carriesIdentity =
+    Boolean(str(form, "lookupApplied")) || form.has("latitude") || form.has("longitude");
+  if (carriesIdentity) {
     const lookup = lookupSchema.safeParse({
       latitude: str(form, "latitude"),
       longitude: str(form, "longitude"),
       osmType: str(form, "osmType"),
       osmId: str(form, "osmId"),
     });
-    if (!lookup.success) return fail("That result didn't look like a place.");
+    if (!lookup.success)
+      return fieldError("latitude", "Give both a latitude and a longitude, or neither.");
     identity = identityFrom(lookup.data);
   }
 
@@ -356,6 +374,13 @@ function identityFrom(data: {
   // Half a pair puts a place in the wrong hemisphere rather than nowhere.
   const bothCoordinates =
     data.latitude !== undefined && data.longitude !== undefined;
+  // Identity is replaced as one unit, so a reference the save is silent about
+  // is cleared rather than left describing the place this used to be — which is
+  // what keeps a hand-edited coordinate from keeping somebody else's venue.
+  // `mapLinkFor` prefers the OSM object over everything else, so a stale one is
+  // worse than none. The editor resubmits the stored reference only while the
+  // coordinates are still the ones it arrived with; an accepted lookup sends
+  // its own.
   return {
     latitude: bothCoordinates ? data.latitude : null,
     longitude: bothCoordinates ? data.longitude : null,
@@ -387,50 +412,16 @@ export async function lookupLocationAddress(
   const query = str(form, "query");
   if (!query) return fail("Type an address or a place name to look up.");
 
-  // The whole directory is optional, so it is loaded behind a dynamic import
-  // and every failure falls back to "found nothing" rather than an error.
-  try {
-    const { lookupAvailable, currentGeoConfig } =
-      await import("@/server/geo/config");
-    if (!(await lookupAvailable())) {
-      return fail("Address lookup is switched off. Turn it on in Settings.");
-    }
-    const config = await currentGeoConfig();
-    if (!config) return fail("Address lookup isn't configured.");
+  // The whole optional directory sits behind `searchPlaces`, which loads it
+  // dynamically and turns every failure into a message rather than an error.
+  const { searchPlaces, LOOKUP_MESSAGES } = await import("@/server/geo/lookup");
+  const outcome = await searchPlaces(query);
+  if (!outcome.ok) return fail(LOOKUP_MESSAGES[outcome.reason]);
 
-    const { searchAddress } = await import("@/server/geo/providers");
-    const candidates = await searchAddress(config, query);
-    return ok({
-      candidates: candidates.map((candidate) => ({
-        label: candidate.label,
-        address: candidate.address,
-        city: candidate.city,
-        region: candidate.region,
-        country: candidate.country,
-        latitude: candidate.latitude,
-        longitude: candidate.longitude,
-        osmType: candidate.osmType,
-        osmId: candidate.osmId,
-      })),
-    });
-  } catch {
-    return fail(
-      "That lookup didn't work. You can still fill the address in by hand.",
-    );
-  }
+  const { toCandidateView } = await import("@/server/geo/providers");
+  return ok({ candidates: outcome.candidates.map(toCandidateView) });
 }
 
-export interface GeoCandidateView {
-  label: string;
-  address: string | null;
-  city: string | null;
-  region: string | null;
-  country: string | null;
-  latitude: string | null;
-  longitude: string | null;
-  osmType: "N" | "W" | "R" | null;
-  osmId: string | null;
-}
 
 export async function setLocationArchived(
   form: FormData,

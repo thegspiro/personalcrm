@@ -24,6 +24,7 @@ import { getPrivacyState } from "@/server/privacy/lock";
 import { privacyScope } from "@/server/privacy/filter";
 import { PROVIDERS } from "@/server/ai/providers";
 import { GeoSettings } from "@/components/settings/geo-settings";
+import { HomeBaseSettings } from "@/components/settings/home-base-settings";
 import { getGeoStatus } from "@/server/geo/config";
 import { GEO_PROVIDERS } from "@/server/geo/providers";
 import { listTags } from "@/server/queries/tags";
@@ -167,14 +168,31 @@ export default async function SettingsPage() {
           />
         }
         places={
-          <GeoSettings
-            enabled={geo.enabled}
-            usable={geo.usable}
-            provider={geo.provider}
-            baseUrl={geo.baseUrl}
-            providers={GEO_PROVIDERS}
-            canEdit={user.role === "ADMIN"}
-          />
+          <div className="grid gap-4">
+            <HomeBaseSettings
+              homeAddress={prefs.homeAddress}
+              homeCity={prefs.homeCity}
+              homeRegion={prefs.homeRegion}
+              homeCountry={prefs.homeCountry}
+              // `Decimal` does not survive the crossing into a client component.
+              homeLatitude={
+                prefs.homeLatitude === null ? null : String(prefs.homeLatitude)
+              }
+              homeLongitude={
+                prefs.homeLongitude === null ? null : String(prefs.homeLongitude)
+              }
+              distanceUnit={prefs.distanceUnit}
+              lookupEnabled={geo.enabled && geo.usable}
+            />
+            <GeoSettings
+              enabled={geo.enabled}
+              usable={geo.usable}
+              provider={geo.provider}
+              baseUrl={geo.baseUrl}
+              providers={GEO_PROVIDERS}
+              canEdit={user.role === "ADMIN"}
+            />
+          </div>
         }
         privacy={
           <PrivacySettings

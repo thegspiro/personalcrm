@@ -1,6 +1,8 @@
 import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
+import { pointOf, withDistance, type Point, type Unit } from "@/lib/geo";
+import { mapLinkFor } from "@/lib/locations";
 import {
   interactionPrivacyWhere,
   privacyScope,
@@ -45,6 +47,64 @@ export function locationVisibleWhere(
       },
     ],
   };
+}
+
+/**
+ * Placed places, nearest to a point first.
+ *
+ * The point of the whole address change: standing on somebody's page, the
+ * question is not "what are all my places" but "what is near enough to suggest".
+ *
+ * Sorted in process rather than by `ST_Distance_Sphere`. Reaching that function
+ * means raw SQL, which would lose both Prisma's typing and — the part that
+ * matters — the privacy where-fragments this app requires be applied in the
+ * query itself rather than after it. One account's places number in the tens,
+ * so the trade is not a close one.
+ */
+export async function listLocationsNear(
+  ownerId: string,
+  origin: Point | null,
+  options: { unit: Unit; take?: number },
+) {
+  if (!origin) return [];
+
+  const scope = await privacyScope();
+  const visible = locationVisibleWhere(ownerId, scope);
+  const rows = await prisma.location.findMany({
+    where: {
+      ...visible,
+      isArchived: false,
+      // Only placed rows: an unplaced one can never sort anywhere meaningful,
+      // and padding the list with "distance unknown" answers a question nobody
+      // asked.
+      latitude: { not: null },
+      longitude: { not: null },
+    },
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      city: true,
+      region: true,
+      country: true,
+      latitude: true,
+      longitude: true,
+      osmType: true,
+      osmId: true,
+    },
+  });
+
+  return withDistance(rows, origin, options.unit, pointOf, { sort: true })
+    .slice(0, options.take ?? 5)
+    .map((row) => ({
+      ...row,
+      // `Decimal` and `BigInt` do not survive the crossing into a client
+      // component, and the map link is built from them.
+      mapHref: mapLinkFor(row),
+      latitude: row.latitude === null ? null : String(row.latitude),
+      longitude: row.longitude === null ? null : String(row.longitude),
+      osmId: row.osmId === null ? null : String(row.osmId),
+    }));
 }
 
 export async function listLocations(ownerId: string, search?: string) {
