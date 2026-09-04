@@ -163,7 +163,14 @@ items, each with a bounded id and non-empty, 191-character text. Checklist
 completion is changed only by a submitted user edit. It is stored on the owned
 `Plan`, so the existing owner lookup and contact-inherited privacy query also
 scope the checklist. `plannedFor` remains a calendar date parsed by
-`plainDate`; no server-timezone conversion is involved.
+`plainDate`; no server-timezone conversion is involved. The optional
+`plannedStartTime` and `plannedDurationMinutes` are read by `parsePlanMinute`
+and `parsePlanDuration`, which refuse anything they cannot read rather than
+coercing it — filing a plan at midnight because the form sent "half seven"
+would put it at a time nobody chose. A time arriving without a day is dropped
+instead, so clearing the day does not become an error to understand. The minute
+is stored as a local wall-clock reading against the day, never converted to an
+instant here.
 
 Important-date and life-event updates and deletes also filter through their
 contact's privacy marker. The timeline exposes these controls, so an id retained
@@ -207,9 +214,9 @@ second write path, so both halves of a pair are still written together.
 
 ### Dating — `actions/dating.ts`
 
-`upsertRomanticProfile`, `setDatingStage`, `endRelationship`, `convertToFriend`,
-`createDateEntry`, `updateDateEntry`, `deleteDateEntry`, `createFlag`,
-`updateFlag`, `deleteFlag`.
+`upsertRomanticProfile`, `setDatingStage`, `endRelationship`, `markAsRomantic`,
+`convertToFriend`, `createDateEntry`, `updateDateEntry`, `deleteDateEntry`,
+`createFlag`, `updateFlag`, `deleteFlag`.
 
 Every one re-checks the lock. `createDateEntry` writes an `Interaction` **and**
 a `DateEntry`, recomputes activity from full history, and renumbers `sequence`
@@ -218,8 +225,13 @@ through the `Interaction` so the pair cannot be left half-removed.
 Create and update validate and persist the nullable `wouldDoAgain` and
 `nextTimeNotes` retrospective fields. Saved-plan preparation notes are shown as
 context and are never silently copied into that private retrospective.
-`convertToFriend` clears `isRomantic` and keeps the profile, dates, flags and
-notes. `updateFlag` can re-type a flag between green, red and dealbreaker: a
+`markAsRomantic` and `convertToFriend` are mirrors, and each sets nothing but
+the one flag the pipeline reads: `convertToFriend` clears `isRomantic` and keeps
+the profile, dates, flags and notes, and `markAsRomantic` sets it again without
+creating a profile, so someone put back gets the history they already had.
+`markAsRomantic` lives here rather than reusing `patchContact`, which checks
+ownership only — right for a favourite, wrong for the flag that decides whether
+a page renders someone's private notes. `updateFlag` can re-type a flag between green, red and dealbreaker: a
 second look often moves one, and re-typing keeps the wording and the day you
 first noticed it rather than starting over.
 

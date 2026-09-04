@@ -204,6 +204,32 @@ export async function endRelationship(form: FormData): Promise<ActionResult> {
 }
 
 /**
+ * Put someone into the pipeline without opening the full edit form.
+ *
+ * The mirror of `convertToFriend`, and deliberately as narrow: it sets the one
+ * flag the pipeline reads and creates nothing else. Someone re-flagged after a
+ * conversion gets their profile, dates and flags back, because a status change
+ * never destroyed them in the first place.
+ *
+ * It goes through the dating guard rather than `patchContact` so a closed lock
+ * refuses it. `patchContact` checks ownership only, which is right for a
+ * favourite and wrong for the flag that decides whether a page renders
+ * someone's private notes.
+ */
+export async function markAsRomantic(contactId: string): Promise<ActionResult> {
+  const blocked = await guard();
+  if (blocked) return fail(blocked);
+
+  const { ownerId } = await owner();
+  if (!(await assertOwned(ownerId, contactId))) return fail("Contact not found.");
+
+  await prisma.contact.update({ where: { id: contactId }, data: { isRomantic: true } });
+
+  touch(contactId);
+  return ok();
+}
+
+/**
  * Drop the romantic layer but keep everything logged.
  *
  * Nothing is destroyed by a status change: the profile, every date, every flag

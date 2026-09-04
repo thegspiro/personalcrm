@@ -31,6 +31,7 @@ import {
   syncFollowUpTask,
 } from "@/server/services/happenings";
 import { planChecklistSchema } from "@/lib/plan-checklist";
+import { PLAN_MINUTE_MAX, parsePlanDuration, parsePlanMinute } from "@/lib/plan-time";
 import {
   type ActionResult,
   bool,
@@ -731,7 +732,15 @@ async function planFields(ownerId: string, form: FormData) {
   const checklist = planChecklistSchema.safeParse(checklistValue);
   if (!checklist.success) return null;
 
+  const startMinute = parsePlanMinute(str(form, "plannedStartTime"));
+  if (!startMinute.ok) return null;
+  if (startMinute.value !== null && startMinute.value > PLAN_MINUTE_MAX) return null;
+
+  const duration = parsePlanDuration(str(form, "plannedDurationMinutes"));
+  if (!duration.ok) return null;
+
   const cost = num(form, "estimatedCost");
+  const plannedFor = plainDate(form, "plannedFor") ?? null;
   return {
     categoryId,
     location: str(form, "location") ?? null,
@@ -740,7 +749,13 @@ async function planFields(ownerId: string, form: FormData) {
     estimatedCostCents: cost === undefined ? null : Math.round(cost * 100),
     notes: str(form, "notes") ?? null,
     checklist: checklist.data as Prisma.InputJsonValue,
-    plannedFor: plainDate(form, "plannedFor") ?? null,
+    plannedFor,
+    // A time on nothing is not a time. Dropping it rather than refusing the
+    // save keeps clearing the day from becoming an error the user has to go
+    // and understand, and leaves nothing behind to surface later as an hour
+    // against a plan with no date.
+    plannedStartMinute: plannedFor ? startMinute.value : null,
+    plannedDurationMinutes: plannedFor ? duration.value : null,
   };
 }
 
@@ -753,7 +768,7 @@ export async function createPlan(form: FormData): Promise<ActionResult<{ id: str
   if (contactId && !(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
 
   const fields = await planFields(ownerId, form);
-  if (!fields) return fail("Invalid category or checklist.");
+  if (!fields) return fail("Check the category, checklist and time.");
 
   const created = await prisma.$transaction(async (tx) => {
     const place = await resolveLocation(tx, ownerId, fields.location ?? undefined, {
@@ -784,7 +799,7 @@ export async function updatePlan(form: FormData): Promise<ActionResult> {
   if (!title) return fail("What do you want to do?");
 
   const fields = await planFields(ownerId, form);
-  if (!fields) return fail("Invalid category or checklist.");
+  if (!fields) return fail("Check the category, checklist and time.");
 
   await prisma.$transaction(async (tx) => {
     const place = await resolveLocation(tx, ownerId, fields.location ?? undefined, {

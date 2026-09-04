@@ -16,7 +16,7 @@ vi.mock("@/server/privacy/lock", () => ({
   requireUnlocked: async () => actionState.locked ? { ok: false, error: "Unlock to continue." } : { ok: true },
 }));
 
-const { createDateEntry, updateDateEntry } = await import("@/server/actions/dating");
+const { createDateEntry, markAsRomantic, updateDateEntry } = await import("@/server/actions/dating");
 
 function actionForm(values: Record<string, string>) {
   const form = new FormData();
@@ -289,6 +289,67 @@ describe.skipIf(!hasTestDatabase)("dating", () => {
     expect(after.romanticProfile?.privateNotes).toBe("Something I would not want read aloud.");
     expect(after.flags).toHaveLength(1);
     expect(after.dateEntries).toHaveLength(1);
+  });
+
+  it("marking someone as dating gives back the history a conversion kept", async () => {
+    const contact = await makeRomantic();
+    await logDate(contact.id, daysAgo(12), 5);
+    await prisma.flag.create({
+      data: { ownerId, contactId: contact.id, kind: "GREEN", text: "Kind to waiters" },
+    });
+    await prisma.contact.update({ where: { id: contact.id }, data: { isRomantic: false } });
+
+    expect(await markAsRomantic(contact.id)).toMatchObject({ ok: true });
+
+    const after = await prisma.contact.findUniqueOrThrow({
+      where: { id: contact.id },
+      include: { romanticProfile: true, flags: true, dateEntries: true },
+    });
+    expect(after.isRomantic).toBe(true);
+    // The flag is all that moves. Re-flagging creates no profile of its own,
+    // so the one they already had is still the one on the page.
+    expect(after.romanticProfile).not.toBeNull();
+    expect(after.flags).toHaveLength(1);
+    expect(after.dateEntries).toHaveLength(1);
+  });
+
+  it("marking someone as dating leaves the rest of the contact alone", async () => {
+    const contact = await prisma.contact.create({
+      data: { ownerId, firstName: "Sam", cadenceDays: 30, isFavorite: true },
+    });
+
+    expect(await markAsRomantic(contact.id)).toMatchObject({ ok: true });
+
+    const after = await prisma.contact.findUniqueOrThrow({ where: { id: contact.id } });
+    expect(after.isRomantic).toBe(true);
+    expect(after.cadenceDays).toBe(30);
+    expect(after.isFavorite).toBe(true);
+    // Nobody has a profile until they fill one in; the pipeline reads the flag.
+    expect(await prisma.romanticProfile.findUnique({ where: { contactId: contact.id } })).toBeNull();
+  });
+
+  it("rejects marking someone as dating while the privacy lock is closed", async () => {
+    const contact = await prisma.contact.create({ data: { ownerId, firstName: "Sam" } });
+    actionState.locked = true;
+
+    const result = await markAsRomantic(contact.id);
+
+    expect(result).toMatchObject({ ok: false, error: "Unlock to continue." });
+    const after = await prisma.contact.findUniqueOrThrow({ where: { id: contact.id } });
+    expect(after.isRomantic).toBe(false);
+  });
+
+  it("rejects marking another owner's contact as dating", async () => {
+    const stranger = await createTestUser();
+    const contact = await prisma.contact.create({
+      data: { ownerId: stranger.id, firstName: "Not mine" },
+    });
+
+    const result = await markAsRomantic(contact.id);
+
+    expect(result).toMatchObject({ ok: false, error: "Contact not found." });
+    const after = await prisma.contact.findUniqueOrThrow({ where: { id: contact.id } });
+    expect(after.isRomantic).toBe(false);
   });
 
   it("the pipeline keys on isRomantic, so an ex does not reappear", async () => {
