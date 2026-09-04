@@ -180,28 +180,46 @@ function connectToOne(
   return new Promise((resolve, reject) => {
     let settled = false;
     let dialing: net.Socket | undefined;
-    // The budget is enforced here rather than only raced from outside. Racing
-    // it left a tie the dial could win: this attempt's own timeout and the
-    // delivery deadline expire together, timers registered for the same
-    // instant run in the order they were created, and so the next address was
-    // tried a moment before the abort landed.
-    const stopAt = Date.now() + budgetMs;
+    let budget: NodeJS.Timeout | undefined;
+    /** One exit, so the budget timer and the abort listener always come off. */
+    const finish = (act: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(budget);
+      signal.removeEventListener("abort", abandon);
+      act();
+    };
     // The delivery's deadline reaches the dial itself. Without this, enough
     // unreachable answers kept `connectToOne` working through the list long
     // after the send had been abandoned — and a later address could still
     // connect and carry the message, arriving after the scheduler had recorded
     // a failure and queued the retry.
     const abandon = () => {
-      if (settled) return;
-      settled = true;
-      dialing?.destroy();
-      reject(new Error("Channel delivery exceeded its deadline."));
+      finish(() => {
+        dialing?.destroy();
+        reject(new Error("Channel delivery exceeded its deadline."));
+      });
     };
     if (signal.aborted) {
       abandon();
       return;
     }
     signal.addEventListener("abort", abandon, { once: true });
+    // The budget is a timer, not a clock comparison.
+    //
+    // It was `Date.now() < stopAt`, and the tie that guarded is a millisecond
+    // wide. An attempt's own timeout is the whole remaining budget, so the two
+    // expire together; the timer fires when the monotonic clock has advanced
+    // far enough, while the check reads the wall clock, and the two round
+    // independently. A wall clock one millisecond short of the deadline the
+    // timer had already reached read as "still inside the budget", and the
+    // next address was dialled at the exact instant the dial should have
+    // stopped — which is how a send that had been given up on still arrived.
+    // CI found it three times before it was read as a race rather than a
+    // flaky test. Timers due in the same millisecond run in the order they
+    // were created and this one is created before any attempt arms its own,
+    // so the budget now wins the tie outright.
+    budget = setTimeout(abandon, budgetMs);
     const attempt = (index: number) => {
       if (settled) return;
       const socket = connect({
@@ -215,12 +233,8 @@ function connectToOne(
       socket.setTimeout(Math.min(15_000, budgetMs), () => socket.destroy(new Error("Channel connection timed out.")));
       const onError = (error: Error) => {
         if (settled) return;
-        if (index + 1 < addresses.length && Date.now() < stopAt) attempt(index + 1);
-        else {
-          settled = true;
-          signal.removeEventListener("abort", abandon);
-          reject(error);
-        }
+        if (index + 1 < addresses.length) attempt(index + 1);
+        else finish(() => reject(error));
       };
       socket.once("error", onError);
       socket.once("connect", () => {
@@ -229,11 +243,11 @@ function connectToOne(
           socket.destroy();
           return;
         }
-        settled = true;
-        signal.removeEventListener("abort", abandon);
-        socket.off("error", onError);
-        socket.setTimeout(0);
-        resolve(socket);
+        finish(() => {
+          socket.off("error", onError);
+          socket.setTimeout(0);
+          resolve(socket);
+        });
       });
     };
     attempt(0);

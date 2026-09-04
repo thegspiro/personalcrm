@@ -296,18 +296,16 @@ describe("notification destinations", () => {
     // and carried the message, after the scheduler had recorded a failure and
     // queued the retry.
     //
-    // This needs an address whose connect neither completes nor fails for
-    // longer than the deadline, and no real address can be relied on to behave
-    // that way: reserved ranges hang on one machine and are refused in 3ms on
-    // another, and — twice in CI now — an address that hung for the probe was
-    // refused during the dial that followed it, so the second address was then
-    // tried entirely legitimately and the check failed having proved nothing.
-    // The connector is supplied instead, so the first answer's behaviour is
-    // decided here rather than by whatever the runner's network happens to do.
+    // Neither half of that is observed by waiting. This check has failed in CI
+    // twice on its own arrangements: first a probed unroutable address that
+    // stalled for the probe and was refused during the dial, then a supplied
+    // socket refused on a timer, where whether the refusal or the deadline
+    // landed first was the runner's load to decide. So nothing here is timed.
+    // The first answer is a socket that does nothing at all, and the two things
+    // the fix consists of are observed directly: the in-flight socket is
+    // destroyed when the budget runs out, and a refusal arriving afterwards
+    // does not start the dial on the next address.
     const DEADLINE_MS = 300;
-    // Long enough after the deadline that only the abandon can explain the
-    // second address going untried, and short enough to keep the test quick.
-    const REFUSED_AFTER_MS = 4 * DEADLINE_MS;
     const net = await import("node:net");
 
     let reached = 0;
@@ -320,21 +318,13 @@ describe("notification destinations", () => {
     const port = (server.address() as { port: number }).port;
 
     const STALLED = "198.51.100.1";
-    const pending: NodeJS.Timeout[] = [];
-    // Silent until well past the deadline, then refused — which is what makes
-    // this a proof rather than a coincidence. Without the budget reaching the
-    // dial, that refusal moves it on to the second address, and the second
-    // address answers.
+    // Never connects, never fails: a socket that is simply still in progress,
+    // which is the state the deadline has to be able to end.
+    let stalled: Socket | undefined;
     const connect = (options: NetConnectOpts): Socket => {
       if ("host" in options && options.host === STALLED) {
-        const socket = new net.Socket();
-        const refuse = setTimeout(
-          () => socket.destroy(new Error("ECONNREFUSED")),
-          REFUSED_AFTER_MS,
-        );
-        pending.push(refuse);
-        socket.once("close", () => clearTimeout(refuse));
-        return socket;
+        stalled = new net.Socket();
+        return stalled;
       }
       return net.connect(options);
     };
@@ -361,12 +351,84 @@ describe("notification destinations", () => {
         ),
       ).rejects.toThrow(/deadline|timed out/i);
 
-      // Past the point the first address gives up, so a dial that outlived the
-      // deadline has had its chance to try the second one.
-      await new Promise((settle) => setTimeout(settle, REFUSED_AFTER_MS + 400));
+      // The dial was abandoned, not merely stopped being waited on. This is
+      // the socket the fix exists for: `live` holds the *connected* one, which
+      // is still undefined while the dial is working through answers, so
+      // without the abort reaching `connectToOne` this one stayed open, went
+      // on to the next address, and carried the message after the scheduler
+      // had already recorded a failure and queued the retry.
+      expect(stalled).toBeDefined();
+      expect(stalled?.destroyed).toBe(true);
+
+      // And the address that would have answered was never dialed. Asserted
+      // after the abandon rather than after a wait, so nothing here depends on
+      // which timer the runner services first.
+      await new Promise((settle) => setTimeout(settle, 250));
       expect(reached).toBe(0);
     } finally {
-      for (const timer of pending) clearTimeout(timer);
+      await new Promise<void>((done) => server.close(() => done()));
+    }
+  }, 15_000);
+
+  it("does not open the next address when the first fails at the budget", async () => {
+    // The failure the budget timer replaced a clock comparison for. An
+    // attempt's own timeout is the whole remaining budget, so the two expire
+    // together, and `Date.now() < stopAt` compared a wall clock against a
+    // deadline a monotonic timer had already reached. One millisecond of
+    // disagreement read as "still inside the budget" and dialled the address
+    // that answers, at the instant the dial should have stopped. Whether that
+    // millisecond appears is the runner's to decide, so what is pinned here is
+    // the invariant that makes it impossible: a failure arriving at or after
+    // the budget never opens the next address.
+    const DEADLINE_MS = 300;
+    const net = await import("node:net");
+
+    let reached = 0;
+    const server = net.createServer((socket) => {
+      reached += 1;
+      socket.resume();
+      socket.write("220 late.example ESMTP\r\n");
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const port = (server.address() as { port: number }).port;
+
+    const STALLED = "198.51.100.1";
+    const timers: NodeJS.Timeout[] = [];
+    const connect = (options: NetConnectOpts): Socket => {
+      if ("host" in options && options.host === STALLED) {
+        const socket = new net.Socket();
+        // Fails no earlier than the budget, and its timer is created from
+        // inside the attempt — so it is created after the budget's, and a tie
+        // in the same millisecond resolves in the budget's favour.
+        timers.push(setTimeout(() => socket.destroy(new Error("ECONNREFUSED")), DEADLINE_MS));
+        return socket;
+      }
+      return net.connect(options);
+    };
+
+    try {
+      await expect(
+        deliverToChannel(
+          channel("EMAIL", {
+            host: "smtp.example", port, from: "crm@example.com", to: "me@example.com",
+          }),
+          "s", "b",
+          {
+            resolve: async () => [
+              { address: STALLED, family: 4 as const },
+              { address: "127.0.0.1", family: 4 as const },
+            ],
+            isAdministrator: async () => true,
+            deadlineMs: DEADLINE_MS,
+            connect,
+          },
+        ),
+      ).rejects.toThrow(/deadline|timed out/i);
+
+      await new Promise((settle) => setTimeout(settle, 250));
+      expect(reached).toBe(0);
+    } finally {
+      for (const timer of timers) clearTimeout(timer);
       await new Promise<void>((done) => server.close(() => done()));
     }
   }, 15_000);
