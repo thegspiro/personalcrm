@@ -110,8 +110,11 @@ test("a place can be put on the map by hand, and read back as a distance", async
   await page.goto("/people");
   await page.getByRole("link", { name: new RegExp(person()) }).first().click();
   const nearby = page.locator("section").filter({ hasText: "Places near them" });
-  // Exact, because the row carries two links to the same place: its name and
-  // the map pin, whose accessible name is "Open <place> on a map".
-  await expect(nearby.getByRole("link", { name: venue(), exact: true })).toBeVisible();
-  await expect(nearby.getByText(/^0\.\d km$/)).toBeVisible();
+  // Scoped to this venue's own row, and named exactly. The row carries two
+  // links to the same place — its name and the map pin, "Open <place> on a
+  // map" — and the section itself holds the other project's venue, which is
+  // the same distance away because both projects place their points alike.
+  const row = nearby.locator("li").filter({ hasText: venue() });
+  await expect(row.getByRole("link", { name: venue(), exact: true })).toBeVisible();
+  await expect(row.getByText(/^0\.\d km$/)).toBeVisible();
 });
