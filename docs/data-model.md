@@ -5,7 +5,7 @@ schema rather than in prose.
 
 - **Engine:** MariaDB (Prisma `mysql` provider), `utf8mb4`
 - **Source of truth:** [`prisma/schema.prisma`](../prisma/schema.prisma)
-- **Tables:** 37 · **Enums:** 21 · **Migrations:** 18
+- **Tables:** 37 · **Enums:** 21 · **Migrations:** 22
 - **Primary keys:** `cuid()` strings unless the table is a join table (composite)
   or a per-user singleton (`UserPreference`, `DashboardLayout` key on `userId`).
 
@@ -25,6 +25,48 @@ schema rather than in prose.
 4. **Partial knowledge stays partial.** `DatePrecision` on every historical date
    means "she moved in 2019" is stored as 2019 and rendered as 2019, not as
    January 1st that later reads as fact.
+
+## Same-owner foreign keys
+
+A table that carries `ownerId` and points at a `Contact`, `Tag` or `Location`
+has two facts about ownership that say nothing about one another. A key naming
+only `Contact(id)` lets a row belonging to one account hang off another
+account's person — the application never writes one, but an import, a restore
+or a hand repair can, and every reader then has to remember an owner predicate
+to exclude it. Forgetting the predicate in one place is a cross-account
+disclosure.
+
+So `Contact`, `Tag` and `Location` each carry a `@@unique([ownerId, id])`, and
+every foreign key into them names both columns: `(ownerId, contactId)` →
+`Contact(ownerId, id)`, and so on. The two owners become literally the same
+column, and the mismatch has nowhere to live.
+
+Every relation into `Contact` uses this shape — `Relationship` (both ends),
+`Fact`, `ImportantDate`, `LifeEvent`, `FamilySuggestionDismissal` (both ends),
+`Idea`, `Task`, `Happening`, `Gift`, `Debt`, `DietaryNeed`, `RomanticProfile`,
+`DateEntry`, `Plan`, `Flag` and `ContactTag` — along with `ContactTag` → `Tag`
+and `LocationAlias` → `Location`.
+
+**Two exceptions, for a reason MariaDB imposes.** `Interaction.place` and
+`Plan.place` are `ON DELETE SET NULL`, and MariaDB refuses a `SET NULL` foreign
+key unless every column in it is nullable; `ownerId` is not, and making it
+nullable would cost the guarantee the key exists to give. Those two keep the
+owner predicate in `src/server/services/locations.ts` instead.
+
+**This does not make the readers' predicates redundant.** `mariadb-dump` writes
+`SET FOREIGN_KEY_CHECKS=0`, so restoring a dump taken before these keys existed
+can still load a cross-owner row — the constraint governs what the application
+and ordinary writes can do, not what a restore can carry in. The integration
+suite creates such rows through that same route (`asARestoreWould`) to keep the
+readers honest.
+
+**The upgrade repairs rather than refuses.** Adding the constraint first would
+abort the upgrade on precisely the installation that needs it, so
+`20260904120000_same_owner_contact_keys` clears the mismatches first. Where the
+link is required the row goes; where it is optional — an idea, a task, a plan —
+only the link is cleared, because the owner wrote that text and deleting their
+note to fix our key is the wrong trade. The counts are left in `AppSetting` and
+said once in the boot log by `runStartupTasks`, so nothing is removed silently.
 
 ---
 
@@ -239,19 +281,9 @@ join table with composite PK `(contactId, tagId)`, cascading from both sides.
 
 `ContactTag` also carries `ownerId`, and both its foreign keys include it —
 `(ownerId, contactId)` → `Contact(ownerId, id)` and `(ownerId, tagId)` →
-`Tag(ownerId, id)`. Two keys naming only `Contact.id` and `Tag.id` say nothing
-about each other, so a row could pair one account's person with another
-account's tag, and every reader had to remember an owner predicate to exclude
-it. Sharing the owner column makes the two owners the same value, so the
-mismatch cannot be stored. `LocationAlias` references `Location(ownerId, id)`
-for the same reason.
-
-This does not make the readers' predicates redundant. `mariadb-dump` writes
-`SET FOREIGN_KEY_CHECKS=0`, so restoring a dump taken before these keys existed
-can still load a cross-owner row — the constraint governs what the application
-and ordinary writes can do, not what a restore can carry in. The integration
-suite creates such rows through that same route (`asARestoreWould`) to keep the
-readers honest.
+`Tag(ownerId, id)`, so a row cannot pair one account's person with another
+account's tag. See [Same-owner foreign keys](#same-owner-foreign-keys) for why,
+and for why the readers still check.
 
 Names normalize to lowercase ASCII hyphenated slugs. Renaming preserves assignments;
 merging deduplicates assignments into the destination before deleting the source; deleting

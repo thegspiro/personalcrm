@@ -58,7 +58,7 @@ describe.skipIf(!hasTestDatabase)("dating", () => {
         isRomantic: true,
         cadenceDays,
         createdAt: daysAgo(400),
-        romanticProfile: { create: { ownerId } },
+        romanticProfile: { create: {} },
       },
     });
   }

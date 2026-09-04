@@ -103,8 +103,9 @@ export async function createTestUser() {
 /**
  * Write rows the schema forbids, the way a restore does.
  *
- * `ContactTag` and `LocationAlias` reference `(ownerId, id)`, so the database
- * refuses a join across accounts and the application cannot make one. That is
+ * Every foreign key into `Contact`, `Tag` and `Location` names `(ownerId, id)`,
+ * so the database refuses a row that spans two accounts and the application
+ * cannot make one. That is
  * not the same as making the readers' owner predicates dead code:
  * `mariadb-dump` emits `SET FOREIGN_KEY_CHECKS=0`, so restoring a dump taken
  * before those keys existed — the documented recovery path — can still bring

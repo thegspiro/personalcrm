@@ -42,7 +42,7 @@ export async function runStartupTasks(): Promise<void> {
 }
 
 /**
- * Say out loud what the same-owner-keys migration had to remove.
+ * Say out loud what the same-owner-key migrations had to remove.
  *
  * A migration cannot write to the container log, and rows deleted silently are
  * not something an operator should have to read a diff to discover. The
@@ -50,24 +50,66 @@ export async function runStartupTasks(): Promise<void> {
  * so on every healthy installation this finds nothing and says nothing. The
  * row is cleared once reported, so it is said once rather than at every boot.
  */
-const SCHEMA_REPAIR_KEY = "schemaRepair.sameOwnerJoinKeys";
+const JOIN_KEY_REPAIR = "schemaRepair.sameOwnerJoinKeys";
+const CONTACT_KEY_REPAIR = "schemaRepair.sameOwnerContactKeys";
+
+/**
+ * Counts as numbers, whatever the migration managed to store.
+ *
+ * A MariaDB user variable read back through the prepared-statement protocol
+ * arrives as a string, so `JSON_OBJECT('deleted', @count)` can land as `"12"`
+ * rather than `12` depending on which client ran the migration — and the
+ * earliest of these migrations has shipped, so its rows cannot be corrected.
+ * Reading them back through `Number` costs nothing and means the log never says
+ * `NaN` at the one moment an operator is being told data was removed.
+ */
+function asCounts(value: unknown): Record<string, number | undefined> {
+  if (typeof value !== "object" || value === null) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, raw]) => {
+      const parsed = Number(raw);
+      return [key, Number.isFinite(parsed) ? parsed : 0];
+    }),
+  );
+}
+
+/**
+ * Read a repair record, phrase it, and clear it. Absent means nothing to say.
+ *
+ * Each key is reported under its own guard: the two migrations are independent,
+ * and a failure reading one is no reason to swallow the other's report.
+ */
+async function reportRepair(
+  key: string,
+  phrase: (counts: Record<string, number | undefined>) => string,
+): Promise<void> {
+  try {
+    const record = await prisma.appSetting.findUnique({ where: { key } });
+    if (!record) return;
+    console.warn(phrase(asCounts(record.value)));
+    await prisma.appSetting.delete({ where: { key } });
+  } catch (error) {
+    console.error(`[startup] could not report ${key}:`, error);
+  }
+}
 
 async function reportSchemaRepairs(): Promise<void> {
-  try {
-    const record = await prisma.appSetting.findUnique({
-      where: { key: SCHEMA_REPAIR_KEY },
-    });
-    if (!record) return;
-    const counts = record.value as { contactTags?: number; locationAliases?: number };
-    console.warn(
+  await reportRepair(
+    JOIN_KEY_REPAIR,
+    (counts) =>
       `[startup] the same-owner key migration removed ${counts.contactTags ?? 0} tag ` +
-        `assignment(s) and ${counts.locationAliases ?? 0} place alias(es) that joined ` +
-        "records belonging to different accounts. The application cannot create such a " +
-        "row; they came from an import or a restore, and nothing could see them. See " +
-        "docs/data-model.md.",
-    );
-    await prisma.appSetting.delete({ where: { key: SCHEMA_REPAIR_KEY } });
-  } catch (error) {
-    console.error("[startup] could not report schema repairs:", error);
-  }
+      `assignment(s) and ${counts.locationAliases ?? 0} place alias(es) that joined ` +
+      "records belonging to different accounts. The application cannot create such a " +
+      "row; they came from an import or a restore, and nothing could see them. See " +
+      "docs/data-model.md.",
+  );
+  await reportRepair(
+    CONTACT_KEY_REPAIR,
+    (counts) =>
+      `[startup] the same-owner key migration removed ${counts.deleted ?? 0} record(s) ` +
+      `and unlinked ${counts.detached ?? 0} idea(s), task(s) or plan(s) that pointed at ` +
+      "a person belonging to another account. The application cannot create such a row; " +
+      "they came from an import or a restore, and nothing could see them. Where the link " +
+      "was optional the text was kept and only the link cleared. See docs/data-model.md.",
+  );
 }
