@@ -8,15 +8,25 @@
   dismissals, ideas, tasks, happenings, gifts, debts, dietary needs, dating
   profiles, dates, plans and flags now reference the person by owner and id
   together, so the database refuses a row that spans two accounts instead of
-  relying on every page to remember to filter one out. The two place links on
-  interactions and plans keep their filter in code: they clear on delete rather
-  than cascade, and MariaDB will not accept that shape of key.
+  relying on every page to remember to filter one out.
+- **The same for who was there.** Interaction participants and mentions, life
+  event participants and household members each gain an owner of their own,
+  taken from the interaction, event or household they belong to, and key on it
+  from both sides. Before this, two independent keys meant an import could file
+  your interaction against a stranger's contact, and the dashboard would show
+  their name.
 
 #### Fixed
+- **A place belonging to another account no longer appears in your timeline.**
+  Somewhere a visit was linked to could be rendered and searched without
+  checking who owned it. The two place links are the only references that keep
+  a single-column key — they clear rather than cascade on delete, and MariaDB
+  will not accept that shape of key otherwise — so the timeline now checks the
+  owner itself, and the upgrade detaches anything already mismatched.
 - **The upgrade repairs an installation that already holds such a row.** Where
-  the link is required the record is removed; where it is optional — an idea, a
-  task or a plan — the text is kept and only the link cleared, because it is
-  your writing and the wrong person is the only thing wrong with it. The counts
-  appear once in the container log on the next start, so nothing is removed
-  silently. A restore of a dump taken before this upgrade re-runs the same
-  repair.
+  the link is required the record is removed, along with any custom field
+  values it had; where it is optional — an idea, a task, a plan, a place — the
+  record is kept and only the link cleared, because it is your writing and the
+  wrong person is the only thing wrong with it. The counts appear once in the
+  container log on the next start, so nothing is removed silently. A restore of
+  a dump taken before this upgrade re-runs the same repair.

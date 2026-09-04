@@ -107,9 +107,10 @@ async function reportSchemaRepairs(): Promise<void> {
     CONTACT_KEY_REPAIR,
     (counts) =>
       `[startup] the same-owner key migration removed ${counts.deleted ?? 0} record(s) ` +
-      `and unlinked ${counts.detached ?? 0} idea(s), task(s) or plan(s) that pointed at ` +
-      "a person belonging to another account. The application cannot create such a row; " +
-      "they came from an import or a restore, and nothing could see them. Where the link " +
-      "was optional the text was kept and only the link cleared. See docs/data-model.md.",
+      `and cleared ${counts.detached ?? 0} link(s) that joined records belonging to ` +
+      "different accounts. The application cannot create such a row; they came from an " +
+      "import or a restore, and nothing could see them. Where the link was optional — an " +
+      "idea, a task, a plan, a place — the record was kept and only the link cleared. " +
+      "See docs/data-model.md.",
   );
 }

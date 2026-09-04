@@ -8,6 +8,10 @@
 -- What it cannot restore is the repair: rows the migration deleted and links it
 -- set to NULL are gone. Take a dump before upgrading if that matters — see
 -- docs/backup.md.
+--
+-- The four join tables lose the `ownerId` column with their keys. That loses
+-- nothing: it was derived from the parent on the way in and can be derived
+-- again.
 
 ALTER TABLE `Relationship` DROP FOREIGN KEY `Relationship_ownerId_fromContactId_fkey`;
 ALTER TABLE `Relationship` DROP FOREIGN KEY `Relationship_ownerId_toContactId_fkey`;
@@ -73,5 +77,41 @@ ALTER TABLE `Plan` ADD CONSTRAINT `Plan_contactId_fkey` FOREIGN KEY (`contactId`
 ALTER TABLE `Flag` DROP FOREIGN KEY `Flag_ownerId_contactId_fkey`;
 ALTER TABLE `Flag` DROP INDEX `Flag_ownerId_contactId_idx`;
 ALTER TABLE `Flag` ADD CONSTRAINT `Flag_contactId_fkey` FOREIGN KEY (`contactId`) REFERENCES `Contact`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE `InteractionParticipant` DROP FOREIGN KEY `InteractionParticipant_ownerId_interactionId_fkey`;
+ALTER TABLE `InteractionParticipant` DROP FOREIGN KEY `InteractionParticipant_ownerId_contactId_fkey`;
+ALTER TABLE `InteractionParticipant` DROP INDEX `InteractionParticipant_ownerId_interactionId_idx`;
+ALTER TABLE `InteractionParticipant` DROP INDEX `InteractionParticipant_ownerId_contactId_idx`;
+ALTER TABLE `InteractionParticipant` DROP COLUMN `ownerId`;
+ALTER TABLE `InteractionParticipant` ADD CONSTRAINT `InteractionParticipant_interactionId_fkey` FOREIGN KEY (`interactionId`) REFERENCES `Interaction`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE `InteractionParticipant` ADD CONSTRAINT `InteractionParticipant_contactId_fkey` FOREIGN KEY (`contactId`) REFERENCES `Contact`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE `InteractionMention` DROP FOREIGN KEY `InteractionMention_ownerId_interactionId_fkey`;
+ALTER TABLE `InteractionMention` DROP FOREIGN KEY `InteractionMention_ownerId_contactId_fkey`;
+ALTER TABLE `InteractionMention` DROP INDEX `InteractionMention_ownerId_interactionId_idx`;
+ALTER TABLE `InteractionMention` DROP INDEX `InteractionMention_ownerId_contactId_idx`;
+ALTER TABLE `InteractionMention` DROP COLUMN `ownerId`;
+ALTER TABLE `InteractionMention` ADD CONSTRAINT `InteractionMention_interactionId_fkey` FOREIGN KEY (`interactionId`) REFERENCES `Interaction`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE `InteractionMention` ADD CONSTRAINT `InteractionMention_contactId_fkey` FOREIGN KEY (`contactId`) REFERENCES `Contact`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE `LifeEventParticipant` DROP FOREIGN KEY `LifeEventParticipant_ownerId_lifeEventId_fkey`;
+ALTER TABLE `LifeEventParticipant` DROP FOREIGN KEY `LifeEventParticipant_ownerId_contactId_fkey`;
+ALTER TABLE `LifeEventParticipant` DROP INDEX `LifeEventParticipant_ownerId_lifeEventId_idx`;
+ALTER TABLE `LifeEventParticipant` DROP INDEX `LifeEventParticipant_ownerId_contactId_idx`;
+ALTER TABLE `LifeEventParticipant` DROP COLUMN `ownerId`;
+ALTER TABLE `LifeEventParticipant` ADD CONSTRAINT `LifeEventParticipant_lifeEventId_fkey` FOREIGN KEY (`lifeEventId`) REFERENCES `LifeEvent`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE `LifeEventParticipant` ADD CONSTRAINT `LifeEventParticipant_contactId_fkey` FOREIGN KEY (`contactId`) REFERENCES `Contact`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE `HouseholdMember` DROP FOREIGN KEY `HouseholdMember_ownerId_householdId_fkey`;
+ALTER TABLE `HouseholdMember` DROP FOREIGN KEY `HouseholdMember_ownerId_contactId_fkey`;
+ALTER TABLE `HouseholdMember` DROP INDEX `HouseholdMember_ownerId_householdId_idx`;
+ALTER TABLE `HouseholdMember` DROP INDEX `HouseholdMember_ownerId_contactId_idx`;
+ALTER TABLE `HouseholdMember` DROP COLUMN `ownerId`;
+ALTER TABLE `HouseholdMember` ADD CONSTRAINT `HouseholdMember_householdId_fkey` FOREIGN KEY (`householdId`) REFERENCES `Household`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE `HouseholdMember` ADD CONSTRAINT `HouseholdMember_contactId_fkey` FOREIGN KEY (`contactId`) REFERENCES `Contact`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE `Interaction` DROP INDEX `Interaction_ownerId_id_key`;
+ALTER TABLE `LifeEvent`   DROP INDEX `LifeEvent_ownerId_id_key`;
+ALTER TABLE `Household`   DROP INDEX `Household_ownerId_id_key`;
 
 DELETE FROM `AppSetting` WHERE `key` = 'schemaRepair.sameOwnerContactKeys';

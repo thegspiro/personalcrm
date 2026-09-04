@@ -421,6 +421,7 @@ model Interaction {
   ideasUsed       Idea[]                   @relation("IdeaUsedIn")
   plansCarriedOut Plan[]                   @relation("PlanCarriedOut")
 
+  @@unique([ownerId, id])
   @@index([ownerId, occurredAt])
   @@index([typeId])
   @@index([locationId])
@@ -493,24 +494,30 @@ model LocationAlias {
 /// separate prevents a mention from falsely advancing their contact cadence.
 model InteractionMention {
   interactionId String
+  ownerId       String
   contactId     String
 
-  interaction Interaction @relation(fields: [interactionId], references: [id], onDelete: Cascade)
-  contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  interaction Interaction @relation(fields: [ownerId, interactionId], references: [ownerId, id], onDelete: Cascade)
+  contact     Contact     @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([interactionId, contactId])
   @@index([contactId])
+  @@index([ownerId, interactionId])
+  @@index([ownerId, contactId])
 }
 
 model InteractionParticipant {
   interactionId String
+  ownerId       String
   contactId     String
 
-  interaction Interaction @relation(fields: [interactionId], references: [id], onDelete: Cascade)
-  contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  interaction Interaction @relation(fields: [ownerId, interactionId], references: [ownerId, id], onDelete: Cascade)
+  contact     Contact     @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([interactionId, contactId])
   @@index([contactId])
+  @@index([ownerId, interactionId])
+  @@index([ownerId, contactId])
 }
 
 /// "Things to know" about a person.
@@ -610,6 +617,7 @@ model LifeEvent {
   type         TaxonomyTerm?          @relation("LifeEventType", fields: [typeId], references: [id], onDelete: SetNull)
   participants LifeEventParticipant[]
 
+  @@unique([ownerId, id])
   @@index([contactId, date])
   @@index([ownerId, date])
   @@index([ownerId, contactId])
@@ -620,13 +628,16 @@ model LifeEvent {
 /// remains the anchor for compatibility and ownership-by-parent semantics.
 model LifeEventParticipant {
   lifeEventId String
+  ownerId     String
   contactId   String
 
-  lifeEvent LifeEvent @relation(fields: [lifeEventId], references: [id], onDelete: Cascade)
-  contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  lifeEvent LifeEvent @relation(fields: [ownerId, lifeEventId], references: [ownerId, id], onDelete: Cascade)
+  contact   Contact   @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([lifeEventId, contactId])
   @@index([contactId])
+  @@index([ownerId, lifeEventId])
+  @@index([ownerId, contactId])
 }
 
 /// A named group of people who belong together — "The Whitfields", "Mum and
@@ -644,22 +655,26 @@ model Household {
   owner   User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   members HouseholdMember[]
 
+  @@unique([ownerId, id])
   @@unique([ownerId, name])
   @@index([ownerId])
 }
 
 model HouseholdMember {
   householdId String
+  ownerId     String
   contactId   String
   /// Optional label within the household: "Mum", "eldest", "the dog".
   role        String? @db.VarChar(96)
   sortOrder   Int     @default(0)
 
-  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  household Household @relation(fields: [ownerId, householdId], references: [ownerId, id], onDelete: Cascade)
+  contact   Contact   @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([householdId, contactId])
   @@index([contactId])
+  @@index([ownerId, householdId])
+  @@index([ownerId, contactId])
 }
 
 /// A pair you have told the app to stop suggesting a relationship for.

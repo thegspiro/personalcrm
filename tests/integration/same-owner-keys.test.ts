@@ -13,7 +13,8 @@ import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
  *
  * `Interaction.place` and `Plan.place` are deliberately absent: they are
  * `ON DELETE SET NULL`, and MariaDB refuses a SET NULL foreign key unless every
- * column in it is nullable. See docs/data-model.md.
+ * column in it is nullable. They are covered by the last case here instead,
+ * which checks the reader drops what the key cannot. See docs/data-model.md.
  */
 
 interface Context {
@@ -23,6 +24,9 @@ interface Context {
   siblingId: string;
   /** A fresh same-owner interaction id, for the relations that need one. */
   nextInteractionId: () => Promise<string>;
+  /** A same-owner life event and household, for the join tables. */
+  lifeEventId: string;
+  householdId: string;
 }
 
 interface Case {
@@ -191,6 +195,56 @@ const CASES: Case[] = [
       }),
     count: (ownerId) => prisma.flag.count({ where: { ownerId } }),
   },
+  // The four join tables carry no id of their own and used to carry no owner
+  // either, so both of their keys named a row and neither named an account.
+  {
+    name: "InteractionParticipant",
+    create: async (context, contactId) =>
+      prisma.interactionParticipant.create({
+        data: {
+          ownerId: context.ownerId,
+          interactionId: await context.nextInteractionId(),
+          contactId,
+        },
+      }),
+    count: (ownerId) => prisma.interactionParticipant.count({ where: { ownerId } }),
+  },
+  {
+    name: "InteractionMention",
+    create: async (context, contactId) =>
+      prisma.interactionMention.create({
+        data: {
+          ownerId: context.ownerId,
+          interactionId: await context.nextInteractionId(),
+          contactId,
+        },
+      }),
+    count: (ownerId) => prisma.interactionMention.count({ where: { ownerId } }),
+  },
+  {
+    name: "LifeEventParticipant",
+    create: (context, contactId) =>
+      prisma.lifeEventParticipant.create({
+        data: {
+          ownerId: context.ownerId,
+          lifeEventId: context.lifeEventId,
+          contactId,
+        },
+      }),
+    count: (ownerId) => prisma.lifeEventParticipant.count({ where: { ownerId } }),
+  },
+  {
+    name: "HouseholdMember",
+    create: (context, contactId) =>
+      prisma.householdMember.create({
+        data: {
+          ownerId: context.ownerId,
+          householdId: context.householdId,
+          contactId,
+        },
+      }),
+    count: (ownerId) => prisma.householdMember.count({ where: { ownerId } }),
+  },
 ];
 
 describe.skipIf(!hasTestDatabase)("same-owner foreign keys", () => {
@@ -212,12 +266,25 @@ describe.skipIf(!hasTestDatabase)("same-owner foreign keys", () => {
     const interactionType = await prisma.taxonomyTerm.findFirstOrThrow({
       where: { ownerId: owner.id, kind: "INTERACTION_TYPE" },
     });
+    const [lifeEvent, household] = await Promise.all([
+      prisma.lifeEvent.create({
+        data: {
+          ownerId: owner.id,
+          contactId: mine.id,
+          title: "Graduated",
+          date: new Date("2018-06-01T00:00:00Z"),
+        },
+      }),
+      prisma.household.create({ data: { ownerId: owner.id, name: "The flat" } }),
+    ]);
     mineId = mine.id;
     theirsId = theirs.id;
     context = {
       ownerId: owner.id,
       relationshipTypeId: type.id,
       siblingId: sibling.id,
+      lifeEventId: lifeEvent.id,
+      householdId: household.id,
       nextInteractionId: async () =>
         (
           await prisma.interaction.create({
@@ -237,8 +304,12 @@ describe.skipIf(!hasTestDatabase)("same-owner foreign keys", () => {
 
   for (const testCase of CASES) {
     it(`refuses a ${testCase.name} pointing at another account's contact`, async () => {
+      // Counted either side rather than asserted at zero: the fixtures this
+      // suite needs put rows in some of these tables before the first case
+      // runs, and "nothing was written" is the claim, not "the table is empty".
+      const before = await testCase.count(context.ownerId);
       await expect(testCase.create(context, theirsId)).rejects.toThrow();
-      expect(await testCase.count(context.ownerId)).toBe(0);
+      expect(await testCase.count(context.ownerId)).toBe(before);
     });
   }
 

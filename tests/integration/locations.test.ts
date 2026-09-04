@@ -238,6 +238,37 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
     ).toHaveLength(2);
   });
 
+  it("does not render or search a place belonging to another account", async () => {
+    state.unlocked = true;
+    const stranger = await createTestUser();
+    const theirs = await prisma.location.create({
+      data: {
+        ownerId: stranger.id,
+        name: "Their Secret Bar",
+        normalizedName: normalizeLocationName("Their Secret Bar"),
+      },
+    });
+    // `Interaction.place` is the one reference that keeps a single-column key:
+    // it clears on delete, and MariaDB will not accept a SET NULL composite
+    // key while `ownerId` is NOT NULL. So this row is writable, and the
+    // reader's own predicate is the whole defence.
+    await visit(theirs.id, [], { label: "somewhere" });
+
+    const entries = await buildTimeline(state.ownerId, TZ, {});
+    expect(entries).toHaveLength(1);
+    expect(entries[0].placeId).toBeNull();
+    expect(entries[0].placeName).toBeNull();
+
+    // Neither route into the query may match on it: free-text search over the
+    // place name, nor the normalized-name filter the place page links with.
+    expect(
+      await buildTimeline(state.ownerId, TZ, { search: "Secret Bar" }),
+    ).toHaveLength(0);
+    expect(
+      await buildTimeline(state.ownerId, TZ, { location: "Their Secret Bar" }),
+    ).toHaveLength(0);
+  });
+
   it("scopes by place id when a freed-up name has been reused", async () => {
     state.unlocked = true;
     const first = await place(state.ownerId, "Corner Cafe");

@@ -225,7 +225,12 @@ async function fetchInteractions(
               { title: { contains: options.search.trim() } },
               { notes: { contains: options.search.trim() } },
               { location: { contains: options.search.trim() } },
-              { place: { name: { contains: options.search.trim() } } },
+              // Owner-scoped, like every read of this relation: `locationId`
+              // says nothing about who owns the place, and the key cannot say
+              // it either — `SET NULL` needs every column nullable and
+              // `ownerId` is not. Unscoped, a restored cross-owner row let a
+              // search match on, and then render, another account's venue.
+              { place: { ownerId, name: { contains: options.search.trim() } } },
               { participants: { some: { contact: { OR: [
                 { firstName: { contains: options.search.trim() } },
                 { lastName: { contains: options.search.trim() } },
@@ -242,13 +247,16 @@ async function fetchInteractions(
             { location: { equals: options.location.trim() } },
             // The same normalizer the place records were written with, rather
             // than a plain `.toLowerCase()` that disagrees with it on locale.
-            { place: { normalizedName: normalizeLocationName(options.location) } },
+            { place: { ownerId, normalizedName: normalizeLocationName(options.location) } },
           ] }] }
         : {}),
     },
     include: {
       type: true,
-      place: { select: { id: true, name: true } },
+      // `ownerId` comes back so the mapper can drop a place this account does
+      // not own. Prisma takes no `where` on a to-one include, so the filter has
+      // to happen on the way out.
+      place: { select: { id: true, name: true, ownerId: true } },
       dateEntry: { select: { id: true } },
       participants: {
         include: { contact: { select: { id: true, firstName: true, lastName: true } } },
@@ -363,6 +371,10 @@ type GiftRow = Awaited<ReturnType<typeof fetchGifts>>[number];
 
 function interactionEntry(row: InteractionRow, timezone: string, now: Date): TimelineEntry {
   const contacts = row.participants.map((p) => p.contact);
+  // The interaction is owner-scoped by the query; its place is a separate key
+  // that a restore can point at another account's row, so it counts as no place
+  // rather than being rendered.
+  const place = row.place?.ownerId === row.ownerId ? row.place : null;
   return {
     id: row.id,
     kind: "interaction",
@@ -379,8 +391,8 @@ function interactionEntry(row: InteractionRow, timezone: string, now: Date): Tim
     reachedOutBy: row.reachedOutBy,
     location: row.location,
     durationMinutes: row.durationMinutes,
-    placeId: row.place?.id ?? null,
-    placeName: row.place?.name ?? null,
+    placeId: place?.id ?? null,
+    placeName: place?.name ?? null,
     href: contacts[0] ? `/people/${contacts[0].id}#timeline-entry-interaction-${row.id}` : "/timeline",
   };
 }
