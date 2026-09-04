@@ -203,10 +203,14 @@ async function digestItemsForUser(db: Db, user: Pick<ScheduledUser, "id">, sched
   // knowing about precisely because its policy says a week. The look-ahead
   // adds the next two days' worth of those, so a reminder that will arrive
   // tomorrow is previewed today rather than being the first you hear of it.
+  // Nested with the look-ahead day outermost so the earliest day that reaches
+  // an occurrence is the one recorded: a policy is stored as written, so
+  // offsets are not necessarily ascending, and `[0, 1]` would otherwise file a
+  // reminder owed today as tomorrow's preview.
   const seen = new Set<string>();
-  for (const date of dates) {
-    for (const offset of effectiveReminderDays(reminderPolicy(date.reminderDaysBefore))) {
-      for (let ahead = 0; ahead <= DIGEST_LOOKAHEAD_DAYS; ahead++) {
+  for (let ahead = 0; ahead <= DIGEST_LOOKAHEAD_DAYS; ahead++) {
+    for (const date of dates) {
+      for (const offset of effectiveReminderDays(reminderPolicy(date.reminderDaysBefore))) {
         const occurrence = dueOccurrence(
           plainDateFromDb(date.date), date.recurrence, addPlainDays(schedule.today, ahead), offset,
         );
@@ -218,23 +222,30 @@ async function digestItemsForUser(db: Db, user: Pick<ScheduledUser, "id">, sched
         if (seen.has(key)) continue;
         seen.add(key);
         items.push({
-          kind: "IMPORTANT_DATE", label: date.label, contactName: personName(date.contact), date: occurrence,
+          kind: "IMPORTANT_DATE", label: date.label, contactName: personName(date.contact),
+          date: occurrence, preview: ahead > 0,
         });
       }
     }
   }
   for (const contact of cadence) {
-    if (contact.nextTouchAt) items.push({
-      kind: "CADENCE", contactName: personName(contact),
-      date: calendarDateInTz(contact.nextTouchAt, schedule.timezone),
-    });
+    if (contact.nextTouchAt) {
+      const due = calendarDateInTz(contact.nextTouchAt, schedule.timezone);
+      items.push({
+        kind: "CADENCE", contactName: personName(contact),
+        date: due, preview: diffPlainDays(schedule.today, due) > 0,
+      });
+    }
   }
   for (const task of tasks) {
-    if (task.dueDate) items.push({
-      kind: "TASK", title: task.title,
-      contactName: task.contact ? personName(task.contact) : null,
-      date: plainDateFromDb(task.dueDate),
-    });
+    if (task.dueDate) {
+      const due = plainDateFromDb(task.dueDate);
+      items.push({
+        kind: "TASK", title: task.title,
+        contactName: task.contact ? personName(task.contact) : null,
+        date: due, preview: diffPlainDays(schedule.today, due) > 0,
+      });
+    }
   }
   return items;
 }

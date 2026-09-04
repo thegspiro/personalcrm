@@ -80,10 +80,19 @@ export function taskMessage(title: string, person: string | null, dueDay: PlainD
   };
 }
 
-export type DigestItem =
+/**
+ * `preview` marks an item the scheduler is showing early — its reminder is not
+ * owed until a later day. It cannot be derived from `date`: an important date
+ * warned about a week ahead is owed *today* for an occurrence still a week
+ * out, so the occurrence date says "upcoming" about work that is due now. Only
+ * the scheduler knows which day the reminder belongs to, so only it can say.
+ * Omitted means owed now, which is what every non-look-ahead caller wants.
+ */
+export type DigestItem = { preview?: boolean } & (
   | { kind: "IMPORTANT_DATE"; label: string; contactName: string; date: PlainDate }
   | { kind: "CADENCE"; contactName: string; date: PlainDate }
-  | { kind: "TASK"; title: string; contactName: string | null; date: PlainDate };
+  | { kind: "TASK"; title: string; contactName: string | null; date: PlainDate }
+);
 
 /** Kept deliberately small enough for the most restrictive supported push channel. */
 export const DIGEST_ENTRY_LIMIT = 20;
@@ -103,8 +112,8 @@ function digestEntry(item: DigestItem, today: PlainDate): string {
  * Format only the already-authorised fields supplied by the scheduler. Group
  * order is fixed; entries are ordered by date, then their visible text.
  *
- * What is already due outranks what is merely coming, ahead of the group order,
- * so the entry cap trims previews rather than overdue work. Grouped the other
+ * What is already due outranks what is merely previewed, ahead of the group
+ * order, so the entry cap trims the look-ahead rather than overdue work. Grouped the other
  * way, an account with twenty important dates in its look-ahead would push
  * every overdue person out of the digest and report them only as a count —
  * losing precisely the thing the digest exists to surface. Sections still
@@ -117,7 +126,7 @@ export function digestMessage(items: DigestItem[], today: PlainDate, limit = DIG
     CADENCE: "Keep in touch",
     TASK: "Tasks",
   };
-  const stillToCome = (item: DigestItem) => (diffPlainDays(today, item.date) > 0 ? 1 : 0);
+  const stillToCome = (item: DigestItem) => (item.preview ? 1 : 0);
   const sorted = [...items].sort((a, b) => {
     const due = stillToCome(a) - stillToCome(b);
     if (due) return due;

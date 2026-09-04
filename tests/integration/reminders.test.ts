@@ -376,6 +376,35 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(send.mock.calls.map((call) => call[1])).toContain("Reminder: Birthday");
   });
 
+  it("ranks a date owed today above the look-ahead, whatever order its offsets are stored in", async () => {
+    // A policy is stored as written, so `[0, 1]` is possible. Reaching the
+    // occurrence from tomorrow first would file a reminder owed today as a
+    // preview — and previews are what the entry cap trims. Only visible once
+    // there are more items than the cap holds.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const sam = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Sam" } });
+    await prisma.importantDate.create({ data: {
+      ownerId: user.id, contactId: sam.id, label: "Birthday",
+      date: new Date("2026-09-03T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [0, 1],
+    } });
+    // More overdue cadences than DIGEST_ENTRY_LIMIT, so the cap has to choose.
+    await prisma.contact.createMany({ data: Array.from({ length: 21 }, (_, i) => ({
+      ownerId: user.id, firstName: `Overdue${String(i).padStart(2, "0")}`,
+      nextTouchAt: new Date("2026-08-20T00:00:00Z"),
+    })) });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest")?.[2] as string;
+    // Offset 1 makes it owed today for tomorrow's occurrence. It is not a
+    // preview, so it survives the cap rather than being trimmed first.
+    expect(digest).toContain("Birthday — Sam (upcoming: 2026-09-03)");
+    expect(digest).toContain("more items.");
+  });
+
   it("keeps two namesakes sharing a date as two entries", async () => {
     // The look-ahead deduplicates occurrences, because one policy can name the
     // same date from more than one of the three days. Keyed on what is shown

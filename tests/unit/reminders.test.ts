@@ -112,6 +112,7 @@ describe("reminder wording", () => {
       label: `Birthday ${index + 1}`,
       contactName: `Future ${index + 1}`,
       date: { year: 2026, month: 10, day: index + 1 },
+      preview: true,
     }));
     const body = digestMessage([
       ...previews,
@@ -122,6 +123,25 @@ describe("reminder wording", () => {
     expect(body).toContain("… and 2 more items.");
     // Sections still render in group order, whichever entries survived.
     expect(body.indexOf("Important dates")).toBeLessThan(body.indexOf("Keep in touch"));
+  });
+
+  it("keeps a reminder owed today whose occurrence is still weeks away", () => {
+    // A birthday warned about a week ahead is owed *today*; its occurrence date
+    // says "upcoming" about work that is due now. Rank on the date instead of
+    // on the reminder day and enough overdue items push it out of a digest it
+    // has every right to be in.
+    const overdue = Array.from({ length: 3 }, (_, index) => ({
+      kind: "CADENCE" as const,
+      contactName: `Overdue ${index + 1}`,
+      date: { year: 2026, month: 8, day: 20 + index },
+    }));
+    const body = digestMessage([
+      { kind: "IMPORTANT_DATE", label: "Birthday", contactName: "Sam", date: { year: 2026, month: 9, day: 9 } },
+      ...overdue,
+    ], today, 3).body;
+
+    expect(body).toContain("Birthday — Sam (upcoming: 2026-09-09)");
+    expect(body).toContain("… and 1 more item.");
   });
 
   it("keeps a useful empty state without empty headings", () => {
