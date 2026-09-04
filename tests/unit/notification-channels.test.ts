@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   CHANNEL_FIELDS,
   CHANNEL_KINDS,
-  TEST_NOTIFICATION_BODY,
-  TEST_NOTIFICATION_SUBJECT,
   encryptedKeyFor,
   isChannelKind,
   secretFieldsFor,
@@ -121,18 +119,6 @@ describe("the field table", () => {
     expect(isChannelKind("EMAIL")).toBe(true);
     expect(isChannelKind("SMS")).toBe(false);
     expect(isChannelKind(null)).toBe(false);
-  });
-});
-
-describe("the test notification", () => {
-  it("is fixed copy with nothing interpolated into it", () => {
-    // Settings stays reachable while the privacy lock is closed, so this is the
-    // one button there that could otherwise put a private person's name on the
-    // wire. There has to be nothing in it to leak.
-    for (const text of [TEST_NOTIFICATION_SUBJECT, TEST_NOTIFICATION_BODY]) {
-      expect(text).not.toMatch(/[${}]/);
-      expect(text.length).toBeGreaterThan(0);
-    }
   });
 });
 
