@@ -184,7 +184,7 @@ async function digestItemsForUser(db: Db, user: Pick<ScheduledUser, "id">, sched
     db.importantDate.findMany({
       where: { ownerId: user.id, contact: { ownerId: user.id, ...visibleContact(schedule.locked) } },
       select: {
-        label: true, date: true, recurrence: true, reminderDaysBefore: true,
+        id: true, label: true, date: true, recurrence: true, reminderDaysBefore: true,
         contact: { select: { firstName: true, lastName: true } },
       },
     }),
@@ -212,7 +212,9 @@ async function digestItemsForUser(db: Db, user: Pick<ScheduledUser, "id">, sched
         );
         if (!occurrence) continue;
         // Two offsets on two different days can name the same occurrence.
-        const key = `${date.label}\u0000${personName(date.contact)}\u0000${plainDateKey(occurrence)}`;
+        // Keyed by row id, not by what is displayed: two people with the same
+        // name sharing a birthday are two entries, not one.
+        const key = `${date.id}\u0000${plainDateKey(occurrence)}`;
         if (seen.has(key)) continue;
         seen.add(key);
         items.push({

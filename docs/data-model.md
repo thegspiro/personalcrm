@@ -797,7 +797,8 @@ A digest reaches two days past today: cadences whose `nextTouchAt` falls before
 the end of that third local day, incomplete tasks due on or before it, and
 important-date occurrences whose own `reminderDaysBefore` policy would speak on
 any of the three days. Each entry is labelled overdue, due today or upcoming
-from its date. The wider read has its own where-fragments rather than reusing
+from its date, and due entries sort ahead of upcoming ones so the 20-entry cap
+trims the look-ahead rather than the work already owed. The wider read has its own where-fragments rather than reusing
 the standalone policies': appearing in the look-ahead must never be able to
 send an individual reminder early, so the query that decides what is *owed* is
 kept separate from the one that decides what is *shown*. Digest scheduling uses

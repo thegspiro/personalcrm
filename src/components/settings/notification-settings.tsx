@@ -194,9 +194,11 @@ function DigestSettings({ digest }: { digest: DigestPreference }) {
       <h3 className="text-sm font-semibold">Daily digest</h3>
       <p className="mt-1 text-xs text-muted-foreground">
         One message a day to every channel, listing important dates, people you are due to
-        reach out to, and tasks that have fallen due — plus what is coming in the next
-        two days. It can contain their names, titles, labels, and dates. The individual
-        reminders above are sent either way, on their own schedule.
+        reach out to, and tasks that have fallen due — plus anything the next two days
+        would remind you about, which for a date set to warn you a month ahead means the
+        date itself may still be weeks away. It can contain their names, titles, labels,
+        and dates. The individual reminders above are sent either way, on their own
+        schedule.
       </p>
       <form action={submit(updateDigest, () => {}, "Saved")} className="mt-3 grid gap-2.5">
         <label className="flex items-center gap-2 text-sm">

@@ -8,3 +8,6 @@
   listed alongside what is due now, each marked overdue, due today or upcoming.
 - **Individual reminders are unchanged.** Seeing something in the look-ahead
   does not send its own reminder early; that still arrives on its own day.
+- **What is already due is never crowded out by what is coming.** When more
+  items exist than one message holds, the look-ahead is trimmed first, so an
+  overdue person is never reduced to part of a count.

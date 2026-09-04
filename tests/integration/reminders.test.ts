@@ -376,6 +376,31 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(send.mock.calls.map((call) => call[1])).toContain("Reminder: Birthday");
   });
 
+  it("keeps two namesakes sharing a date as two entries", async () => {
+    // The look-ahead deduplicates occurrences, because one policy can name the
+    // same date from more than one of the three days. Keyed on what is shown
+    // rather than on the row, two people called Alex Smith who share a birthday
+    // would collapse into one and the second would vanish silently.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    for (let i = 0; i < 2; i++) {
+      const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Alex", lastName: "Smith" } });
+      await prisma.importantDate.create({ data: {
+        ownerId: user.id, contactId: contact.id, label: "Birthday",
+        date: new Date("2026-09-03T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [1, 0],
+      } });
+    }
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest")?.[2] as string;
+    // Both people, and neither of them twice: offsets 1 and 0 reach the same
+    // occurrence from two of the three look-ahead days.
+    expect(digest.match(/Birthday — Alex Smith/g)).toHaveLength(2);
+  });
+
   it("never puts private, archived, or foreign-owner details in digest attempts or retries", async () => {
     const owner = await createTestUser();
     const other = await createTestUser();

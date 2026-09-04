@@ -102,6 +102,28 @@ describe("reminder wording", () => {
     ].join("\n"));
   });
 
+  it("spends the last entries on what is due, not on what is merely coming", () => {
+    // The look-ahead can hand the formatter twenty important dates whose
+    // reminders land in the next two days. Grouped by kind alone they would all
+    // sort ahead of an overdue person, who would then be reported only as part
+    // of a count — losing the one thing the digest exists to surface.
+    const previews = Array.from({ length: 3 }, (_, index) => ({
+      kind: "IMPORTANT_DATE" as const,
+      label: `Birthday ${index + 1}`,
+      contactName: `Future ${index + 1}`,
+      date: { year: 2026, month: 10, day: index + 1 },
+    }));
+    const body = digestMessage([
+      ...previews,
+      { kind: "CADENCE", contactName: "Overdue Person", date: { year: 2026, month: 8, day: 28 } },
+    ], today, 2).body;
+
+    expect(body).toContain("Overdue Person (overdue: 2026-08-28)");
+    expect(body).toContain("… and 2 more items.");
+    // Sections still render in group order, whichever entries survived.
+    expect(body.indexOf("Important dates")).toBeLessThan(body.indexOf("Keep in touch"));
+  });
+
   it("keeps a useful empty state without empty headings", () => {
     expect(digestMessage([], today).body).toBe("Nothing needs your attention today.");
   });

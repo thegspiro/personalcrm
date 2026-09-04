@@ -102,6 +102,13 @@ function digestEntry(item: DigestItem, today: PlainDate): string {
 /**
  * Format only the already-authorised fields supplied by the scheduler. Group
  * order is fixed; entries are ordered by date, then their visible text.
+ *
+ * What is already due outranks what is merely coming, ahead of the group order,
+ * so the entry cap trims previews rather than overdue work. Grouped the other
+ * way, an account with twenty important dates in its look-ahead would push
+ * every overdue person out of the digest and report them only as a count —
+ * losing precisely the thing the digest exists to surface. Sections still
+ * render in group order, and within a group this is the date order anyway.
  */
 export function digestMessage(items: DigestItem[], today: PlainDate, limit = DIGEST_ENTRY_LIMIT): ReminderMessage {
   const kindOrder: DigestItem["kind"][] = ["IMPORTANT_DATE", "CADENCE", "TASK"];
@@ -110,7 +117,10 @@ export function digestMessage(items: DigestItem[], today: PlainDate, limit = DIG
     CADENCE: "Keep in touch",
     TASK: "Tasks",
   };
+  const stillToCome = (item: DigestItem) => (diffPlainDays(today, item.date) > 0 ? 1 : 0);
   const sorted = [...items].sort((a, b) => {
+    const due = stillToCome(a) - stillToCome(b);
+    if (due) return due;
     const kind = kindOrder.indexOf(a.kind) - kindOrder.indexOf(b.kind);
     if (kind) return kind;
     const date = compareDigestDates(a.date, b.date);
