@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { NetConnectOpts, Socket } from "node:net";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/server/db/client", () => ({ prisma: { user: { findUnique: vi.fn() } } }));
@@ -295,43 +296,19 @@ describe("notification destinations", () => {
     // and carried the message, after the scheduler had recorded a failure and
     // queued the retry.
     //
-    // This needs an address whose connect neither completes nor fails, and
-    // whether a reserved range behaves that way is the network's business,
-    // not this repository's: 192.0.2.1 hangs on one machine here and is
-    // refused in 3ms on another. So one is looked for, and the check says so
-    // rather than inventing a result when the environment offers none.
-    //
-    // The probe has to prove more than "stalls for a moment". What the check
-    // needs is that the dial is *still* on this address when the budget runs
-    // out, and the budget handed to the dial is what remains of the deadline
-    // after resolution — so it is shorter than the deadline, never longer. A
-    // 250ms probe guarding a 300ms deadline left 50ms of room, and CI found
-    // it: an address hung past the probe, was refused just before the
-    // deadline, and the second address was then tried entirely legitimately.
-    // Proving a stall several times the whole deadline leaves no such gap.
+    // This needs an address whose connect neither completes nor fails for
+    // longer than the deadline, and no real address can be relied on to behave
+    // that way: reserved ranges hang on one machine and are refused in 3ms on
+    // another, and — twice in CI now — an address that hung for the probe was
+    // refused during the dial that followed it, so the second address was then
+    // tried entirely legitimately and the check failed having proved nothing.
+    // The connector is supplied instead, so the first answer's behaviour is
+    // decided here rather than by whatever the runner's network happens to do.
     const DEADLINE_MS = 300;
-    const STALL_PROOF_MS = 6 * DEADLINE_MS;
+    // Long enough after the deadline that only the abandon can explain the
+    // second address going untried, and short enough to keep the test quick.
+    const REFUSED_AFTER_MS = 4 * DEADLINE_MS;
     const net = await import("node:net");
-    const stalls = async (address: string) =>
-      await new Promise<boolean>((decide) => {
-        const probe = net.connect({ host: address, port: 2525 });
-        const timer = setTimeout(() => { probe.destroy(); decide(true); }, STALL_PROOF_MS);
-        const settle = (answer: boolean) => {
-          clearTimeout(timer);
-          probe.destroy();
-          decide(answer);
-        };
-        probe.once("connect", () => settle(false));
-        probe.once("error", () => settle(false));
-      });
-    let blackhole: string | undefined;
-    for (const candidate of ["198.51.100.1", "203.0.113.1", "192.0.2.1"]) {
-      if (await stalls(candidate)) { blackhole = candidate; break; }
-    }
-    if (!blackhole) {
-      console.warn("no unroutable address stalls here; the abandoned-dial check did not run");
-      return;
-    }
 
     let reached = 0;
     const server = net.createServer((socket) => {
@@ -341,6 +318,26 @@ describe("notification destinations", () => {
     });
     await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
     const port = (server.address() as { port: number }).port;
+
+    const STALLED = "198.51.100.1";
+    const pending: NodeJS.Timeout[] = [];
+    // Silent until well past the deadline, then refused — which is what makes
+    // this a proof rather than a coincidence. Without the budget reaching the
+    // dial, that refusal moves it on to the second address, and the second
+    // address answers.
+    const connect = (options: NetConnectOpts): Socket => {
+      if ("host" in options && options.host === STALLED) {
+        const socket = new net.Socket();
+        const refuse = setTimeout(
+          () => socket.destroy(new Error("ECONNREFUSED")),
+          REFUSED_AFTER_MS,
+        );
+        pending.push(refuse);
+        socket.once("close", () => clearTimeout(refuse));
+        return socket;
+      }
+      return net.connect(options);
+    };
 
     try {
       await expect(
@@ -354,26 +351,25 @@ describe("notification destinations", () => {
             // when the budget runs out. The second would answer, and must
             // never be tried once the delivery has been given up on.
             resolve: async () => [
-              { address: blackhole, family: 4 as const },
+              { address: STALLED, family: 4 as const },
               { address: "127.0.0.1", family: 4 as const },
             ],
             isAdministrator: async () => true,
             deadlineMs: DEADLINE_MS,
+            connect,
           },
         ),
       ).rejects.toThrow(/deadline|timed out/i);
 
-      // Deliberately long. Without the budget reaching the dial, the first
-      // socket runs to its own fifteen-second connect timeout and *then* the
-      // second address is tried — so a short wait here would pass against the
-      // broken code as readily as the fixed one. Waiting past that point is
-      // what makes this a proof rather than a coincidence.
-      await new Promise((settle) => setTimeout(settle, 17_000));
+      // Past the point the first address gives up, so a dial that outlived the
+      // deadline has had its chance to try the second one.
+      await new Promise((settle) => setTimeout(settle, REFUSED_AFTER_MS + 400));
       expect(reached).toBe(0);
     } finally {
+      for (const timer of pending) clearTimeout(timer);
       await new Promise<void>((done) => server.close(() => done()));
     }
-  }, 60_000);
+  }, 15_000);
 
   it("counts a stalled resolver against the delivery budget", async () => {
     // The budget used to start at the transport, so resolution was unbounded —

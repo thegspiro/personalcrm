@@ -24,6 +24,13 @@ interface HttpInput {
 }
 
 type HttpAdapter = (input: HttpInput) => Promise<{ status: number }>;
+/**
+ * How a TCP connection is opened. Only the SMTP dial uses one, and only a test
+ * ever supplies its own: the behaviour worth pinning here is what happens to
+ * an address that neither answers nor refuses, and no real address can be
+ * relied on to behave that way twice in a row.
+ */
+type TcpConnector = (options: net.NetConnectOpts) => net.Socket;
 type SmtpAdapter = (
   config: Record<string, unknown>,
   addresses: ResolvedAddress[],
@@ -38,6 +45,11 @@ export interface DeliveryDependencies {
   isAdministrator?: (ownerId: string) => Promise<boolean>;
   http?: HttpAdapter;
   smtp?: SmtpAdapter;
+  /**
+   * Replaces `net.connect` for the SMTP dial, and nothing else. Ignored when
+   * `smtp` is supplied, which replaces the dial along with the rest.
+   */
+  connect?: TcpConnector;
 }
 
 /**
@@ -163,6 +175,7 @@ function connectToOne(
   port: number,
   budgetMs: number,
   signal: AbortSignal,
+  connect: TcpConnector,
 ): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -191,7 +204,7 @@ function connectToOne(
     signal.addEventListener("abort", abandon, { once: true });
     const attempt = (index: number) => {
       if (settled) return;
-      const socket = net.connect({
+      const socket = connect({
         host: addresses[index].address,
         port,
         family: addresses[index].family,
@@ -227,7 +240,7 @@ function connectToOne(
   });
 }
 
-const defaultSmtp: SmtpAdapter = async (config, addresses, mail, deadlineMs) => {
+const smtpVia = (connect: TcpConnector): SmtpAdapter => async (config, addresses, mail, deadlineMs) => {
   const host = config.host as string;
   const port = typeof config.port === "number" ? config.port : 587;
   // The socket nodemailer is actually talking on, so the deadline can end the
@@ -256,7 +269,7 @@ const defaultSmtp: SmtpAdapter = async (config, addresses, mail, deadlineMs) => 
     // The connect itself is bounded here rather than by nodemailer, which
     // hands the socket back already opened and so never sees this phase.
     getSocket: (_options: SMTPTransport.Options, callback: (error: Error | null, value?: { connection: net.Socket }) => void) => {
-      connectToOne(addresses, port, deadlineMs, dial.signal).then(
+      connectToOne(addresses, port, deadlineMs, dial.signal, connect).then(
         (connection) => {
           // Held so the deadline below can end the session outright. Closing
           // the transport is not enough: for a non-pooled transport it does
@@ -303,6 +316,18 @@ const defaultSmtp: SmtpAdapter = async (config, addresses, mail, deadlineMs) => 
     transport.close();
   }
 };
+
+const defaultSmtp = smtpVia((options) => net.connect(options));
+
+/**
+ * A whole SMTP adapter replaces the dial with it; a connector replaces only the
+ * dial. Supplying both would silently drop the connector, so `smtp` wins and
+ * says so in `DeliveryDependencies`.
+ */
+function smtpAdapter(dependencies: DeliveryDependencies): SmtpAdapter {
+  if (dependencies.smtp) return dependencies.smtp;
+  return dependencies.connect ? smtpVia(dependencies.connect) : defaultSmtp;
+}
 
 /**
  * A failure that happened after the destination was confirmed public.
@@ -391,7 +416,7 @@ export async function deliverToChannel(
       validateDestination(config.host, administrative, resolveDns),
     );
     await afterValidation(
-      (dependencies.smtp ?? defaultSmtp)(config, addresses, {
+      smtpAdapter(dependencies)(config, addresses, {
         from: config.from, to: config.to, subject, text: body,
       }, Math.max(1, remaining())),
     );
