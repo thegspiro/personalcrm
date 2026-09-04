@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Archive, MapPin, Pencil, Search } from "lucide-react";
+import { Archive, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
@@ -20,8 +20,9 @@ import {
   lookupLocationAddress,
   setLocationArchived,
   updateLocation,
-  type GeoCandidateView,
 } from "@/server/actions/locations";
+import type { GeoCandidateView } from "@/server/geo/providers";
+import { PlaceLookup } from "./place-lookup";
 
 export interface EditablePlace {
   id: string;
@@ -30,6 +31,11 @@ export interface EditablePlace {
   city: string | null;
   region: string | null;
   country: string | null;
+  /** Serialised — `Decimal` and `BigInt` do not cross into a client component. */
+  latitude: string | null;
+  longitude: string | null;
+  osmType: string | null;
+  osmId: string | null;
   phone: string | null;
   url: string | null;
   notes: string | null;
@@ -57,17 +63,33 @@ export function EditPlaceSheet({
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>(
     {},
   );
-  const [candidates, setCandidates] = React.useState<GeoCandidateView[] | null>(
-    null,
-  );
-  const [looking, setLooking] = React.useState(false);
   // What a lookup filled in, held here rather than written on the spot so a
   // single Save carries it alongside anything typed by hand.
   const [applied, setApplied] = React.useState<GeoCandidateView | null>(null);
+  // The name field is uncontrolled, so the query reads it through a ref rather
+  // than by walking up to the form element.
+  const nameRef = React.useRef<HTMLInputElement>(null);
+
   const [address, setAddress] = React.useState(place.address ?? "");
   const [city, setCity] = React.useState(place.city ?? "");
   const [region, setRegion] = React.useState(place.region ?? "");
   const [country, setCountry] = React.useState(place.country ?? "");
+  const [latitude, setLatitude] = React.useState(place.latitude ?? "");
+  const [longitude, setLongitude] = React.useState(place.longitude ?? "");
+  /**
+   * The OSM object this place is still pointing at.
+   *
+   * A fresh match brings its own, and `lookupApplied` tells the action to take
+   * it wholesale. Otherwise the saved one is kept only while the coordinates
+   * are the ones it came with: edit them by hand and the reference no longer
+   * describes this spot, and `mapLinkFor` prefers it — so keeping it would open
+   * the venue this place used to be.
+   */
+  const osmReference =
+    applied ??
+    (latitude === (place.latitude ?? "") && longitude === (place.longitude ?? "")
+      ? place
+      : null);
 
   async function onSubmit(form: FormData) {
     form.set("id", place.id);
@@ -92,27 +114,17 @@ export function EditPlaceSheet({
     await run(async () => ({ ok: true }), "Place saved", () => setOpen(false));
   }
 
-  async function lookUp(formEl: HTMLFormElement) {
-    const data = new FormData(formEl);
+  // Only the name and whatever address is in the form. Nothing else about this
+  // place — not the notes, not who was seen here — is sent anywhere.
+  function buildQuery() {
+    return [nameRef.current?.value, address].filter(Boolean).join(", ");
+  }
+
+  function runLookup(query: string) {
     const form = new FormData();
     form.set("id", place.id);
-    // Only the name and whatever address is in the form. Nothing else about
-    // this place — not the notes, not who was seen here — is sent anywhere.
-    form.set(
-      "query",
-      [data.get("name"), data.get("address")].filter(Boolean).join(", "),
-    );
-
-    setLooking(true);
-    const result = await lookupLocationAddress(form);
-    setLooking(false);
-
-    if (!result.ok) {
-      setError(result.error ?? "That lookup didn't work.");
-      return;
-    }
-    setError(undefined);
-    setCandidates(result.data?.candidates ?? []);
+    form.set("query", query);
+    return lookupLocationAddress(form);
   }
 
   function accept(candidate: GeoCandidateView) {
@@ -124,7 +136,10 @@ export function EditPlaceSheet({
     if (candidate.city) setCity(candidate.city);
     if (candidate.region) setRegion(candidate.region);
     if (candidate.country) setCountry(candidate.country);
-    setCandidates(null);
+    // Shown rather than hidden, so a match that landed a continent away is
+    // visible and correctable before Save rather than after.
+    setLatitude(candidate.latitude ?? "");
+    setLongitude(candidate.longitude ?? "");
   }
 
   return (
@@ -158,6 +173,7 @@ export function EditPlaceSheet({
                 <Input
                   id="place-name"
                   name="name"
+                  ref={nameRef}
                   defaultValue={place.name}
                   required
                   maxLength={191}
@@ -176,48 +192,11 @@ export function EditPlaceSheet({
               </Field>
 
               {lookupEnabled ? (
-                <div className="grid gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={looking}
-                    onClick={(event) => {
-                      const formEl = event.currentTarget.closest("form");
-                      if (formEl) void lookUp(formEl);
-                    }}
-                  >
-                    <Search className="size-3.5" />
-                    {looking ? "Looking…" : "Look up this address"}
-                  </Button>
-
-                  {candidates?.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">
-                      Nothing matched. Fill it in by hand.
-                    </p>
-                  ) : null}
-
-                  {candidates?.length ? (
-                    <ul className="grid gap-1.5 rounded-lg border border-border p-1.5">
-                      {candidates.map((candidate, index) => (
-                        <li
-                          key={`${candidate.osmType}-${candidate.osmId}-${index}`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => void accept(candidate)}
-                            className="flex w-full min-w-0 items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted"
-                          >
-                            <MapPin className="mt-0.5 size-3.5 shrink-0 text-accent-11" />
-                            <span className="min-w-0 flex-1">
-                              {candidate.label}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
+                <PlaceLookup
+                  buildQuery={buildQuery}
+                  search={runLookup}
+                  onAccept={accept}
+                />
               ) : null}
 
               <div className="grid gap-3 sm:grid-cols-3">
@@ -300,36 +279,47 @@ export function EditPlaceSheet({
               {applied ? (
                 <>
                   <input type="hidden" name="lookupApplied" value="1" />
-                  {applied.osmType ? (
-                    <input
-                      type="hidden"
-                      name="osmType"
-                      value={applied.osmType}
-                    />
-                  ) : null}
-                  {applied.osmId ? (
-                    <input type="hidden" name="osmId" value={applied.osmId} />
-                  ) : null}
-                  {applied.latitude ? (
-                    <input
-                      type="hidden"
-                      name="latitude"
-                      value={applied.latitude}
-                    />
-                  ) : null}
-                  {applied.longitude ? (
-                    <input
-                      type="hidden"
-                      name="longitude"
-                      value={applied.longitude}
-                    />
-                  ) : null}
                   <p className="text-xs text-muted-foreground">
                     Matched to <strong>{applied.label}</strong>. Save to keep
                     it.
                   </p>
                 </>
               ) : null}
+
+              {/*
+                Always submitted, so a place can be put on the map without the
+                optional lookup — which is off in the shipped configuration, and
+                without this every distance in the app would be unreachable for
+                anyone who never turns it on.
+              */}
+              {osmReference?.osmType ? (
+                <input type="hidden" name="osmType" value={osmReference.osmType} />
+              ) : null}
+              {osmReference?.osmType && osmReference.osmId ? (
+                <input type="hidden" name="osmId" value={osmReference.osmId} />
+              ) : null}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Latitude" htmlFor="place-latitude" error={fieldErrors.latitude}>
+                  <Input
+                    id="place-latitude"
+                    name="latitude"
+                    inputMode="decimal"
+                    value={latitude}
+                    onChange={(event) => setLatitude(event.target.value)}
+                    placeholder="53.8008"
+                  />
+                </Field>
+                <Field label="Longitude" htmlFor="place-longitude">
+                  <Input
+                    id="place-longitude"
+                    name="longitude"
+                    inputMode="decimal"
+                    value={longitude}
+                    onChange={(event) => setLongitude(event.target.value)}
+                    placeholder="-1.5491"
+                  />
+                </Field>
+              </div>
 
               {error ? (
                 <p className="text-xs text-destructive">{error}</p>

@@ -494,7 +494,7 @@ The third and last thing in the app that sends anything anywhere.
 `src/server/geo/` is off by default: switched off, nothing in it runs and a
 place's address is simply something you type.
 
-Four rules, the same shape as the assisted reading's:
+Five rules, the same shape as the assisted reading's:
 
 1. **Nothing is sent until you switch it on.** Off is the shipped state.
 2. **Nothing is sent except when you press the button.** Never while you type,
@@ -504,15 +504,45 @@ Four rules, the same shape as the assisted reading's:
    but it is the rule we would want regardless.
 3. **Only the place's name and the address you typed.** Never the notes, never
    who was seen there, never anything about an interaction. A place is the only
-   subject; the people are not part of the query.
-4. **Nothing is written from the answer.** Candidates are shown, you pick one,
-   and the write goes through `applyLocationLookup` like any other action. Every
-   failure — not configured, timed out, an unreadable reply — returns no
-   candidates rather than an error, and the field stays typeable.
+   subject; the people are not part of the query. Looking up a *person's* address
+   sends the address lines, city, region and country and nothing else — never the
+   label, never the notes, never their name.
+4. **A private contact's address is never sent, whatever the toggle says.** The
+   same promise the assisted reading makes about a line naming a private contact,
+   and for a stronger reason: a home address identifies somebody more precisely
+   than a name does. The refusal is in `lookupContactAddress` itself, before any
+   provider is reached, so it holds however the action is called. Their
+   coordinates are typed in by hand instead, and the form offers the fields
+   directly for exactly that.
+5. **Nothing is written from the answer.** Candidates are shown, you pick one,
+   and the write goes through `applyLocationLookup` — or an ordinary address or
+   home-base save — like any other action. Every failure — not configured, timed
+   out, an unreadable reply — returns no candidates rather than an error, and the
+   field stays typeable.
 
 What it stores is an OpenStreetMap object reference (`osmType` + `osmId`) plus
 the address parts and coordinates. Nominatim's own `place_id` is deliberately
 discarded: it is internal to one instance and does not survive a reimport.
+
+### Distances
+
+Nothing is sent to compute one. Every distance in the app is straight-line
+arithmetic over coordinates already stored, done on this machine in
+`src/lib/geo.ts`, so it is always on and works offline. There is no routing
+service and no travel time; if one is ever added it will sit behind its own
+off-by-default toggle exactly as this does.
+
+A private contact's coordinates are as much a disclosure as their name — a point
+on a map that appears only while the lock is open is itself an answer — so
+`originsFor` fetches the contact through `contactPrivacyWhere`. Locked, a private
+person yields no origin and the "places near them" section is simply not there,
+exactly as if they had no address at all.
+
+Address coordinates carry no `isPrivate` marker of their own, so they do not
+change `countPrivateRows` or the offline gate. They are ordinary contact detail:
+on an account that is [cacheable](#offline-caching) at all, a home address and
+its coordinates are written to disk by the service worker alongside the rest of
+that person's card, and locking or signing out wipes it with everything else.
 
 ### Endpoints
 

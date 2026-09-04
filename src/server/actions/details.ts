@@ -6,6 +6,9 @@ import { Prisma, type TaxonomyKind } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
 import { resolveLocation } from "@/server/services/locations";
+// A "use server" module may only export async functions, so the candidate
+// shape lives beside the provider table.
+import type { GeoCandidateView } from "@/server/geo/providers";
 import {
   contactPrivacyWhere,
   debtPrivacyWhere,
@@ -1485,6 +1488,10 @@ const addressSchema = z.object({
   postalCode: z.string().trim().max(32).optional(),
   country: z.string().trim().max(120).optional(),
   notes: z.string().trim().max(5000).optional(),
+  latitude: z.coerce.number().min(-90).max(90).optional(),
+  longitude: z.coerce.number().min(-180).max(180).optional(),
+  osmType: z.enum(["N", "W", "R"]).optional(),
+  osmId: z.string().trim().regex(/^\d+$/).max(20).optional(),
 });
 
 /**
@@ -1680,8 +1687,14 @@ const ADDRESS_PARTS = ["line1", "line2", "city", "region", "postalCode", "countr
  * An address with nothing in it renders as a row that is only a delete button,
  * so at least one line has to say where.
  */
+/**
+ * Plain values only, never Prisma's `{ set: … }` update operations, so the same
+ * object serves both `create` and `update`.
+ */
+type AddressData = Omit<Prisma.AddressUncheckedCreateInput, "id" | "contactId">;
+
 type AddressFields =
-  | { ok: true; data: Record<string, string | null> }
+  | { ok: true; data: AddressData }
   | { ok: false; result: ActionResult<never> };
 
 function addressFields(form: FormData): AddressFields {
@@ -1694,6 +1707,10 @@ function addressFields(form: FormData): AddressFields {
     postalCode: str(form, "postalCode"),
     country: str(form, "country"),
     notes: str(form, "notes"),
+    latitude: str(form, "latitude"),
+    longitude: str(form, "longitude"),
+    osmType: str(form, "osmType"),
+    osmId: str(form, "osmId"),
   });
   if (!parsed.success) return { ok: false, result: invalid(parsed.error) };
 
@@ -1701,10 +1718,37 @@ function addressFields(form: FormData): AddressFields {
     return { ok: false, result: fieldError("line1", "Fill in at least one line of the address.") };
   }
 
-  const data: Record<string, string | null> = {};
+  // A latitude on its own is not a place — it is a point on the prime meridian.
+  // Said out loud rather than silently dropped, because the person typing it
+  // meant to place the address and would otherwise never learn they had not.
+  const { latitude, longitude } = parsed.data;
+  if ((latitude === undefined) !== (longitude === undefined)) {
+    return {
+      ok: false,
+      result: fieldError(
+        latitude === undefined ? "latitude" : "longitude",
+        "Give both a latitude and a longitude, or neither.",
+      ),
+    };
+  }
+
+  const data: AddressData = {};
   for (const key of [...ADDRESS_PARTS, "label", "notes"] as const) {
     data[key] = parsed.data[key] ?? null;
   }
+
+  data.latitude = latitude ?? null;
+  data.longitude = longitude ?? null;
+  // The OSM reference only means anything beside the coordinates it came with.
+  // Kept without them it would outlive the place it described, and `mapLinkFor`
+  // prefers it — so the map would open the venue the address used to be.
+  const placed = latitude !== undefined;
+  data.osmType = placed ? parsed.data.osmType ?? null : null;
+  data.osmId =
+    placed && parsed.data.osmType && parsed.data.osmId
+      ? BigInt(parsed.data.osmId)
+      : null;
+
   return { ok: true, data };
 }
 
@@ -1754,6 +1798,52 @@ export async function deleteAddress(id: string): Promise<ActionResult> {
   await prisma.address.delete({ where: { id } });
   touch(existing.contactId);
   return ok();
+}
+
+/**
+ * Ask the configured endpoint where an address is. Writes nothing.
+ *
+ * Refused outright for a private contact. The rule the AI layer already
+ * follows — a line naming a private contact never leaves the machine whatever
+ * the toggle says — applies here for the same reason: a home address is a
+ * stronger identifier than a name, and "off by default" is not the same promise
+ * as "never". Their coordinates are typed in by hand instead, which is why the
+ * form offers the fields directly.
+ *
+ * For everyone else only the address itself is sent — the lines, the city, the
+ * region, the country. Never the label, never the notes, and never the name of
+ * the person who lives there.
+ */
+export async function lookupContactAddress(
+  form: FormData,
+): Promise<ActionResult<{ candidates: GeoCandidateView[] }>> {
+  const { ownerId } = await owner();
+
+  const contactId = str(form, "contactId");
+  if (!contactId) return fail("Contact not found.");
+
+  // Owner-scoped and lock-checked in one query, exactly as every other write
+  // here is: an id remembered from an unlocked session is not a way back in.
+  const contact = await prisma.contact.findFirst({
+    where: { id: contactId, ownerId, ...contactPrivacyWhere(await privacyScope()) },
+    select: { isPrivate: true },
+  });
+  if (!contact) return fail("Contact not found.");
+  if (contact.isPrivate) {
+    return fail(
+      "This person is private, so their address is never sent anywhere. Fill in the coordinates by hand to place it.",
+    );
+  }
+
+  const query = str(form, "query");
+  if (!query) return fail("Fill in the address first, then look it up.");
+
+  const { searchPlaces, LOOKUP_MESSAGES } = await import("@/server/geo/lookup");
+  const outcome = await searchPlaces(query);
+  if (!outcome.ok) return fail(LOOKUP_MESSAGES[outcome.reason]);
+
+  const { toCandidateView } = await import("@/server/geo/providers");
+  return ok({ candidates: outcome.candidates.map(toCandidateView) });
 }
 
 // --- helpers ---------------------------------------------------------------

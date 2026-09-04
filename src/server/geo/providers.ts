@@ -83,6 +83,30 @@ export interface GeoCandidate {
 }
 
 /**
+ * The candidate as a client component may receive it.
+ *
+ * Identical to `GeoCandidate` today, and separate anyway: this is the shape
+ * that crosses to the browser, so it is the one that must never grow a `BigInt`
+ * or a `Decimal` — neither survives serialisation into a client component.
+ * Coordinates and the OSM id stay strings the whole way across.
+ */
+export type GeoCandidateView = GeoCandidate;
+
+export function toCandidateView(candidate: GeoCandidate): GeoCandidateView {
+  return {
+    label: candidate.label,
+    address: candidate.address,
+    city: candidate.city,
+    region: candidate.region,
+    country: candidate.country,
+    latitude: candidate.latitude,
+    longitude: candidate.longitude,
+    osmType: candidate.osmType,
+    osmId: candidate.osmId,
+  };
+}
+
+/**
  * Identify this app to the endpoint.
  *
  * Nominatim rejects the stock User-Agent an HTTP library sends, and a 403 with

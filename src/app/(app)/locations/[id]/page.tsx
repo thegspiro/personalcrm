@@ -5,6 +5,8 @@ import { ExternalLink, MapPin, Users } from "lucide-react";
 import { getUserContext } from "@/server/user/context";
 import { getLocation } from "@/server/queries/locations";
 import { mapLinkFor } from "@/lib/locations";
+import { distanceBetween, formatDistance, pointOf } from "@/lib/geo";
+import { originsFor } from "@/server/queries/origins";
 import { getGeoStatus } from "@/server/geo/config";
 import { EditPlaceSheet } from "@/components/locations/edit-place";
 
@@ -39,6 +41,12 @@ export default async function LocationPage({
   }
   const mapHref = mapLinkFor(location);
   const { enabled: lookupEnabled } = await getGeoStatus();
+  // Null unless both this place and a home base have coordinates, so a distance
+  // is either right or absent — never a zero standing in for "don't know".
+  const origins = await originsFor(user.id);
+  const fromHome = formatDistance(
+    distanceBetween(origins.home, pointOf(location), origins.unit),
+  );
   const where = [location.city, location.region, location.country]
     .filter(Boolean)
     .join(", ");
@@ -65,8 +73,12 @@ export default async function LocationPage({
                 {location.address}
               </p>
             ) : null}
-            {where ? (
-              <p className="text-sm text-muted-foreground">{where}</p>
+            {where || fromHome ? (
+              <p className="text-sm text-muted-foreground">
+                {[where, fromHome ? `${fromHome} from home` : null]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
             ) : null}
             {location.isArchived ? (
               <p className="mt-1 text-xs text-muted-foreground">
@@ -100,6 +112,14 @@ export default async function LocationPage({
                 city: location.city,
                 region: location.region,
                 country: location.country,
+                // Serialised here: `Decimal` and `BigInt` do not survive the
+                // crossing into a client component.
+                latitude:
+                  location.latitude === null ? null : String(location.latitude),
+                longitude:
+                  location.longitude === null ? null : String(location.longitude),
+                osmType: location.osmType,
+                osmId: location.osmId === null ? null : String(location.osmId),
                 phone: location.phone,
                 url: location.url,
                 notes: location.notes,

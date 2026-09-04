@@ -43,6 +43,7 @@ const {
   createContactMethod,
   deleteAddress,
   deleteContactMethod,
+  lookupContactAddress,
   moveContactMethod,
   setPrimaryContactMethod,
   updateAddress,
@@ -458,6 +459,120 @@ describe.skipIf(!hasTestDatabase)("contact methods and addresses", () => {
     state.unlocked = false;
     expect((await updateAddress(form({ id: hiddenId, city: "Changed" }))).ok).toBe(false);
     expect((await deleteAddress(hiddenId)).ok).toBe(false);
+  });
+
+  it("stores a whole coordinate pair and refuses half of one", async () => {
+    const placed = await createAddress(
+      form({
+        contactId: danaId,
+        line1: "14 Ashfield Road",
+        city: "Leeds",
+        latitude: "53.8008",
+        longitude: "-1.5491",
+        osmType: "W",
+        osmId: "123456789012",
+      }),
+    );
+    expect(placed.ok).toBe(true);
+
+    const stored = await prisma.address.findFirstOrThrow({ where: { contactId: danaId } });
+    expect(Number(stored.latitude)).toBeCloseTo(53.8008, 4);
+    expect(Number(stored.longitude)).toBeCloseTo(-1.5491, 4);
+    expect(stored.osmType).toBe("W");
+    // A BIGINT because OSM ids are past 2^32 — a plain Int would have wrapped.
+    expect(stored.osmId).toBe(123456789012n);
+
+    // Half a pair places somewhere confidently wrong, so it is refused out loud
+    // rather than dropped: whoever typed it meant to place the address.
+    const half = await createAddress(
+      form({ contactId: danaId, line1: "Somewhere", latitude: "53.8008" }),
+    );
+    expect(half.ok).toBe(false);
+    expect((half as { fieldErrors?: Record<string, string> }).fieldErrors).toHaveProperty(
+      "longitude",
+    );
+    expect(await prisma.address.count({ where: { contactId: danaId } })).toBe(1);
+  });
+
+  it("drops an OSM reference that no longer has coordinates beside it", async () => {
+    // `mapLinkFor` prefers the OSM object over everything else, so a reference
+    // kept after the coordinates went would open the venue the address used to
+    // be — worse than having neither.
+    const created = await createAddress(
+      form({
+        contactId: danaId,
+        city: "Leeds",
+        latitude: "53.8008",
+        longitude: "-1.5491",
+        osmType: "W",
+        osmId: "123456789012",
+      }),
+    );
+    const id = (created as { data: { id: string } }).data.id;
+
+    await updateAddress(form({ id, city: "Leeds", osmType: "W", osmId: "123456789012" }));
+
+    const stored = await prisma.address.findFirstOrThrow({ where: { id } });
+    expect(stored.latitude).toBeNull();
+    expect(stored.osmType).toBeNull();
+    expect(stored.osmId).toBeNull();
+  });
+
+  it("bounds and validates the coordinate columns", async () => {
+    for (const bad of [
+      { latitude: "91", longitude: "0.5" },
+      { latitude: "10", longitude: "181" },
+      { latitude: "not-a-number", longitude: "1" },
+    ]) {
+      expect((await createAddress(form({ contactId: danaId, city: "X", ...bad }))).ok).toBe(false);
+    }
+    // An OSM type outside N/W/R is somebody else's id space, not ours.
+    expect(
+      (
+        await createAddress(
+          form({
+            contactId: danaId,
+            city: "X",
+            latitude: "1",
+            longitude: "1",
+            osmType: "Q",
+            osmId: "1",
+          }),
+        )
+      ).ok,
+    ).toBe(false);
+    expect(await prisma.address.count()).toBe(0);
+  });
+
+  it("never sends a private contact's address anywhere, whatever the toggle says", async () => {
+    // The same promise the AI layer makes. A home address identifies somebody
+    // more precisely than their name does, so "off by default" is not enough:
+    // the refusal is in the action, before any provider is reached.
+    state.enabled = true;
+    state.unlocked = true;
+
+    const refused = await lookupContactAddress(
+      form({ contactId: privateId, query: "14 Ashfield Road, Leeds" }),
+    );
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toContain("private");
+
+    // And it is not a way to ask about somebody else's contact either.
+    const theirContact = await prisma.contact.create({
+      data: { ownerId: strangerId, firstName: "Someone" },
+    });
+    const foreign = await lookupContactAddress(
+      form({ contactId: theirContact.id, query: "anywhere" }),
+    );
+    expect(foreign).toMatchObject({ ok: false, error: "Contact not found." });
+
+    // A visible contact gets as far as the gate, which is off by default and
+    // therefore says so rather than reaching the network.
+    const allowed = await lookupContactAddress(
+      form({ contactId: danaId, query: "14 Ashfield Road, Leeds" }),
+    );
+    expect(allowed).toMatchObject({ ok: false });
+    expect(allowed.error).toContain("switched off");
   });
 
   it("takes both with the contact, since neither cascades on its own", async () => {

@@ -2,6 +2,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import { privacyScope } from "@/server/privacy/filter";
+import { pointOf, withDistance, type Point, type Unit } from "@/lib/geo";
 
 /**
  * Reads for saved plans — the things you mean to do with people.
@@ -30,6 +31,14 @@ export async function listPlans(
     includeDone?: boolean;
     /** Row cap. Callers that want to detect truncation ask for one more. */
     take?: number;
+    /**
+     * Measure each plan's place from here. Without it every plan comes back
+     * with `distance: null` and the lists read exactly as they did before.
+     */
+    origin?: Point | null;
+    unit?: Unit;
+    /** Nearest first, with the unplaced ones behind in their existing order. */
+    sortByDistance?: boolean;
   } = {},
 ) {
   const scope = await privacyScope();
@@ -51,7 +60,7 @@ export async function listPlans(
     clauses.push({ OR: [{ contactId: null }, { contact: { isPrivate: false } }] });
   }
 
-  return prisma.plan.findMany({
+  const rows = await prisma.plan.findMany({
     where: {
       ownerId,
       ...(clauses.length > 0 ? { AND: clauses } : {}),
@@ -60,8 +69,19 @@ export async function listPlans(
     include: {
       category: true,
       contact: { select: { id: true, firstName: true, lastName: true } },
+      // Where the plan actually is. A plan's own `location` is the words that
+      // were typed; the place is the thing that has coordinates.
+      place: { select: { id: true, latitude: true, longitude: true } },
     },
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
     take: options.take ?? 200,
+  });
+
+  // Annotated in process — see the note on `listLocationsNear` for why this is
+  // not `ST_Distance_Sphere`. Status still leads the ordering when sorting by
+  // distance is not asked for, because OPEN before ARCHIVED is what a list of
+  // plans wants first.
+  return withDistance(rows, options.origin, options.unit ?? "mi", (plan) => pointOf(plan.place), {
+    sort: options.sortByDistance,
   });
 }

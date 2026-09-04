@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { MapPin } from "lucide-react";
 import { cn, displayName } from "@/lib/utils";
 import { Icon } from "@/components/nav/icon";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +19,7 @@ import {
   SectionRow,
 } from "@/components/contacts/section-card";
 import { formatPartialDate } from "@/lib/date-precision";
+import { formatDistance, type Distance } from "@/lib/geo";
 import { formatMoney, termColorClasses } from "@/lib/format";
 import { plainDateKey, type PlainDate } from "@/lib/dates";
 import {
@@ -64,6 +66,13 @@ export interface PlanItem {
   categoryId: string | null;
   category: { label: string; icon: string | null; color: string | null } | null;
   contact: { id: string; firstName: string; lastName: string | null } | null;
+  /**
+   * How far the plan's place is from wherever the page is measuring. Null
+   * whenever either end has no coordinates, which is every plan until an
+   * address is placed — so the chip simply is not there rather than reading
+   * zero.
+   */
+  distance?: Distance | null;
 }
 
 export interface PlanPerson {
@@ -368,6 +377,12 @@ export function PlansSection({
 
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                   {plan.location ? <span>{plan.location}</span> : null}
+                  {plan.distance ? (
+                    <span className="inline-flex shrink-0 items-center gap-0.5">
+                      <MapPin className="size-3" />
+                      {formatDistance(plan.distance)}
+                    </span>
+                  ) : null}
                   {plan.address ? (
                     // Free text up to 500 characters, so a long unbroken one has to be
                     // allowed to break: layout.spec.ts asserts no route scrolls sideways.

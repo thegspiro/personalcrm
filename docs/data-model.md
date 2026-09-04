@@ -156,6 +156,15 @@ One row per user, PK is `userId`.
 | `hideDating` | `bool` | `false` | Removes the dating module from nav and dashboard entirely |
 | `blurPrivateNotes`      | `bool`        | `true`             | Shoulder-surfing layer _after_ the lock is open                    |
 | `onboardingCompletedAt` | `datetime?` | — | When the welcome flow was finished or skipped |
+| `homeAddress` / `homeCity` / `homeRegion` / `homeCountry` | `varchar(500)?` / `varchar(120)?` ×3 | — | Where you are, for the lookup to search and for the row to be recognisable |
+| `homeLatitude` / `homeLongitude` | `decimal(10,7)?` | — | The only load-bearing half. A pair or nothing |
+| `distanceUnit` | `varchar(8)` | `mi` | `mi` or `km`. Matches the other shipped defaults rather than guessing |
+
+Your home base lives here rather than in `Location` deliberately: a home is the
+point distances are counted from, not a venue with a history, and putting it in
+the places list would file your own house among the restaurants. Everything is
+optional — an account that sets none of it never sees a distance anywhere, which
+is how every installation reads the day it upgrades.
 
 ### `AppSetting`
 
@@ -296,6 +305,22 @@ kind would need an enum migration, defaults, a usage count and an admin group
 to replace a field whose realistic values are "Home" and "Work". The form
 offers a `<datalist>` of suggestions instead.
 
+`latitude`/`longitude` (`DECIMAL(10,7)`) and `osmType`/`osmId` place the
+address, and are the same columns with the same meaning as on
+[`Location`](#location) — one point reader, `pointOf` in `src/lib/geo.ts`,
+serves every table that holds a pair. Stored as a whole pair or not at all;
+`addressFields` refuses half of one out loud rather than dropping it, because
+whoever typed a latitude meant to place the address. The OSM reference is kept
+only while the coordinates it arrived with are still there: `mapLinkFor` prefers
+it, so a reference outliving its coordinates would open the venue the address
+used to be.
+
+An address is placed either by the optional [address lookup](#location) or by
+hand. By hand is the **only** route for a private contact — see
+[privacy](privacy.md). A person's home deliberately does not become a
+`Location`: places are a reusable list of venues with histories, and somebody's
+house is not one.
+
 Same privacy shape as `ContactMethod` — no `ownerId`, no `isPrivate`, scoped
 through the contact.
 
@@ -419,6 +444,23 @@ it must not do — the schema marks that relation required, so a row the
 constraint would have refused makes Prisma throw rather than return null.
 The legacy JSON `Location.aliases` column is retained only as a preservation
 area for ambiguous imported claims; new reads and writes use the indexed table.
+
+`resolveLocation` carries an accepted lookup's `city`, `region`, `country`,
+coordinates and OSM reference onto the place, so one created as a side effect of
+saving a plan or logging a date is as complete as one edited by hand. Text
+fields overwrite when given and are never cleared by a blank; **coordinates are
+filled in but never overwritten**, because typing a venue's name into an
+interaction says *which* place is meant, not where it is — a stray save must not
+move a place that was geocoded deliberately.
+
+**Distances are computed in process, not in SQL.** MariaDB has
+`ST_Distance_Sphere`, but reaching it means raw SQL, which would lose Prisma's
+typing and — the part that decides it — the privacy where-fragments this app
+requires be applied *in the query* rather than after it. One account's places and
+plans number in the tens, already capped by `src/lib/list-cap.ts`, so
+`withDistance` in `src/lib/geo.ts` sorts the fetched rows instead. Rows with no
+coordinates keep their incoming order behind the ones that have them, rather than
+sorting to the top as zero or vanishing from the list.
 
 ### `Fact`
 
@@ -889,6 +931,7 @@ the `init-migrate` s6 oneshot).
 | `20260903140000_same_owner_join_keys` | Gives `ContactTag` an `ownerId` and points both of its keys, and `LocationAlias`'s, at `(ownerId, id)` so a join across two accounts cannot be stored. **Hand-edited**: backfills the new column, then records and removes the rows that cannot satisfy the new key *before* adding it — adding it first would abort the upgrade on exactly the installation that needs the repair. The counts go to `AppSetting` for `runStartupTasks` to say once in the boot log |
 | `20260904120000_same_owner_contact_keys` | Extends the same treatment to every remaining reference to a `Contact` — seventeen owned relations, plus `InteractionParticipant`, `InteractionMention`, `LifeEventParticipant` and `HouseholdMember`, which gain an `ownerId` backfilled from their parent. **Hand-edited**: repairs before it constrains, deleting a row whose link is required and clearing only the link where it is optional, sweeping the `CustomFieldValue` rows of anything it deletes, and detaching cross-owner `Interaction.place` / `Plan.place`, which keep a single-column key because `SET NULL` needs every column nullable. Ships a `down.sql` |
 | `20260904150000_add_plan_times` | Additive nullable `Plan.plannedStartMinute` and `plannedDurationMinutes`, so a pencilled-in plan can carry a time of day and a rough length. Purely additive — no existing column is re-expressed, and a plan with a day but no time reads exactly as it did before |
+| `20260905120000_add_address_coordinates_and_home_base` | Adds `latitude`, `longitude`, `osmType` and `osmId` to `Address`, and the home base plus `distanceUnit` to `UserPreference`. Entirely additive — every column nullable or defaulted, nothing removed or renamed, so there is nothing to backfill and nothing that can be lost |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).

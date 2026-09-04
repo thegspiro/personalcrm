@@ -111,6 +111,20 @@ model UserPreference {
   digestHour         Int     @default(8)
   digestEnabled      Boolean @default(true)
 
+  /// Where you measure from. The same practical columns as `Location`, minus
+  /// the identity ones — your home is somewhere distances are counted from,
+  /// not a venue you log visits to, so it must never appear in the places list.
+  /// Coordinates are a pair or nothing, like everywhere else that holds them.
+  homeAddress        String?  @db.VarChar(500)
+  homeCity           String?  @db.VarChar(120)
+  homeRegion         String?  @db.VarChar(120)
+  homeCountry        String?  @db.VarChar(120)
+  homeLatitude       Decimal? @db.Decimal(10, 7)
+  homeLongitude      Decimal? @db.Decimal(10, 7)
+  /// How distances read: `mi` or `km`. Defaults to `mi` to match the other
+  /// shipped defaults (`America/New_York`, `USD`) rather than to a guess.
+  distanceUnit       String   @default("mi") @db.VarChar(8)
+
   /// Require the PIN before showing the dating module or anything private.
   privacyLockEnabled Boolean @default(false)
   /// Hide the dating module from navigation and the dashboard entirely.
@@ -314,6 +328,18 @@ model Address {
   postalCode String? @db.VarChar(32)
   country    String? @db.VarChar(120)
   notes      String? @db.Text
+
+  /// Where this actually is. Written by the optional address lookup, or typed
+  /// by hand — which is the only route for a private contact, whose address is
+  /// never sent anywhere. Stored as a pair or not at all: half a pair places
+  /// somewhere confidently wrong, exactly as on `Location`.
+  latitude   Decimal? @db.Decimal(10, 7)
+  longitude  Decimal? @db.Decimal(10, 7)
+  /// The OpenStreetMap object a lookup matched, when one did. Same reasoning as
+  /// `Location.osmType`/`osmId`: an OSM node/way/relation reference survives a
+  /// reimport where Nominatim's own `place_id` does not.
+  osmType    String?  @db.VarChar(1)
+  osmId      BigInt?
 
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 

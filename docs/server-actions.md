@@ -283,6 +283,25 @@ through.
 Every place a lookup can be reached from is behind an explicit button. See
 [privacy.md](privacy.md) for what is sent.
 
+The gate itself — the toggle check, the dynamic `import()` of the optional
+directory, and turning every failure into a sentence rather than an error page —
+lives once in `src/server/geo/lookup.ts` (`searchPlaces`). All three callers use
+it, so they cannot drift into three different failure stories.
+
+`lookupContactAddress` (in `actions/details.ts`) is the same lookup for a
+person's home. It is **refused outright for a private contact** — the promise the
+assisted-reading layer already makes, applied here because a home address
+identifies somebody more precisely than a name does. Their coordinates are typed
+by hand instead, which is why the form offers the fields directly. For everyone
+else only the address is sent: the lines, the city, the region, the country.
+Never the label, never the notes, never the person's name.
+
+`lookupHomeBase` and `updateHomeBase` (in `actions/settings.ts`) do the same for
+your own address. `updateHomeBase` follows `updateDefaults`' presence-not-value
+rule for `distanceUnit`, so a panel that omits the field never resets it, and it
+refuses half a coordinate pair out loud rather than storing a prime-meridian
+guess.
+
 ### Tags — `actions/tags.ts`
 
 | Action | Notes |

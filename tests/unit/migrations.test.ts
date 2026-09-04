@@ -89,6 +89,47 @@ describe("MariaDB migrations", () => {
     }
   });
 
+  it("adds coordinates and a home base without touching anything already there", () => {
+    const sql = readFileSync(
+      join(
+        migrationsRoot,
+        "20260905120000_add_address_coordinates_and_home_base",
+        "migration.sql",
+      ),
+      "utf8",
+    );
+
+    // Purely additive by construction. An installation upgrading through this
+    // keeps every address it has and reads exactly as it did before, so there
+    // is nothing to backfill and nothing that can be lost.
+    expect(sql).not.toMatch(/DROP COLUMN/i);
+    expect(sql).not.toMatch(/DROP TABLE/i);
+    expect(sql).not.toMatch(/\bRENAME\b/i);
+
+    for (const column of ["latitude", "longitude", "osmType", "osmId"]) {
+      expect(sql, `Address gains ${column}`).toContain(`ADD COLUMN \`${column}\``);
+    }
+    for (const column of [
+      "homeAddress",
+      "homeCity",
+      "homeRegion",
+      "homeCountry",
+      "homeLatitude",
+      "homeLongitude",
+      "distanceUnit",
+    ]) {
+      expect(sql, `UserPreference gains ${column}`).toContain(`ADD COLUMN \`${column}\``);
+    }
+
+    // Coordinates match `Location` exactly, so one reader serves every table
+    // that holds a point; `osmId` is a BIGINT because OSM ids are past 2^32.
+    expect(sql).toContain("`latitude` DECIMAL(10,7) NULL");
+    expect(sql).toContain("`osmId` BIGINT NULL");
+    // The one non-null addition needs a default, or the ALTER fails on any row
+    // that already exists.
+    expect(sql).toContain("`distanceUnit` VARCHAR(8) NOT NULL DEFAULT 'mi'");
+  });
+
   it("backfills only unambiguous aliases and preserves the legacy JSON", () => {
     const sql = readFileSync(
       join(migrationsRoot, "20260903000000_add_location_aliases", "migration.sql"),
