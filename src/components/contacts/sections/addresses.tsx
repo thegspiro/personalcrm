@@ -72,6 +72,11 @@ function AddressFields({
   const line1Ref = React.useRef<HTMLInputElement>(null);
   const line2Ref = React.useRef<HTMLInputElement>(null);
 
+  // A private contact's address is never sent anywhere, whatever the toggle
+  // says. The action refuses it too — this only keeps the button from offering
+  // something that would be turned down.
+  const canLookUp = lookupEnabled && !isPrivate;
+
   // Only the address itself — the lines, the city, the region, the country.
   // Never the label, never the notes, and never the name of the person who
   // lives there.
@@ -202,7 +207,7 @@ function AddressFields({
         precisely than a name does. The coordinate fields below are the way in
         for them, and the way to correct a bad match for anyone else.
       */}
-      {lookupEnabled && !isPrivate ? (
+      {canLookUp ? (
         <PlaceLookup buildQuery={buildQuery} search={runLookup} onAccept={accept} />
       ) : null}
 
@@ -218,7 +223,14 @@ function AddressFields({
         </p>
       ) : null}
 
-      <details className="text-xs" open={Boolean(latitude || longitude)}>
+      {/*
+        Open when there is no lookup button above it, because then typing the
+        pair is the only way to place this address at all — which is always the
+        case for a private contact, whose address is never sent anywhere. Left
+        folded away when the button is there, since that is the easier route
+        and most people will take it.
+      */}
+      <details className="text-xs" open={Boolean(latitude || longitude) || !canLookUp}>
         <summary className="cursor-pointer text-muted-foreground">
           Coordinates (optional)
         </summary>
