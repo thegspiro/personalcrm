@@ -22,7 +22,15 @@ log() { printf '[backup] %s\n' "$*"; }
 fail() { printf '[backup] ERROR: %s\n' "$*" >&2; exit 1; }
 cleanup() {
     [[ -n "${temporary}" ]] && rm -f -- "${temporary}"
-    [[ -n "${credentials}" ]] && rm -f -- "${credentials}"
+    # The option file and everything unpacked beside it: the client certificate
+    # and its key, and the password used to get them out of the bundle. All of
+    # it is key material, and none of it outlives the run.
+    [[ -n "${credentials}" ]] && rm -f -- \
+        "${credentials}" \
+        "${credentials}.identity-pass" \
+        "${credentials}.identity-path" \
+        "${credentials}.cert.pem" \
+        "${credentials}.key.pem"
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -76,6 +84,7 @@ chmod 700 "${CREDENTIAL_DIR}" 2>/dev/null || true
 # property of the runtime rather than something this script can insist on, and
 # a sweep costs nothing. Anything left by a run that was killed goes now.
 find "${CREDENTIAL_DIR}" -maxdepth 1 -type f -name '.mariadb-client.*' -delete 2>/dev/null || true
+find "${CREDENTIAL_DIR}" -maxdepth 1 -type f -name '.mariadb-client.*.pem' -delete 2>/dev/null || true
 credentials="$(mktemp "${CREDENTIAL_DIR}/.mariadb-client.XXXXXX")"
 # Parse rather than echoing DATABASE_URL: the credential never appears in argv
 # or logs. The option file exists only for this run and is mode 0600.
@@ -107,20 +116,37 @@ const params = url.searchParams;
 const poolOnly = new Set([
   "connection_limit", "pool_timeout", "connect_timeout", "socket_timeout",
 ]);
-const translated = new Set(["socket", "sslcert", "sslaccept"]);
+const translated = new Set([
+  "socket", "sslcert", "sslaccept", "sslidentity", "sslpassword",
+]);
 const untranslatable = [...params.keys()].filter(
   (key) => !poolOnly.has(key) && !translated.has(key),
 );
-// Refused rather than ignored. Silently dropping, say, a client identity would
-// mean the dump connects on weaker terms than the application — the failure
-// this whole file exists to avoid. Only the names are printed; no value from
-// the URL reaches the log.
+// Refused rather than ignored. Silently dropping a connection option would mean
+// the dump connects on weaker terms than the application — the failure this
+// whole file exists to avoid. Only the names are printed; no value from the URL
+// reaches the log.
 if (untranslatable.length > 0) {
   throw new Error(
     `DATABASE_URL carries connection options the backup cannot reproduce: ${untranslatable.join(", ")}. ` +
     "It will not connect on weaker terms than the application, so it stops here. " +
     "See docs/backup.md for what is supported.",
   );
+}
+
+// A client identity, which Prisma takes as a PKCS#12 bundle and the MariaDB
+// client will not read: it wants the certificate and the key as separate PEM
+// files. Refusing the whole backup over that meant an installation using mutual
+// TLS simply had no backups, which is a poor answer to "we cannot reproduce
+// this exactly". The bundle is unpacked instead, by the shell below, into files
+// this script owns and deletes.
+//
+// The password goes to a file rather than onto openssl's command line, for the
+// reason the database password is not on `mariadb-dump`'s: argv is readable.
+const identityPath = params.get("sslidentity");
+if (identityPath) {
+  fs.writeFileSync(`${target}.identity-pass`, params.get("sslpassword") ?? "", { mode: 0o600 });
+  fs.writeFileSync(`${target}.identity-path`, identityPath, { mode: 0o600 });
 }
 
 const socketPath = params.get("socket");
@@ -137,6 +163,10 @@ const where = socketPath
 const tls = [];
 const ca = params.get("sslcert");
 if (ca) tls.push(`ssl-ca="${esc(ca)}"`);
+if (identityPath) {
+  tls.push(`ssl-cert="${esc(`${target}.cert.pem`)}"`);
+  tls.push(`ssl-key="${esc(`${target}.key.pem`)}"`);
+}
 const accept = params.get("sslaccept");
 if (accept === "accept_invalid_certs") tls.push("ssl-verify-server-cert=0");
 else if (accept === "strict" || (ca && !accept)) tls.push("ssl-verify-server-cert=1");
@@ -161,6 +191,26 @@ process.stdout.write(db);
 NODE
 )"
 [[ -n "${database}" ]] || fail "DATABASE_URL must name a database"
+
+# Unpack the client identity, if the URL named one. `openssl` reads the
+# passphrase from a file rather than from argv, which is world-readable in
+# /proc — the same reason the database password is in an option file and not on
+# `mariadb-dump`'s command line. `-nodes` leaves the key unencrypted because
+# there is nothing to type a passphrase at; it lives 0600 in the same volatile
+# directory as the option file and goes with it.
+if [[ -f "${credentials}.identity-path" ]]; then
+    identity="$(cat "${credentials}.identity-path")"
+    [[ -r "${identity}" ]] || fail "DATABASE_URL sslidentity=\"${identity}\" cannot be read"
+    if ! openssl pkcs12 -in "${identity}" -passin "file:${credentials}.identity-pass" \
+            -clcerts -nokeys -out "${credentials}.cert.pem" 2>/dev/null \
+        || ! openssl pkcs12 -in "${identity}" -passin "file:${credentials}.identity-pass" \
+            -nocerts -nodes -out "${credentials}.key.pem" 2>/dev/null; then
+        fail "could not read the client identity at ${identity}; check sslpassword"
+    fi
+    chmod 600 "${credentials}.cert.pem" "${credentials}.key.pem"
+    rm -f -- "${credentials}.identity-pass" "${credentials}.identity-path"
+    log "connecting with the client identity from ${identity}"
+fi
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 final="${BACKUP_DIR}/personalcrm-${timestamp}.sql.gz"
 temporary="${final}.partial.$$"

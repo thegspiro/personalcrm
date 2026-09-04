@@ -94,6 +94,8 @@ export default async function DatingPage() {
           notes: plan.notes,
           checklist: plan.checklist,
           plannedFor: plan.plannedFor ? plainDateFromDb(plan.plannedFor) : null,
+          plannedStartMinute: plan.plannedStartMinute,
+          plannedDurationMinutes: plan.plannedDurationMinutes,
           categoryId: plan.categoryId,
           category: plan.category
             ? {

@@ -1,5 +1,3 @@
-import { formatDailyDigest } from "./digest-formatter";
-
 /**
  * What each kind of notification channel needs to be configured.
  *
@@ -225,16 +223,6 @@ export function validateChannelConfig(
  * a button there could push a private person's name off the machine. There is
  * nothing here to leak.
  */
-export const TEST_NOTIFICATION = formatDailyDigest({
-  date: { year: 2030, month: 6, day: 15 },
-  heading: "Test notification — sample data",
-  note: "This is fictional sample data. No CRM records were included.",
-  sections: [
-    { heading: "Overdue cadences", entries: ["Alex Example — overdue since 2030-06-12"] },
-    { heading: "Due today", entries: ["Send Jordan Example a fictional thank-you note"] },
-    { heading: "Tomorrow", entries: ["Casey Example — Sample anniversary"] },
-    { heading: "In 2 days", entries: ["Plan a pretend coffee with Morgan Example"] },
-  ],
-});
-export const TEST_NOTIFICATION_SUBJECT = TEST_NOTIFICATION.subject;
-export const TEST_NOTIFICATION_BODY = TEST_NOTIFICATION.body;
+export const TEST_NOTIFICATION_SUBJECT = "Personal CRM test";
+export const TEST_NOTIFICATION_BODY =
+  "If you're reading this, this channel works. Nothing else was sent.";

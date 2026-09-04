@@ -152,6 +152,7 @@ export async function addHouseholdMember(form: FormData): Promise<ActionResult> 
   await prisma.householdMember.upsert({
     where: { householdId_contactId: { householdId, contactId } },
     create: {
+      ownerId,
       householdId,
       contactId,
       role: role ?? null,

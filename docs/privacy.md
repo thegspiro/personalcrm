@@ -356,7 +356,15 @@ discovered:
 | Task | The task's title | `Book the dentist` |
 | | The contact's name, if the task is for someone | `Dana Whitfield` |
 | | The due date | `2026-09-02` |
-| Daily digest | How many cadences and tasks are due — counts only, no names | `2 cadence reminders and 1 due task` |
+| Daily digest | Important-date labels and eligible contact names | `Anniversary — Dana Whitfield` |
+| | Keep-in-touch contact names | `Dana Whitfield` |
+| | Task titles and the contact name, when present | `Book the dentist — Dana Whitfield` |
+| | Local due or occurrence dates and whether each item is overdue, due today, or upcoming | `upcoming: 2026-09-14` |
+
+Digest entries are bounded and ordered deterministically. If more items are due
+than fit, the message reports only how many remain; it does not expose their
+names or titles. An empty digest says that nothing needs attention instead of
+including empty headings.
 
 That goes to whatever host the channel names, on the hour, with no preview and
 no confirmation step. A retry after a failure re-reads the record and sends
@@ -411,13 +419,32 @@ Nothing is lost by saying nothing there. The check before the send is the one
 that matters: the name is resolved, every answer inspected and the connection
 pinned to it, so a destination a member may not reach is never sent to. It
 merely takes until a delivery to say so, on the row — which is already where an
-unresolvable name reported. The **Send sample digest** button sends a deterministic, clearly fictional
-digest and never reads contacts, tasks, important dates, or current digest
-counts. It answers a member with one sentence whichever way it failed, for the
-same reason; an administrator, who is allowed a non-public destination anyway,
-is told what actually happened. Success means the configured transport accepted
-the payload. It cannot guarantee that a mail provider, notification service,
-operating system, or recipient device will ultimately display it.
+unresolvable name reported.
+
+The **Send sample digest** button draws the same line, but around the part that
+actually leaks rather than around the whole button. Everything up to the
+destination check is answered with one sentence whichever way it failed, so a
+refusal and a name nobody has registered still cannot be told apart. Once the
+address has been shown to be public the reason is given in full — a member is
+refused any other kind of address, so repeating "connection refused" or
+"HTTP 401" says nothing about the network the member did not supply, and that
+is where the detail was worth having. An administrator, who is allowed a
+non-public destination anyway, is told what happened either way.
+
+What it sends is a fixed sample: invented people, invented dates, rendered by
+the same `digestMessage()` the scheduler uses, from `src/lib/sample-digest.ts`.
+It reads no contact, task, important date or digest count, so it is unchanged
+by the privacy lock — there is nothing in it that the lock would hide. Sending
+the real digest instead would have been the more faithful preview and is
+exactly what must not happen here: this button is reachable while the lock is
+closed, which is the one state where a digest would otherwise carry a private
+person's name to a channel. Its subject says "sample" because a push
+notification is often read as one collapsed line, and a body-only disclaimer is
+the half nobody sees.
+
+Success means the configured transport accepted the payload. It cannot
+guarantee that a mail provider, notification service, operating system or
+recipient device will ultimately display it.
 
 ### Private contacts and the send
 

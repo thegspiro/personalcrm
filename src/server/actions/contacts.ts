@@ -21,7 +21,7 @@ import {
   privacyScope,
   type PrivacyScope,
 } from "@/server/privacy/filter";
-import { tagVisibleWhere } from "@/server/queries/tags";
+import { lockedTagsUsable } from "@/server/queries/tags";
 import {
   type ActionResult,
   bool,
@@ -36,35 +36,32 @@ import {
 } from "./helpers";
 
 /**
- * Replace a contact's tags with the submitted set.
+ * Replace a contact's tags with the set `lockSubmittedTags` has already
+ * approved and is holding.
  *
- * Scoped by what the lock currently shows, not by ownership alone. A contact
- * form loaded while unlocked keeps the ids of every tag it listed, and closing
- * the lock in another tab does not empty that form: submitting it then carried
- * a tag that exists only on private people onto a visible contact — writing a
- * private-derived association from a locked session, and publishing the hidden
- * tag's name, since one visible use is what puts it back in `listTags`.
- *
- * The scope is read by the caller rather than here, so the cookie read happens
- * before the transaction opens rather than inside it.
+ * The two halves used to be here together, and the ordering rule separated
+ * them: whether the lock is currently showing a tag is a locking read, and
+ * every locking read that can wait has to happen before the transaction takes
+ * its read view. So the question is asked at the top of the transaction and
+ * this only writes the answer. What it is guarding against is unchanged — a
+ * contact form loaded while unlocked keeps the ids of every tag it listed, and
+ * closing the lock in another tab does not empty that form, so submitting it
+ * would otherwise carry a tag that exists only on private people onto a
+ * visible contact, publishing the hidden tag's name through its new visible
+ * use.
  */
 async function replaceTags(
   tx: Prisma.TransactionClient,
   ownerId: string,
-  scope: PrivacyScope,
   contactId: string,
   tagIds: string[],
 ) {
-  const usable = tagIds.length
-    ? await tx.tag.count({
-        where: { id: { in: tagIds }, ...tagVisibleWhere(ownerId, scope) },
-      })
-    : 0;
-  if (usable !== tagIds.length) throw new InvalidTagError();
   await tx.contactTag.deleteMany({ where: { contactId } });
   if (tagIds.length)
     await tx.contactTag.createMany({
-      data: tagIds.map((tagId) => ({ contactId, tagId })),
+      // One owner on the row, referenced by both foreign keys, so the contact
+      // and the tag cannot belong to different accounts.
+      data: tagIds.map((tagId) => ({ ownerId, contactId, tagId })),
     });
 }
 
@@ -93,6 +90,7 @@ async function replaceTags(
 async function lockSubmittedTags(
   tx: Prisma.TransactionClient,
   ownerId: string,
+  scope: PrivacyScope,
   tagIds: string[],
 ): Promise<string[]> {
   const unique = [...new Set(tagIds)];
@@ -103,6 +101,14 @@ async function lockSubmittedTags(
     FOR UPDATE
   `;
   if (locked.length !== unique.length) throw new InvalidTagError();
+  // Whether the lock is currently showing them, decided here rather than in
+  // `replaceTags`, because it is a locking read that can wait and every one of
+  // those has to precede the transaction's first consistent read — waiting on
+  // a row and then finding it changed since that read view is MariaDB 11's
+  // error 1020 rather than a result. Ownership and existence are settled
+  // above; this is the privacy half, and it holds the assignments it reads.
+  if (!(await lockedTagsUsable(tx, ownerId, scope, unique)))
+    throw new InvalidTagError();
   return unique;
 }
 
@@ -184,7 +190,7 @@ export async function createContact(
     contact = await prisma.$transaction(async (tx) => {
       // Before the contact row, so the lock is the transaction's first
       // statement — see `lockSubmittedTags`.
-      const tagIds = await lockSubmittedTags(tx, ownerId, strList(form, "tagIds"));
+      const tagIds = await lockSubmittedTags(tx, ownerId, scope, strList(form, "tagIds"));
       const created = await tx.contact.create({
         data: {
           ownerId,
@@ -221,7 +227,7 @@ export async function createContact(
         created.id,
         form,
       );
-      await replaceTags(tx, ownerId, scope, created.id, tagIds);
+      await replaceTags(tx, ownerId, created.id, tagIds);
       // A new contact has no interactions, but this seeds nextTouchAt from their
       // creation date so a cadence starts counting immediately.
       await recomputeContactActivity(tx, [created.id]);
@@ -282,7 +288,7 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
   try {
     await prisma.$transaction(async (tx) => {
       // First, as in `createContact` and for the same reason.
-      const tagIds = await lockSubmittedTags(tx, ownerId, strList(form, "tagIds"));
+      const tagIds = await lockSubmittedTags(tx, ownerId, scope, strList(form, "tagIds"));
       await tx.contact.update({
         where: { id },
         data: {
@@ -317,7 +323,7 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
       });
 
       await saveCustomFieldValuesOrThrow(tx, ownerId, "CONTACT", id, form);
-      await replaceTags(tx, ownerId, scope, id, tagIds);
+      await replaceTags(tx, ownerId, id, tagIds);
       // The cadence may have changed, so nextTouchAt has to be re-derived.
       await recomputeContactActivity(tx, [id]);
     });

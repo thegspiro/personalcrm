@@ -14,6 +14,7 @@ import {
   startOfDayInTz,
   yearsBetween,
   zonedStartOfDay,
+  zonedTimeOfDay,
 } from "@/lib/dates";
 
 const NY = "America/New_York";
@@ -94,6 +95,42 @@ describe("zonedStartOfDay", () => {
   it("round-trips through startOfDayInTz", () => {
     const instant = new Date("2026-07-15T18:45:00Z");
     expect(startOfDayInTz(instant, NY).toISOString()).toBe("2026-07-15T04:00:00.000Z");
+  });
+});
+
+describe("zonedTimeOfDay", () => {
+  it("resolves a wall-clock minute on an ordinary day", () => {
+    // 19:30 on a standard-time day in New York is 00:30Z the next morning.
+    const at = zonedTimeOfDay({ year: 2026, month: 1, day: 15 }, 19 * 60 + 30, NY);
+    expect(at.toISOString()).toBe("2026-01-16T00:30:00.000Z");
+  });
+
+  it("agrees with zonedStartOfDay at minute zero", () => {
+    const date = { year: 2026, month: 7, day: 15 };
+    expect(zonedTimeOfDay(date, 0, NY).toISOString()).toBe(
+      zonedStartOfDay(date, NY).toISOString(),
+    );
+  });
+
+  it("lands a skipped local time after the spring-forward gap", () => {
+    // The clocks jump 02:00 -> 03:00 on 2026-03-08, so 02:30 never happens
+    // locally. Two and a half hours after the day began is 03:30 EDT, which is
+    // where a calendar app puts it rather than refusing the time.
+    const at = zonedTimeOfDay({ year: 2026, month: 3, day: 8 }, 2 * 60 + 30, NY);
+    expect(at.toISOString()).toBe("2026-03-08T07:30:00.000Z");
+    expect(calendarDateInTz(at, NY)).toEqual({ year: 2026, month: 3, day: 8 });
+  });
+
+  it("takes the first of a repeated local time on the fall-back day", () => {
+    // 01:30 happens twice on 2026-11-01. The earlier one is 05:30Z (EDT); the
+    // second would be 06:30Z. Earliest matches zonedStartOfDay's own rule.
+    const at = zonedTimeOfDay({ year: 2026, month: 11, day: 1 }, 60 + 30, NY);
+    expect(at.toISOString()).toBe("2026-11-01T05:30:00.000Z");
+  });
+
+  it("stays on the intended day at one minute to midnight", () => {
+    const at = zonedTimeOfDay({ year: 2026, month: 7, day: 15 }, 1439, NY);
+    expect(calendarDateInTz(at, NY)).toEqual({ year: 2026, month: 7, day: 15 });
   });
 });
 

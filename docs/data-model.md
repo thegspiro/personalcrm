@@ -5,16 +5,18 @@ schema rather than in prose.
 
 - **Engine:** MariaDB (Prisma `mysql` provider), `utf8mb4`
 - **Source of truth:** [`prisma/schema.prisma`](../prisma/schema.prisma)
-- **Tables:** 37 · **Enums:** 21 · **Migrations:** 18
+- **Tables:** 37 · **Enums:** 21 · **Migrations:** 22
 - **Primary keys:** `cuid()` strings unless the table is a join table (composite)
   or a per-user singleton (`UserPreference`, `DashboardLayout` key on `userId`).
 
 ## The four rules the schema is built on
 
 1. **Everything user-owned carries `ownerId`.** Multi-user instances share one
-   database, so every top-level table is scoped by owner. Rows that only exist
-   beneath a `Contact` (methods, addresses, join rows) are scoped through their
-   parent instead of carrying their own copy.
+   database, so every top-level table is scoped by owner. A row that hangs off
+   exactly one parent — a contact method, an address — is scoped through it and
+   carries no copy. A row that names *two* parents does carry one, because two
+   independent keys can otherwise be made to disagree about the owner: see
+   [Same-owner foreign keys](#same-owner-foreign-keys).
 2. **Anything renameable is a `TaxonomyTerm` row, never an enum.** Interaction
    types, fact categories, relationship types, dating stages and the rest are
    data. Enums are reserved for states the application code itself branches on
@@ -25,6 +27,71 @@ schema rather than in prose.
 4. **Partial knowledge stays partial.** `DatePrecision` on every historical date
    means "she moved in 2019" is stored as 2019 and rendered as 2019, not as
    January 1st that later reads as fact.
+
+## Same-owner foreign keys
+
+A table that carries `ownerId` and points at a `Contact`, `Tag` or `Location`
+has two facts about ownership that say nothing about one another. A key naming
+only `Contact(id)` lets a row belonging to one account hang off another
+account's person — the application never writes one, but an import, a restore
+or a hand repair can, and every reader then has to remember an owner predicate
+to exclude it. Forgetting the predicate in one place is a cross-account
+disclosure.
+
+So `Contact`, `Tag` and `Location` each carry a `@@unique([ownerId, id])`, and
+every foreign key into them names both columns: `(ownerId, contactId)` →
+`Contact(ownerId, id)`, and so on. The two owners become literally the same
+column, and the mismatch has nowhere to live.
+
+Every relation into `Contact` uses this shape — `Relationship` (both ends),
+`Fact`, `ImportantDate`, `LifeEvent`, `FamilySuggestionDismissal` (both ends),
+`Idea`, `Task`, `Happening`, `Gift`, `Debt`, `DietaryNeed`, `RomanticProfile`,
+`DateEntry`, `Plan`, `Flag` and `ContactTag` — along with `ContactTag` → `Tag`
+and `LocationAlias` → `Location`.
+
+The four join tables that name a contact and something else —
+`InteractionParticipant`, `InteractionMention`, `LifeEventParticipant` and
+`HouseholdMember` — carry an `ownerId` of their own for exactly this purpose,
+backfilled from their parent, and key on it from both sides:
+`(ownerId, interactionId)` → `Interaction(ownerId, id)` and
+`(ownerId, contactId)` → `Contact(ownerId, id)`. They are the one place the
+"scoped through the parent" rule does not apply, because there are two parents
+and nothing else makes them agree. `Interaction`, `LifeEvent` and `Household`
+each gained the `@@unique([ownerId, id])` those keys point at.
+
+**Two exceptions, for a reason MariaDB imposes.** `Interaction.place` and
+`Plan.place` are `ON DELETE SET NULL`, and MariaDB refuses a `SET NULL` foreign
+key unless every column in it is nullable; `ownerId` is not, and making it
+nullable would cost the guarantee the key exists to give. Those two keep an
+explicit owner predicate in code instead — `src/server/services/locations.ts`
+on the write path, and `src/server/queries/timeline.ts` on the read, where the
+place is both searched and rendered. Prisma takes no `where` on a to-one
+`include`, so the timeline selects the place's `ownerId` and drops it in the
+mapper rather than filtering in the query.
+
+**This does not make the readers' predicates redundant.** `mariadb-dump` writes
+`SET FOREIGN_KEY_CHECKS=0`, so restoring a dump taken before these keys existed
+can still load a cross-owner row — the constraint governs what the application
+and ordinary writes can do, not what a restore can carry in. The integration
+suite creates such rows through that same route (`asARestoreWould`) to keep the
+readers honest.
+
+**The upgrade repairs rather than refuses.** Adding the constraint first would
+abort the upgrade on precisely the installation that needs it, so
+`20260904120000_same_owner_contact_keys` clears the mismatches first. Each
+repair asks the constraint's own question — is there a `Contact` with this
+owner and this id — rather than whether two owners disagree: the restore that
+motivates all of this can equally leave a `contactId` pointing at nothing, that
+row fails the new key just the same, and a join between the two tables would
+skip it. Where the
+link is required the row goes; where it is optional — an idea, a task, a plan,
+a place — only the link is cleared, because the owner wrote that text and
+deleting their note to fix our key is the wrong trade. Deleting a record takes
+its `CustomFieldValue` rows with it: `entityId` points at four tables and is
+therefore not a foreign key, so nothing cascades and every delete path,
+including this one, sweeps them by hand. The counts are left in `AppSetting`
+and said once in the boot log by `runStartupTasks`, so nothing is removed
+silently.
 
 ---
 
@@ -237,6 +304,12 @@ through the contact.
 Free-form labels. `Tag` is unique per `(ownerId, slug)`; `ContactTag` is the
 join table with composite PK `(contactId, tagId)`, cascading from both sides.
 
+`ContactTag` also carries `ownerId`, and both its foreign keys include it —
+`(ownerId, contactId)` → `Contact(ownerId, id)` and `(ownerId, tagId)` →
+`Tag(ownerId, id)`, so a row cannot pair one account's person with another
+account's tag. See [Same-owner foreign keys](#same-owner-foreign-keys) for why,
+and for why the readers still check.
+
 Names normalize to lowercase ASCII hyphenated slugs. Renaming preserves assignments;
 merging deduplicates assignments into the destination before deleting the source; deleting
 a tag removes only join rows, never contacts. All operations are owner-scoped. While the
@@ -299,12 +372,18 @@ Join table, PK `(interactionId, contactId)`, cascading from both. An
 interaction is withheld while locked if it is itself private **or** any
 participant is.
 
+Carries an `ownerId` backfilled from the interaction, and both keys name it —
+`(ownerId, interactionId)` and `(ownerId, contactId)` — so a row cannot file
+one account's interaction against another account's person. See
+[Same-owner foreign keys](#same-owner-foreign-keys).
+
 ### `InteractionMention`
 
 Join table, PK `(interactionId, contactId)`, for someone discussed but not
 present. A mention makes the interaction discoverable from that person's
 history without advancing their contact cadence. Private mentioned contacts
 withhold the interaction while the lock is closed, just like participants.
+Same-owner keyed on `ownerId` exactly as `InteractionParticipant` is.
 
 ### `Location`
 
@@ -329,11 +408,15 @@ somewhere confidently wrong. Aliases live in owner-scoped `LocationAlias` rows.
 Each stores the entered `value`, its case-and-whitespace-folded
 `normalizedValue`, and whether it is the canonical name. `(ownerId,
 normalizedValue)` is unique, so two places in one account cannot claim the same
-spelling while different owners remain isolated. The alias's `ownerId` and its
-location's are two independent columns, and nothing in the schema ties them
-together, so `resolveLocation` requires the related location to belong to the
-caller as well: an imported or restored row whose two owners disagree is
-re-pointed at the right place rather than followed to the wrong one.
+spelling while different owners remain isolated. The alias references
+`Location(ownerId, id)`, so its owner and its location's are the same column and
+a cross-owner claim cannot be written. `resolveLocation` still checks, because a
+restore can load one past the constraint: it reads the alias's `locationId`
+alone and fetches the location owner-scoped, so a claim pointing somewhere this
+account does not own reads as no claim and is re-pointed at the right place
+rather than followed to the wrong one. Reading it through the relation is what
+it must not do — the schema marks that relation required, so a row the
+constraint would have refused makes Prisma throw rather than return null.
 The legacy JSON `Location.aliases` column is retained only as a preservation
 area for ambiguous imported claims; new reads and writes use the indexed table.
 
@@ -380,8 +463,9 @@ Deliberately not an `Interaction` (which assumes you were there) and not an
 Adds `endDate` / `endPrecision` for events that span a period, and
 `isMilestone` to pin one to the top of the profile. `LifeEventParticipant` is
 the join that lets one marriage, move, birth, reunion, or bereavement appear in
-every selected person's history. `contactId` remains the compatibility anchor;
-the migration backfills it into the participant join without changing dates or
+every selected person's history; it carries an `ownerId` from its event and
+keys on it from both sides. `contactId` remains the compatibility anchor; the
+migration backfills it into the participant join without changing dates or
 duplicating events.
 
 ### `Happening`
@@ -432,6 +516,8 @@ lodgers and multi-generation homes all break that guess. Unique per
 
 `HouseholdMember` is the join: PK `(householdId, contactId)`, plus an optional
 `role` label within the household ("Mum", "eldest", "the dog") and `sortOrder`.
+It carries an `ownerId` from its household and keys on it from both sides, so a
+household cannot be given a member from another account.
 
 ### `FamilySuggestionDismissal`
 
@@ -473,6 +559,8 @@ you _do_ it.
 | `checklist` | `json` | A validated list of up to 25 `{ id, text, completed }` items. Suggestions begin only in the editor and are never completed automatically |
 | `status` | `PlanStatus` | `OPEN` \| `PLANNED` \| `DONE` \| `ARCHIVED` |
 | `plannedFor` | `date?` | Pencilled in, before there is anything logged to point at |
+| `plannedStartMinute` | `int?` | Local wall-clock minutes past midnight on `plannedFor`, 0–1439. Cleared when there is no day — a time on nothing is not a time |
+| `plannedDurationMinutes` | `int?` | How long to set aside, in minutes. Null = open-ended |
 | `usedAt` | `datetime?` | |
 | `usedInInteractionId` | `cuid?` | → `Interaction`, `SET NULL`. An interaction rather than a `DateEntry`: a plan carried out with a friend never produces one of those |
 
@@ -480,6 +568,15 @@ Deliberately not confined to the dating layer — a hike with a friend and a fir
 date are the same object, so it hangs off any `Contact`, or off nobody.
 Checklist data inherits the plan's ownership and contact privacy filtering; it
 does not add a separately queried or cacheable child row.
+
+The time is a **day plus a local minute, never an instant**. `plannedFor` stays
+a `DATE` because the day is what gets compared, grouped and displayed, and
+storing a moment instead would drag every existing reader onto the instant side
+of the split `src/lib/dates.ts` warns about. `zonedTimeOfDay` resolves the pair
+against the account's timezone at the point something genuinely needs a moment,
+and settles both daylight-saving transitions the way calendar apps do: a local
+time inside the skipped hour lands after the gap, and one inside a repeated hour
+takes the first.
 
 ### `Task`
 
@@ -774,6 +871,9 @@ the `init-migrate` s6 oneshot).
 | `20260901191500_drop_login_attempt_table` | Drops it again. Both halves of its key came from whoever was knocking, which made it a store an attacker chose the size of; bounding it meant dropping records, and dropping records meant the throttle could be switched off by filling it. Sign-in throttling now lives in the process serving the request, in a structure of fixed size. The table held only ephemeral counters, so nothing is lost but whatever backoff was in flight at the upgrade |
 | `20260902120000_add_reminder_policy_and_dedup_key` | Adds and backfills an explicit scheduling policy and SHA-256 durable deduplication key for every existing reminder ledger row before making the key required and unique per owner. **Hand-edited**: the backfill computes the very key the application does — byte for byte, so pre-upgrade rows are found by the scheduler's lookup rather than blocking their reminders for ever — the policy column's default exists only for the backfill and is dropped afterwards, and rows whose channel was since deleted fold in their own id, because the delivery key they derive from lets any number of `NULL` channels coexist |
 | `20260903120000_add_happenings` | Adds `Happening` and `AvailabilityImpact`, and appends `HAPPENING_TYPE` to `TaxonomyKind`. Purely additive: no column is re-expressed, so there is nothing to backfill before a drop. The enum `MODIFY` appends a value without reordering the existing ones, so no stored `TaxonomyTerm.kind` changes meaning |
+| `20260903140000_same_owner_join_keys` | Gives `ContactTag` an `ownerId` and points both of its keys, and `LocationAlias`'s, at `(ownerId, id)` so a join across two accounts cannot be stored. **Hand-edited**: backfills the new column, then records and removes the rows that cannot satisfy the new key *before* adding it — adding it first would abort the upgrade on exactly the installation that needs the repair. The counts go to `AppSetting` for `runStartupTasks` to say once in the boot log |
+| `20260904120000_same_owner_contact_keys` | Extends the same treatment to every remaining reference to a `Contact` — seventeen owned relations, plus `InteractionParticipant`, `InteractionMention`, `LifeEventParticipant` and `HouseholdMember`, which gain an `ownerId` backfilled from their parent. **Hand-edited**: repairs before it constrains, deleting a row whose link is required and clearing only the link where it is optional, sweeping the `CustomFieldValue` rows of anything it deletes, and detaching cross-owner `Interaction.place` / `Plan.place`, which keep a single-column key because `SET NULL` needs every column nullable. Ships a `down.sql` |
+| `20260904150000_add_plan_times` | Additive nullable `Plan.plannedStartMinute` and `plannedDurationMinutes`, so a pencilled-in plan can carry a time of day and a rough length. Purely additive — no existing column is re-expressed, and a plan with a day but no time reads exactly as it did before |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).

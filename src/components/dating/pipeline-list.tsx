@@ -77,7 +77,7 @@ export function PipelineList({
       <EmptyState
         icon={<Icon name="Heart" />}
         title="Nobody in the pipeline"
-        description="Mark someone as dating or interested on their page and they'll show up here."
+        description="Open someone's page, then pick “Dating or interested” from the actions menu."
       />
     );
   }

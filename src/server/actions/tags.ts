@@ -10,7 +10,7 @@ import {
   privacyScope,
   type PrivacyScope,
 } from "@/server/privacy/filter";
-import { tagVisibleWhere } from "@/server/queries/tags";
+import { lockedTagsUsable, tagVisibleWhere } from "@/server/queries/tags";
 import { fail, fieldError, ok, owner, str, type ActionResult } from "./helpers";
 
 const tagName = z.string().trim().min(1, "A tag name is required.").max(96);
@@ -140,26 +140,28 @@ export async function setContactTag(
       // is the order the contact-save paths take too, so the two cannot
       // deadlock against each other.
       if ((await lockContact(tx, ownerId, contactId)) !== 1) return false;
-      const [contact, tag] = await Promise.all([
-        tx.contact.findFirst({
-          where: { id: contactId, ownerId, ...contactPrivacyWhere(scope) },
-          select: { id: true },
-        }),
-        // The tag has to be one the lock is currently showing, not merely one
-        // the account owns. This takes an id straight off a page that may have
-        // been rendered before the lock closed, and a tag living only on
-        // private people is exactly what must not be assignable from a locked
-        // session.
-        tx.tag.findFirst({
-          where: { id: tagId, ...tagVisibleWhere(ownerId, scope) },
-          select: { id: true },
-        }),
-      ]);
-      if (!contact || !tag) return false;
+      // The visibility question is a locking read too, so it belongs up here
+      // with the others and ahead of the consistent read below. Every locking
+      // read that can *wait* has to come before the transaction takes its read
+      // view: waiting on a row and then finding it changed since that view is
+      // MariaDB 11's error 1020, not a row count. See `lockTags`.
+      //
+      // The tag has to be one the lock is currently showing, not merely one the
+      // account owns: this takes an id straight off a page that may have been
+      // rendered before the lock closed, and a tag living only on private
+      // people is exactly what must not be assignable from a locked session.
+      // Asked of held rows rather than of the snapshot, so an assignment
+      // committed by another tab a moment ago is part of the answer.
+      if (!(await lockedTagsUsable(tx, ownerId, scope, [tagId]))) return false;
+      const contact = await tx.contact.findFirst({
+        where: { id: contactId, ownerId, ...contactPrivacyWhere(scope) },
+        select: { id: true },
+      });
+      if (!contact) return false;
       if (assigned)
         await tx.contactTag.upsert({
           where: { contactId_tagId: { contactId, tagId } },
-          create: { contactId, tagId },
+          create: { ownerId, contactId, tagId },
           update: {},
         });
       else await tx.contactTag.deleteMany({ where: { contactId, tagId } });
@@ -276,8 +278,17 @@ async function lockContact(
  * session in another tab could put the tag on a private person in the gap, and
  * the merge would then carry that association to the destination and delete
  * the original — a locked session mutating a record it cannot see, which is
- * the one thing this check exists to prevent. Behind the lock no such
- * assignment can be committed, so the answer holds until the transaction ends.
+ * the one thing this check exists to prevent.
+ *
+ * It locks the assignments it counts rather than counting them from the
+ * transaction's snapshot. A plain count cannot see an uncommitted insert, so
+ * what made the earlier version hold was a side effect: adding a `ContactTag`
+ * takes a shared lock on the tag row it references, which collided with
+ * `lockTags`. That collision was never the point, and it disappeared the
+ * moment the foreign key moved from the tag's primary key to `(ownerId, id)`
+ * — the same schema change that made a cross-owner row unstorable silently
+ * unmade this guarantee, and only the concurrency check caught it. Locking the
+ * rows this question is actually about depends on no such coincidence.
  *
  * The scope is read by the caller, before the transaction opens, because it
  * reads the request's cookies and refreshes the unlock.
@@ -288,19 +299,20 @@ async function touchesHiddenContacts(
   scope: PrivacyScope,
   tagIds: string[],
 ): Promise<boolean> {
-  if (scope.unlocked) return false;
-  // Owner-scoped on both sides. Unscoped, submitting another account's tag id
-  // answered from their rows: the unlock message when their tag was on one of
-  // their private contacts, "Tag not found" otherwise — a difference that is
-  // itself a fact about an account this one cannot see.
-  const hidden = await tx.contactTag.count({
-    where: {
-      tagId: { in: tagIds },
-      tag: { ownerId },
-      contact: { ownerId, isPrivate: true },
-    },
-  });
-  return hidden > 0;
+  if (scope.unlocked || !tagIds.length) return false;
+  // Owner-scoped. Unscoped, submitting another account's tag id answered from
+  // their rows: the unlock message when their tag was on one of their private
+  // contacts, "Tag not found" otherwise — a difference that is itself a fact
+  // about an account this one cannot see.
+  const hidden = await tx.$queryRaw<Array<{ contactId: string }>>`
+    SELECT ct.contactId FROM ContactTag ct
+    JOIN Contact c ON c.ownerId = ct.ownerId AND c.id = ct.contactId
+    WHERE ct.ownerId = ${ownerId}
+      AND ct.tagId IN (${Prisma.join(tagIds)})
+      AND c.isPrivate = TRUE
+    FOR UPDATE
+  `;
+  return hidden.length > 0;
 }
 
 /** What a locked-namespace write settled on, so the caller can phrase it. */
@@ -341,18 +353,16 @@ export async function mergeTag(
     if (await touchesHiddenContacts(tx, ownerId, scope, [sourceId, destinationId]))
       return "hidden";
     const assignments = await tx.contactTag.findMany({
-      // Scoped by the contact's owner, not merely the tag's. The two are
-      // independent foreign keys, so an import or a restore can join this
-      // account's tag to another account's person — and copying that row onto
-      // the destination would have made this account the author of a
-      // cross-owner association it cannot see. Such a row is left where it is
-      // rather than carried forward.
-      where: { tagId: sourceId, contact: { ownerId } },
+      // Still owner-scoped, though the schema now makes a cross-owner row
+      // unstorable: the predicate costs nothing, and a query that states which
+      // account it is about does not depend on the reader knowing that.
+      where: { ownerId, tagId: sourceId },
       select: { contactId: true },
     });
     if (assignments.length)
       await tx.contactTag.createMany({
         data: assignments.map(({ contactId }) => ({
+          ownerId,
           contactId,
           tagId: destinationId,
         })),
