@@ -70,7 +70,12 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
   // Gate before fetching: withholding the section in the component would still
   // have put the dates and notes into the payload sent to the browser.
-  const showDating = contact.isRomantic && (await canSeeDating(prefs.hideDating));
+  // `datingAvailable` is the module itself — on, and unlocked — which is what
+  // decides whether the header may offer to put this person in the pipeline.
+  // It is asked for every contact, not only romantic ones, so the answer never
+  // depends on the person and cannot leak who is already in there.
+  const datingAvailable = await canSeeDating(prefs.hideDating);
+  const showDating = contact.isRomantic && datingAvailable;
   // This one person is the whole page, so their own marker decides it — plus
   // the dating sections, which are the most sensitive thing here.
   const cacheable =
@@ -208,6 +213,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
               : null,
           }}
           interactionFields={interactionFields}
+          datingAvailable={datingAvailable}
           cadence={{
             status: cadenceStatus(contact.nextTouchAt, timezone),
             message: cadenceMessage(daysUntilTouch(contact.nextTouchAt, timezone)),

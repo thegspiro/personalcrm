@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Archive, BellOff, EyeOff, History, MoreVertical, Pencil, Plus, Star, Trash2 } from "lucide-react";
+import { Archive, BellOff, EyeOff, Heart, History, MoreVertical, Pencil, Plus, Star, Trash2 } from "lucide-react";
 import { cn, displayName, initialsOf } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ import { cadenceLabel } from "@/lib/cadence";
 import { formatPartialDate, type DatePrecision } from "@/lib/date-precision";
 import type { PlainDate } from "@/lib/dates";
 import { deleteContact, patchContact, setContactArchived, snoozeContact } from "@/server/actions/contacts";
+import { markAsRomantic } from "@/server/actions/dating";
 import { setPrivate } from "@/server/actions/privacy";
 
 const STATUS_STYLES: Record<string, string> = {
@@ -41,6 +42,7 @@ export function ContactHeader({
   contacts,
   interactionFields = [],
   allergySummary,
+  datingAvailable = false,
 }: {
   contact: {
     id: string;
@@ -72,6 +74,12 @@ export function ContactHeader({
   /** Your own interaction fields, for the log sheet. */
   interactionFields?: RenderableField[];
   allergySummary?: string | null;
+  /**
+   * Whether the dating module may be shown at all — the module is on and the
+   * privacy lock is open. Defaults to closed: a control that decides who is
+   * treated as romantic should be absent when in doubt, not present.
+   */
+  datingAvailable?: boolean;
 }) {
   const router = useRouter();
   const [logging, setLogging] = React.useState(false);
@@ -212,6 +220,22 @@ export function ContactHeader({
               <Star />
               {contact.isFavorite ? "Remove favourite" : "Make favourite"}
             </DropdownMenuItem>
+            {/* Only the way in. Leaving the pipeline is "Just a friend" in the
+                dating section itself, which is on screen whenever this person
+                is already romantic — two controls for one flag would drift.
+                Gated on the module as a whole rather than on this person, so a
+                label reading either way cannot disclose who is romantic while
+                the lock is closed. */}
+            {datingAvailable && !contact.isRomantic ? (
+              <DropdownMenuItem
+                onSelect={() =>
+                  void run(() => markAsRomantic(contact.id), "Added to your dating pipeline")
+                }
+              >
+                <Heart />
+                Dating or interested
+              </DropdownMenuItem>
+            ) : null}
 
             {contact.cadenceDays ? (
               <>
