@@ -41,6 +41,54 @@ describe("MariaDB migrations", () => {
     expect(sql).not.toMatch(/DROP COLUMN `location`/);
   });
 
+  it("repairs what the same-owner key would refuse, not merely what disagrees", () => {
+    const sql = readFileSync(
+      join(migrationsRoot, "20260904120000_same_owner_contact_keys", "migration.sql"),
+      "utf8",
+    );
+
+    // A restore with foreign-key checks off is the case this migration exists
+    // for, and it can leave a `contactId` pointing at no row at all. Asking
+    // "do the two owners disagree" is a join, and a join skips that row — so
+    // it survived the repair and then `ADD CONSTRAINT` aborted the upgrade on
+    // exactly the installation that needed it. Every repair asks the
+    // constraint's own question instead.
+    expect(sql).not.toMatch(/`c`\.`ownerId` <> /);
+    for (const table of [
+      "Relationship", "Fact", "ImportantDate", "LifeEvent",
+      "FamilySuggestionDismissal", "Happening", "Gift", "Debt", "DietaryNeed",
+      "RomanticProfile", "DateEntry", "Flag",
+    ]) {
+      expect(sql, `${table} is repaired by a delete`).toContain(
+        `DELETE \`x\` FROM \`${table}\` \`x\` WHERE NOT EXISTS`,
+      );
+    }
+    for (const table of ["Idea", "Task", "Plan"]) {
+      expect(sql, `${table} keeps its text and loses only the link`).toMatch(
+        new RegExp(`UPDATE \`${table}\` \`x\` SET \`x\`\\.\`contactId\` = NULL`),
+      );
+    }
+
+    // The owner is copied from the parent, so a join row whose parent is gone
+    // keeps a NULL one — and `MODIFY ... NOT NULL` refuses it. Those rows have
+    // to go first.
+    for (const [table, parent] of [
+      ["InteractionParticipant", "Interaction"],
+      ["InteractionMention", "Interaction"],
+      ["LifeEventParticipant", "LifeEvent"],
+      ["HouseholdMember", "Household"],
+    ]) {
+      const orphans = sql.indexOf(
+        `DELETE \`j\` FROM \`${table}\` \`j\` WHERE NOT EXISTS (\n    SELECT 1 FROM \`${parent}\``,
+      );
+      const notNull = sql.indexOf(
+        `ALTER TABLE \`${table}\` MODIFY COLUMN \`ownerId\` VARCHAR(191) NOT NULL`,
+      );
+      expect(orphans, `${table} sweeps rows whose ${parent} is gone`).toBeGreaterThan(-1);
+      expect(notNull).toBeGreaterThan(orphans);
+    }
+  });
+
   it("backfills only unambiguous aliases and preserves the legacy JSON", () => {
     const sql = readFileSync(
       join(migrationsRoot, "20260903000000_add_location_aliases", "migration.sql"),

@@ -119,6 +119,15 @@ The dump includes `CREATE DATABASE`/`USE` statements for the configured database
 An external-database operator should restore into an isolated server or edit a
 copy deliberately if the test database must use another name.
 
+`--databases` dumps every table, `_prisma_migrations` included, so restoring a
+dump taken before an upgrade rewinds the ledger with the schema and step 5
+re-applies the same migrations to the same data. That is what keeps the
+same-owner key repair honest across a restore: a pre-upgrade dump can carry a
+row joining two accounts — `mariadb-dump` writes `SET FOREIGN_KEY_CHECKS=0`, so
+the constraint does not stop it going back in — and the migration that adds the
+key removes it again on the way through. See
+[data-model.md](data-model.md#same-owner-foreign-keys).
+
 ## Whole-volume backup
 
 For the simplest complete backup, stop the container and copy all of `/config`:

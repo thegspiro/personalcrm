@@ -368,14 +368,15 @@ model Relationship {
   pairId        String  @db.VarChar(32)
 
   owner       User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  fromContact Contact      @relation("RelationshipFrom", fields: [fromContactId], references: [id], onDelete: Cascade)
-  toContact   Contact      @relation("RelationshipTo", fields: [toContactId], references: [id], onDelete: Cascade)
+  fromContact Contact      @relation("RelationshipFrom", fields: [ownerId, fromContactId], references: [ownerId, id], onDelete: Cascade)
+  toContact   Contact      @relation("RelationshipTo", fields: [ownerId, toContactId], references: [ownerId, id], onDelete: Cascade)
   type        TaxonomyTerm @relation("RelationshipType", fields: [typeId], references: [id], onDelete: Cascade)
 
   @@unique([fromContactId, toContactId, typeId])
-  @@index([ownerId])
   @@index([toContactId])
   @@index([typeId])
+  @@index([ownerId, fromContactId])
+  @@index([ownerId, toContactId])
   @@index([pairId])
 }
 
@@ -406,6 +407,10 @@ model Interaction {
 
   owner User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   type  TaxonomyTerm? @relation("InteractionType", fields: [typeId], references: [id], onDelete: SetNull)
+  /// Not a same-owner composite key, unlike every other reference in this
+  /// schema: `SET NULL` requires every column of the key to be nullable and
+  /// `ownerId` is not, so MariaDB refuses it. The owner check lives in
+  /// `src/server/services/locations.ts`. See docs/data-model.md.
   place Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   participants    InteractionParticipant[]
@@ -415,6 +420,7 @@ model Interaction {
   ideasUsed       Idea[]                   @relation("IdeaUsedIn")
   plansCarriedOut Plan[]                   @relation("PlanCarriedOut")
 
+  @@unique([ownerId, id])
   @@index([ownerId, occurredAt])
   @@index([typeId])
   @@index([locationId])
@@ -487,24 +493,30 @@ model LocationAlias {
 /// separate prevents a mention from falsely advancing their contact cadence.
 model InteractionMention {
   interactionId String
+  ownerId       String
   contactId     String
 
-  interaction Interaction @relation(fields: [interactionId], references: [id], onDelete: Cascade)
-  contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  interaction Interaction @relation(fields: [ownerId, interactionId], references: [ownerId, id], onDelete: Cascade)
+  contact     Contact     @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([interactionId, contactId])
   @@index([contactId])
+  @@index([ownerId, interactionId])
+  @@index([ownerId, contactId])
 }
 
 model InteractionParticipant {
   interactionId String
+  ownerId       String
   contactId     String
 
-  interaction Interaction @relation(fields: [interactionId], references: [id], onDelete: Cascade)
-  contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  interaction Interaction @relation(fields: [ownerId, interactionId], references: [ownerId, id], onDelete: Cascade)
+  contact     Contact     @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([interactionId, contactId])
   @@index([contactId])
+  @@index([ownerId, interactionId])
+  @@index([ownerId, contactId])
 }
 
 /// "Things to know" about a person.
@@ -523,13 +535,13 @@ model Fact {
   updatedAt           DateTime @updatedAt
 
   owner             User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact           Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact           Contact       @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   category          TaxonomyTerm? @relation("FactCategory", fields: [categoryId], references: [id], onDelete: SetNull)
   sourceInteraction Interaction?  @relation("FactSource", fields: [sourceInteractionId], references: [id], onDelete: SetNull)
 
   @@index([contactId, importance])
-  @@index([ownerId])
   @@index([categoryId])
+  @@index([ownerId, contactId])
   @@index([sourceInteractionId])
 }
 
@@ -567,11 +579,12 @@ model ImportantDate {
   updatedAt          DateTime       @updatedAt
 
   owner   User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact Contact       @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   type    TaxonomyTerm? @relation("ImportantDateType", fields: [typeId], references: [id], onDelete: SetNull)
 
   @@index([contactId])
   @@index([ownerId, date])
+  @@index([ownerId, contactId])
   @@index([typeId])
 }
 
@@ -598,12 +611,14 @@ model LifeEvent {
   updatedAt    DateTime       @updatedAt
 
   owner        User                   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact      Contact                @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact      Contact                @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   type         TaxonomyTerm?          @relation("LifeEventType", fields: [typeId], references: [id], onDelete: SetNull)
   participants LifeEventParticipant[]
 
+  @@unique([ownerId, id])
   @@index([contactId, date])
   @@index([ownerId, date])
+  @@index([ownerId, contactId])
   @@index([typeId])
 }
 
@@ -611,13 +626,16 @@ model LifeEvent {
 /// remains the anchor for compatibility and ownership-by-parent semantics.
 model LifeEventParticipant {
   lifeEventId String
+  ownerId     String
   contactId   String
 
-  lifeEvent LifeEvent @relation(fields: [lifeEventId], references: [id], onDelete: Cascade)
-  contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  lifeEvent LifeEvent @relation(fields: [ownerId, lifeEventId], references: [ownerId, id], onDelete: Cascade)
+  contact   Contact   @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([lifeEventId, contactId])
   @@index([contactId])
+  @@index([ownerId, lifeEventId])
+  @@index([ownerId, contactId])
 }
 
 /// A named group of people who belong together — "The Whitfields", "Mum and
@@ -635,22 +653,26 @@ model Household {
   owner   User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   members HouseholdMember[]
 
+  @@unique([ownerId, id])
   @@unique([ownerId, name])
   @@index([ownerId])
 }
 
 model HouseholdMember {
   householdId String
+  ownerId     String
   contactId   String
   /// Optional label within the household: "Mum", "eldest", "the dog".
   role        String? @db.VarChar(96)
   sortOrder   Int     @default(0)
 
-  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  household Household @relation(fields: [ownerId, householdId], references: [ownerId, id], onDelete: Cascade)
+  contact   Contact   @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([householdId, contactId])
   @@index([contactId])
+  @@index([ownerId, householdId])
+  @@index([ownerId, contactId])
 }
 
 /// A pair you have told the app to stop suggesting a relationship for.
@@ -666,11 +688,12 @@ model FamilySuggestionDismissal {
   dismissedAt DateTime @default(now())
 
   owner    User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  aContact Contact @relation("DismissalA", fields: [aContactId], references: [id], onDelete: Cascade)
-  bContact Contact @relation("DismissalB", fields: [bContactId], references: [id], onDelete: Cascade)
+  aContact Contact @relation("DismissalA", fields: [ownerId, aContactId], references: [ownerId, id], onDelete: Cascade)
+  bContact Contact @relation("DismissalB", fields: [ownerId, bContactId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([ownerId, aContactId, bContactId])
   @@index([aContactId])
+  @@index([ownerId, bContactId])
   @@index([bContactId])
 }
 
@@ -694,11 +717,12 @@ model Idea {
   updatedAt           DateTime   @updatedAt
 
   owner             User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact           Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact           Contact?     @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   usedInInteraction Interaction? @relation("IdeaUsedIn", fields: [usedInInteractionId], references: [id], onDelete: SetNull)
 
   @@index([ownerId, status])
   @@index([contactId, status])
+  @@index([ownerId, contactId])
   @@index([usedInInteractionId])
 }
 
@@ -721,11 +745,12 @@ model Task {
   updatedAt   DateTime     @updatedAt
 
   owner     User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact   Contact?   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact   Contact?   @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   /// Set when this task is the "ask how it went" follow-up for a happening.
   happening Happening? @relation("HappeningFollowUp")
 
   @@index([ownerId, completedAt, dueDate])
+  @@index([ownerId, contactId])
   @@index([contactId])
 }
 
@@ -796,13 +821,14 @@ model Happening {
   updatedAt DateTime @updatedAt
 
   owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact      Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact      Contact       @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   type         TaxonomyTerm? @relation("HappeningType", fields: [typeId], references: [id], onDelete: SetNull)
   followUpTask Task?         @relation("HappeningFollowUp", fields: [followUpTaskId], references: [id], onDelete: SetNull)
 
   @@index([contactId, date])
   @@index([ownerId, date])
   @@index([ownerId, endDate])
+  @@index([ownerId, contactId])
   @@index([typeId])
 }
 
@@ -836,11 +862,12 @@ model Gift {
   updatedAt   DateTime      @updatedAt
 
   owner    User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact  Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact  Contact       @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   occasion TaxonomyTerm? @relation("GiftOccasion", fields: [occasionId], references: [id], onDelete: SetNull)
 
   @@index([contactId, status])
   @@index([ownerId, status])
+  @@index([ownerId, contactId])
   @@index([occasionId])
 }
 
@@ -871,9 +898,10 @@ model Debt {
   updatedAt   DateTime      @updatedAt
 
   owner   User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@index([contactId, settledOn])
+  @@index([ownerId, contactId])
   @@index([ownerId, settledOn])
 }
 
@@ -919,8 +947,9 @@ model DietaryNeed {
   updatedAt               DateTime        @updatedAt
 
   owner   User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
+  @@index([ownerId, contactId])
   @@index([contactId, category, kind])
 }
 
@@ -1014,10 +1043,11 @@ model RomanticProfile {
   updatedAt DateTime @updatedAt
 
   owner   User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact Contact       @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   stage   TaxonomyTerm? @relation("DatingStage", fields: [stageId], references: [id], onDelete: SetNull)
   source  TaxonomyTerm? @relation("DatingSource", fields: [sourceId], references: [id], onDelete: SetNull)
 
+  @@unique([ownerId, contactId])
   @@index([ownerId, stageId])
   @@index([sourceId])
 }
@@ -1060,12 +1090,12 @@ model DateEntry {
   updatedAt DateTime @updatedAt
 
   owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact      Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact      Contact       @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   interaction  Interaction   @relation(fields: [interactionId], references: [id], onDelete: Cascade)
   activityType TaxonomyTerm? @relation("DateActivityType", fields: [activityTypeId], references: [id], onDelete: SetNull)
 
   @@index([contactId, sequence])
-  @@index([ownerId])
+  @@index([ownerId, contactId])
   @@index([activityTypeId])
 }
 
@@ -1125,10 +1155,14 @@ model Plan {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// Not a same-owner composite key, unlike every other reference in this
+  /// schema: `SET NULL` requires every column of the key to be nullable and
+  /// `ownerId` is not, so MariaDB refuses it. The owner check lives in
+  /// `src/server/services/locations.ts`. See docs/data-model.md.
   place Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   owner             User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact           Contact?      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact           Contact?      @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   category          TaxonomyTerm? @relation("PlanCategory", fields: [categoryId], references: [id], onDelete: SetNull)
   usedInInteraction Interaction?  @relation("PlanCarriedOut", fields: [usedInInteractionId], references: [id], onDelete: SetNull)
 
@@ -1136,6 +1170,7 @@ model Plan {
   @@index([contactId, status])
   @@index([categoryId])
   @@index([usedInInteractionId])
+  @@index([ownerId, contactId])
   @@index([locationId])
 }
 
@@ -1157,9 +1192,10 @@ model Flag {
   createdAt DateTime  @default(now())
 
   owner   User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@index([contactId, kind])
+  @@index([ownerId, contactId])
   @@index([ownerId, kind])
 }
 

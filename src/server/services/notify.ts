@@ -24,6 +24,13 @@ interface HttpInput {
 }
 
 type HttpAdapter = (input: HttpInput) => Promise<{ status: number }>;
+/**
+ * How a TCP connection is opened. Only the SMTP dial uses one, and only a test
+ * ever supplies its own: the behaviour worth pinning here is what happens to
+ * an address that neither answers nor refuses, and no real address can be
+ * relied on to behave that way twice in a row.
+ */
+type TcpConnector = (options: net.NetConnectOpts) => net.Socket;
 type SmtpAdapter = (
   config: Record<string, unknown>,
   addresses: ResolvedAddress[],
@@ -38,6 +45,11 @@ export interface DeliveryDependencies {
   isAdministrator?: (ownerId: string) => Promise<boolean>;
   http?: HttpAdapter;
   smtp?: SmtpAdapter;
+  /**
+   * Replaces `net.connect` for the SMTP dial, and nothing else. Ignored when
+   * `smtp` is supplied, which replaces the dial along with the rest.
+   */
+  connect?: TcpConnector;
 }
 
 /**
@@ -163,35 +175,54 @@ function connectToOne(
   port: number,
   budgetMs: number,
   signal: AbortSignal,
+  connect: TcpConnector,
 ): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     let settled = false;
     let dialing: net.Socket | undefined;
-    // The budget is enforced here rather than only raced from outside. Racing
-    // it left a tie the dial could win: this attempt's own timeout and the
-    // delivery deadline expire together, timers registered for the same
-    // instant run in the order they were created, and so the next address was
-    // tried a moment before the abort landed.
-    const stopAt = Date.now() + budgetMs;
+    let budget: NodeJS.Timeout | undefined;
+    /** One exit, so the budget timer and the abort listener always come off. */
+    const finish = (act: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(budget);
+      signal.removeEventListener("abort", abandon);
+      act();
+    };
     // The delivery's deadline reaches the dial itself. Without this, enough
     // unreachable answers kept `connectToOne` working through the list long
     // after the send had been abandoned — and a later address could still
     // connect and carry the message, arriving after the scheduler had recorded
     // a failure and queued the retry.
     const abandon = () => {
-      if (settled) return;
-      settled = true;
-      dialing?.destroy();
-      reject(new Error("Channel delivery exceeded its deadline."));
+      finish(() => {
+        dialing?.destroy();
+        reject(new Error("Channel delivery exceeded its deadline."));
+      });
     };
     if (signal.aborted) {
       abandon();
       return;
     }
     signal.addEventListener("abort", abandon, { once: true });
+    // The budget is a timer, not a clock comparison.
+    //
+    // It was `Date.now() < stopAt`, and the tie that guarded is a millisecond
+    // wide. An attempt's own timeout is the whole remaining budget, so the two
+    // expire together; the timer fires when the monotonic clock has advanced
+    // far enough, while the check reads the wall clock, and the two round
+    // independently. A wall clock one millisecond short of the deadline the
+    // timer had already reached read as "still inside the budget", and the
+    // next address was dialled at the exact instant the dial should have
+    // stopped — which is how a send that had been given up on still arrived.
+    // CI found it three times before it was read as a race rather than a
+    // flaky test. Timers due in the same millisecond run in the order they
+    // were created and this one is created before any attempt arms its own,
+    // so the budget now wins the tie outright.
+    budget = setTimeout(abandon, budgetMs);
     const attempt = (index: number) => {
       if (settled) return;
-      const socket = net.connect({
+      const socket = connect({
         host: addresses[index].address,
         port,
         family: addresses[index].family,
@@ -202,12 +233,8 @@ function connectToOne(
       socket.setTimeout(Math.min(15_000, budgetMs), () => socket.destroy(new Error("Channel connection timed out.")));
       const onError = (error: Error) => {
         if (settled) return;
-        if (index + 1 < addresses.length && Date.now() < stopAt) attempt(index + 1);
-        else {
-          settled = true;
-          signal.removeEventListener("abort", abandon);
-          reject(error);
-        }
+        if (index + 1 < addresses.length) attempt(index + 1);
+        else finish(() => reject(error));
       };
       socket.once("error", onError);
       socket.once("connect", () => {
@@ -216,18 +243,18 @@ function connectToOne(
           socket.destroy();
           return;
         }
-        settled = true;
-        signal.removeEventListener("abort", abandon);
-        socket.off("error", onError);
-        socket.setTimeout(0);
-        resolve(socket);
+        finish(() => {
+          socket.off("error", onError);
+          socket.setTimeout(0);
+          resolve(socket);
+        });
       });
     };
     attempt(0);
   });
 }
 
-const defaultSmtp: SmtpAdapter = async (config, addresses, mail, deadlineMs) => {
+const smtpVia = (connect: TcpConnector): SmtpAdapter => async (config, addresses, mail, deadlineMs) => {
   const host = config.host as string;
   const port = typeof config.port === "number" ? config.port : 587;
   // The socket nodemailer is actually talking on, so the deadline can end the
@@ -256,7 +283,7 @@ const defaultSmtp: SmtpAdapter = async (config, addresses, mail, deadlineMs) => 
     // The connect itself is bounded here rather than by nodemailer, which
     // hands the socket back already opened and so never sees this phase.
     getSocket: (_options: SMTPTransport.Options, callback: (error: Error | null, value?: { connection: net.Socket }) => void) => {
-      connectToOne(addresses, port, deadlineMs, dial.signal).then(
+      connectToOne(addresses, port, deadlineMs, dial.signal, connect).then(
         (connection) => {
           // Held so the deadline below can end the session outright. Closing
           // the transport is not enough: for a non-pooled transport it does
@@ -303,6 +330,18 @@ const defaultSmtp: SmtpAdapter = async (config, addresses, mail, deadlineMs) => 
     transport.close();
   }
 };
+
+const defaultSmtp = smtpVia((options) => net.connect(options));
+
+/**
+ * A whole SMTP adapter replaces the dial with it; a connector replaces only the
+ * dial. Supplying both would silently drop the connector, so `smtp` wins and
+ * says so in `DeliveryDependencies`.
+ */
+function smtpAdapter(dependencies: DeliveryDependencies): SmtpAdapter {
+  if (dependencies.smtp) return dependencies.smtp;
+  return dependencies.connect ? smtpVia(dependencies.connect) : defaultSmtp;
+}
 
 /**
  * A failure that happened after the destination was confirmed public.
@@ -391,7 +430,7 @@ export async function deliverToChannel(
       validateDestination(config.host, administrative, resolveDns),
     );
     await afterValidation(
-      (dependencies.smtp ?? defaultSmtp)(config, addresses, {
+      smtpAdapter(dependencies)(config, addresses, {
         from: config.from, to: config.to, subject, text: body,
       }, Math.max(1, remaining())),
     );

@@ -220,12 +220,12 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
 
       await tx.interactionParticipant.deleteMany({ where: { interactionId: id } });
       await tx.interactionParticipant.createMany({
-        data: parsed.data.contactIds.map((contactId) => ({ interactionId: id, contactId })),
+        data: parsed.data.contactIds.map((contactId) => ({ ownerId, interactionId: id, contactId })),
       });
       await tx.interactionMention.deleteMany({ where: { interactionId: id } });
       if (mentionedContactIds.length) {
         await tx.interactionMention.createMany({
-          data: mentionedContactIds.map((contactId) => ({ interactionId: id, contactId })),
+          data: mentionedContactIds.map((contactId) => ({ ownerId, interactionId: id, contactId })),
         });
       }
 

@@ -370,7 +370,11 @@ export async function updateLifeEvent(form: FormData): Promise<ActionResult> {
     } });
     await tx.lifeEventParticipant.deleteMany({ where: { lifeEventId: id } });
     await tx.lifeEventParticipant.createMany({
-      data: requestedContactIds.map((participantId) => ({ lifeEventId: id, contactId: participantId })),
+      data: requestedContactIds.map((participantId) => ({
+        ownerId,
+        lifeEventId: id,
+        contactId: participantId,
+      })),
     });
   });
 
