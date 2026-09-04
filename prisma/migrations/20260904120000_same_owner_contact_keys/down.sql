@@ -120,4 +120,7 @@ ALTER TABLE `Interaction` DROP INDEX `Interaction_ownerId_id_key`;
 ALTER TABLE `LifeEvent`   DROP INDEX `LifeEvent_ownerId_id_key`;
 ALTER TABLE `Household`   DROP INDEX `Household_ownerId_id_key`;
 
-DELETE FROM `AppSetting` WHERE `key` = 'schemaRepair.sameOwnerContactKeys';
+DELETE FROM `AppSetting` WHERE `key` IN (
+  'schemaRepair.sameOwnerContactKeys',
+  'schemaRepair.sameOwnerContactKeys.derived'
+);

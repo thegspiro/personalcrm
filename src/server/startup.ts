@@ -2,6 +2,10 @@ import "server-only";
 import { prisma } from "@/server/db/client";
 import { provisionTaxonomies } from "@/server/taxonomy/provision";
 import { purgeExpiredSessions } from "@/server/auth/session";
+import {
+  recomputeContactActivity,
+  resequenceDateEntries,
+} from "@/server/services/contact-activity";
 
 import { startReminderScheduler } from "@/server/reminder-scheduler";
 
@@ -38,7 +42,55 @@ export async function runStartupTasks(): Promise<void> {
     console.error("[startup] session cleanup failed:", error);
   }
 
+  await finishSchemaRepairs();
   await reportSchemaRepairs();
+}
+
+const DERIVED_REPAIR = "schemaRepair.sameOwnerContactKeys.derived";
+/** Recomputed in batches: a damaged restore can name a lot of people. */
+const DERIVED_BATCH = 100;
+
+/**
+ * Finish the repair the migration was not allowed to.
+ *
+ * `Contact.lastInteractionAt` / `nextTouchAt` and `DateEntry.sequence` are
+ * derived fields with exactly one writer each, in application code. A migration
+ * that removes a participant or a date has changed what they derive from, and
+ * SQL that set them directly would be the very bug `contact-activity.ts` exists
+ * to prevent — a backdated log reading as "spoke today". So the migration
+ * leaves the contacts behind and the services run over them here.
+ *
+ * Idempotent, because both are recomputations from the underlying history
+ * rather than adjustments: running twice is running once. The row is cleared
+ * only once the work has committed, so a boot that dies half way through does
+ * it again rather than losing it.
+ */
+export async function finishSchemaRepairs(): Promise<void> {
+  try {
+    const record = await prisma.appSetting.findUnique({ where: { key: DERIVED_REPAIR } });
+    if (!record) return;
+    const ids = [
+      ...new Set((Array.isArray(record.value) ? record.value : []).filter(
+        (id): id is string => typeof id === "string" && id.length > 0,
+      )),
+    ];
+    if (ids.length > 0) {
+      for (let from = 0; from < ids.length; from += DERIVED_BATCH) {
+        const batch = ids.slice(from, from + DERIVED_BATCH);
+        await prisma.$transaction(async (tx) => {
+          await recomputeContactActivity(tx, batch);
+          for (const contactId of batch) await resequenceDateEntries(tx, contactId);
+        });
+      }
+      console.warn(
+        `[startup] recomputed last-contact dates and date numbering for ${ids.length} ` +
+          "person(s) whose history the same-owner key migration changed.",
+      );
+    }
+    await prisma.appSetting.delete({ where: { key: DERIVED_REPAIR } });
+  } catch (error) {
+    console.error(`[startup] could not finish ${DERIVED_REPAIR}:`, error);
+  }
 }
 
 /**

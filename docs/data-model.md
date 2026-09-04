@@ -89,7 +89,23 @@ a place — only the link is cleared, because the owner wrote that text and
 deleting their note to fix our key is the wrong trade. Deleting a record takes
 its `CustomFieldValue` rows with it: `entityId` points at four tables and is
 therefore not a foreign key, so nothing cascades and every delete path,
-including this one, sweeps them by hand. The counts are left in `AppSetting`
+including this one, sweeps them by hand.
+
+Removing a row is not always the whole repair, because the application's own
+delete paths do more than one delete. A relationship is two directional rows
+sharing a `pairId` and the pair is the unit — `deleteRelationship` removes both
+— so the pair goes rather than the half that fails the key, and two people are
+never left describing each other differently. A happening's "ask how it went"
+follow-up is an ordinary `Task` the key points *at*, so nothing cascades that
+way and the open one is removed by hand, exactly as `deleteHappening` does; a
+completed one is history and stays. And two fields are derived in application
+code with a single writer each — `Contact.lastInteractionAt` / `nextTouchAt`
+and `DateEntry.sequence` — which a migration may not set: writing them in SQL
+is the bug `contact-activity.ts` exists to prevent. The people affected are
+recorded alongside the counts, and `runStartupTasks` runs the real services
+over them at the next boot, in batches and only once they commit.
+
+The counts are left in `AppSetting`
 and said once in the boot log by `runStartupTasks`, so nothing is removed
 silently.
 

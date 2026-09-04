@@ -91,22 +91,39 @@ DELETE `v` FROM `CustomFieldValue` `v`
 -- repair exists for — can leave one behind. Written as a join between the two
 -- tables it would be skipped, and `ADD CONSTRAINT` would then abort the
 -- upgrade on the installation that needed the repair most.
+-- A relationship is two directional rows sharing a `pairId`: "Alice is Bob's
+-- parent" and "Bob is Alice's child". Every write path treats the pair as the
+-- unit — `deleteRelationship` removes `WHERE ownerId, pairId` — so removing the
+-- one direction that fails the key would leave the other standing, and the two
+-- people would show contradictory relationships until somebody edited one. The
+-- pair is what goes. The derived table is not decoration: MariaDB refuses a
+-- subquery that reads the table being deleted from unless it is materialised.
 SET @xoRelationships = (
-  SELECT COUNT(*) FROM `Relationship` `x` WHERE NOT EXISTS (
+  SELECT COUNT(*) FROM `Relationship` `r` WHERE `r`.`pairId` IN (
+    SELECT `pairId` FROM (
+      SELECT DISTINCT `x`.`pairId` FROM `Relationship` `x`
+        WHERE NOT EXISTS (
     SELECT 1 FROM `Contact` `c`
       WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`fromContactId`
   ) OR NOT EXISTS (
     SELECT 1 FROM `Contact` `c`
       WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`toContactId`
   )
+    ) AS `broken`
+  )
 );
-DELETE `x` FROM `Relationship` `x` WHERE NOT EXISTS (
+DELETE `r` FROM `Relationship` `r` WHERE `r`.`pairId` IN (
+  SELECT `pairId` FROM (
+    SELECT DISTINCT `x`.`pairId` FROM `Relationship` `x`
+      WHERE NOT EXISTS (
     SELECT 1 FROM `Contact` `c`
       WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`fromContactId`
   ) OR NOT EXISTS (
     SELECT 1 FROM `Contact` `c`
       WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`toContactId`
-  );
+  )
+  ) AS `broken`
+);
 SET @xoFacts = (
   SELECT COUNT(*) FROM `Fact` `x` WHERE NOT EXISTS (
     SELECT 1 FROM `Contact` `c`
@@ -153,6 +170,26 @@ DELETE `x` FROM `FamilySuggestionDismissal` `x` WHERE NOT EXISTS (
     SELECT 1 FROM `Contact` `c`
       WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`bContactId`
   );
+-- The follow-up is an ordinary `Task`, and the key points from the happening
+-- to it — so nothing cascades this way and `deleteHappening` removes it by
+-- hand. Left behind, "Ask how the trip went" stays on the tasks page and in the
+-- digest for an event that no longer exists. Mirrors `deleteFollowUpTask`: only
+-- while it is still open, because a completed one is history.
+SET @xoFollowUpTasks = (
+  SELECT COUNT(*) FROM `Task` `t`
+    JOIN `Happening` `x` ON `x`.`followUpTaskId` = `t`.`id` AND `x`.`ownerId` = `t`.`ownerId`
+    WHERE `t`.`completedAt` IS NULL AND NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
+);
+DELETE `t` FROM `Task` `t`
+  JOIN `Happening` `x` ON `x`.`followUpTaskId` = `t`.`id` AND `x`.`ownerId` = `t`.`ownerId`
+  WHERE `t`.`completedAt` IS NULL AND NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
+
 SET @xoHappenings = (
   SELECT COUNT(*) FROM `Happening` `x` WHERE NOT EXISTS (
     SELECT 1 FROM `Contact` `c`
@@ -203,6 +240,22 @@ DELETE `x` FROM `RomanticProfile` `x` WHERE NOT EXISTS (
     SELECT 1 FROM `Contact` `c`
       WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
   );
+-- `sequence` is "the nth date with this person", maintained on write, and the
+-- normal delete path calls `resequenceDateEntries`. A migration cannot: the
+-- ordering is derived in application code. The contacts whose numbering this
+-- disturbs are recorded instead, and `runStartupTasks` runs the real service
+-- over them at the next boot.
+SET @xoResequence = IFNULL((
+  SELECT JSON_ARRAYAGG(`id`) FROM (
+    SELECT DISTINCT `x`.`contactId` AS `id` FROM `DateEntry` `x`
+      WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
+        AND EXISTS (SELECT 1 FROM `Contact` `c2` WHERE `c2`.`id` = `x`.`contactId`)
+  ) AS `touched`
+), JSON_ARRAY());
+
 SET @xoDateEntries = (
   SELECT COUNT(*) FROM `DateEntry` `x` WHERE NOT EXISTS (
     SELECT 1 FROM `Contact` `c`
@@ -295,6 +348,30 @@ UPDATE `Plan` `x` SET `x`.`locationId` = NULL
 -- the same constraint-shaped condition as above removes what the contact key
 -- would refuse. `LifeEventParticipant` is reached after the `LifeEvent` repair,
 -- so a row cascaded away with its event is never counted here.
+-- Removing a participant removes a history edge, and `lastInteractionAt` /
+-- `nextTouchAt` are derived from the full history by `contact-activity.ts` —
+-- the one place allowed to write them. Left stale, the referenced person keeps
+-- a last-contact date from a meeting they are no longer part of, and drops off
+-- the overdue list on the strength of it. The contacts are recorded here and
+-- recomputed by the real service at the next boot. Captured before either
+-- delete, and only for contacts that exist: a dangling id has nothing to
+-- recompute.
+SET @xoRecompute = IFNULL((
+  SELECT JSON_ARRAYAGG(`id`) FROM (
+    SELECT DISTINCT `j`.`contactId` AS `id` FROM `InteractionParticipant` `j`
+      WHERE EXISTS (SELECT 1 FROM `Contact` `c2` WHERE `c2`.`id` = `j`.`contactId`)
+        AND (
+          NOT EXISTS (SELECT 1 FROM `Interaction` `p` WHERE `p`.`id` = `j`.`interactionId`)
+          OR NOT EXISTS (
+            SELECT 1 FROM `Contact` `c`
+              WHERE `c`.`ownerId` = (
+                SELECT `p2`.`ownerId` FROM `Interaction` `p2` WHERE `p2`.`id` = `j`.`interactionId`
+              ) AND `c`.`id` = `j`.`contactId`
+          )
+        )
+  ) AS `touched`
+), JSON_ARRAY());
+
 SET @xoParticipants = (SELECT COUNT(*) FROM `InteractionParticipant` `j` WHERE NOT EXISTS (
     SELECT 1 FROM `Interaction` `p` WHERE `p`.`id` = `j`.`interactionId`
   ));
@@ -565,7 +642,7 @@ SET @xoDeleted = @xoRelationships + @xoFacts + @xoImportantDates + @xoLifeEvents
   + @xoDismissals + @xoHappenings + @xoGifts + @xoDebts + @xoDietaryNeeds
   + @xoRomanticProfiles + @xoDateEntries + @xoFlags
   + @xoParticipants + @xoMentions + @xoEventParticipants + @xoHouseholdMembers
-  + @xoCustomFields;
+  + @xoCustomFields + @xoFollowUpTasks;
 SET @xoDetached = @xoIdeas + @xoTasks + @xoPlans
   + @xoInteractionPlaces + @xoPlanPlaces;
 
@@ -574,6 +651,21 @@ SET @xoDetached = @xoIdeas + @xoTasks + @xoPlans
 -- store `"12"` rather than `12`. The reader copes with either, but a count that
 -- is a count in one client and a string in another is a trap for the next
 -- person to add a key here.
+-- --- what the application has to finish -------------------------------------
+-- Two of the fields this repair disturbs are derived in application code and
+-- may not be written from here: `Contact.lastInteractionAt` / `nextTouchAt`,
+-- and `DateEntry.sequence`. The contacts are left where `runStartupTasks` can
+-- find them, and the services that own those fields run over them at the next
+-- boot. Written only when there is something to do, so a healthy installation
+-- carries no row and does no work.
+SET @xoDerived = JSON_MERGE_PRESERVE(@xoRecompute, @xoResequence);
+
+INSERT INTO `AppSetting` (`key`, `value`, `updatedAt`)
+  SELECT 'schemaRepair.sameOwnerContactKeys.derived', @xoDerived, NOW(3)
+  FROM DUAL
+  WHERE JSON_LENGTH(@xoDerived) > 0
+  ON DUPLICATE KEY UPDATE `value` = @xoDerived, `updatedAt` = NOW(3);
+
 INSERT INTO `AppSetting` (`key`, `value`, `updatedAt`)
   SELECT 'schemaRepair.sameOwnerContactKeys',
          JSON_OBJECT('deleted', CAST(@xoDeleted AS UNSIGNED),

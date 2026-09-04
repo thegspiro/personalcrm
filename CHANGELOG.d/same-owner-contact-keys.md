@@ -29,6 +29,13 @@
   record is kept and only the link cleared, because it is your writing and the
   wrong person is the only thing wrong with it. A record pointing at a person
   who is not there at all, which a restore can equally leave behind, is
-  repaired the same way rather than stopping the upgrade. The counts appear once in the
-  container log on the next start, so nothing is removed silently. A restore of
-  a dump taken before this upgrade re-runs the same repair.
+  repaired the same way rather than stopping the upgrade. The counts appear
+  once in the container log on the next start, so nothing is removed silently.
+  A restore of a dump taken before this upgrade re-runs the same repair.
+- **Removing a record takes with it what the app would have taken.** Both
+  directions of a relationship, so two people are never left describing each
+  other differently, and an "ask how it went" follow-up that is still open, so
+  no task outlives the event that created it. Last-contact dates and date
+  numbering are recalculated on the next start, from the history that remains,
+  so nobody drops off your overdue list on the strength of a meeting that was
+  never theirs.

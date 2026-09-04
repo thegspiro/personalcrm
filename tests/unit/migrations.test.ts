@@ -55,7 +55,7 @@ describe("MariaDB migrations", () => {
     // constraint's own question instead.
     expect(sql).not.toMatch(/`c`\.`ownerId` <> /);
     for (const table of [
-      "Relationship", "Fact", "ImportantDate", "LifeEvent",
+      "Fact", "ImportantDate", "LifeEvent",
       "FamilySuggestionDismissal", "Happening", "Gift", "Debt", "DietaryNeed",
       "RomanticProfile", "DateEntry", "Flag",
     ]) {
@@ -68,6 +68,17 @@ describe("MariaDB migrations", () => {
         new RegExp(`UPDATE \`${table}\` \`x\` SET \`x\`\\.\`contactId\` = NULL`),
       );
     }
+
+    // A relationship is two directional rows sharing a `pairId`, and every
+    // write path treats the pair as the unit. Repairing the one direction that
+    // fails the key would leave the other standing, and the two people would
+    // describe each other differently until somebody edited one.
+    expect(sql).toContain("DELETE `r` FROM `Relationship` `r` WHERE `r`.`pairId` IN");
+
+    // The follow-up is a `Task` the happening points at, so nothing cascades
+    // that way; `deleteHappening` removes the open one by hand and so does
+    // this. A completed one is history.
+    expect(sql).toMatch(/DELETE `t` FROM `Task` `t`[\s\S]*`t`\.`completedAt` IS NULL/);
 
     // The owner is copied from the parent, so a join row whose parent is gone
     // keeps a NULL one — and `MODIFY ... NOT NULL` refuses it. Those rows have
