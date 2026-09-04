@@ -373,7 +373,6 @@ model Relationship {
   type        TaxonomyTerm @relation("RelationshipType", fields: [typeId], references: [id], onDelete: Cascade)
 
   @@unique([fromContactId, toContactId, typeId])
-  @@index([ownerId])
   @@index([toContactId])
   @@index([typeId])
   @@index([ownerId, fromContactId])
@@ -541,7 +540,6 @@ model Fact {
   sourceInteraction Interaction?  @relation("FactSource", fields: [sourceInteractionId], references: [id], onDelete: SetNull)
 
   @@index([contactId, importance])
-  @@index([ownerId])
   @@index([categoryId])
   @@index([ownerId, contactId])
   @@index([sourceInteractionId])
@@ -1097,7 +1095,6 @@ model DateEntry {
   activityType TaxonomyTerm? @relation("DateActivityType", fields: [activityTypeId], references: [id], onDelete: SetNull)
 
   @@index([contactId, sequence])
-  @@index([ownerId])
   @@index([ownerId, contactId])
   @@index([activityTypeId])
 }

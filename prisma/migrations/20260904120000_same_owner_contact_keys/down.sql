@@ -13,6 +13,12 @@
 -- nothing: it was derived from the parent on the way in and can be derived
 -- again.
 
+-- Restored first: they are what covers the `ownerId` foreign key once the
+-- composite indexes below are dropped.
+ALTER TABLE `Relationship` ADD INDEX `Relationship_ownerId_idx` (`ownerId`);
+ALTER TABLE `Fact`         ADD INDEX `Fact_ownerId_idx` (`ownerId`);
+ALTER TABLE `DateEntry`    ADD INDEX `DateEntry_ownerId_idx` (`ownerId`);
+
 ALTER TABLE `Relationship` DROP FOREIGN KEY `Relationship_ownerId_fromContactId_fkey`;
 ALTER TABLE `Relationship` DROP FOREIGN KEY `Relationship_ownerId_toContactId_fkey`;
 ALTER TABLE `Relationship` DROP INDEX `Relationship_ownerId_fromContactId_idx`;

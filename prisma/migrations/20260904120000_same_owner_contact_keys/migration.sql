@@ -548,6 +548,16 @@ ALTER TABLE `HouseholdMember`
   FOREIGN KEY (`ownerId`, `contactId`) REFERENCES `Contact`(`ownerId`, `id`)
   ON DELETE CASCADE ON UPDATE CASCADE;
 
+-- --- indexes the new ones have made dead weight -----------------------------
+-- `(ownerId)` is the leftmost prefix of the composite index each of these
+-- tables just gained, so every lookup it served is served by the wider one and
+-- the `ownerId` foreign key stays covered. Dropped rather than left: this
+-- change is what made them redundant, and an index nothing can use is still
+-- maintained on every insert, update and delete.
+ALTER TABLE `Relationship` DROP INDEX `Relationship_ownerId_idx`;
+ALTER TABLE `Fact`         DROP INDEX `Fact_ownerId_idx`;
+ALTER TABLE `DateEntry`    DROP INDEX `DateEntry_ownerId_idx`;
+
 -- --- what was repaired -----------------------------------------------------
 -- Left where `runStartupTasks` can find it, and only when there was something
 -- to say, so a healthy installation stays quiet.
