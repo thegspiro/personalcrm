@@ -8,11 +8,10 @@ import {
   CHANNEL_FIELDS,
   CHANNEL_LABELS,
   isChannelKind,
-  TEST_NOTIFICATION_BODY,
-  TEST_NOTIFICATION_SUBJECT,
   validateChannelConfig,
   type ChannelKind,
 } from "@/lib/notification-channels";
+import { TEST_NOTIFICATION_BODY, TEST_NOTIFICATION_SUBJECT } from "@/lib/sample-digest";
 import { configOf, mergeChannelSecrets, resolveChannelSecrets } from "@/server/notifications/config";
 import net from "node:net";
 import { ReachedDestinationError, deliverToChannel } from "@/server/services/notify";
@@ -295,7 +294,7 @@ const COOLDOWN_MS = 30_000;
 const lastTestAt = new Map<string, number>();
 
 /**
- * Send a fixed message, to prove the channel is reachable.
+ * Send a fixed fictional digest, to prove the transport accepts the payload.
  *
  * Separate from saving on purpose. Verifying before storing is right for the
  * AI key — one global value, where a bad key means silent nothingness — and
@@ -321,9 +320,10 @@ export async function sendTestNotification(id: string): Promise<ActionResult> {
   lastTestAt.set(ownerId, Date.now());
 
   try {
-    // Fixed copy, no interpolation. Settings stays reachable while the privacy
-    // lock is closed, so this is the one button there that could otherwise put
-    // a private person's name on the wire.
+    // Invented people, run through the real digest formatter. Nothing here is
+    // read from the database. Settings stays reachable while the privacy lock
+    // is closed, so this is the one button there that could otherwise put a
+    // private person's name on the wire.
     await deliverToChannel(channel, TEST_NOTIFICATION_SUBJECT, TEST_NOTIFICATION_BODY);
   } catch (error) {
     return fail(await testFailureMessage(error));

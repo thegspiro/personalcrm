@@ -390,12 +390,25 @@ owner to scope by — which is why they need a role check and this does not.
 `sendTestNotification` is separate from saving on purpose. Verifying before
 storing is right for the AI key — one global value, where a bad key means
 silent nothingness — and wrong for a row: a Gotify box down for ten minutes
-must not stop you recording its address. It sends fixed copy with nothing
-interpolated, because Settings stays reachable while the privacy lock is
-closed and this is the one button there that could otherwise put a private
-person's name on the wire. It writes no `ReminderLog`: the ledger's unique key
-is the occurrence, and a test has none. It is rate-limited per channel, being
-a public POST that makes an outbound request to a caller-supplied URL.
+must not stop you recording its address.
+
+What it sends is the fixed sample digest in `src/lib/sample-digest.ts`:
+invented people and invented dates, rendered by the same `digestMessage()` the
+scheduler uses. Nothing is interpolated and no record is read, because Settings
+stays reachable while the privacy lock is closed and this is the one button
+there that could otherwise put a private person's name on the wire. Going
+through the real formatter is what makes the sample worth sending — it shows
+how a genuine digest will wrap, truncate and group on that channel — and the
+sample carries one entry of every kind and every timing word so no section
+goes unexercised. Its subject says "sample" rather than only its body: a push
+notification is often read as a single collapsed line.
+
+It writes no `ReminderLog`: the ledger's unique key is the occurrence, and a
+test has none. It is rate-limited per account rather than per channel, being a
+public POST that makes an outbound request to a caller-supplied URL — keyed by
+channel, the guard would reset by creating another one. A send that succeeds
+means the transport accepted the payload, not that a mail provider,
+notification service or recipient device will display it.
 
 ## Custom fields on a form
 
