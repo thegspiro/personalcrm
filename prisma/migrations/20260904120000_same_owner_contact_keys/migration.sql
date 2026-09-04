@@ -32,6 +32,14 @@
 -- Existing mismatches are detached here and the readers keep an explicit owner
 -- predicate: `src/server/services/locations.ts` for the write path and
 -- `src/server/queries/timeline.ts` for the read.
+--
+-- Every repair below asks the constraint's own question — "is there a `Contact`
+-- with this owner and this id" — rather than "do the two owners disagree". A
+-- restore with foreign-key checks off is the scenario this migration exists
+-- for, and it can leave a `contactId` pointing at nothing at all. That row
+-- fails the new key exactly as a mismatched one does, a join between the two
+-- tables skips it, and the upgrade would then abort on the installation that
+-- needed the repair most.
 
 -- --- the keys the composite foreign keys point at -------------------------
 ALTER TABLE `Interaction` ADD UNIQUE INDEX `Interaction_ownerId_id_key` (`ownerId`, `id`);
@@ -42,219 +50,330 @@ ALTER TABLE `Household`   ADD UNIQUE INDEX `Household_ownerId_id_key` (`ownerId`
 -- `CustomFieldValue.entityId` points at four different tables and is therefore
 -- not a foreign key, so nothing cascades and every delete path sweeps it by
 -- hand. This is a delete path. `ROMANTIC` values are keyed by the contact id
--- and `DATE_ENTRY` values by the entry id, matching
--- `deleteCustomFieldValues` in src/server/actions. Left behind they would keep
--- counting toward the custom-field totals and keep appearing in exports, for
--- records that no longer exist.
+-- and `DATE_ENTRY` values by the entry id, matching `deleteCustomFieldValues`
+-- in src/server/actions. Left behind they would keep counting toward the
+-- custom-field totals and keep appearing in exports, for records that no
+-- longer exist.
 SET @xoCustomFields = (
   SELECT COUNT(*) FROM `CustomFieldValue` `v`
     JOIN `RomanticProfile` `x` ON `x`.`ownerId` = `v`.`ownerId` AND `x`.`contactId` = `v`.`entityId`
-    JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-    WHERE `v`.`entityType` = 'ROMANTIC' AND `c`.`ownerId` <> `x`.`ownerId`
+    WHERE `v`.`entityType` = 'ROMANTIC' AND NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
 ) + (
   SELECT COUNT(*) FROM `CustomFieldValue` `v`
     JOIN `DateEntry` `x` ON `x`.`ownerId` = `v`.`ownerId` AND `x`.`id` = `v`.`entityId`
-    JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-    WHERE `v`.`entityType` = 'DATE_ENTRY' AND `c`.`ownerId` <> `x`.`ownerId`
+    WHERE `v`.`entityType` = 'DATE_ENTRY' AND NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
 );
 
 DELETE `v` FROM `CustomFieldValue` `v`
   JOIN `RomanticProfile` `x` ON `x`.`ownerId` = `v`.`ownerId` AND `x`.`contactId` = `v`.`entityId`
-  JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-  WHERE `v`.`entityType` = 'ROMANTIC' AND `c`.`ownerId` <> `x`.`ownerId`;
+  WHERE `v`.`entityType` = 'ROMANTIC' AND NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
 
 DELETE `v` FROM `CustomFieldValue` `v`
   JOIN `DateEntry` `x` ON `x`.`ownerId` = `v`.`ownerId` AND `x`.`id` = `v`.`entityId`
-  JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-  WHERE `v`.`entityType` = 'DATE_ENTRY' AND `c`.`ownerId` <> `x`.`ownerId`;
+  WHERE `v`.`entityType` = 'DATE_ENTRY' AND NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
 
 -- --- required links: count, then delete ------------------------------------
+-- The condition is the constraint's own, not "the owners disagree": a
+-- `contactId` matching no row at all fails the new key exactly as a mismatched
+-- one does, and a restore with foreign-key checks off — the same recovery this
+-- repair exists for — can leave one behind. Written as a join between the two
+-- tables it would be skipped, and `ADD CONSTRAINT` would then abort the
+-- upgrade on the installation that needed the repair most.
 SET @xoRelationships = (
-  SELECT COUNT(*) FROM `Relationship` `r`
-    JOIN `Contact` `f` ON `f`.`id` = `r`.`fromContactId`
-    JOIN `Contact` `t` ON `t`.`id` = `r`.`toContactId`
-    WHERE `f`.`ownerId` <> `r`.`ownerId` OR `t`.`ownerId` <> `r`.`ownerId`
+  SELECT COUNT(*) FROM `Relationship` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`fromContactId`
+  ) OR NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`toContactId`
+  )
 );
-DELETE `r` FROM `Relationship` `r`
-  JOIN `Contact` `f` ON `f`.`id` = `r`.`fromContactId`
-  JOIN `Contact` `t` ON `t`.`id` = `r`.`toContactId`
-  WHERE `f`.`ownerId` <> `r`.`ownerId` OR `t`.`ownerId` <> `r`.`ownerId`;
-
+DELETE `x` FROM `Relationship` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`fromContactId`
+  ) OR NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`toContactId`
+  );
 SET @xoFacts = (
-  SELECT COUNT(*) FROM `Fact` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-    WHERE `c`.`ownerId` <> `x`.`ownerId`
+  SELECT COUNT(*) FROM `Fact` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
 );
-DELETE `x` FROM `Fact` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-  WHERE `c`.`ownerId` <> `x`.`ownerId`;
-
+DELETE `x` FROM `Fact` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
 SET @xoImportantDates = (
-  SELECT COUNT(*) FROM `ImportantDate` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-    WHERE `c`.`ownerId` <> `x`.`ownerId`
+  SELECT COUNT(*) FROM `ImportantDate` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
 );
-DELETE `x` FROM `ImportantDate` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-  WHERE `c`.`ownerId` <> `x`.`ownerId`;
-
+DELETE `x` FROM `ImportantDate` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
 SET @xoLifeEvents = (
-  SELECT COUNT(*) FROM `LifeEvent` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-    WHERE `c`.`ownerId` <> `x`.`ownerId`
+  SELECT COUNT(*) FROM `LifeEvent` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
 );
-DELETE `x` FROM `LifeEvent` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-  WHERE `c`.`ownerId` <> `x`.`ownerId`;
-
+DELETE `x` FROM `LifeEvent` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
 SET @xoDismissals = (
-  SELECT COUNT(*) FROM `FamilySuggestionDismissal` `d`
-    JOIN `Contact` `a` ON `a`.`id` = `d`.`aContactId`
-    JOIN `Contact` `b` ON `b`.`id` = `d`.`bContactId`
-    WHERE `a`.`ownerId` <> `d`.`ownerId` OR `b`.`ownerId` <> `d`.`ownerId`
+  SELECT COUNT(*) FROM `FamilySuggestionDismissal` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`aContactId`
+  ) OR NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`bContactId`
+  )
 );
-DELETE `d` FROM `FamilySuggestionDismissal` `d`
-  JOIN `Contact` `a` ON `a`.`id` = `d`.`aContactId`
-  JOIN `Contact` `b` ON `b`.`id` = `d`.`bContactId`
-  WHERE `a`.`ownerId` <> `d`.`ownerId` OR `b`.`ownerId` <> `d`.`ownerId`;
-
+DELETE `x` FROM `FamilySuggestionDismissal` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`aContactId`
+  ) OR NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`bContactId`
+  );
 SET @xoHappenings = (
-  SELECT COUNT(*) FROM `Happening` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-    WHERE `c`.`ownerId` <> `x`.`ownerId`
+  SELECT COUNT(*) FROM `Happening` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
 );
-DELETE `x` FROM `Happening` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-  WHERE `c`.`ownerId` <> `x`.`ownerId`;
-
+DELETE `x` FROM `Happening` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
 SET @xoGifts = (
-  SELECT COUNT(*) FROM `Gift` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-    WHERE `c`.`ownerId` <> `x`.`ownerId`
+  SELECT COUNT(*) FROM `Gift` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
 );
-DELETE `x` FROM `Gift` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-  WHERE `c`.`ownerId` <> `x`.`ownerId`;
-
+DELETE `x` FROM `Gift` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
 SET @xoDebts = (
-  SELECT COUNT(*) FROM `Debt` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-    WHERE `c`.`ownerId` <> `x`.`ownerId`
+  SELECT COUNT(*) FROM `Debt` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
 );
-DELETE `x` FROM `Debt` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-  WHERE `c`.`ownerId` <> `x`.`ownerId`;
-
+DELETE `x` FROM `Debt` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
 SET @xoDietaryNeeds = (
-  SELECT COUNT(*) FROM `DietaryNeed` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-    WHERE `c`.`ownerId` <> `x`.`ownerId`
+  SELECT COUNT(*) FROM `DietaryNeed` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
 );
-DELETE `x` FROM `DietaryNeed` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-  WHERE `c`.`ownerId` <> `x`.`ownerId`;
-
+DELETE `x` FROM `DietaryNeed` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
 SET @xoRomanticProfiles = (
-  SELECT COUNT(*) FROM `RomanticProfile` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-    WHERE `c`.`ownerId` <> `x`.`ownerId`
+  SELECT COUNT(*) FROM `RomanticProfile` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
 );
-DELETE `x` FROM `RomanticProfile` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-  WHERE `c`.`ownerId` <> `x`.`ownerId`;
-
+DELETE `x` FROM `RomanticProfile` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
 SET @xoDateEntries = (
-  SELECT COUNT(*) FROM `DateEntry` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-    WHERE `c`.`ownerId` <> `x`.`ownerId`
+  SELECT COUNT(*) FROM `DateEntry` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
 );
-DELETE `x` FROM `DateEntry` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-  WHERE `c`.`ownerId` <> `x`.`ownerId`;
-
+DELETE `x` FROM `DateEntry` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
 SET @xoFlags = (
-  SELECT COUNT(*) FROM `Flag` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-    WHERE `c`.`ownerId` <> `x`.`ownerId`
+  SELECT COUNT(*) FROM `Flag` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
 );
-DELETE `x` FROM `Flag` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-  WHERE `c`.`ownerId` <> `x`.`ownerId`;
+DELETE `x` FROM `Flag` `x` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
 
 -- --- optional links: count, then detach ------------------------------------
+-- The row is the owner's own writing; only the pointer is wrong.
 SET @xoIdeas = (
-  SELECT COUNT(*) FROM `Idea` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-    WHERE `c`.`ownerId` <> `x`.`ownerId`
+  SELECT COUNT(*) FROM `Idea` `x` WHERE `x`.`contactId` IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
 );
-UPDATE `Idea` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-  SET `x`.`contactId` = NULL
-  WHERE `c`.`ownerId` <> `x`.`ownerId`;
-
+UPDATE `Idea` `x` SET `x`.`contactId` = NULL
+  WHERE `x`.`contactId` IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
 SET @xoTasks = (
-  SELECT COUNT(*) FROM `Task` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-    WHERE `c`.`ownerId` <> `x`.`ownerId`
+  SELECT COUNT(*) FROM `Task` `x` WHERE `x`.`contactId` IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
 );
-UPDATE `Task` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-  SET `x`.`contactId` = NULL
-  WHERE `c`.`ownerId` <> `x`.`ownerId`;
-
+UPDATE `Task` `x` SET `x`.`contactId` = NULL
+  WHERE `x`.`contactId` IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
 SET @xoPlans = (
-  SELECT COUNT(*) FROM `Plan` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-    WHERE `c`.`ownerId` <> `x`.`ownerId`
+  SELECT COUNT(*) FROM `Plan` `x` WHERE `x`.`contactId` IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  )
 );
-UPDATE `Plan` `x` JOIN `Contact` `c` ON `c`.`id` = `x`.`contactId`
-  SET `x`.`contactId` = NULL
-  WHERE `c`.`ownerId` <> `x`.`ownerId`;
+UPDATE `Plan` `x` SET `x`.`contactId` = NULL
+  WHERE `x`.`contactId` IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `x`.`ownerId` AND `c`.`id` = `x`.`contactId`
+  );
 
 -- --- the two place links that cannot take a composite key -------------------
 -- `SET NULL` needs every column of the key nullable and `ownerId` is not, so
 -- these keep a single-column key and an explicit predicate in the readers.
--- Detaching what is already mismatched is still worth doing: it is exactly the
--- row those predicates exist to survive, and nothing is lost but a pointer at
--- a place this account cannot see.
+-- Detaching what is already broken is still worth doing: it is exactly the row
+-- those predicates exist to survive, and nothing is lost but a pointer at a
+-- place this account cannot see, or at no place at all.
 SET @xoInteractionPlaces = (
-  SELECT COUNT(*) FROM `Interaction` `x` JOIN `Location` `l` ON `l`.`id` = `x`.`locationId`
-    WHERE `l`.`ownerId` <> `x`.`ownerId`
+  SELECT COUNT(*) FROM `Interaction` `x` WHERE `x`.`locationId` IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM `Location` `l`
+      WHERE `l`.`ownerId` = `x`.`ownerId` AND `l`.`id` = `x`.`locationId`
+  )
 );
-UPDATE `Interaction` `x` JOIN `Location` `l` ON `l`.`id` = `x`.`locationId`
-  SET `x`.`locationId` = NULL
-  WHERE `l`.`ownerId` <> `x`.`ownerId`;
-
+UPDATE `Interaction` `x` SET `x`.`locationId` = NULL
+  WHERE `x`.`locationId` IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM `Location` `l`
+      WHERE `l`.`ownerId` = `x`.`ownerId` AND `l`.`id` = `x`.`locationId`
+  );
 SET @xoPlanPlaces = (
-  SELECT COUNT(*) FROM `Plan` `x` JOIN `Location` `l` ON `l`.`id` = `x`.`locationId`
-    WHERE `l`.`ownerId` <> `x`.`ownerId`
+  SELECT COUNT(*) FROM `Plan` `x` WHERE `x`.`locationId` IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM `Location` `l`
+      WHERE `l`.`ownerId` = `x`.`ownerId` AND `l`.`id` = `x`.`locationId`
+  )
 );
-UPDATE `Plan` `x` JOIN `Location` `l` ON `l`.`id` = `x`.`locationId`
-  SET `x`.`locationId` = NULL
-  WHERE `l`.`ownerId` <> `x`.`ownerId`;
+UPDATE `Plan` `x` SET `x`.`locationId` = NULL
+  WHERE `x`.`locationId` IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM `Location` `l`
+      WHERE `l`.`ownerId` = `x`.`ownerId` AND `l`.`id` = `x`.`locationId`
+  );
 
 -- --- the join tables: give them an owner, then key on it --------------------
--- Nullable first, because there is nothing to put in it yet; the parent
--- supplies it. `LifeEventParticipant` is backfilled after the `LifeEvent`
--- repair above, so a row cascaded away with its event is never counted here.
-
+-- Rows whose parent is gone go first: the owner is copied from that parent, so
+-- without this the column stays NULL and `MODIFY ... NOT NULL` refuses. Then
+-- the same constraint-shaped condition as above removes what the contact key
+-- would refuse. `LifeEventParticipant` is reached after the `LifeEvent` repair,
+-- so a row cascaded away with its event is never counted here.
+SET @xoParticipants = (SELECT COUNT(*) FROM `InteractionParticipant` `j` WHERE NOT EXISTS (
+    SELECT 1 FROM `Interaction` `p` WHERE `p`.`id` = `j`.`interactionId`
+  ));
+DELETE `j` FROM `InteractionParticipant` `j` WHERE NOT EXISTS (
+    SELECT 1 FROM `Interaction` `p` WHERE `p`.`id` = `j`.`interactionId`
+  );
 ALTER TABLE `InteractionParticipant` ADD COLUMN `ownerId` VARCHAR(191) NULL;
 UPDATE `InteractionParticipant` `j` JOIN `Interaction` `p` ON `p`.`id` = `j`.`interactionId`
   SET `j`.`ownerId` = `p`.`ownerId`;
-SET @xoParticipants = (
-  SELECT COUNT(*) FROM `InteractionParticipant` `j` JOIN `Contact` `c` ON `c`.`id` = `j`.`contactId`
-    WHERE `c`.`ownerId` <> `j`.`ownerId`
+SET @xoParticipants = @xoParticipants + (
+  SELECT COUNT(*) FROM `InteractionParticipant` `j` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `j`.`ownerId` AND `c`.`id` = `j`.`contactId`
+  )
 );
-DELETE `j` FROM `InteractionParticipant` `j` JOIN `Contact` `c` ON `c`.`id` = `j`.`contactId`
-  WHERE `c`.`ownerId` <> `j`.`ownerId`;
+DELETE `j` FROM `InteractionParticipant` `j` WHERE NOT EXISTS (
+  SELECT 1 FROM `Contact` `c`
+    WHERE `c`.`ownerId` = `j`.`ownerId` AND `c`.`id` = `j`.`contactId`
+);
 ALTER TABLE `InteractionParticipant` MODIFY COLUMN `ownerId` VARCHAR(191) NOT NULL;
-
+SET @xoMentions = (SELECT COUNT(*) FROM `InteractionMention` `j` WHERE NOT EXISTS (
+    SELECT 1 FROM `Interaction` `p` WHERE `p`.`id` = `j`.`interactionId`
+  ));
+DELETE `j` FROM `InteractionMention` `j` WHERE NOT EXISTS (
+    SELECT 1 FROM `Interaction` `p` WHERE `p`.`id` = `j`.`interactionId`
+  );
 ALTER TABLE `InteractionMention` ADD COLUMN `ownerId` VARCHAR(191) NULL;
 UPDATE `InteractionMention` `j` JOIN `Interaction` `p` ON `p`.`id` = `j`.`interactionId`
   SET `j`.`ownerId` = `p`.`ownerId`;
-SET @xoMentions = (
-  SELECT COUNT(*) FROM `InteractionMention` `j` JOIN `Contact` `c` ON `c`.`id` = `j`.`contactId`
-    WHERE `c`.`ownerId` <> `j`.`ownerId`
+SET @xoMentions = @xoMentions + (
+  SELECT COUNT(*) FROM `InteractionMention` `j` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `j`.`ownerId` AND `c`.`id` = `j`.`contactId`
+  )
 );
-DELETE `j` FROM `InteractionMention` `j` JOIN `Contact` `c` ON `c`.`id` = `j`.`contactId`
-  WHERE `c`.`ownerId` <> `j`.`ownerId`;
+DELETE `j` FROM `InteractionMention` `j` WHERE NOT EXISTS (
+  SELECT 1 FROM `Contact` `c`
+    WHERE `c`.`ownerId` = `j`.`ownerId` AND `c`.`id` = `j`.`contactId`
+);
 ALTER TABLE `InteractionMention` MODIFY COLUMN `ownerId` VARCHAR(191) NOT NULL;
-
+SET @xoEventParticipants = (SELECT COUNT(*) FROM `LifeEventParticipant` `j` WHERE NOT EXISTS (
+    SELECT 1 FROM `LifeEvent` `p` WHERE `p`.`id` = `j`.`lifeEventId`
+  ));
+DELETE `j` FROM `LifeEventParticipant` `j` WHERE NOT EXISTS (
+    SELECT 1 FROM `LifeEvent` `p` WHERE `p`.`id` = `j`.`lifeEventId`
+  );
 ALTER TABLE `LifeEventParticipant` ADD COLUMN `ownerId` VARCHAR(191) NULL;
 UPDATE `LifeEventParticipant` `j` JOIN `LifeEvent` `p` ON `p`.`id` = `j`.`lifeEventId`
   SET `j`.`ownerId` = `p`.`ownerId`;
-SET @xoEventParticipants = (
-  SELECT COUNT(*) FROM `LifeEventParticipant` `j` JOIN `Contact` `c` ON `c`.`id` = `j`.`contactId`
-    WHERE `c`.`ownerId` <> `j`.`ownerId`
+SET @xoEventParticipants = @xoEventParticipants + (
+  SELECT COUNT(*) FROM `LifeEventParticipant` `j` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `j`.`ownerId` AND `c`.`id` = `j`.`contactId`
+  )
 );
-DELETE `j` FROM `LifeEventParticipant` `j` JOIN `Contact` `c` ON `c`.`id` = `j`.`contactId`
-  WHERE `c`.`ownerId` <> `j`.`ownerId`;
+DELETE `j` FROM `LifeEventParticipant` `j` WHERE NOT EXISTS (
+  SELECT 1 FROM `Contact` `c`
+    WHERE `c`.`ownerId` = `j`.`ownerId` AND `c`.`id` = `j`.`contactId`
+);
 ALTER TABLE `LifeEventParticipant` MODIFY COLUMN `ownerId` VARCHAR(191) NOT NULL;
-
+SET @xoHouseholdMembers = (SELECT COUNT(*) FROM `HouseholdMember` `j` WHERE NOT EXISTS (
+    SELECT 1 FROM `Household` `p` WHERE `p`.`id` = `j`.`householdId`
+  ));
+DELETE `j` FROM `HouseholdMember` `j` WHERE NOT EXISTS (
+    SELECT 1 FROM `Household` `p` WHERE `p`.`id` = `j`.`householdId`
+  );
 ALTER TABLE `HouseholdMember` ADD COLUMN `ownerId` VARCHAR(191) NULL;
 UPDATE `HouseholdMember` `j` JOIN `Household` `p` ON `p`.`id` = `j`.`householdId`
   SET `j`.`ownerId` = `p`.`ownerId`;
-SET @xoHouseholdMembers = (
-  SELECT COUNT(*) FROM `HouseholdMember` `j` JOIN `Contact` `c` ON `c`.`id` = `j`.`contactId`
-    WHERE `c`.`ownerId` <> `j`.`ownerId`
+SET @xoHouseholdMembers = @xoHouseholdMembers + (
+  SELECT COUNT(*) FROM `HouseholdMember` `j` WHERE NOT EXISTS (
+    SELECT 1 FROM `Contact` `c`
+      WHERE `c`.`ownerId` = `j`.`ownerId` AND `c`.`id` = `j`.`contactId`
+  )
 );
-DELETE `j` FROM `HouseholdMember` `j` JOIN `Contact` `c` ON `c`.`id` = `j`.`contactId`
-  WHERE `c`.`ownerId` <> `j`.`ownerId`;
+DELETE `j` FROM `HouseholdMember` `j` WHERE NOT EXISTS (
+  SELECT 1 FROM `Contact` `c`
+    WHERE `c`.`ownerId` = `j`.`ownerId` AND `c`.`id` = `j`.`contactId`
+);
 ALTER TABLE `HouseholdMember` MODIFY COLUMN `ownerId` VARCHAR(191) NOT NULL;
 
 -- --- swap the keys ---------------------------------------------------------

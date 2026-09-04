@@ -27,6 +27,8 @@
   the link is required the record is removed, along with any custom field
   values it had; where it is optional — an idea, a task, a plan, a place — the
   record is kept and only the link cleared, because it is your writing and the
-  wrong person is the only thing wrong with it. The counts appear once in the
+  wrong person is the only thing wrong with it. A record pointing at a person
+  who is not there at all, which a restore can equally leave behind, is
+  repaired the same way rather than stopping the upgrade. The counts appear once in the
   container log on the next start, so nothing is removed silently. A restore of
   a dump taken before this upgrade re-runs the same repair.

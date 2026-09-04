@@ -78,7 +78,12 @@ readers honest.
 
 **The upgrade repairs rather than refuses.** Adding the constraint first would
 abort the upgrade on precisely the installation that needs it, so
-`20260904120000_same_owner_contact_keys` clears the mismatches first. Where the
+`20260904120000_same_owner_contact_keys` clears the mismatches first. Each
+repair asks the constraint's own question — is there a `Contact` with this
+owner and this id — rather than whether two owners disagree: the restore that
+motivates all of this can equally leave a `contactId` pointing at nothing, that
+row fails the new key just the same, and a join between the two tables would
+skip it. Where the
 link is required the row goes; where it is optional — an idea, a task, a plan,
 a place — only the link is cleared, because the owner wrote that text and
 deleting their note to fix our key is the wrong trade. Deleting a record takes
