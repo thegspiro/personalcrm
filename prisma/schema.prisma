@@ -1140,12 +1140,20 @@ model Plan {
   estimatedCostCents Int?
   currency           String @default("USD") @db.VarChar(8)
 
-  notes      String?    @db.Text
+  notes                  String?    @db.Text
   /// Local, user-edited preparation steps; each item has id, text and completed.
-  checklist  Json       @default("[]")
-  status     PlanStatus @default(OPEN)
+  checklist              Json       @default("[]")
+  status                 PlanStatus @default(OPEN)
   /// Pencilled in, before there is anything logged to point at.
-  plannedFor DateTime?  @db.Date
+  plannedFor             DateTime?  @db.Date
+  /// Local wall-clock minutes past midnight on `plannedFor`, 0-1439. A day and
+  /// a local minute rather than an instant, because the day is what recurs, is
+  /// compared and is displayed; `zonedTimeOfDay` resolves the pair against the
+  /// account's timezone at the point something actually needs a moment.
+  /// Meaningless without a day, so it is cleared when `plannedFor` is null.
+  plannedStartMinute     Int?
+  /// How long to set aside, in minutes. Null = open-ended.
+  plannedDurationMinutes Int?
 
   usedAt              DateTime?
   /// What it became. An interaction rather than a DateEntry: a plan carried

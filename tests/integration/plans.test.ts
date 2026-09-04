@@ -1,5 +1,32 @@
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestUser, daysAgo, hasTestDatabase, prisma, reset } from "./db";
+
+// The time-of-day rules live in `planFields`, so those cases drive the real
+// actions rather than Prisma. Everything else here stays a direct write.
+const actionState = vi.hoisted(() => ({ ownerId: "", locked: false }));
+vi.mock("@/server/db/client", async () => ({ prisma: (await import("./db")).prisma }));
+vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+vi.mock("@/server/user/context", () => ({
+  getUserContext: async () => ({
+    user: { id: actionState.ownerId },
+    prefs: {},
+    timezone: "America/New_York",
+  }),
+}));
+vi.mock("@/server/privacy/lock", () => ({
+  getPrivacyState: async () => ({ enabled: actionState.locked, unlocked: !actionState.locked }),
+  recordProtectedReadActivity: async () => {},
+  requireUnlocked: async () =>
+    actionState.locked ? { ok: false, error: "Unlock to continue." } : { ok: true },
+}));
+
+const { createPlan, updatePlan } = await import("@/server/actions/details");
+
+function actionForm(values: Record<string, string>) {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(values)) form.set(key, value);
+  return form;
+}
 
 /**
  * Plans — the things you mean to do with people.
@@ -14,6 +41,8 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     await reset();
     const user = await createTestUser();
     ownerId = user.id;
+    actionState.ownerId = user.id;
+    actionState.locked = false;
   });
 
   afterAll(async () => {
@@ -152,5 +181,76 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     const orphaned = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
     expect(orphaned.usedInInteractionId).toBeNull();
     expect(orphaned.status).toBe("DONE");
+  });
+
+  it("a plan keeps the day, the time and how long to set aside", async () => {
+    const created = await createPlan(
+      actionForm({
+        title: "Late showing at the Alamo",
+        plannedFor: "2026-10-02",
+        plannedStartTime: "19:30",
+        plannedDurationMinutes: "150",
+      }),
+    );
+    expect(created).toMatchObject({ ok: true });
+
+    const plan = await prisma.plan.findFirstOrThrow({ where: { ownerId } });
+    expect(plan.plannedFor?.toISOString()).toBe("2026-10-02T00:00:00.000Z");
+    expect(plan.plannedStartMinute).toBe(19 * 60 + 30);
+    expect(plan.plannedDurationMinutes).toBe(150);
+  });
+
+  it("a plan with a day and no time is stored exactly as it was before", async () => {
+    expect(
+      await createPlan(actionForm({ title: "Go to the observatory", plannedFor: "2026-10-02" })),
+    ).toMatchObject({ ok: true });
+
+    const plan = await prisma.plan.findFirstOrThrow({ where: { ownerId } });
+    expect(plan.plannedFor?.toISOString()).toBe("2026-10-02T00:00:00.000Z");
+    expect(plan.plannedStartMinute).toBeNull();
+    expect(plan.plannedDurationMinutes).toBeNull();
+  });
+
+  it("drops a time that arrives without a day, rather than refusing the save", async () => {
+    // A time on nothing is not a time, and refusing would make clearing the
+    // day an error the user has to go and understand.
+    expect(
+      await createPlan(actionForm({ title: "Something", plannedStartTime: "19:30" })),
+    ).toMatchObject({ ok: true });
+
+    const plan = await prisma.plan.findFirstOrThrow({ where: { ownerId } });
+    expect(plan.plannedFor).toBeNull();
+    expect(plan.plannedStartMinute).toBeNull();
+  });
+
+  it("clears the time when the day is cleared on an edit", async () => {
+    const created = await createPlan(
+      actionForm({ title: "Dinner", plannedFor: "2026-10-02", plannedStartTime: "19:30" }),
+    );
+    const id = (created as { data?: { id: string } }).data!.id;
+
+    expect(await updatePlan(actionForm({ id, title: "Dinner" }))).toMatchObject({ ok: true });
+
+    const plan = await prisma.plan.findUniqueOrThrow({ where: { id } });
+    expect(plan.plannedFor).toBeNull();
+    expect(plan.plannedStartMinute).toBeNull();
+  });
+
+  it("refuses a time it cannot read instead of filing the plan at midnight", async () => {
+    const result = await createPlan(
+      actionForm({ title: "Dinner", plannedFor: "2026-10-02", plannedStartTime: "half seven" }),
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    expect(await prisma.plan.count()).toBe(0);
+  });
+
+  it("refuses a duration longer than a day", async () => {
+    const result = await createPlan(
+      actionForm({ title: "Dinner", plannedFor: "2026-10-02", plannedDurationMinutes: "1441" }),
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    expect(await prisma.plan.count()).toBe(0);
   });
 });

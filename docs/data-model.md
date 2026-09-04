@@ -559,6 +559,8 @@ you _do_ it.
 | `checklist` | `json` | A validated list of up to 25 `{ id, text, completed }` items. Suggestions begin only in the editor and are never completed automatically |
 | `status` | `PlanStatus` | `OPEN` \| `PLANNED` \| `DONE` \| `ARCHIVED` |
 | `plannedFor` | `date?` | Pencilled in, before there is anything logged to point at |
+| `plannedStartMinute` | `int?` | Local wall-clock minutes past midnight on `plannedFor`, 0–1439. Cleared when there is no day — a time on nothing is not a time |
+| `plannedDurationMinutes` | `int?` | How long to set aside, in minutes. Null = open-ended |
 | `usedAt` | `datetime?` | |
 | `usedInInteractionId` | `cuid?` | → `Interaction`, `SET NULL`. An interaction rather than a `DateEntry`: a plan carried out with a friend never produces one of those |
 
@@ -566,6 +568,15 @@ Deliberately not confined to the dating layer — a hike with a friend and a fir
 date are the same object, so it hangs off any `Contact`, or off nobody.
 Checklist data inherits the plan's ownership and contact privacy filtering; it
 does not add a separately queried or cacheable child row.
+
+The time is a **day plus a local minute, never an instant**. `plannedFor` stays
+a `DATE` because the day is what gets compared, grouped and displayed, and
+storing a moment instead would drag every existing reader onto the instant side
+of the split `src/lib/dates.ts` warns about. `zonedTimeOfDay` resolves the pair
+against the account's timezone at the point something genuinely needs a moment,
+and settles both daylight-saving transitions the way calendar apps do: a local
+time inside the skipped hour lands after the gap, and one inside a repeated hour
+takes the first.
 
 ### `Task`
 
@@ -862,6 +873,7 @@ the `init-migrate` s6 oneshot).
 | `20260903120000_add_happenings` | Adds `Happening` and `AvailabilityImpact`, and appends `HAPPENING_TYPE` to `TaxonomyKind`. Purely additive: no column is re-expressed, so there is nothing to backfill before a drop. The enum `MODIFY` appends a value without reordering the existing ones, so no stored `TaxonomyTerm.kind` changes meaning |
 | `20260903140000_same_owner_join_keys` | Gives `ContactTag` an `ownerId` and points both of its keys, and `LocationAlias`'s, at `(ownerId, id)` so a join across two accounts cannot be stored. **Hand-edited**: backfills the new column, then records and removes the rows that cannot satisfy the new key *before* adding it — adding it first would abort the upgrade on exactly the installation that needs the repair. The counts go to `AppSetting` for `runStartupTasks` to say once in the boot log |
 | `20260904120000_same_owner_contact_keys` | Extends the same treatment to every remaining reference to a `Contact` — seventeen owned relations, plus `InteractionParticipant`, `InteractionMention`, `LifeEventParticipant` and `HouseholdMember`, which gain an `ownerId` backfilled from their parent. **Hand-edited**: repairs before it constrains, deleting a row whose link is required and clearing only the link where it is optional, sweeping the `CustomFieldValue` rows of anything it deletes, and detaching cross-owner `Interaction.place` / `Plan.place`, which keep a single-column key because `SET NULL` needs every column nullable. Ships a `down.sql` |
+| `20260904150000_add_plan_times` | Additive nullable `Plan.plannedStartMinute` and `plannedDurationMinutes`, so a pencilled-in plan can carry a time of day and a rough length. Purely additive — no existing column is re-expressed, and a plan with a day but no time reads exactly as it did before |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).

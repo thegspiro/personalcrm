@@ -449,6 +449,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             notes: plan.notes,
             checklist: plan.checklist,
             plannedFor: plan.plannedFor ? plainDateFromDb(plan.plannedFor) : null,
+            plannedStartMinute: plan.plannedStartMinute,
+            plannedDurationMinutes: plan.plannedDurationMinutes,
             categoryId: plan.categoryId,
             category: plan.category
               ? {
