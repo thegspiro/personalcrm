@@ -218,8 +218,8 @@ unticked checklist, because inherited ticks would claim a booking nobody made.
 The write is a compare-and-set on both the status *and* the contact, not just an
 update after the read: several awaits separate the two, and on status alone a
 second stale form would overwrite the person the first one attached and still
-report success. The copy re-checks the plan's `locationId` against the owner
-before taking it, for the reason given under `completePlan` below.
+report success. The copy re-checks both of the plan's foreign keys against the
+owner before taking them — `ownedPlanRefs`.
 
 `completePlan` refuses outright on a plan that is already `DONE` or `ARCHIVED`.
 Both of its claims carry the status, but the shared-idea path has no claim — it
@@ -227,7 +227,15 @@ never writes to the original — so that precondition is what stops a stale form
 or a direct POST filing a second evening from a closed idea. All three write
 paths name the contact they read as well as the status, including the
 nobody-attached one: a request attaching the row in between would otherwise have
-*their* plan marked done with no interaction and no cadence recomputed.
+*their* plan marked done with no interaction and no cadence recomputed. The two
+that write to the plan itself also name the day and start time they read, since
+`occurredAt` is derived from those — a reschedule for the same person changes
+neither status nor contact, so on those alone the evening would be filed on the
+old day and the newly arranged one marked done before it happened. The shared
+path has no claim at all, so it re-reads the source inside the transaction
+before writing anything from it: a snapshot read rather than a lock, but taken
+after the precondition, so an idea archived while the request was deciding no
+longer produces an evening out of it.
 
 `completePlan` records what a plan became. `setPlanStatus(id, "DONE")` closes a
 plan and *clears* `usedInInteractionId` — right for undoing a mistake, wrong for
@@ -259,11 +267,16 @@ a literal replay, because two tabs would mint two of them. The violation is
 caught *outside* `transact`, on a transaction the database has already rolled
 back — catching it inside and carrying on is the trap invariant 9 describes.
 
-A `locationId` on the plan is re-checked against the owner before it is copied
-into the interaction or the copy. `Interaction.place` and `Plan.place` are keyed
-on the location id alone, so a restored or imported row can point at another
-account's `Location`; the free-text venue name is kept either way, and only the
-foreign key is dropped.
+Both of the plan's pointers — `locationId` and `categoryId` — are re-checked
+against the owner by `ownedPlanRefs` before either is copied into the
+interaction or the copy. `Interaction.place`, `Plan.place` and `Plan.category`
+are all keyed on the target id alone rather than on `(ownerId, id)`, because
+`SET NULL` needs every column of the key nullable and `ownerId` is not, so a
+restored or imported row can point at another account's `Location` or
+`TaxonomyTerm`. `listPlans` loads both with no owner predicate, so the other
+account's label, colour and coordinates would surface here, and their delete
+would reach through. The free-text venue name is kept either way; only the
+foreign keys are dropped.
 
 It never writes a `DateEntry`, even for someone romantic: plans are deliberately
 not behind the privacy lock and a `DateEntry` is, so writing one from here would

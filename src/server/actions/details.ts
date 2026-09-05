@@ -1143,6 +1143,41 @@ export async function setPlanStatus(id: string, status: PlanStatusValue): Promis
 }
 
 /**
+ * The pointers on a plan that are safe to carry onward, and only those.
+ *
+ * `Plan.place` and `Plan.category` are keyed on the target id alone rather than
+ * on `(ownerId, id)` — `SET NULL` needs every column of the key nullable and
+ * `ownerId` is not — so a restored or imported plan can point at another
+ * account's `Location` or `TaxonomyTerm`. Copying either onward mints a further
+ * cross-owner reference: `listPlans` loads both with no owner predicate, so the
+ * other account's label, colour and coordinates surface here, and a delete over
+ * there reaches through `ON DELETE SET NULL` into this account's rows.
+ *
+ * Callers keep the free-text `location` name either way. What is dropped is
+ * only a foreign key that should never have been stored.
+ */
+async function ownedPlanRefs(
+  ownerId: string,
+  plan: { locationId: string | null; categoryId: string | null },
+): Promise<{ locationId: string | null; categoryId: string | null }> {
+  const [place, category] = await Promise.all([
+    plan.locationId
+      ? prisma.location.findFirst({
+          where: { id: plan.locationId, ownerId },
+          select: { id: true },
+        })
+      : null,
+    plan.categoryId
+      ? prisma.taxonomyTerm.findFirst({
+          where: { id: plan.categoryId, ownerId, kind: "PLAN_CATEGORY" },
+          select: { id: true },
+        })
+      : null,
+  ]);
+  return { locationId: place?.id ?? null, categoryId: category?.id ?? null };
+}
+
+/**
  * Pencil a plan in for a day, and optionally a time and a person.
  *
  * The awkward part is who it is with. `updatePlan` deliberately never moves a
@@ -1235,29 +1270,18 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
   // the original's status cannot be made contradictory by it. A copy taken
   // from a plan someone finished a moment ago is simply a new evening.
 
-  // The location is re-checked against the owner first, exactly as
-  // `completePlan` does it. `Plan.place` is keyed on the location id alone, so
-  // a restored or imported shared plan can point at another account's row, and
-  // copying it unchecked would mint a second cross-owner reference for
-  // `listPlans` to load and for a delete over there to reach through. The
-  // free-text venue name is kept either way.
-  const placeId =
-    existing.locationId &&
-    (await prisma.location.findFirst({
-      where: { id: existing.locationId, ownerId },
-      select: { id: true },
-    }))
-      ? existing.locationId
-      : null;
+  // Both of the plan's foreign keys are re-checked against the owner before the
+  // copy takes them; see `ownedPlanRefs`.
+  const refs = await ownedPlanRefs(ownerId, existing);
 
   const copy = await prisma.plan.create({
     data: {
       ownerId,
       contactId: withContactId,
       title: existing.title,
-      categoryId: existing.categoryId,
+      categoryId: refs.categoryId,
       location: existing.location,
-      locationId: placeId,
+      locationId: refs.locationId,
       address: existing.address,
       url: existing.url,
       estimatedCostCents: existing.estimatedCostCents,
@@ -1349,7 +1373,16 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
     // between the read and here would otherwise have its plan marked done with
     // no interaction and no cadence recomputed for the person now on it.
     const claimed = await prisma.plan.updateMany({
-      where: { id, ownerId, contactId: null, status: { notIn: ["DONE", "ARCHIVED"] } },
+      where: {
+        id,
+        ownerId,
+        contactId: null,
+        status: { notIn: ["DONE", "ARCHIVED"] },
+        // `usedAt` was derived from these two, so a reschedule that landed
+        // since the read has to abort this rather than stamp the old evening.
+        plannedFor: existing.plannedFor,
+        plannedStartMinute: existing.plannedStartMinute,
+      },
       data: { status: "DONE", usedAt: occurredAt },
     });
     if (claimed.count === 0) {
@@ -1361,22 +1394,11 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
 
   const hangout = await findTermBySlug(ownerId, "INTERACTION_TYPE", "hangout");
 
-  // `Interaction.place` is keyed on the location id alone, not on
-  // `[ownerId, id]` the way `LocationAlias` is, so a restored or imported plan
-  // can carry another account's `locationId` — the same cross-owner state
-  // `queries/timeline.ts` already guards its place search against. Copied
-  // unchecked, the timeline drops the mismatched place and the outing loses its
-  // venue, and a delete in the other account reaches across `ON DELETE SET
-  // NULL` into this one. The free-text name is kept either way: what is dropped
-  // is only a foreign key that should never have been there.
-  const placeId =
-    existing.locationId &&
-    (await prisma.location.findFirst({
-      where: { id: existing.locationId, ownerId },
-      select: { id: true },
-    }))
-      ? existing.locationId
-      : null;
+  // `Interaction.place` has the same single-column key, so the outing inherits
+  // the problem `ownedPlanRefs` describes: copied unchecked, the timeline drops
+  // the mismatched place and the evening loses its venue, and a delete in the
+  // other account reaches across `ON DELETE SET NULL` into this one.
+  const refs = await ownedPlanRefs(ownerId, existing);
 
   const interactionData = {
     ownerId,
@@ -1385,7 +1407,7 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
     title: existing.title,
     notes: str(form, "notes") ?? null,
     location: existing.location,
-    locationId: placeId,
+    locationId: refs.locationId,
     participants: { create: [{ contactId }] },
   };
 
@@ -1413,15 +1435,28 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
 
   const completed = await transact(async (tx) => {
     if (sharedCopy) {
+      // The precondition above is outside the transaction, and this path has no
+      // claim to fall back on, so read the source again here before writing
+      // anything from it. The transaction's snapshot is taken at this statement
+      // — after that outer read — so anything committed in between is seen, and
+      // the window narrows to the transaction itself. It is a snapshot read and
+      // not a lock: what it buys is that a plan archived or finished while this
+      // request was deciding no longer produces an evening out of it.
+      const source = await tx.plan.findFirst({
+        where: { id, ownerId, contactId: null, status: { notIn: ["DONE", "ARCHIVED"] } },
+        select: { id: true },
+      });
+      if (!source) return false;
+
       const interaction = await tx.interaction.create({ data: interactionData });
       await tx.plan.create({
         data: {
           ownerId,
           contactId,
           title: existing.title,
-          categoryId: existing.categoryId,
+          categoryId: refs.categoryId,
           location: existing.location,
-          locationId: placeId,
+          locationId: refs.locationId,
           address: existing.address,
           url: existing.url,
           estimatedCostCents: existing.estimatedCostCents,
@@ -1476,12 +1511,20 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
     // read a moment ago while `closePlanAsInteraction` matched nothing against
     // the row as it now is, committing the plan done with no link and leaving
     // that interaction adrift.
+    //
+    // The day and time are in it too. Another tab rescheduling this plan for
+    // the same person changes neither the status nor the contact, so on those
+    // alone the claim would still match: the interaction would be filed on the
+    // day that was read rather than the day now on the row, and the freshly
+    // arranged evening would be marked done before it happened.
     const claimed = await tx.plan.updateMany({
       where: {
         id,
         ownerId,
         contactId: existing.contactId,
         status: { notIn: ["DONE", "ARCHIVED"] },
+        plannedFor: existing.plannedFor,
+        plannedStartMinute: existing.plannedStartMinute,
       },
       data: { status: "DONE", usedAt: occurredAt },
     });

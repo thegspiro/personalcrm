@@ -44,3 +44,9 @@
 - **A closed idea cannot be finished a second time.** Ticking off something
   already done or archived — from a stale page, or a resent request — filed
   another evening from it.
+- **Moving an evening in one tab no longer lets another tab file the old one.**
+  Ticking a plan off from a stale page recorded it on the day it used to be set
+  for, and closed out the day it had just been moved to.
+- **A category belonging to another account is no longer copied either.** The
+  same restore that could leave a stray venue pointer could leave a stray
+  category, which would have shown that account's label and colour on the copy.
