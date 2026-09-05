@@ -806,10 +806,19 @@ old row's date. The projection inherits the legacy row's `reminderDaysBefore`,
 so an account that configured offsets keeps them.
 
 A canonical birthday is stored in the ledger under
-`contact-birthday:<contactId>`, not an `ImportantDate` id; `entityId` is a
-64-character column and the prefixed cuid fits. Only `DAY` and `MONTH_DAY`
-precision produce a reminder: `MONTH` and `YEAR` have no day to name, and
-`projectDateOccurrences` likewise declines to invent one.
+`contact-birthday:<contactId>` — `entityId` is a 64-character column and the
+prefixed cuid fits — *unless* a legacy birthday row exists, in which case it
+keeps that row's id. The ledger history for the current occurrence is already
+written under it, and re-keying would make the dedup miss and send the same
+birthday a second time on the upgrade. Only the identity is inherited; the date
+still comes from `Contact.birthDate`.
+
+Only `DAY` and `MONTH_DAY` precision produce a reminder: `MONTH` and `YEAR`
+have no day to name, and `projectDateOccurrences` likewise declines to invent
+one. The legacy row is suppressed by the *existence* of a canonical birthday,
+not by whether it is precise enough to remind — otherwise a birthday recorded
+as a month would leave that row live to announce an exact day the contact page
+does not show. An unknown day means silence, not a fallback to the stale row.
 
 A digest reaches two days past today: cadences whose `nextTouchAt` falls before
 the end of that third local day, incomplete tasks due on or before it, and

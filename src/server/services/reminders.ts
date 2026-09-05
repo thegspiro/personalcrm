@@ -184,11 +184,22 @@ const IMPORTANT_DATE_SELECT = {
   type: { select: { slug: true } },
 } as const;
 
-function birthdaySource(contact: Parameters<typeof projectContactBirthday>[0]): DateSource | null {
+/**
+ * `key` is the ledger identity, which is not always the projection id: where a
+ * legacy birthday row exists it keeps that row's id. Its ledger history is
+ * already written under it, and re-keying an occurrence the legacy row has
+ * already sent would make the dedup miss and send the same birthday twice on
+ * the upgrade. The date still comes from the canonical field either way — only
+ * the identity is inherited.
+ */
+function birthdaySource(
+  contact: Parameters<typeof projectContactBirthday>[0],
+  legacyKey?: string,
+): DateSource | null {
   const birthday = projectContactBirthday(contact);
   if (!birthday || !REMINDABLE_PRECISION.has(birthday.precision)) return null;
   return {
-    key: birthdayProjectionId(birthday.contactId),
+    key: legacyKey ?? birthdayProjectionId(birthday.contactId),
     contactId: birthday.contactId,
     label: birthday.label,
     contactName: personName(birthday.contact),
@@ -223,8 +234,21 @@ async function dateSourcesForUser(
       select: birthdayContactSelect,
     }),
   ]);
-  const birthdays = contacts.map(birthdaySource).filter((row): row is DateSource => row !== null);
-  const canonical = new Set(birthdays.map((birthday) => birthday.contactId));
+  // Every contact holding a canonical birthday, precise enough to remind or
+  // not. Keyed off the remindable ones instead, a birthday recorded as a month
+  // would leave its legacy row live — and that row would announce an exact day
+  // the contact page does not show, which is the invention this all exists to
+  // prevent. An unknown day means silence, not a fallback to the stale row.
+  const canonical = new Set(contacts.map((contact) => contact.id));
+  const legacyBirthdayKey = new Map<string, string>();
+  for (const row of [...rows].sort((a, b) => a.id.localeCompare(b.id))) {
+    if (isBirthdayImportantDate(row) && !legacyBirthdayKey.has(row.contactId)) {
+      legacyBirthdayKey.set(row.contactId, row.id);
+    }
+  }
+  const birthdays = contacts
+    .map((contact) => birthdaySource(contact, legacyBirthdayKey.get(contact.id)))
+    .filter((row): row is DateSource => row !== null);
   const dates = rows
     .filter((row) => !(canonical.has(row.contactId) && isBirthdayImportantDate(row)))
     .map((row) => ({
@@ -259,14 +283,16 @@ async function dateSourceById(
     select: IMPORTANT_DATE_SELECT,
   });
   if (!row) return null;
-  // A birthday row that has since been superseded by a canonical birthday is
-  // no longer owed under its own id; the projection carries the reminder now.
+  // A birthday row superseded by a canonical birthday no longer speaks for
+  // itself: the canonical date answers, still under this row's ledger identity
+  // so the retry keeps its dedup key. If the canonical birthday has no day to
+  // name, nothing is owed — the stale row must not stand in for it.
   if (isBirthdayImportantDate(row)) {
     const contact = await db.contact.findFirst({
       where: { id: row.contactId, ownerId: user.id, birthDate: { not: null } },
       select: birthdayContactSelect,
     });
-    if (contact && birthdaySource(contact)) return null;
+    if (contact) return birthdaySource(contact, row.id);
   }
   return {
     key: row.id,

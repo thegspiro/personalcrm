@@ -397,12 +397,72 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(send.mock.calls.filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(0);
   });
 
-  it("cancels a legacy birthday's pending retry once a canonical birthday takes over", async () => {
-    // The narrow window the candidate-side suppression cannot close: a legacy
-    // row's delivery is already queued and failing when the contact form sets
-    // Contact.birthDate. Without this the retry would go out under the old row
-    // while the canonical birthday sends under its own id — the same birthday,
-    // twice, from two different dates.
+  it("silences a legacy row when the canonical birthday has no known day", async () => {
+    // The canonical birthday is "September 1990" — no day. The legacy row has
+    // an exact one. Suppressing only where the projection is remindable would
+    // leave that row to announce a day the contact page never shows.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Vague",
+      birthDate: new Date("1990-09-01T00:00:00Z"), birthDatePrecision: "MONTH",
+    } });
+    const birthdayType = await prisma.taxonomyTerm.findFirst({
+      where: { ownerId: user.id, kind: "DATE_TYPE", slug: "birthday" },
+    });
+    await prisma.importantDate.create({ data: {
+      ownerId: user.id, contactId: contact.id, label: "Birthday", typeId: birthdayType!.id,
+      date: new Date("1990-09-02T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [0],
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    expect(send.mock.calls.filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(0);
+    const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest")?.[2] as string;
+    expect(digest).not.toContain("Vague");
+  });
+
+  it("keeps a legacy birthday's ledger identity, so an upgrade does not re-send it", async () => {
+    // Before this change the legacy row sent under its own id. Emitting the
+    // projection id for the same occurrence would miss that ledger row and
+    // send the birthday a second time, to every channel, on the upgrade.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Dana",
+      birthDate: new Date("1990-09-02T00:00:00Z"), birthDatePrecision: "DAY",
+    } });
+    const birthdayType = await prisma.taxonomyTerm.findFirst({
+      where: { ownerId: user.id, kind: "DATE_TYPE", slug: "birthday" },
+    });
+    const legacy = await prisma.importantDate.create({ data: {
+      ownerId: user.id, contactId: contact.id, label: "Birthday", typeId: birthdayType!.id,
+      date: new Date("1990-09-02T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [0],
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send.mock.calls.filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(1);
+
+    // Ledgered under the legacy row's id, which is what a pre-upgrade install
+    // already holds — so the next pass dedupes against it and stays quiet.
+    const logged = await prisma.reminderLog.findMany({ where: { entityType: "IMPORTANT_DATE" } });
+    expect(logged).toHaveLength(1);
+    expect(logged[0].entityId).toBe(legacy.id);
+
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
+    expect(send.mock.calls.filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(1);
+  });
+
+  it("hands a legacy birthday's pending retry to the canonical date, under the same ledger identity", async () => {
+    // A legacy row's delivery is already queued and failing when the contact
+    // form sets Contact.birthDate. The retry is not cancelled and re-created
+    // under a new id — that would lose the ledger row that stops a second
+    // send. It continues under its own identity, answering with the canonical
+    // birthday, and the canonical candidate dedupes against it.
     const user = await createTestUser();
     await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
     await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
@@ -410,7 +470,7 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     const birthdayType = await prisma.taxonomyTerm.findFirst({
       where: { ownerId: user.id, kind: "DATE_TYPE", slug: "birthday" },
     });
-    await prisma.importantDate.create({ data: {
+    const legacy = await prisma.importantDate.create({ data: {
       ownerId: user.id, contactId: contact.id, label: "Birthday", typeId: birthdayType!.id,
       date: new Date("1990-09-02T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [0],
     } });
@@ -428,12 +488,12 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     send.mockImplementation(async () => undefined);
     await processImportantDateReminders(new Date(first.getTime() + 61_000), { db: prisma, send });
 
-    // Exactly one birthday goes out on the retry pass: the canonical one.
+    // One birthday in total across both passes, and one ledger row — still the
+    // legacy row's id, so nothing was re-keyed out from under the dedup.
     expect(send.mock.calls.slice(1).filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(1);
-    expect(await prisma.reminderLog.count({
-      where: { entityType: "IMPORTANT_DATE", nextAttemptAt: null, error: { contains: "cancelled" } },
-    })).toBe(1);
-    expect(await prisma.reminderLog.count({ where: { entityType: "IMPORTANT_DATE", ok: true } })).toBe(1);
+    const logged = await prisma.reminderLog.findMany({ where: { entityType: "IMPORTANT_DATE" } });
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toMatchObject({ entityId: legacy.id, ok: true });
   });
 
   it("says nothing about a birthday whose day is not known", async () => {

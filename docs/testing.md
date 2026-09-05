@@ -89,8 +89,9 @@ the schema do, not things a mock can:
   cancellation after task, date or privacy changes; that a birthday set on the
   contact form is reminded about and digested at all, exactly once where a
   legacy `ImportantDate` row also exists, on the canonical date rather than a
-  stale row's, never for a birthday with no known day, and never for a locked
-  private or archived contact; that a digest lists
+  stale row's, under that row's ledger identity so an upgrade re-sends nothing,
+  never for a birthday with no known day — nor from the legacy row standing in
+  for one — and never for a locked private or archived contact; that a digest lists
   timezone-local important dates, cadences and tasks two days ahead without
   sending any of that look-ahead as a reminder early, names each occurrence
   once however many offsets reach it, and is retried within its day with a
