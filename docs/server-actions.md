@@ -271,7 +271,11 @@ The copy path has no row to claim, so the copy instead carries a `completionKey`
 `<sourcePlanId>:<contactId>:<local day>`, unique per owner — and a replayed POST
 or a second tab collides on it rather than filing the evening twice. The key is
 derived on the server, not minted by the browser: a client token would stop only
-a literal replay, because two tabs would mint two of them. The violation is
+a literal replay, because two tabs would mint two of them. Its day is the one
+the completion is being recorded on, or the one the form named — never
+`occurredAt`, which folds in the plan's own schedule that this same request then
+clears, so a replay would work out a different day and miss the index
+altogether. Nothing the completion changes may be read into its key. The violation is
 caught *outside* `transact`, on a transaction the database has already rolled
 back — catching it inside and carrying on is the trap invariant 9 describes.
 

@@ -1475,8 +1475,19 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
   // with this person, on this day", so a replay and a second tab both collide
   // on the unique index while going to the observatory with Robin again in July
   // gets a different day and a copy of its own.
+  //
+  // The day is the one this is being *recorded* on, or the one the form named —
+  // deliberately not `occurredAt`, which folds in the plan's own schedule. A
+  // Friday plan ticked off on Sunday keyed itself to Friday, and the claim
+  // below then cleared that schedule from the source, so a replay read an open
+  // plan, fell back to Sunday, and keyed itself somewhere new: the index it was
+  // supposed to collide on never saw it, and a further copy could be added
+  // every day after. Nothing the completion itself changes can be allowed into
+  // the key. Two different past evenings can still be told apart, because the
+  // only way to say "this happened then" is the explicit override, and that is
+  // what the key reads when it is given.
   const completionKey = sharedCopy
-    ? `${existing.id}:${contactId}:${plainDateKey(calendarDateInTz(occurredAt, timezone))}`
+    ? `${existing.id}:${contactId}:${plainDateKey(calendarDateInTz(override ?? now, timezone))}`
     : null;
 
   const completed = await transact(async (tx) => {

@@ -57,6 +57,9 @@
   for something wrote back the length as it was when the page loaded.
 - **A completion time that cannot be read is refused.** It used to be ignored,
   and the evening filed at whatever time the plan already carried.
+- **Finishing a shared idea stays single-use once its day is cleared.** Ticking
+  off a Friday arrangement on Sunday left it open to being recorded a second
+  time, and once more on each day after.
 
 #### Changed
 - **The schedule sheet builds itself when you open it.** On a large account the

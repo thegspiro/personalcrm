@@ -743,6 +743,35 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     expect(original.status).toBe("OPEN");
   });
 
+  it("stays single-use after the day it was arranged for is cleared", async () => {
+    // Friday's shared plan, ticked off on Sunday. The first completion releases
+    // the source and clears its day, so a replay reads an open plan with no
+    // schedule and works the occurrence out afresh. Keying on the plan's own
+    // schedule made those two answers differ, and the index never saw the
+    // collision it exists for — a further copy every day after.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(null, {
+      status: "PLANNED",
+      plannedFor: daysAgo(2),
+      plannedStartMinute: 1170,
+    });
+
+    expect(
+      await completePlan(actionForm({ id: plan.id, contactId: friend.id })),
+    ).toMatchObject({ ok: true });
+
+    const original = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(original.status).toBe("OPEN");
+    expect(original.plannedFor).toBeNull();
+
+    expect(
+      await completePlan(actionForm({ id: plan.id, contactId: friend.id })),
+    ).toMatchObject({ ok: false });
+
+    expect(await prisma.plan.count({ where: { contactId: friend.id } })).toBe(1);
+    expect(await prisma.interaction.count()).toBe(1);
+  });
+
   it("lets the same shared idea happen again on another day", async () => {
     // The key is the idea, the person and the day — not the idea and the
     // person — so going to the observatory with Marcus again in July is a
