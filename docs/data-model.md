@@ -687,6 +687,16 @@ worse; compatibility fields (`birthYear`, `heightCm`, `distanceKm`,
 `mbti`, `enneagram`); `exclusive`; `overallRating` and `chemistryScore` (1–5);
 `profileLinks` JSON (`{ label, url }`); and `privateNotes`.
 
+`distanceKm` is what somebody told you — "about twenty minutes away" — rather
+than a measurement, which is why it survives alongside the coordinates on their
+`Address`: you can know it without knowing where they live. It is stored in
+kilometres whatever the account reads distances in, and rendered through
+`formatStoredKm` (`src/lib/geo.ts`) in the account's unit; it deliberately is
+**not** a `Distance`, which carries a `source` describing how it was computed.
+Where their address is placed and a home base is set, the measured figure is
+shown beside it rather than replacing it — one is arithmetic and the other is
+hearsay, and they answer differently.
+
 Converting someone to an ordinary contact clears `Contact.isRomantic` and
 **keeps** this row, their dates, flags and notes.
 
@@ -704,6 +714,19 @@ remembered late slots in where it happened rather than being appended),
 `conversationQuality`. Optional retrospective fields `wouldDoAgain` and
 `nextTimeNotes` remain null until the user answers them, so older dates never
 acquire an invented opinion. These are separate from pre-date `Plan.notes`.
+
+`venue` and `city` are the wording used at the time, exactly as
+`Interaction.location` is. **Where the date was, as a place, lives on the
+mirrored `Interaction`** — `createDateEntry` and `updateDateEntry` both resolve
+the venue and write `Interaction.locationId`, and `listDateEntries` reads it back
+through `interaction.place`. `DateEntry` deliberately has **no `locationId` of
+its own**: `interactionId` is unique, so a second foreign key would store the
+same fact twice and let the two drift. This is the one place the `Plan` pattern
+is not copied, and the reason is that `Plan` has no interaction to hang it on.
+
+Both write paths pass the form's `city` to `resolveLocation`, so a place first
+seen by logging a date is born with a locality rather than a bare name — without
+it nothing could ever measure or map that place.
 
 ### `Flag`
 

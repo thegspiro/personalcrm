@@ -25,6 +25,9 @@ import { privacyScope } from "@/server/privacy/filter";
 import { PROVIDERS } from "@/server/ai/providers";
 import { GeoSettings } from "@/components/settings/geo-settings";
 import { HomeBaseSettings } from "@/components/settings/home-base-settings";
+import { BulkPlaceSettings } from "@/components/settings/bulk-place-settings";
+import { countUnplaced } from "@/server/queries/unplaced";
+import { isRateLimited } from "@/server/geo/providers";
 import { getGeoStatus } from "@/server/geo/config";
 import { GEO_PROVIDERS } from "@/server/geo/providers";
 import { listTags } from "@/server/queries/tags";
@@ -64,6 +67,15 @@ export default async function SettingsPage() {
     listChannelsForSettings(user.id),
     listTags(user.id),
     listSessions(user.id),
+  ]);
+
+  // How much there is to place, so the panel can say so before anything is
+  // sent anywhere. Owner-scoped and privacy-filtered in the query: a private
+  // contact's addresses are never counted, so the total cannot shift on unlock
+  // and announce that a hidden person has one.
+  const [unplacedPlaces, unplacedAddresses] = await Promise.all([
+    countUnplaced(user.id, "places"),
+    countUnplaced(user.id, "addresses"),
   ]);
 
   // Value counts drive the delete warning: deleting a field takes everything
@@ -191,6 +203,12 @@ export default async function SettingsPage() {
               baseUrl={geo.baseUrl}
               providers={GEO_PROVIDERS}
               canEdit={user.role === "ADMIN"}
+            />
+            <BulkPlaceSettings
+              usable={geo.enabled && geo.usable}
+              publicEndpoint={isRateLimited(geo.baseUrl)}
+              places={unplacedPlaces}
+              addresses={unplacedAddresses}
             />
           </div>
         }

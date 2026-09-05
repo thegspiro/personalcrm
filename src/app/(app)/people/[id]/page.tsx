@@ -47,7 +47,8 @@ import { isBirthdayImportantDate, projectContactBirthday } from "@/server/querie
 import { listContactLocations, listLocationsNear } from "@/server/queries/locations";
 import { originsFor } from "@/server/queries/origins";
 import { getGeoStatus } from "@/server/geo/config";
-import { pointOf, withDistance } from "@/lib/geo";
+import { distanceBetween, formatDistance, pointOf, withDistance } from "@/lib/geo";
+import { mapLinkFor } from "@/lib/locations";
 import { NearbyPlaces } from "@/components/locations/nearby-places";
 import { listContactHappenings } from "@/server/queries/happenings";
 import Link from "next/link";
@@ -294,6 +295,12 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
               contactName={contact.firstName}
               customFields={romanticFields}
               blurPrivate={prefs.blurPrivateNotes}
+              unit={origins.unit}
+              // Home to their placed address. Null unless both ends are placed,
+              // so it is either right or absent.
+              measuredDistance={formatDistance(
+                distanceBetween(origins.home, origins.contact, origins.unit),
+              )}
               stages={terms.DATING_STAGE}
               sources={terms.MEETING_SOURCE}
               profile={
@@ -363,6 +370,23 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                 isPrivate: entry.interaction.isPrivate,
                 activityTypeId: entry.activityTypeId,
                 activityLabel: entry.activityType?.label ?? null,
+                // The place comes from the mirrored interaction, and its map
+                // link and distance are built here rather than in the client
+                // component: `Decimal` and `BigInt` do not survive the crossing.
+                place: entry.interaction.place
+                  ? {
+                      id: entry.interaction.place.id,
+                      name: entry.interaction.place.name,
+                      mapHref: mapLinkFor(entry.interaction.place),
+                      distanceLabel: formatDistance(
+                        distanceBetween(
+                          origins.home,
+                          pointOf(entry.interaction.place),
+                          origins.unit,
+                        ),
+                      ),
+                    }
+                  : null,
               }))}
             />
 

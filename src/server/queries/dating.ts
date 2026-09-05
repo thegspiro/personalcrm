@@ -322,8 +322,34 @@ export async function listDateEntries(ownerId: string, contactId: string) {
       activityType: true,
       // `isPrivate` lives on the interaction, not the DateEntry, and the edit
       // form has to show the marker it is about to write back.
+      //
+      // So does the place. A `DateEntry` deliberately has no `locationId` of its
+      // own: `interactionId` is unique, and both write paths already resolve the
+      // venue onto the interaction, so a second foreign key would store the same
+      // fact twice and let the two disagree. `venue` and `city` stay as the
+      // wording used at the time, exactly as `Interaction.location` does.
       interaction: {
-        select: { id: true, occurredAt: true, notes: true, sentiment: true, isPrivate: true },
+        select: {
+          id: true,
+          occurredAt: true,
+          notes: true,
+          sentiment: true,
+          isPrivate: true,
+          place: {
+            select: {
+              id: true,
+              name: true,
+              address: true,
+              city: true,
+              region: true,
+              country: true,
+              latitude: true,
+              longitude: true,
+              osmType: true,
+              osmId: true,
+            },
+          },
+        },
       },
     },
     orderBy: { sequence: "desc" },

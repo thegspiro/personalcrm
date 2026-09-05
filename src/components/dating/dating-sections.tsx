@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Flag, HeartCrack, ShieldAlert, ThumbsUp, UserMinus } from "lucide-react";
+import { Flag, HeartCrack, MapPin, ShieldAlert, ThumbsUp, UserMinus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatStoredKm, type Unit } from "@/lib/geo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -82,6 +83,8 @@ export function RomanticSection({
   sources,
   blurPrivate,
   customFields = [],
+  unit,
+  measuredDistance = null,
 }: {
   contactId: string;
   contactName: string;
@@ -91,6 +94,14 @@ export function RomanticSection({
   blurPrivate: boolean;
   /** Defined under Settings → Fields → Dating profiles. */
   customFields?: RenderableField[];
+  /** The account's distance unit. `distanceKm` is stored in km whatever it is. */
+  unit: Unit;
+  /**
+   * Measured from your home base to their placed address, already formatted.
+   * Shown beside the figure they told you rather than replacing it — one is
+   * arithmetic and the other is what somebody said, and they answer differently.
+   */
+  measuredDistance?: string | null;
 }) {
   const run = useAction();
   const router = useRouter();
@@ -224,7 +235,8 @@ export function RomanticSection({
             <Detail label="Wants kids" value={KIDS_OPTIONS.find((k) => k.value === profile?.wantsKids)?.label} />
             <Detail label="Style" value={profile?.relationshipStyle} />
             <Detail label="Living" value={profile?.livingSituation} />
-            <Detail label="Distance" value={profile?.distanceKm ? `${profile.distanceKm} km` : null} />
+            <Detail label="Distance" value={formatStoredKm(profile?.distanceKm, unit)} />
+            <Detail label="From home" value={measuredDistance} />
             <Detail label="Religion" value={profile?.religion} />
             <Detail label="Politics" value={profile?.politics} />
             <Detail label="Drinking" value={profile?.drinking} />
@@ -334,6 +346,22 @@ export interface DateLogItem {
   isPrivate: boolean;
   activityTypeId: string | null;
   activityLabel: string | null;
+  /**
+   * Where it was, as a place rather than as words.
+   *
+   * Comes from the mirrored interaction, which is where a date's venue has
+   * always been resolved — `venue` above stays the wording used at the time.
+   * Null until the place has been put on the map, and then nothing renders.
+   */
+  place: DatePlace | null;
+}
+
+export interface DatePlace {
+  id: string;
+  name: string;
+  mapHref: string;
+  /** Already formatted, in the account's unit. Null when either end is unplaced. */
+  distanceLabel: string | null;
 }
 
 /** Just enough of a saved plan to pick one when logging the date it became. */
@@ -626,6 +654,26 @@ export function DateLogSection({
               {entry.activityLabel ? <span>{entry.activityLabel}</span> : null}
               {WHO_PAID_LABELS[entry.whoPaid] ? <span>{WHO_PAID_LABELS[entry.whoPaid]}</span> : null}
               {formatMoney(entry.costCents) ? <span>{formatMoney(entry.costCents)}</span> : null}
+              {/*
+                Present whenever the venue resolved to a saved place, which is
+                every date logged with one. `mapLinkFor` falls back to a search
+                when the place has no coordinates, so the link is useful either
+                way — the distance is the part that needs both ends placed, and
+                it is simply absent until they are. A date logged with no venue
+                at all reads exactly as it did before.
+              */}
+              {entry.place ? (
+                <a
+                  href={entry.place.mapHref}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  aria-label={`Open ${entry.place.name} on a map`}
+                  className="inline-flex shrink-0 items-center gap-0.5 text-accent-11 hover:underline"
+                >
+                  <MapPin className="size-3" />
+                  {entry.place.distanceLabel ?? "Map"}
+                </a>
+              ) : null}
             </div>
             {entry.notes ? (
               <PrivateText enabled={blurPrivate} className="mt-1 block whitespace-pre-line text-xs text-muted-foreground">
