@@ -4,8 +4,10 @@ import {
   groupByDay,
   isInMonth,
   monthGridDays,
+  plainMonthKey,
   weekdayOrder,
 } from "@/lib/calendar-grid";
+import Link from "next/link";
 import { type PlainDate, plainDateKey } from "@/lib/dates";
 import type { CalendarEntry } from "@/server/queries/calendar";
 import { EntryChip } from "@/components/calendar/entry-chip";
@@ -36,17 +38,21 @@ export function MonthGrid({
   weekStartsOn,
   entries,
   today,
+  selected,
   className,
 }: {
   month: PlainMonth;
   weekStartsOn: WeekStart;
   entries: CalendarEntry[];
   today: PlainDate;
+  /** The day whose full list is open below the grid, if any. */
+  selected: PlainDate | null;
   className?: string;
 }) {
   const days = monthGridDays(month, weekStartsOn);
   const byDay = groupByDay(entries, (entry) => entry.day);
   const todayKey = plainDateKey(today);
+  const selectedKey = selected ? plainDateKey(selected) : null;
 
   return (
     <div className={cn("min-w-0", className)}>
@@ -80,24 +86,40 @@ export function MonthGrid({
               )}
             >
               <div className="flex min-w-0 items-baseline justify-between gap-1">
-                <span
+                {/* The date is a link even on an empty day, so opening a day is
+                    one predictable target rather than something that appears
+                    only when there is already something there. */}
+                <Link
+                  href={`/calendar?month=${plainMonthKey(month)}&day=${key}`}
+                  aria-label={`Everything on ${key}`}
                   className={cn(
-                    "text-[11px] tabular-nums",
+                    "rounded-full px-1.5 text-[11px] tabular-nums hover:underline",
                     key === todayKey
-                      ? "rounded-full bg-primary px-1.5 font-semibold text-primary-foreground"
-                      : outside
-                        ? "text-muted-foreground/60"
-                        : "text-muted-foreground",
+                      ? "bg-primary font-semibold text-primary-foreground"
+                      : key === selectedKey
+                        ? "bg-accent-3 font-semibold text-accent-11"
+                        : outside
+                          ? "text-muted-foreground/60"
+                          : "text-muted-foreground",
                   )}
                 >
                   {day.day}
-                </span>
+                </Link>
               </div>
               {shown.map((entry) => (
                 <EntryChip key={entry.id} entry={entry} />
               ))}
+              {/* The overflow has to go somewhere. A cell holds three before it
+                  starts to scroll, and a count that cannot be opened is just a
+                  way of hiding things — which is exactly what the first e2e run
+                  caught, with a plan filed on a busy day and nowhere to see it. */}
               {hidden > 0 ? (
-                <span className="px-1 text-[11px] text-muted-foreground">+{hidden} more</span>
+                <Link
+                  href={`/calendar?month=${plainMonthKey(month)}&day=${key}`}
+                  className="px-1 text-[11px] text-muted-foreground hover:underline"
+                >
+                  +{hidden} more
+                </Link>
               ) : null}
             </div>
           );

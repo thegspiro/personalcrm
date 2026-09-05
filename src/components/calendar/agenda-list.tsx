@@ -9,6 +9,33 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/nav/icon";
 
 /**
+ * One day's entries, in full.
+ *
+ * Shared by the month agenda and the single-day view the grid links into, so
+ * the two cannot drift — and so the day view is not a second piece of markup
+ * saying the same thing.
+ */
+export function DayEntries({ entries }: { entries: CalendarEntry[] }) {
+  return (
+    <ul className="grid min-w-0 gap-1">
+      {entries.map((entry) => (
+        <li key={entry.id} className="flex min-w-0 items-center gap-2">
+          <span className="w-20 shrink-0 text-[11px] text-muted-foreground">
+            {KIND_LABEL[entry.kind]}
+          </span>
+          <EntryChip entry={entry} className="min-w-0 flex-1" />
+          {entry.contact ? (
+            <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
+              {displayName(entry.contact)}
+            </span>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
  * The month as a list of the days that hold something. The phone's view of the
  * calendar, and the accessible reading of the same data on any screen.
  *
@@ -57,21 +84,7 @@ export function AgendaList({
                 {relativeDay(day, today, { short: true })}
               </span>
             </h3>
-            <ul className="grid min-w-0 gap-1">
-              {dayEntries.map((entry) => (
-                <li key={entry.id} className="flex min-w-0 items-center gap-2">
-                  <span className="w-20 shrink-0 text-[11px] text-muted-foreground">
-                    {KIND_LABEL[entry.kind]}
-                  </span>
-                  <EntryChip entry={entry} className="min-w-0 flex-1" />
-                  {entry.contact ? (
-                    <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
-                      {displayName(entry.contact)}
-                    </span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
+            <DayEntries entries={dayEntries} />
           </li>
         );
       })}

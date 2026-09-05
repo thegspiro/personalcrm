@@ -82,9 +82,50 @@ test("something pencilled in for today reaches the calendar", async ({ page }) =
   await plans.getByRole("button", { name: "Save", exact: true }).click();
   await expect(plans.getByText(title)).toBeVisible();
 
+  // Through the day view, not the month, and that is the point. A grid square
+  // holds three entries before it would scroll, so on an account with a busy
+  // today the month grid legitimately shows "+n more" instead of this plan —
+  // which is how the first run of this test failed, on desktop only. The day
+  // view is complete and renders at every width, so it is both the honest
+  // assertion and the thing a reader would actually click through to.
+  //
+  // The day is read from the browser, because that is the clock chrono parsed
+  // "today" against a moment ago in the form above.
+  const today = await page.evaluate(() => {
+    const now = new Date();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    return `${now.getFullYear()}-${month}-${day}`;
+  });
+
+  await page.goto(`/calendar?day=${today}`);
+  await expect(page.getByRole("link", { name: new RegExp(title) })).toBeVisible();
+});
+
+test("a day opens from the grid and closes again", async ({ page }) => {
+  // Desktop only: the grid is what links into a day, and it is hidden on a
+  // phone, where the month agenda already lists every day in full.
+  test.skip(
+    test.info().project.name !== "desktop",
+    "the month grid is a desktop-width view",
+  );
+
+  await ensureSignedIn(page);
   await page.goto("/calendar");
-  // Both readings render — the grid on a desktop, the agenda on a phone — and
-  // only one is visible at a time, so this asserts on whichever the project's
-  // viewport shows rather than on a count.
-  await expect(page.getByRole("link", { name: new RegExp(title) }).first()).toBeVisible();
+
+  const today = await page.evaluate(() => {
+    const now = new Date();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    return `${now.getFullYear()}-${month}-${day}`;
+  });
+
+  await page.getByRole("link", { name: `Everything on ${today}` }).click();
+  // By id: the month heading is also an h3, and positional matching between
+  // two headings is the kind of locator that passes until it does not.
+  await expect(page.locator("#calendar-day-heading")).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`day=${today}`));
+
+  await page.getByRole("link", { name: "Close" }).click();
+  await expect(page).not.toHaveURL(/day=/);
 });

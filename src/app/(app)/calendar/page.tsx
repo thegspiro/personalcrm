@@ -5,7 +5,7 @@ import { getCalendarEntries } from "@/server/queries/calendar";
 import { offlineCacheable } from "@/server/privacy/offline";
 import { CacheThisPage } from "@/components/offline/offline";
 import { MonthGrid } from "@/components/calendar/month-grid";
-import { AgendaList } from "@/components/calendar/agenda-list";
+import { AgendaList, DayEntries } from "@/components/calendar/agenda-list";
 import { Icon } from "@/components/nav/icon";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,7 +17,9 @@ import {
   parsePlainMonth,
   plainMonthKey,
 } from "@/lib/calendar-grid";
-import { todayInTz } from "@/lib/dates";
+import { groupByDay, isWithin } from "@/lib/calendar-grid";
+import { formatPartialDate } from "@/lib/date-precision";
+import { plainDateKey, parsePlainDate, todayInTz } from "@/lib/dates";
 
 export const metadata: Metadata = { title: "Calendar" };
 export const dynamic = "force-dynamic";
@@ -60,8 +62,11 @@ export default async function CalendarPage({
 }) {
   const { user, prefs, timezone } = await getUserContext();
   const params = await searchParams;
-  const raw = params.month;
-  const requested = parsePlainMonth(Array.isArray(raw) ? raw[0] : raw);
+  const first = (key: string) => {
+    const value = params[key];
+    return Array.isArray(value) ? value[0] : value;
+  };
+  const requested = parsePlainMonth(first("month"));
 
   // Today is the account's today, not the server's — invariant 2. It decides
   // the default month and which square is highlighted.
@@ -80,6 +85,15 @@ export default async function CalendarPage({
     getCalendarEntries(user.id, timezone, window),
     offlineCacheable(user.id),
   ]);
+
+  // A day the grid links into, shown in full underneath it. Ignored unless it
+  // is one of the days actually drawn, so a hand-typed date cannot ask the page
+  // for something the query was never given.
+  const askedFor = parsePlainDate(first("day") ?? "");
+  const selected = askedFor && isWithin(askedFor, window) ? askedFor : null;
+  const selectedEntries = selected
+    ? (groupByDay(entries, (entry) => entry.day).get(plainDateKey(selected)) ?? [])
+    : [];
 
   const previous = plainMonthKey(addPlainMonths(month, -1));
   const next = plainMonthKey(addPlainMonths(month, 1));
@@ -134,8 +148,38 @@ export default async function CalendarPage({
           weekStartsOn={weekStartsOn}
           entries={entries}
           today={today}
+          selected={selected}
           className="hidden lg:block"
         />
+
+        {/* The day a cell was opened on, in full. The grid holds three entries
+            to a square before it would start to scroll, so on a busy day this
+            is the only place the rest of them exist. Rendered at every width:
+            on a phone the month agenda is already complete, but a link into a
+            particular day still has to lead somewhere. */}
+        {selected ? (
+          <section
+            aria-labelledby="calendar-day-heading"
+            className="grid min-w-0 gap-1.5 rounded-xl border border-border bg-card p-4"
+          >
+            <div className="flex min-w-0 items-baseline justify-between gap-2">
+              <h3 id="calendar-day-heading" className="min-w-0 truncate text-sm font-semibold tracking-tight">
+                {formatPartialDate(selected, "DAY", { weekday: true })}
+              </h3>
+              <Link
+                href={`/calendar?month=${plainMonthKey(month)}`}
+                className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:underline"
+              >
+                Close
+              </Link>
+            </div>
+            {selectedEntries.length > 0 ? (
+              <DayEntries entries={selectedEntries} />
+            ) : (
+              <p className="text-xs text-muted-foreground">Nothing on this day.</p>
+            )}
+          </section>
+        ) : null}
         <div className="lg:hidden">
           <AgendaList
             month={month}
