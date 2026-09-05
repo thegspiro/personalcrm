@@ -353,6 +353,22 @@ describe.skipIf(!hasTestDatabase)("dating", () => {
     expect(after.isRomantic).toBe(false);
   });
 
+  it("refuses to add an archived contact, rather than reporting a success nobody can see", async () => {
+    // The pipeline leaves archived people out, so the flag alone would be a
+    // lie. The menu hides the action, but a second tab archiving them — or a
+    // form left open — still reaches the endpoint.
+    const contact = await prisma.contact.create({
+      data: { ownerId, firstName: "Sam", isArchived: true },
+    });
+
+    const result = await markAsRomantic(contact.id);
+
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { error?: string }).error).toMatch(/restore them first/i);
+    const after = await prisma.contact.findUniqueOrThrow({ where: { id: contact.id } });
+    expect(after.isRomantic).toBe(false);
+  });
+
   it("the pipeline keys on isRomantic, so an ex does not reappear", async () => {
     const current = await makeRomantic();
     const ex = await makeRomantic();
@@ -421,6 +437,42 @@ describe.skipIf(!hasTestDatabase)("dating", () => {
     expect(Number(entry.interaction.place?.latitude)).toBeCloseTo(53.8008, 4);
   });
 
+  it("does not rewrite a place's city from an old date's wording", async () => {
+    // The city on a date is the wording used at the time; the one on the place
+    // is shared by everything that names it. Editing a date's rating resubmits
+    // the old city, and overwriting on that undid a correction made on the
+    // place page — for every other date at that venue too.
+    const contact = await makeRomantic();
+    const created = await createDateEntry(
+      actionForm({
+        contactId: contact.id,
+        venue: "Corner Cafe",
+        city: "Leeds",
+        occurredAt: new Date().toISOString(),
+      }),
+    );
+    const entryId = (created as { data: { id: string } }).data.id;
+
+    // Corrected on the place's own page, the way anyone would fix it.
+    await prisma.location.updateMany({
+      where: { ownerId, normalizedName: "corner cafe" },
+      data: { city: "Wetherby" },
+    });
+
+    // Now edit something unrelated. The form still carries the old city.
+    await updateDateEntry(
+      actionForm({ id: entryId, venue: "Corner Cafe", city: "Leeds", rating: "5" }),
+    );
+
+    const place = await prisma.location.findFirstOrThrow({
+      where: { ownerId, normalizedName: "corner cafe" },
+    });
+    expect(place.city).toBe("Wetherby");
+    // And the date keeps what was typed at the time, which is its own record.
+    const entry = await prisma.dateEntry.findUniqueOrThrow({ where: { id: entryId } });
+    expect(entry.city).toBe("Leeds");
+  });
+
   it("does not move a place that was already put on the map", async () => {
     // Logging a second date at the same venue must not re-place it: the name
     // says which place is meant, not where it is.
@@ -441,8 +493,9 @@ describe.skipIf(!hasTestDatabase)("dating", () => {
       where: { ownerId, normalizedName: "corner cafe" },
     });
     expect(Number(place.latitude)).toBeCloseTo(53.8008, 4);
-    // Text still overwrites when it is given, exactly as it always has.
-    expect(place.city).toBe("York");
+    // The locality is filled in, never rewritten — the same rule the
+    // coordinates follow, and for the same reason.
+    expect(place.city).toBe("Leeds");
   });
 
   it("ending records the reason and the retrospective separately", async () => {

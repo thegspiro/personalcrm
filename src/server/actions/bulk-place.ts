@@ -6,6 +6,9 @@ import { type ActionResult, fail, ok, owner, str } from "./helpers";
 import { countUnplaced, listUnplaced, type UnplacedKind } from "@/server/queries/unplaced";
 import { isOsmType } from "@/lib/locations";
 import { pointOf } from "@/lib/geo";
+// Type only: a "use server" module may export nothing but async functions,
+// and a type import is erased before that rule applies.
+import type { GeoCandidate } from "@/server/geo/providers";
 
 /**
  * Put everything on the map that can be put there unambiguously.
@@ -26,6 +29,19 @@ import { pointOf } from "@/lib/geo";
 /** Small enough that one press is a few seconds even at one request a second. */
 const BATCH = 10;
 
+/**
+ * How long one call may spend asking before it hands back what it has.
+ *
+ * An endpoint that accepts connections and then says nothing costs the
+ * provider's full eight-second timeout per row, and ten of those would hold a
+ * single server action for eighty seconds — during which the Stop button does
+ * nothing, because it is only read between batches. Ending early on the clock
+ * covers that without having to tell a timeout apart from an honest "no match",
+ * which `searchAddress` deliberately does not distinguish. The cursor is
+ * returned either way, so the next press carries on from the same place.
+ */
+const BUDGET_MS = 20_000;
+
 export interface BulkPlaceProgress {
   /** Rows looked at in this call. */
   processed: number;
@@ -41,6 +57,37 @@ export interface BulkPlaceProgress {
 
 function kindOf(value: string | undefined): UnplacedKind | null {
   return value === "places" || value === "addresses" ? value : null;
+}
+
+/** The largest value a signed `BIGINT` column holds. */
+const MAX_OSM_ID = 9223372036854775807n;
+
+/** Null for anything the column would refuse, rather than a throw mid-batch. */
+function osmIdOf(value: string | null): bigint | null {
+  if (!value || !/^\d+$/.test(value)) return null;
+  const parsed = BigInt(value);
+  return parsed <= MAX_OSM_ID ? parsed : null;
+}
+
+function fold(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.toLocaleLowerCase("en-US") : null;
+}
+
+/**
+ * Whether a lone candidate is in the place the row already says it is.
+ *
+ * Only checked where both sides name a locality — most rows worth placing say
+ * at least a city, and where ours does not there is nothing to compare and the
+ * single answer stands as before. Deliberately not a similarity score on the
+ * street or the venue name: those differ legitimately in wording all the time,
+ * while a city that disagrees means the geocoder found somewhere else entirely.
+ */
+function agreesOnLocality(row: { city: string | null }, candidate: GeoCandidate): boolean {
+  const ours = fold(row.city);
+  const theirs = fold(candidate.city);
+  if (!ours || !theirs) return true;
+  return ours === theirs;
 }
 
 export async function placeUnplaced(
@@ -76,8 +123,15 @@ export async function placeUnplaced(
 
   let placed = 0;
   let skipped = 0;
+  let processed = 0;
+  const deadline = Date.now() + BUDGET_MS;
 
   for (const row of rows) {
+    // Checked before the request rather than after, so the budget bounds what
+    // this call starts rather than only what it finishes.
+    if (processed > 0 && Date.now() > deadline) break;
+    processed += 1;
+
     if (!row.query) {
       skipped += 1;
       continue;
@@ -93,7 +147,13 @@ export async function placeUnplaced(
     // So anything but a single unambiguous match is left for a person.
     const only = candidates.length === 1 ? candidates[0] : null;
     const point = only ? pointOf(only) : null;
-    if (!only || !point) {
+    // One answer is necessary but not sufficient: a geocoder handed a misspelt
+    // or half-written address will happily return a single fallback — often the
+    // city on its own — and a lone result is no evidence that it is the right
+    // one. Where the row already says which locality it is in, the candidate has
+    // to agree; that is a comparison of facts we hold rather than a guess at
+    // string similarity, which is the kind of matching this codebase refuses.
+    if (!only || !point || !agreesOnLocality(row, only)) {
       skipped += 1;
       continue;
     }
@@ -103,7 +163,11 @@ export async function placeUnplaced(
       latitude: point.lat,
       longitude: point.lon,
       osmType,
-      osmId: osmType && only.osmId ? BigInt(only.osmId) : null,
+      // Digits only, and inside a signed 64-bit column — the same validation
+      // the one-at-a-time lookup applies. A custom endpoint can return anything
+      // here, and an unchecked `BigInt("abc")` throws where nothing catches it:
+      // the whole batch would die on one bad row rather than skipping it.
+      osmId: osmType ? osmIdOf(only.osmId) : null,
     };
 
     // Scoped in the where clause, and still requiring both coordinates to be
@@ -129,7 +193,9 @@ export async function placeUnplaced(
     else skipped += 1;
   }
 
-  const nextCursor = rows[rows.length - 1].id;
+  // The last row actually looked at, not the last one fetched: giving back the
+  // end of the page after breaking early would skip everything in between.
+  const nextCursor = rows[processed - 1].id;
   const remaining = await countUnplaced(ownerId, kind, nextCursor);
 
   // Only when something actually moved. The browser calls this once per batch,
@@ -138,7 +204,7 @@ export async function placeUnplaced(
   if (placed > 0) revalidatePath("/", "layout");
 
   return ok({
-    processed: rows.length,
+    processed,
     placed,
     skipped,
     // Nothing after this page means the pass is done, whatever is still

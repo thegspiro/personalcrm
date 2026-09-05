@@ -137,3 +137,45 @@ export function daysAgo(n: number, from: Date = new Date()): Date {
 export function daysFromNow(n: number, from: Date = new Date()): Date {
   return new Date(from.getTime() + n * 86_400_000);
 }
+
+/**
+ * Hold a write open and uncommitted until the returned release is called.
+ *
+ * The interleavings this enables are not sleep-timed races. An uncommitted
+ * write is invisible to a plain read but its row locks are real, so it puts the
+ * code under test in exactly the state a concurrent tab would: the read it
+ * takes before the transaction sees nothing, and the moment it wants a lock on
+ * the same row it waits. Releasing then decides the order deterministically.
+ *
+ * Lives here rather than in one suite because two now need it — the tag writes
+ * that first motivated it, and `resolveLocation`, which reads a place before
+ * deciding what to fill in.
+ */
+export async function holdUncommitted(
+  write: (tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]) => Promise<unknown>,
+): Promise<{ release: () => void; settled: Promise<unknown> }> {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let written!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    written = resolve;
+  });
+  const settled = prisma.$transaction(
+    async (tx) => {
+      await write(tx);
+      written();
+      await held;
+    },
+    { timeout: 20_000 },
+  );
+  await ready;
+  return { release, settled };
+}
+
+/** Let the code under test reach the lock it is about to wait on, then let go. */
+export async function releaseAfterItBlocks(release: () => void): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  release();
+}

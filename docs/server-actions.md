@@ -195,10 +195,17 @@ scope the checklist. `plannedFor` remains a calendar date parsed by
 `plannedStartTime` and `plannedDurationMinutes` are read by `parsePlanMinute`
 and `parsePlanDuration`, which refuse anything they cannot read rather than
 coercing it — filing a plan at midnight because the form sent "half seven"
-would put it at a time nobody chose. A time arriving without a day is dropped
-instead, so clearing the day does not become an error to understand. The minute
-is stored as a local wall-clock reading against the day, never converted to an
-instant here.
+would put it at a time nobody chose. A day that is present but unreadable is
+refused for the same reason: `plainDate` answers `undefined` to both that and an
+empty field, and folding the two together saved a malformed date as a plan with
+no date at all and reported success.
+
+A time arriving without a day is dropped rather than refused, so clearing the
+day does not become an error to understand. A **duration** without a day is
+kept: how long a thing takes belongs to the thing, not to the day picked for it,
+so "the observatory takes most of an evening" survives on a plan nobody has
+scheduled. Only the start minute needs a day to hang on, and it is stored as a
+local wall-clock reading against that day, never converted to an instant here.
 
 Important-date and life-event updates and deletes also filter through their
 contact's privacy marker. The timeline exposes these controls, so an id retained
@@ -339,7 +346,20 @@ pin in the wrong city looks answered when it is not. And it selects **only rows
 with no coordinates**, re-checking that in the `updateMany` where-clause, so a
 row placed by hand in another tab is never overwritten by a machine's guess.
 Private contacts are excluded by the query that feeds it, not filtered
-afterwards.
+afterwards, and places go through `locationVisibleWhere` for the same reason —
+one known only through a private interaction is neither counted nor sent while
+the lock is closed.
+
+"Exactly one candidate" is necessary but not sufficient: a geocoder handed a
+half-written address returns a single fallback, often the wrong locality
+entirely. Where the row already names a city, the candidate has to agree — a
+comparison of facts already held rather than a similarity score on the street or
+venue name, which differ legitimately in wording. An `osmId` is validated for
+digits and the signed `BIGINT` range before conversion, so a malformed one from a
+custom endpoint skips that row rather than throwing and killing the batch. Each
+call also stops asking after twenty seconds and returns its cursor, so an
+endpoint that accepts connections and never answers cannot hold one action for
+the provider timeout times ten.
 
 `lookupHomeBase` and `updateHomeBase` (in `actions/settings.ts`) do the same for
 your own address. `updateHomeBase` follows `updateDefaults`' presence-not-value

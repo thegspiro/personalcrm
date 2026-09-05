@@ -63,14 +63,20 @@ each gained the `@@unique([ownerId, id])` those keys point at.
 `Plan.place` and `Associate.promotedContactId` are `ON DELETE SET NULL`, and
 MariaDB refuses a `SET NULL` foreign key unless every column in it is nullable;
 `ownerId` is not, and making it nullable would cost the guarantee the key exists
-to give. The two places keep an explicit owner predicate in code instead —
-`src/server/services/locations.ts` on the write path, and
-`src/server/queries/timeline.ts` on the read, where the place is both searched
-and rendered. Prisma takes no `where` on a to-one
-`include`, so the timeline selects the place's `ownerId` and drops it in the
-mapper rather than filtering in the query. `Associate.promotedContactId` is
-compensated the same way, in `getContact` and `listAssociateGroups`: both
-select the promoted contact's `ownerId` and drop the join in the mapper.
+to give. They keep an explicit owner predicate in code instead.
+
+For the two places that is `src/server/services/locations.ts` on the write path,
+and on the read every query that returns the place:
+`src/server/queries/timeline.ts`, where it is both searched and rendered, and
+`src/server/queries/dating.ts`, which reads a logged date's venue through its
+interaction. `Associate.promotedContactId` is compensated the same way, in
+`getContact` and `listAssociateGroups`. Prisma takes no `where` on a to-one
+`include`, so each of them selects the joined row's `ownerId` and drops a
+mismatch in the mapper rather than filtering in the query.
+
+**Any future reader of `place`, or of a promoted associate, owes the same
+check** — these are the references in the schema the database will not make for
+you.
 
 **This does not make the readers' predicates redundant.** `mariadb-dump` writes
 `SET FOREIGN_KEY_CHECKS=0`, so restoring a dump taken before these keys existed
@@ -450,11 +456,50 @@ area for ambiguous imported claims; new reads and writes use the indexed table.
 
 `resolveLocation` carries an accepted lookup's `city`, `region`, `country`,
 coordinates and OSM reference onto the place, so one created as a side effect of
-saving a plan or logging a date is as complete as one edited by hand. Text
-fields overwrite when given and are never cleared by a blank; **coordinates are
-filled in but never overwritten**, because typing a venue's name into an
-interaction says *which* place is meant, not where it is — a stray save must not
-move a place that was geocoded deliberately.
+saving a plan or logging a date is as complete as one edited by hand. Nothing is
+ever cleared by a blank, and two rules govern what a non-blank may do:
+
+- `address` and `url` **overwrite when given**. They are edited from the place
+  page and passed by `Plan`, which is a direct statement about the place itself.
+- `city`, `region`, `country` and the coordinates are **filled in but never
+  overwritten**. What a caller passes is the wording from one interaction or
+  date — often an old one — while the place is shared by everything that names
+  it. Editing a date's rating resubmits the city typed at the time, and
+  overwriting on that would undo a correction made on the place page, or leave a
+  venue holding coordinates for one city and text naming another, for everybody.
+  The same reasoning covers the coordinates: a venue's name says *which* place is
+  meant, not where it is, so a stray save must not move one geocoded
+  deliberately.
+
+**Both fill-only rules are expressed in the `WHERE` clause, not decided from a
+read.** A plain read is a snapshot one, so deciding from it loses a race: a date
+save and a place-page correction could see the same blank field, and the save
+would write the old wording over the correction after it committed. Each write
+therefore carries its own condition — `city: null`, or both coordinate columns
+null — and the database evaluates it at the moment of writing against the row as
+it is then, so nothing is decided from a value that may already be stale.
+
+**And every caller reaches `resolveLocation` through `transact`, not a bare
+`prisma.$transaction`.** The `WHERE` clause is the whole rule on MariaDB 10.11,
+which the container bundles: the update matches no rows and the correction
+stands. It is not the whole rule from 11.6.2 on, where
+`innodb_snapshot_isolation` is on by default and REPEATABLE READ is a true
+snapshot. There the row must still be locked before any condition of ours is
+evaluated, and locking one that moved since the transaction's snapshot raises
+**1020**, `Record has changed since last read` — so putting the condition in the
+`WHERE` does not avoid the error, it only stops the write. A locking read avoids
+it no better; that was tried first.
+
+1020 is not a statement-level failure. Measured against 11.8.3:
+`@@in_transaction` reads 0 afterwards, and the next statement commits on its own,
+outside any transaction and untouched by a later `ROLLBACK`. So it cannot be
+caught and stepped over — doing that would autocommit the remainder of a save one
+statement at a time — and the answer is the one the server's own message asks
+for: start the transaction again. `src/server/db/transaction.ts` does that, up to
+three attempts, only for 1020. The restart takes a fresh snapshot, sees the
+correction that displaced it, and fills nothing in. Both versions therefore keep
+the correction; a Location is the most contended row in the schema, since every
+interaction, plan and date that names a venue writes it.
 
 **Distances are computed in process, not in SQL.** MariaDB has
 `ST_Distance_Sphere`, but reaching it means raw SQL, which would lose Prisma's
@@ -751,7 +796,15 @@ is not copied, and the reason is that `Plan` has no interaction to hang it on.
 
 Both write paths pass the form's `city` to `resolveLocation`, so a place first
 seen by logging a date is born with a locality rather than a bare name — without
-it nothing could ever measure or map that place.
+it nothing could ever measure or map that place. It only ever *fills in* a
+missing city, never rewrites one; see [`Location`](#location) for why.
+
+The place a date reads back is the interaction's, and `listDateEntries` drops one
+whose `ownerId` does not match the account's before returning it. `place` is the
+single-column reference the schema note above describes, so the application
+cannot write a cross-owner link but a restore can, and this read would otherwise
+hand one account another's venue and coordinates. `queries/timeline.ts` guards
+the same reference the same way.
 
 ### `Flag`
 

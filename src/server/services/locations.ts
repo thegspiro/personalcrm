@@ -37,9 +37,34 @@ export interface LocationDetails {
  */
 function textUpdates(details: LocationDetails): Record<string, string> {
   const updates: Record<string, string> = {};
-  for (const key of ["address", "url", "city", "region", "country"] as const) {
+  for (const key of ["address", "url"] as const) {
     const value = details[key];
     if (typeof value === "string" && value.trim()) updates[key] = value.trim();
+  }
+  return updates;
+}
+
+/**
+ * Where the place is, filled in but never rewritten.
+ *
+ * The locality is shared by every interaction and plan that names this place,
+ * while what a caller passes is the wording from one of them — often an old one.
+ * Editing a date's rating resubmits the city typed at the time, and overwriting
+ * on that would undo a correction made on the place's own page, or leave a venue
+ * holding coordinates for one city and text naming another, for everybody.
+ *
+ * So this behaves like the coordinates below: it completes a place that is
+ * missing something, and otherwise leaves it alone. `address` and `url` keep
+ * their older overwrite-when-given behaviour — they are edited from the place
+ * page and passed by `Plan`, which is a different relationship to the row.
+ */
+function localityUpdates(details: LocationDetails): Record<string, string> {
+  const updates: Record<string, string> = {};
+  for (const key of ["city", "region", "country"] as const) {
+    const value = details[key];
+    if (typeof value === "string" && value.trim()) {
+      updates[key] = value.trim();
+    }
   }
   return updates;
 }
@@ -68,6 +93,16 @@ function identityUpdates(details: LocationDetails) {
   };
 }
 
+/**
+ * Get-or-create the place a save names, and fill in what it knows about it.
+ *
+ * Call this inside `transact`, not a bare `prisma.$transaction`. A `Location` is
+ * the most contended row in the schema — every interaction, plan and date that
+ * names a venue writes it — and on MariaDB 11.6.2 and later a write to a row
+ * that moved since the transaction's snapshot rolls that transaction back. The
+ * fill-only rules below say what must not be overwritten; `transact` is what
+ * keeps the save alive while they hold.
+ */
 export async function resolveLocation(
   tx: Prisma.TransactionClient,
   ownerId: string,
@@ -154,24 +189,57 @@ export async function resolveLocation(
   if (canonical && (claimIsStale || !claimed))
     await claimCanonical(canonical.id, canonical.name);
   if (existing) {
+    // Three writes, not a read followed by one write.
+    //
+    // Deciding from a read is what made the fill-only rule lose a race: a plain
+    // read is a snapshot one, so a date save and the place page could both see a
+    // blank city, the page could commit its correction, and the save would then
+    // write the old wording over it. The condition therefore goes in the `WHERE`,
+    // where the database evaluates it at the moment of writing against the row as
+    // it is then, and nothing is decided from a value that may already be stale.
+    //
+    // That is the whole of the rule on MariaDB 10.11, which the container
+    // bundles: the update simply matches no rows and the correction stands.
+    //
+    // It is not the whole of it on 11.6.2 and later, where
+    // `innodb_snapshot_isolation` is on by default. There the row still has to be
+    // locked before the `WHERE` can be evaluated, and locking one that moved
+    // since this transaction's snapshot raises 1020 — so putting the condition in
+    // the `WHERE` does not dodge the error, it only stops the write. Since 1020
+    // rolls the transaction back, the answer cannot live here at all: callers
+    // reach `resolveLocation` through `transact`, which starts the transaction
+    // again against a fresh snapshot. Either way the correction survives.
     const text = textUpdates(details);
-    const identity = identityUpdates(details);
-    // Coordinates are filled in, never overwritten. Typing a venue's name into
-    // an interaction must not move a place the user geocoded deliberately on
-    // its own page — the name is evidence of which place is meant, not of
-    // where it is. Text is still overwritten when given, as it always was.
-    const placed =
-      identity === null
-        ? null
-        : await tx.location.findFirst({
-            where: { id: existing.id, latitude: null, longitude: null },
-            select: { id: true },
-          });
-    const data = { ...text, ...(placed ? identity : {}) };
-
-    if (Object.keys(data).length > 0) {
-      await tx.location.update({ where: { id: existing.id }, data });
+    if (Object.keys(text).length > 0) {
+      // `address` and `url` overwrite when given, as they always have: they are
+      // edited from the place page and passed by `Plan`, which is a statement
+      // about the place rather than one record's recollection of it.
+      await tx.location.update({ where: { id: existing.id }, data: text });
     }
+
+    // The locality is shared by everything naming this place, while what a
+    // caller passes is one record's wording — often an old one. Each field is
+    // written only while it is still empty, so a correction already made cannot
+    // be undone. Usually one statement: a date save carries only a city.
+    for (const [column, value] of Object.entries(localityUpdates(details))) {
+      await tx.location.updateMany({
+        where: { id: existing.id, [column]: null },
+        data: { [column]: value },
+      });
+    }
+
+    // Coordinates are filled in, never overwritten, and always as a pair.
+    // Typing a venue's name into an interaction must not move a place the user
+    // geocoded deliberately — the name is evidence of which place is meant, not
+    // of where it is.
+    const identity = identityUpdates(details);
+    if (identity) {
+      await tx.location.updateMany({
+        where: { id: existing.id, latitude: null, longitude: null },
+        data: identity,
+      });
+    }
+
     return existing;
   }
   const created = await tx.location.create({
@@ -180,6 +248,9 @@ export async function resolveLocation(
       name,
       normalizedName,
       ...textUpdates(details),
+      // Nothing is set yet, so "fill in what is missing" is everything given —
+      // which is how a place first seen by logging a date gets its city.
+      ...localityUpdates(details),
       ...(identityUpdates(details) ?? {}),
     },
     select: { id: true, name: true },

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { Prisma, type TaxonomyKind } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
+import { transact } from "@/server/db/transaction";
 import { resolveLocation } from "@/server/services/locations";
 // A "use server" module may only export async functions, so the candidate
 // shape lives beside the provider table.
@@ -846,13 +847,11 @@ export async function promoteAssociate(
       ...associatePrivacyWhere(scope),
       ...viaContactPrivacyWhere(scope),
     },
-    select: {
-      contactId: true,
-      notes: true,
-      isPrivate: true,
-      promotedContactId: true,
-      contact: { select: { isPrivate: true } },
-    },
+    // Only what is needed before the transaction opens: whether this is
+    // reachable at all, whether it is already done, and whose page it is on.
+    // The note and both privacy markers are read again under a lock inside,
+    // because a value read here can be stale by the time it is used.
+    select: { contactId: true, promotedContactId: true },
   });
   if (!existing) return fail("Not found.");
 
@@ -872,39 +871,46 @@ export async function promoteAssociate(
   });
   if (!type) return fail(UNKNOWN_TERM);
 
-  // A hidden note must not publish a name. The lookup above already refused
-  // anything unreadable, so a closed lock can only have reached a public entry
-  // on a public contact — but the person is marked from both either way.
-  const isPrivate = existing.isPrivate || existing.contact.isPrivate;
-
   let personId: string;
   try {
     personId = await prisma.$transaction(async (tx) => {
+      // Both rows the new contact's privacy is derived from are locked before
+      // it is decided. A plain read inside a transaction is a non-locking
+      // consistent read under MariaDB's default isolation, so the privacy read
+      // taken above can already be stale by the time the row is claimed — and
+      // the answer to a stale read here is a public profile whose summary
+      // carries a note about someone now hidden. `FOR UPDATE` is a current
+      // read: it sees a committed change the snapshot would miss, and waits
+      // for a tab still making one. Same reason `createContactMethod` locks
+      // the contact before deciding a sort order.
+      const [locked] = await tx.$queryRaw<
+        { isPrivate: number; parentPrivate: number; notes: string | null }[]
+      >`SELECT a.isPrivate AS isPrivate, a.notes AS notes, c.isPrivate AS parentPrivate
+          FROM Associate a
+          JOIN Contact c ON c.id = a.contactId
+         WHERE a.id = ${id} AND a.ownerId = ${ownerId} AND a.promotedContactId IS NULL
+         FOR UPDATE`;
+      if (!locked) throw new AlreadyPromoted();
+
+      // Derived from the locked read, never from the one taken before the
+      // transaction opened.
+      const isPrivate = Boolean(locked.isPrivate) || Boolean(locked.parentPrivate);
+
       const person = await tx.contact.create({
         data: {
           ownerId,
           firstName: parsed.data.firstName,
           lastName: parsed.data.lastName ?? null,
-          summary: existing.notes,
+          summary: locked.notes,
           isPrivate,
         },
       });
 
-      // The claim pins the two markers the new contact's privacy was derived
-      // from, not just the promotion pointer. Both were read before this
-      // transaction opened, so without them another tab marking either one
-      // private in between would be answered with a public profile whose
-      // summary carries the note — a leak the claim can refuse for free.
-      // A moved marker matches nothing here, so it lands on the same recovery
-      // as a lost race and the retry reads the privacy that now holds.
+      // Still a compare-and-set rather than a bare update: the lock above
+      // serialises writers, but a request that was already past it and has
+      // committed is only visible here.
       const claimed = await tx.associate.updateMany({
-        where: {
-          id,
-          ownerId,
-          promotedContactId: null,
-          isPrivate: existing.isPrivate,
-          contact: { isPrivate: existing.contact.isPrivate },
-        },
+        where: { id, ownerId, promotedContactId: null },
         data: { promotedContactId: person.id },
       });
       if (claimed.count === 0) throw new AlreadyPromoted();
@@ -1014,7 +1020,15 @@ async function planFields(ownerId: string, form: FormData) {
   if (!duration.ok) return null;
 
   const cost = num(form, "estimatedCost");
-  const plannedFor = plainDate(form, "plannedFor") ?? null;
+
+  // An unreadable day is not an empty one. `plainDate` answers `undefined` to
+  // both, and folding them together let a malformed "2026-02-30" save as a
+  // plan with no date at all — quietly taking the time and duration with it,
+  // and reporting success.
+  const plannedForRaw = str(form, "plannedFor");
+  const plannedFor = plannedForRaw ? plainDate(form, "plannedFor") : null;
+  if (plannedForRaw && !plannedFor) return null;
+
   return {
     categoryId,
     location: str(form, "location") ?? null,
@@ -1029,7 +1043,11 @@ async function planFields(ownerId: string, form: FormData) {
     // and understand, and leaves nothing behind to surface later as an hour
     // against a plan with no date.
     plannedStartMinute: plannedFor ? startMinute.value : null,
-    plannedDurationMinutes: plannedFor ? duration.value : null,
+    // How long a thing takes is a property of the thing, not of the day you
+    // picked for it: "the observatory takes most of an evening" is worth
+    // keeping on a plan nobody has scheduled yet. Only the start time needs a
+    // day to hang on.
+    plannedDurationMinutes: duration.value,
   };
 }
 
@@ -1044,7 +1062,7 @@ export async function createPlan(form: FormData): Promise<ActionResult<{ id: str
   const fields = await planFields(ownerId, form);
   if (!fields) return fail("Check the category, checklist and time.");
 
-  const created = await prisma.$transaction(async (tx) => {
+  const created = await transact(async (tx) => {
     const place = await resolveLocation(tx, ownerId, fields.location ?? undefined, {
       address: fields.address,
       url: fields.url,
@@ -1075,7 +1093,7 @@ export async function updatePlan(form: FormData): Promise<ActionResult> {
   const fields = await planFields(ownerId, form);
   if (!fields) return fail("Check the category, checklist and time.");
 
-  await prisma.$transaction(async (tx) => {
+  await transact(async (tx) => {
     const place = await resolveLocation(tx, ownerId, fields.location ?? undefined, {
       address: fields.address,
       url: fields.url,

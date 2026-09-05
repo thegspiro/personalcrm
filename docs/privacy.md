@@ -551,6 +551,17 @@ has to be pressed. Rule 4 above holds unchanged: private contacts are excluded b
 the query that feeds the pass, so their addresses are never among the rows sent,
 locked or not.
 
+Places are weaker than that, deliberately, and the difference is worth stating
+plainly. They are filtered through `locationVisibleWhere` — the same predicate as
+the places list — so a venue known only through a private interaction is withheld
+from the count *and* never sent **while the lock is closed**. Unlocked, it is
+counted and can be sent, exactly as it becomes visible everywhere else, because
+that is what unlocking is for; the count therefore does change on unlock. What
+the lock guarantees is that a locked session neither reveals the venue in a total
+nor puts its address on the wire. A contact's address is held to the stricter
+rule instead — never sent whatever the lock says — because it names where a
+person lives rather than where a bar is.
+
 It sends the same thing a single lookup does and nothing more: the address parts
 for an address, the place's name and address for a place. Never a label, never
 notes, never whose address it is. Only an exact single match is written — an

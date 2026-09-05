@@ -24,6 +24,13 @@ interface Progress {
   done: boolean;
 }
 
+/** What a stopped pass left behind for the next press to carry on from. */
+interface Resumed {
+  cursor: string | null;
+  placed: number;
+  skipped: number;
+}
+
 const KINDS = [
   { kind: "places" as const, noun: "saved place" },
   { kind: "addresses" as const, noun: "address" },
@@ -50,6 +57,21 @@ export function BulkPlaceSettings({
   // Set when the user asks to stop, and read inside the loop so an in-flight
   // batch finishes rather than being abandoned half-written.
   const stop = React.useRef(false);
+  /**
+   * Where each kind got to, and what it has done, kept across presses.
+   *
+   * Starting from null every time looked resumable and was not: a row the
+   * lookup could not match stays unplaced, so it is selected again, and ten
+   * unmatchable rows at the front meant every resumed pass re-tried the same
+   * ten and never reached the eleventh. Cleared when a pass runs to the end, so
+   * pressing again after that starts over rather than finding nothing.
+   *
+   * The tallies travel with the cursor rather than beside it. Kept apart, a
+   * resumed pass counted only its own segment: stopping after ten rows nobody
+   * could match and then finishing two more reported "2 need a look" when the
+   * true answer was twelve, which is worse than no number at all.
+   */
+  const resume = React.useRef<Record<string, Resumed>>({});
 
   if (!usable) return null;
 
@@ -57,43 +79,58 @@ export function BulkPlaceSettings({
     stop.current = false;
     setRunning(kind);
     setError(undefined);
+    // Picked up where the last press left off, so the running total is of the
+    // whole pass rather than of this segment of it.
+    const carried = resume.current[kind];
+    let cursor: string | null = carried?.cursor ?? null;
+    let placed = carried?.placed ?? 0;
+    let skipped = carried?.skipped ?? 0;
+
     setProgress((current) => ({
       ...current,
-      [kind]: { placed: 0, skipped: 0, remaining: total, done: false },
+      [kind]: { placed, skipped, remaining: total, done: false },
     }));
 
-    let cursor: string | null = null;
-    let placed = 0;
-    let skipped = 0;
+    try {
+      // Bounded by the row count: every call either advances the cursor or ends
+      // the pass, so this cannot spin on a row that refuses to be placed.
+      for (;;) {
+        const form = new FormData();
+        form.set("kind", kind);
+        if (cursor) form.set("cursor", cursor);
 
-    // Bounded by the row count: every call either advances the cursor or ends
-    // the pass, so this cannot spin on a row that refuses to be placed.
-    for (;;) {
-      const form = new FormData();
-      form.set("kind", kind);
-      if (cursor) form.set("cursor", cursor);
+        const result = await placeUnplaced(form);
+        if (!result.ok) {
+          setError(result.error ?? "That didn't work.");
+          break;
+        }
 
-      const result = await placeUnplaced(form);
-      if (!result.ok) {
-        setError(result.error ?? "That didn't work.");
-        break;
+        const data = result.data;
+        if (!data) break;
+
+        placed += data.placed;
+        skipped += data.skipped;
+        cursor = data.nextCursor;
+        // Stored together: a cursor without its tallies is what produced the
+        // misleading count above. Cleared at the end of a pass, so the next
+        // press starts a fresh one rather than resuming a finished one.
+        if (cursor) resume.current[kind] = { cursor, placed, skipped };
+        else delete resume.current[kind];
+        setProgress((current) => ({
+          ...current,
+          [kind]: { placed, skipped, remaining: data.remaining, done: !data.nextCursor },
+        }));
+
+        if (!data.nextCursor || stop.current) break;
       }
-
-      const data = result.data;
-      if (!data) break;
-
-      placed += data.placed;
-      skipped += data.skipped;
-      setProgress((current) => ({
-        ...current,
-        [kind]: { placed, skipped, remaining: data.remaining, done: !data.nextCursor },
-      }));
-
-      if (!data.nextCursor || stop.current) break;
-      cursor = data.nextCursor;
+    } catch {
+      // A server action can reject outright — a dropped connection, a deploy
+      // mid-pass. Without this the panel stayed on "Placing…" for good, with
+      // the button disabled and no way back but a reload.
+      setError("That stopped unexpectedly. Press again to carry on where it left off.");
+    } finally {
+      setRunning(null);
     }
-
-    setRunning(null);
   }
 
   return (

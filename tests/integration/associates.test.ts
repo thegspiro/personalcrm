@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
+import { createTestUser, hasTestDatabase, holdUncommitted, prisma, reset } from "./db";
 
 /**
  * The people in someone's life who are not tracked themselves.
@@ -454,32 +454,32 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       expect((await listContacts(ownerId, { search: "Bob" }, TZ)).items).toHaveLength(0);
     });
 
-    it("pins the claim to the privacy it read, so a moved marker matches nothing", async () => {
-      // White-box on purpose. The new contact's privacy is derived before the
-      // transaction opens, and the claim carries both markers so that a tab
-      // marking either one private in between is answered with a retry rather
-      // than a public profile whose summary holds the note. The interleaving
-      // itself cannot be forced from here, so what is asserted is the
-      // predicate the action depends on: once the marker moves, the claim
-      // matches nothing.
-      const id = await add();
-      await prisma.contact.update({ where: { id: aliceId }, data: { isPrivate: true } });
+    it("does not publish a name because it read the privacy a moment too early", async () => {
+      // The interleaving, not a sleep: the uncommitted write is invisible to
+      // the read `promoteAssociate` takes before its transaction opens, so the
+      // action starts out believing this person is public. Its locking read
+      // then waits on the held row, and sees the truth once released.
+      //
+      // Without that lock the profile is created from the stale read — public,
+      // with the note about a now-hidden person sitting in its summary.
+      const id = await add({ notes: "On night shifts." });
+      const held = await holdUncommitted((tx) =>
+        tx.contact.update({ where: { id: aliceId }, data: { isPrivate: true } }),
+      );
 
-      const claimed = await prisma.associate.updateMany({
-        where: {
-          id,
-          ownerId,
-          promotedContactId: null,
-          isPrivate: false,
-          contact: { isPrivate: false },
-        },
-        data: { promotedContactId: aliceId },
+      const promoting = promote(id);
+      // Let the action get past its pre-transaction read and into the lock.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      held.release();
+      await held.settled;
+
+      const result = await promoting;
+      expect(result.ok).toBe(true);
+      const person = await prisma.contact.findUniqueOrThrow({
+        where: { id: result.data!.contactId },
       });
-
-      expect(claimed.count).toBe(0);
-      expect(
-        (await prisma.associate.findUniqueOrThrow({ where: { id } })).promotedContactId,
-      ).toBeNull();
+      expect(person.isPrivate).toBe(true);
+      expect(person.summary).toBe("On night shifts.");
     });
 
     it("survives the promoted person being deleted, and becomes editable again", async () => {
