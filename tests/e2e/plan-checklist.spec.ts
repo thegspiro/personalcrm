@@ -128,7 +128,12 @@ test("a duration with no day shows, and survives an edit that does not touch it"
   // `SectionRow` renders a div with tabindex="-1", not an <li> — the same
   // locator the two tests above use.
   const row = plans.locator("[tabindex='-1']").filter({ hasText: title }).first();
-  await expect(row.getByText("2h")).toBeVisible();
+  // Exact, and not for tidiness: the schedule form inside this same row lists
+  // every contact as an <option>, and the e2e fixtures generate names from
+  // random characters. One of them containing "2h" is enough for a substring
+  // match to resolve to two elements and fail on strict mode — which is exactly
+  // how this first went red, on a run where the name was "Ondrelldesktoplocalmtor2hnb".
+  await expect(row.getByText("2h", { exact: true })).toBeVisible();
 
   // Reopen, change something else entirely, and save.
   await row.getByRole("button", { name: "Edit plan" }).click();
@@ -137,7 +142,7 @@ test("a duration with no day shows, and survives an edit that does not touch it"
   await plans.getByRole("button", { name: "Save", exact: true }).click();
 
   await expect(row.getByText("The park")).toBeVisible();
-  await expect(row.getByText("2h")).toBeVisible();
+  await expect(row.getByText("2h", { exact: true })).toBeVisible();
 });
 
 test("a plan can be scheduled and then closed out", async ({ page }) => {
