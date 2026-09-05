@@ -534,6 +534,21 @@ What it stores is an OpenStreetMap object reference (`osmType` + `osmId`) plus
 the address parts and coordinates. Nominatim's own `place_id` is deliberately
 discarded: it is internal to one instance and does not survive a reimport.
 
+### Placing everything at once
+
+The one thing in the app that sends many addresses rather than one. It is gated
+three times over: lookup is off in the shipped state, the button appears **only
+when the endpoint is not the public OpenStreetMap service** — whose usage policy
+asks applications not to geocode in bulk against donated hardware — and it still
+has to be pressed. Rule 4 above holds unchanged: private contacts are excluded by
+the query that feeds the pass, so their addresses are never among the rows sent,
+locked or not.
+
+It sends the same thing a single lookup does and nothing more: the address parts
+for an address, the place's name and address for a place. Never a label, never
+notes, never whose address it is. Only an exact single match is written — an
+ambiguous answer is left for a person rather than guessed at.
+
 ### Distances
 
 Nothing is sent to compute one. Every distance in the app is straight-line

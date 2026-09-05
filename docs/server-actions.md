@@ -316,6 +316,23 @@ by hand instead, which is why the form offers the fields directly. For everyone
 else only the address is sent: the lines, the city, the region, the country.
 Never the label, never the notes, never the person's name.
 
+`placeUnplaced` (in `actions/bulk-place.ts`) is the same lookup applied to
+everything at once: a bounded batch of **ten rows**, returning a cursor the
+browser passes back until there is nothing left. No queue, no job table, no
+background worker — the loop lives in the settings panel, so closing the tab
+stops it and pressing the button again resumes.
+
+Three rules make it safe to run unattended. It is **refused outright against the
+public OpenStreetMap service** (`isRateLimited`), whose usage policy asks
+applications not to geocode in bulk against hardware the foundation runs on
+donations. It writes **only an unambiguous match** — anything other than exactly
+one candidate is left for a person, because nobody is present to choose and a
+pin in the wrong city looks answered when it is not. And it selects **only rows
+with no coordinates**, re-checking that in the `updateMany` where-clause, so a
+row placed by hand in another tab is never overwritten by a machine's guess.
+Private contacts are excluded by the query that feeds it, not filtered
+afterwards.
+
 `lookupHomeBase` and `updateHomeBase` (in `actions/settings.ts`) do the same for
 your own address. `updateHomeBase` follows `updateDefaults`' presence-not-value
 rule for `distanceUnit`, so a panel that omits the field never resets it, and it

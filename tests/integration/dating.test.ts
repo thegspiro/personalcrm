@@ -17,6 +17,7 @@ vi.mock("@/server/privacy/lock", () => ({
 }));
 
 const { createDateEntry, markAsRomantic, updateDateEntry } = await import("@/server/actions/dating");
+const { listDateEntries } = await import("@/server/queries/dating");
 
 function actionForm(values: Record<string, string>) {
   const form = new FormData();
@@ -365,6 +366,83 @@ describe.skipIf(!hasTestDatabase)("dating", () => {
 
     // ...but their profile is still there if they are flagged again.
     expect(await prisma.romanticProfile.findUnique({ where: { contactId: ex.id } })).not.toBeNull();
+  });
+
+  it("gives the place a date is logged at its city, not just its name", async () => {
+    // Before this the venue reached `resolveLocation` alone, so a place first
+    // seen by logging a date was born with a name and nothing else — no
+    // locality, so nothing could ever measure or map it.
+    const contact = await makeRomantic();
+    const result = await createDateEntry(
+      actionForm({
+        contactId: contact.id,
+        venue: "Corner Cafe",
+        city: "Leeds",
+        occurredAt: new Date().toISOString(),
+      }),
+    );
+    expect(result.ok).toBe(true);
+
+    const place = await prisma.location.findFirstOrThrow({
+      where: { ownerId, normalizedName: "corner cafe" },
+    });
+    expect(place.city).toBe("Leeds");
+
+    // And the entry still keeps the words that were typed, the way
+    // `Interaction.location` does — the place is the identity, not the wording.
+    const entry = await prisma.dateEntry.findFirstOrThrow({
+      where: { contactId: contact.id },
+      include: { interaction: true },
+    });
+    expect(entry.venue).toBe("Corner Cafe");
+    expect(entry.city).toBe("Leeds");
+    expect(entry.interaction.locationId).toBe(place.id);
+  });
+
+  it("reads a logged date's place back through the interaction it mirrors", async () => {
+    // `DateEntry` has no `locationId` of its own on purpose: the fact is stored
+    // once, on the interaction, so the two cannot disagree.
+    const contact = await makeRomantic();
+    await createDateEntry(
+      actionForm({
+        contactId: contact.id,
+        venue: "Corner Cafe",
+        city: "Leeds",
+        occurredAt: new Date().toISOString(),
+      }),
+    );
+    await prisma.location.updateMany({
+      where: { ownerId, normalizedName: "corner cafe" },
+      data: { latitude: 53.8008, longitude: -1.5491 },
+    });
+
+    const [entry] = await listDateEntries(ownerId, contact.id);
+    expect(entry.interaction.place?.name).toBe("Corner Cafe");
+    expect(Number(entry.interaction.place?.latitude)).toBeCloseTo(53.8008, 4);
+  });
+
+  it("does not move a place that was already put on the map", async () => {
+    // Logging a second date at the same venue must not re-place it: the name
+    // says which place is meant, not where it is.
+    const contact = await makeRomantic();
+    await createDateEntry(
+      actionForm({ contactId: contact.id, venue: "Corner Cafe", city: "Leeds", occurredAt: new Date().toISOString() }),
+    );
+    await prisma.location.updateMany({
+      where: { ownerId, normalizedName: "corner cafe" },
+      data: { latitude: 53.8008, longitude: -1.5491 },
+    });
+
+    await createDateEntry(
+      actionForm({ contactId: contact.id, venue: "corner cafe", city: "York", occurredAt: new Date().toISOString() }),
+    );
+
+    const place = await prisma.location.findFirstOrThrow({
+      where: { ownerId, normalizedName: "corner cafe" },
+    });
+    expect(Number(place.latitude)).toBeCloseTo(53.8008, 4);
+    // Text still overwrites when it is given, exactly as it always has.
+    expect(place.city).toBe("York");
   });
 
   it("ending records the reason and the retrospective separately", async () => {

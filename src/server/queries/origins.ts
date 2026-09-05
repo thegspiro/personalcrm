@@ -2,7 +2,7 @@ import "server-only";
 import { prisma } from "@/server/db/client";
 import { contactPrivacyWhere } from "@/server/privacy/where";
 import { privacyScope } from "@/server/privacy/filter";
-import { isUnit, pointOf, type Point, type Unit } from "@/lib/geo";
+import { pointOf, unitOf, type Point, type Unit } from "@/lib/geo";
 
 /**
  * Where distances are measured from.
@@ -59,6 +59,6 @@ export async function originsFor(
   return {
     home: pointOf({ latitude: prefs?.homeLatitude, longitude: prefs?.homeLongitude }),
     contact: pointOf(address),
-    unit: isUnit(prefs?.distanceUnit) ? prefs.distanceUnit : "mi",
+    unit: unitOf(prefs?.distanceUnit),
   };
 }

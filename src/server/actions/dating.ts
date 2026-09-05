@@ -274,7 +274,12 @@ export async function createDateEntry(form: FormData): Promise<ActionResult<{ id
   try {
     entry = await prisma.$transaction(async (tx) => {
     await ensureProfileTx(tx, ownerId, contactId);
-    const place = await resolveLocation(tx, ownerId, venue);
+    // The city the form already carries goes to the place too, not only onto
+    // the DateEntry. Without it a place first seen by logging a date was born
+    // with a name and nothing else — no locality, so nothing could ever measure
+    // or map it. Blank never overwrites, so this cannot clear a city typed on
+    // the place's own page.
+    const place = await resolveLocation(tx, ownerId, venue, { city: str(form, "city") });
 
     const interaction = await tx.interaction.create({
       data: {
@@ -370,7 +375,7 @@ export async function updateDateEntry(form: FormData): Promise<ActionResult> {
 
   try {
     await prisma.$transaction(async (tx) => {
-    const place = await resolveLocation(tx, ownerId, venue);
+    const place = await resolveLocation(tx, ownerId, venue, { city: str(form, "city") });
     await tx.dateEntry.update({
       where: { id },
       data: {

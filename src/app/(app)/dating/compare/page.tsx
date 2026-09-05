@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getUserContext } from "@/server/user/context";
+import { unitOf } from "@/lib/geo";
 import { listForCompare } from "@/server/queries/dating";
 import { canSeeDating } from "@/server/privacy/filter";
 import { getPrivacyState } from "@/server/privacy/lock";
@@ -39,7 +40,7 @@ export default async function ComparePage() {
         </div>
       </div>
 
-      <CompareView rows={rows} now={new Date()} />
+      <CompareView rows={rows} now={new Date()} unit={unitOf(prefs.distanceUnit)} />
     </div>
   );
 }
