@@ -21,6 +21,7 @@ const ROUTES = [
   "/tasks",
   "/ideas",
   "/gifts",
+  "/calendar",
   "/more",
   "/settings",
 ];
