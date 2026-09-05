@@ -813,10 +813,14 @@ rows come and go around it.
 An install upgrading into canonical birthdays has already sent the occurrence
 in flight under the legacy row's id, which the ledger cannot match under the
 new key. So the scheduler *reads* that old identity rather than adopting it:
-where a legacy birthday row exists, a candidate is skipped if a delivery for
-the same occurrence and offset already exists under it — sent, or still being
-retried. A cancelled row does not count; nothing will deliver it, and
-suppressing on one would lose the birthday rather than repeat it. Borrowing the
+where legacy birthday rows exist, a delivery is skipped if one for the same
+occurrence, offset **and channel** already exists under any of them — sent, or
+still being retried. Per channel, because the ledger is keyed that way: an
+owner whose email had the legacy reminder and who adds a webhook the same day
+should still get it there. Across *every* such row, not the first, since any of
+them could be the one holding the history. A cancelled row does not count;
+nothing will deliver it, and suppressing on one would lose the birthday rather
+than repeat it. Borrowing the
 legacy id as the key instead would look like continuity and is not: adding a
 birthday-typed date to a contact whose birthday had already gone out would move
 the identity out from under the ledger row and send the occurrence again.

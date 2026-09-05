@@ -457,6 +457,77 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(send.mock.calls.filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(0);
   });
 
+  it("still sends a superseded birthday to a channel the legacy delivery never reached", async () => {
+    // Email got the legacy reminder; a webhook is added the same day. The
+    // ledger is keyed per channel, so reconciling per occurrence alone would
+    // make the email row silence the webhook that is genuinely still owed.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    const emailed = await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Already", config: { url: "https://already.invalid" } } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Added later", config: { url: "https://later.invalid" } } });
+    const contact = await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Dana",
+      birthDate: new Date("1990-09-02T00:00:00Z"), birthDatePrecision: "DAY",
+    } });
+    const birthdayType = await prisma.taxonomyTerm.findFirst({
+      where: { ownerId: user.id, kind: "DATE_TYPE", slug: "birthday" },
+    });
+    const legacy = await prisma.importantDate.create({ data: {
+      ownerId: user.id, contactId: contact.id, label: "Birthday", typeId: birthdayType!.id,
+      date: new Date("1990-09-02T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [0],
+    } });
+    // Pre-upgrade: only the first channel was ledgered under the legacy id.
+    await prisma.reminderLog.create({ data: {
+      ownerId: user.id, entityType: "IMPORTANT_DATE", entityId: legacy.id,
+      schedulingPolicy: "IMPORTANT_DATE_OFFSET", dedupKey: "pre-upgrade-one-channel",
+      scheduledFor: new Date("2026-09-02T00:00:00Z"), offsetDays: 0,
+      channelId: emailed.id, ok: true, attemptCount: 1, sentAt: new Date("2026-09-02T08:00:00Z"),
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    const birthdays = send.mock.calls.filter((call) => call[1] === "Reminder: Birthday");
+    expect(birthdays).toHaveLength(1);
+    expect((birthdays[0][0] as { name: string }).name).toBe("Added later");
+  });
+
+  it("checks every superseded birthday row, not just the first", async () => {
+    // Two birthday-typed rows on one contact. The ledger success sits on the
+    // one that does not sort first, so keeping a single superseded id would
+    // miss it and send the birthday again.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    const channel = await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Dana",
+      birthDate: new Date("1990-09-02T00:00:00Z"), birthDatePrecision: "DAY",
+    } });
+    const birthdayType = await prisma.taxonomyTerm.findFirst({
+      where: { ownerId: user.id, kind: "DATE_TYPE", slug: "birthday" },
+    });
+    const rows = [];
+    for (let i = 0; i < 2; i++) {
+      rows.push(await prisma.importantDate.create({ data: {
+        ownerId: user.id, contactId: contact.id, label: "Birthday", typeId: birthdayType!.id,
+        date: new Date("1990-09-02T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [0],
+      } }));
+    }
+    // Whichever sorts *last* is the one holding the pre-upgrade delivery.
+    const holder = [...rows].sort((a, b) => a.id.localeCompare(b.id))[1];
+    await prisma.reminderLog.create({ data: {
+      ownerId: user.id, entityType: "IMPORTANT_DATE", entityId: holder.id,
+      schedulingPolicy: "IMPORTANT_DATE_OFFSET", dedupKey: "pre-upgrade-second-row",
+      scheduledFor: new Date("2026-09-02T00:00:00Z"), offsetDays: 0,
+      channelId: channel.id, ok: true, attemptCount: 1, sentAt: new Date("2026-09-02T08:00:00Z"),
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    expect(send.mock.calls.filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(0);
+  });
+
   it("keeps the birthday identity stable when a birthday-typed date is added later", async () => {
     // The reverse of the upgrade: canonical birthday already delivered under
     // the projection id, then a birthday-typed date is added. Adopting that

@@ -58,6 +58,8 @@ type Channel = Awaited<ReturnType<Db["notificationChannel"]["findFirstOrThrow"]>
 
 /** One thing owed to one owner on one occurrence; fanned out per channel. */
 type Candidate = ReminderMessage & {
+  /** Legacy identities this candidate took over; see `supersededPairs`. */
+  supersedes?: string[];
   entityType: ReminderEntity;
   entityId: string;
   policy: SchedulingPolicy;
@@ -171,7 +173,7 @@ type DateSource = {
    * from under the ledger row and send the occurrence a second time. So the old
    * identity is read, never adopted.
    */
-  supersedes?: string;
+  supersedes?: string[];
   contactId: string;
   label: string;
   contactName: string;
@@ -197,7 +199,7 @@ const IMPORTANT_DATE_SELECT = {
 
 function birthdaySource(
   contact: Parameters<typeof projectContactBirthday>[0],
-  supersedes?: string,
+  supersedes?: string[],
 ): DateSource | null {
   const birthday = projectContactBirthday(contact);
   if (!birthday || !REMINDABLE_PRECISION.has(birthday.precision)) return null;
@@ -244,14 +246,16 @@ async function dateSourcesForUser(
   // the contact page does not show, which is the invention this all exists to
   // prevent. An unknown day means silence, not a fallback to the stale row.
   const canonical = new Set(contacts.map((contact) => contact.id));
-  const legacyBirthdayId = new Map<string, string>();
-  for (const row of [...rows].sort((a, b) => a.id.localeCompare(b.id))) {
-    if (isBirthdayImportantDate(row) && !legacyBirthdayId.has(row.contactId)) {
-      legacyBirthdayId.set(row.contactId, row.id);
-    }
+  // Every birthday-typed row for the contact, not the first: they are all
+  // suppressed, so any of them could be the one holding the ledger history for
+  // the occurrence in flight, and missing it sends the birthday again.
+  const legacyBirthdayIds = new Map<string, string[]>();
+  for (const row of rows) {
+    if (!isBirthdayImportantDate(row)) continue;
+    legacyBirthdayIds.set(row.contactId, [...(legacyBirthdayIds.get(row.contactId) ?? []), row.id]);
   }
   const birthdays = contacts
-    .map((contact) => birthdaySource(contact, legacyBirthdayId.get(contact.id)))
+    .map((contact) => birthdaySource(contact, legacyBirthdayIds.get(contact.id)))
     .filter((row): row is DateSource => row !== null);
   const dates = rows
     .filter((row) => !(canonical.has(row.contactId) && isBirthdayImportantDate(row)))
@@ -268,37 +272,42 @@ async function dateSourcesForUser(
 }
 
 /**
- * Whether a superseded identity is already carrying this occurrence.
+ * Deliveries a superseded identity is already carrying, keyed per channel.
  *
- * Sent, or still being retried — both mean a delivery exists for it and the
- * canonical source must not open a second one. A row that was *cancelled* does
- * not count: nothing will deliver it, so suppressing on it would lose the
- * birthday entirely rather than merely repeat it.
+ * An install upgrading into canonical birthdays has already sent the occurrence
+ * in flight under the legacy row's id, which the ledger cannot match under the
+ * new key. Rather than moving the identity — which only relocates the problem —
+ * the old one is read and its deliveries are skipped.
  *
- * Deliberately not per channel: the candidate is built once for the owner and
- * fanned out afterwards, so this can only answer for the occurrence as a whole.
- * Erring toward silence is the right way round — a birthday that arrives once
- * instead of twice costs nothing, and the alternative is the duplicate.
+ * Per channel, because the candidate is fanned out per channel and the ledger
+ * is keyed that way: an owner whose email had the legacy reminder and who adds
+ * a webhook the same day should still get it there. Sent or still being
+ * retried both count; a *cancelled* row does not, since nothing will deliver it
+ * and suppressing on one would lose the birthday rather than repeat it.
  */
-async function alreadyHandledAs(
+async function supersededPairs(
   db: Db,
-  user: Pick<ScheduledUser, "id">,
-  entityId: string,
-  occurrence: PlainDate,
-  offsetDays: number,
-): Promise<boolean> {
-  const sent = await db.reminderLog.findFirst({
+  ownerId: string,
+  candidates: Candidate[],
+): Promise<Set<string>> {
+  const ids = [...new Set(candidates.flatMap((candidate) => candidate.supersedes ?? []))];
+  if (ids.length === 0) return new Set();
+  const rows = await db.reminderLog.findMany({
     where: {
-      ownerId: user.id,
+      ownerId,
       entityType: "IMPORTANT_DATE",
-      entityId,
-      scheduledFor: plainDateToDb(occurrence),
-      offsetDays,
+      entityId: { in: ids },
       OR: [{ ok: true }, { nextAttemptAt: { not: null } }],
     },
-    select: { id: true },
+    select: { entityId: true, scheduledFor: true, offsetDays: true, channelId: true },
   });
-  return sent !== null;
+  return new Set(rows.map((row) =>
+    supersededKey(row.entityId, row.scheduledFor, row.offsetDays, row.channelId),
+  ));
+}
+
+function supersededKey(entityId: string, scheduledFor: Date, offsetDays: number, channelId: string | null): string {
+  return [entityId, scheduledFor.toISOString().slice(0, 10), offsetDays, channelId ?? ""].join("\u0000");
 }
 
 /** The same source, re-read for one stored `entityId` when a retry claims it. */
@@ -327,10 +336,20 @@ async function dateSourceById(
   // name, nothing is owed — the stale row must not stand in for it.
   if (isBirthdayImportantDate(row)) {
     const contact = await db.contact.findFirst({
-      where: { id: row.contactId, ownerId: user.id, birthDate: { not: null } },
+      // The same visibility predicate as the row read above. Defensive rather
+      // than load-bearing: the read above gates this one on the identical
+      // predicate, so no caller can reach here with a contact this would
+      // exclude. It is here because a reader should not have to prove that,
+      // and because the projection-id branch already reads this way — two
+      // lookups of the same thing filtering differently is how the next
+      // change to either one goes wrong.
+      where: {
+        id: row.contactId, ownerId: user.id, birthDate: { not: null },
+        ...visibleContact(schedule.locked),
+      },
       select: birthdayContactSelect,
     });
-    if (contact) return birthdaySource(contact, row.id);
+    if (contact) return birthdaySource(contact, [row.id]);
   }
   return {
     key: row.id,
@@ -459,13 +478,8 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
     for (const offset of effectiveReminderDays(reminderPolicy(date.reminderDaysBefore))) {
       const occurrence = dueOccurrence(date.anchor, date.recurrence, schedule.today, offset);
       if (!occurrence) continue;
-      // An install upgrading into canonical birthdays already sent this
-      // occurrence under the legacy row's id. The ledger cannot recognise it
-      // under the new key, so ask it directly rather than sending again.
-      // Only ever true for the occurrence in flight at the upgrade; the
-      // identity is stable from then on and this reads nothing.
-      if (date.supersedes && await alreadyHandledAs(db, user, date.supersedes, occurrence, offset)) continue;
       candidates.push({
+        supersedes: date.supersedes,
         entityType: "IMPORTANT_DATE",
         entityId: date.key,
         policy: "IMPORTANT_DATE_OFFSET",
@@ -809,6 +823,7 @@ export async function processReminderDeliveries(
       select: { id: true, dedupKey: true, ok: true, nextAttemptAt: true, attemptCount: true },
     });
     const ledgered = new Set(rows.map((row) => row.dedupKey));
+    const superseded = await supersededPairs(db, user.id, candidates);
 
     // A row cancelled while its reminder was ineligible — the task completed,
     // the person made private — keeps its key, so the candidate it matches
@@ -825,6 +840,11 @@ export async function processReminderDeliveries(
     }
     for (const { candidate, channel, dedupKey } of pairs) {
       if (ledgered.has(dedupKey)) continue;
+      // Delivered already under an identity this candidate took over — for
+      // this channel specifically, so a channel added since still gets its own.
+      if (candidate.supersedes?.some((id) =>
+        superseded.has(supersededKey(id, candidate.scheduledFor, candidate.offsetDays, channel.id)),
+      )) continue;
       const result = await createAndDeliver(db, send, user, candidate, channel, dedupKey, now, clock);
       if (result === true) sent += 1;
       if (result === false) failed += 1;
