@@ -4,6 +4,10 @@
 -- drop because nothing is dropped. The table starts empty, so an installation
 -- that applies this and rolls back loses nothing that existed before it.
 --
+-- Named `Associate` rather than `Acquaintance` because the latter is already a
+-- CONTACT_CATEGORY label: being categorised an acquaintance is a different
+-- fact from being someone your contact knows and you do not track.
+--
 -- No new taxonomy kind: promoting an entry into a real person writes an
 -- ordinary Relationship, so it reuses RELATIONSHIP_TYPE.
 --
@@ -15,7 +19,7 @@
 -- rather than CASCADE so that deleting the person an entry became leaves the
 -- note the owner wrote, reverted to an ordinary entry.
 -- CreateTable
-CREATE TABLE `Acquaintance` (
+CREATE TABLE `Associate` (
     `id` VARCHAR(191) NOT NULL,
     `ownerId` VARCHAR(191) NOT NULL,
     `contactId` VARCHAR(191) NOT NULL,
@@ -27,17 +31,17 @@ CREATE TABLE `Acquaintance` (
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
-    INDEX `Acquaintance_ownerId_contactId_idx`(`ownerId`, `contactId`),
-    INDEX `Acquaintance_contactId_name_idx`(`contactId`, `name`),
-    INDEX `Acquaintance_promotedContactId_idx`(`promotedContactId`),
+    INDEX `Associate_ownerId_contactId_idx`(`ownerId`, `contactId`),
+    INDEX `Associate_contactId_name_idx`(`contactId`, `name`),
+    INDEX `Associate_promotedContactId_idx`(`promotedContactId`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- AddForeignKey
-ALTER TABLE `Acquaintance` ADD CONSTRAINT `Acquaintance_ownerId_fkey` FOREIGN KEY (`ownerId`) REFERENCES `User`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE `Associate` ADD CONSTRAINT `Associate_ownerId_fkey` FOREIGN KEY (`ownerId`) REFERENCES `User`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `Acquaintance` ADD CONSTRAINT `Acquaintance_ownerId_contactId_fkey` FOREIGN KEY (`ownerId`, `contactId`) REFERENCES `Contact`(`ownerId`, `id`) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE `Associate` ADD CONSTRAINT `Associate_ownerId_contactId_fkey` FOREIGN KEY (`ownerId`, `contactId`) REFERENCES `Contact`(`ownerId`, `id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `Acquaintance` ADD CONSTRAINT `Acquaintance_promotedContactId_fkey` FOREIGN KEY (`promotedContactId`) REFERENCES `Contact`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE `Associate` ADD CONSTRAINT `Associate_promotedContactId_fkey` FOREIGN KEY (`promotedContactId`) REFERENCES `Contact`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;

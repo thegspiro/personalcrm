@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Icon } from "@/components/nav/icon";
-import type { AcquaintanceGroup } from "@/server/queries/acquaintances";
+import type { AssociateGroup } from "@/server/queries/associates";
 
 /**
  * Everyone noted as being in someone else's life, on /people/friends.
@@ -10,7 +10,7 @@ import type { AcquaintanceGroup } from "@/server/queries/acquaintances";
  * mean anything is. A second editing surface would be the same wiring twice
  * and two places for the shared-fields trap to bite.
  */
-export function AcquaintanceList({ groups }: { groups: AcquaintanceGroup[] }) {
+export function AssociateList({ groups }: { groups: AssociateGroup[] }) {
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
       {groups.map((group) => (

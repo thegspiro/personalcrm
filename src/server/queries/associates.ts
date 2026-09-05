@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "@/server/db/client";
 import {
-  acquaintancePrivacyWhere,
+  associatePrivacyWhere,
   privacyScope,
   viaContactPrivacyWhere,
 } from "@/server/privacy/filter";
@@ -20,7 +20,7 @@ import { displayName } from "@/lib/utils";
  * lets the other's rows through.
  */
 
-export interface AcquaintanceEntry {
+export interface AssociateEntry {
   id: string;
   name: string;
   howTheyKnow: string | null;
@@ -32,9 +32,9 @@ export interface AcquaintanceEntry {
   promoted: { id: string; name: string } | null;
 }
 
-export interface AcquaintanceGroup {
+export interface AssociateGroup {
   contact: { id: string; name: string };
-  entries: AcquaintanceEntry[];
+  entries: AssociateEntry[];
 }
 
 /**
@@ -61,7 +61,7 @@ function toEntry(
   },
   ownerId: string,
   unlocked: boolean,
-): AcquaintanceEntry {
+): AssociateEntry {
   const foreign = row.promoted !== null && row.promoted.ownerId !== ownerId;
   const withheld = row.promoted !== null && row.promoted.isPrivate && !unlocked;
   return {
@@ -84,15 +84,15 @@ function toEntry(
  * The cap is applied to rows *before* grouping, so a truncated page never
  * shows one person with entries silently missing while the next reads whole.
  */
-export async function listAcquaintanceGroups(
+export async function listAssociateGroups(
   ownerId: string,
   cap = 300,
-): Promise<CappedList<AcquaintanceGroup>> {
+): Promise<CappedList<AssociateGroup>> {
   const scope = await privacyScope();
-  const rows = await prisma.acquaintance.findMany({
+  const rows = await prisma.associate.findMany({
     where: {
       ownerId,
-      ...acquaintancePrivacyWhere(scope),
+      ...associatePrivacyWhere(scope),
       ...viaContactPrivacyWhere(scope),
     },
     include: {
@@ -120,7 +120,7 @@ export async function listAcquaintanceGroups(
 
   const { items, truncated } = applyCap(rows, cap);
 
-  const groups: AcquaintanceGroup[] = [];
+  const groups: AssociateGroup[] = [];
   for (const row of items) {
     const entry = toEntry(row, ownerId, scope.unlocked);
     const last = groups.at(-1);

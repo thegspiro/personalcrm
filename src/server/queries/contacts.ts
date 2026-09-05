@@ -10,7 +10,7 @@ import {
 } from "@/lib/reciprocity";
 import { DUE_SOON_DAYS } from "@/lib/cadence";
 import {
-  acquaintancePrivacyWhere,
+  associatePrivacyWhere,
   contactPrivacyWhere,
   factPrivacyWhere,
   interactionPrivacyWhere,
@@ -127,8 +127,8 @@ function buildWhere(
       // belongs to, which would answer "is anything hidden here" from a page
       // the lock does not gate.
       {
-        acquaintances: {
-          some: { name: { contains: search }, ...acquaintancePrivacyWhere(privacy) },
+        associates: {
+          some: { name: { contains: search }, ...associatePrivacyWhere(privacy) },
         },
       },
       { dietaryNeeds: { some: { label: { contains: search } } } },
@@ -256,7 +256,7 @@ const detailInclude = (ownerId: string) =>
       orderBy: [{ importance: "desc" }, { createdAt: "desc" }],
     },
     // Ordered explicitly, like `addresses` above, for the same reason.
-    acquaintances: {
+    associates: {
       include: {
         // Selected with its owner: `promotedContactId` is the one key here
         // that is not same-owner, so the join can reach another account's
@@ -348,7 +348,7 @@ export const getContact = cache(
       // would not help here: without this the private debt is serialised into
       // the page payload even though the section never renders it.
       contact.debts = contact.debts.filter((debt) => !debt.isPrivate);
-      contact.acquaintances = contact.acquaintances
+      contact.associates = contact.associates
         .filter((entry) => !entry.isPrivate)
         // The promotion link names a real person, so a private one would be
         // readable from an ordinary contact's page — the same leak the
@@ -363,7 +363,7 @@ export const getContact = cache(
     // Unconditional, outside the lock block: the promotion pointer is reached
     // through the one key here that the database does not hold to a single
     // owner, so a foreign row is dropped for everybody, locked or not.
-    contact.acquaintances = contact.acquaintances.map((entry) =>
+    contact.associates = contact.associates.map((entry) =>
       entry.promoted && entry.promoted.ownerId !== ownerId
         ? { ...entry, promoted: null }
         : entry,

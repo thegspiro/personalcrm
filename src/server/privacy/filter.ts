@@ -3,7 +3,7 @@ import { getPrivacyState, recordProtectedReadActivity } from "./lock";
 import type { PrivacyScope } from "./where";
 
 export {
-  acquaintancePrivacyWhere,
+  associatePrivacyWhere,
   contactPrivacyWhere,
   debtPrivacyWhere,
   factPrivacyWhere,

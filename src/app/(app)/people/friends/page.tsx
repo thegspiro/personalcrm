@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
 import { getUserContext } from "@/server/user/context";
-import { listAcquaintanceGroups } from "@/server/queries/acquaintances";
+import { listAssociateGroups } from "@/server/queries/associates";
 import { offlineCacheable } from "@/server/privacy/offline";
 import { CacheThisPage } from "@/components/offline/offline";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/nav/icon";
 import { ListCapNotice } from "@/components/ui/list-cap-notice";
-import { AcquaintanceList } from "@/components/lists/acquaintance-list";
+import { AssociateList } from "@/components/lists/associate-list";
 import { PeopleTabs } from "@/components/contacts/people-tabs";
 
 export const metadata: Metadata = { title: "Their people" };
@@ -25,7 +25,7 @@ const CAP = 300;
 export default async function TheirPeoplePage() {
   const { user } = await getUserContext();
   const [{ items: groups, truncated }, cacheable] = await Promise.all([
-    listAcquaintanceGroups(user.id, CAP),
+    listAssociateGroups(user.id, CAP),
     offlineCacheable(user.id),
   ]);
 
@@ -51,7 +51,7 @@ export default async function TheirPeoplePage() {
         />
       ) : (
         <>
-          <AcquaintanceList groups={groups} />
+          <AssociateList groups={groups} />
           {truncated ? (
             <ListCapNotice
               shown={total}

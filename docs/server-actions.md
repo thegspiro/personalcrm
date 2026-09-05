@@ -120,7 +120,7 @@ list, because a person missing from the form would be silently dropped on save.
 | Significant moments (`LifeEvent`) | `createLifeEvent`, `updateLifeEvent`, `deleteLifeEvent` |
 | Going on in their life (`Happening`) | `createHappening`, `updateHappening`, `acknowledgeHappening`, `deleteHappening` |
 | Ideas | `createIdea`, `updateIdea`, `setIdeaStatus`, `deleteIdea` |
-| People in their life (`Acquaintance`) | `createAcquaintance`, `updateAcquaintance`, `promoteAcquaintance`, `deleteAcquaintance` |
+| People in their life (`Associate`) | `createAssociate`, `updateAssociate`, `promoteAssociate`, `deleteAssociate` |
 | Plans | `createPlan`, `updatePlan`, `setPlanStatus`, `deletePlan` |
 | Tasks | `createTask`, `updateTask`, `setTaskDone`, `deleteTask` |
 | Gifts | `createGift`, `updateGift`, `setGiftStatus`, `deleteGift` |
@@ -128,7 +128,7 @@ list, because a person missing from the form would be silently dropped on save.
 | Dietary needs | `createDietaryNeed`, `updateDietaryNeed`, `deleteDietaryNeed`, `updateAllergyStatus` |
 | Relationships | `createRelationship`, `updateRelationship`, `deleteRelationship` |
 
-`promoteAcquaintance` is the one action here that creates a `Contact`. It runs
+`promoteAssociate` is the one action here that creates a `Contact`. It runs
 in a transaction that creates the person, claims the entry, and writes both
 halves of the reciprocal `Relationship` — sharing `writeRelationshipPair` with
 `createRelationship` so the second half cannot go missing on one path and not
@@ -140,7 +140,7 @@ of which a disabled button catches — blocks on the first writer's row lock,
 matches nothing, and throws to roll its own half-built person away. The action
 then answers with the contact that already exists rather than an error, because
 a stale tab should land on the person, not on a red toast. Once the pointer is
-set the entry refuses `updateAcquaintance`: it is a record of what was written
+set the entry refuses `updateAssociate`: it is a record of what was written
 before the profile existed, and the profile is where that person is edited now.
 Deleting is still allowed, and takes nothing about the created person with it.
 

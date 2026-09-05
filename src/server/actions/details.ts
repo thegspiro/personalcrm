@@ -10,7 +10,7 @@ import { resolveLocation } from "@/server/services/locations";
 // shape lives beside the provider table.
 import type { GeoCandidateView } from "@/server/geo/providers";
 import {
-  acquaintancePrivacyWhere,
+  associatePrivacyWhere,
   contactPrivacyWhere,
   debtPrivacyWhere,
   factPrivacyWhere,
@@ -682,13 +682,13 @@ export async function deleteIdea(id: string): Promise<ActionResult> {
  * Entries appear on the person's page and on the roll-up, and a promotion adds
  * someone to the people list, so the shared `touch` is not enough on its own.
  */
-function touchAcquaintance(contactId?: string | null) {
+function touchAssociate(contactId?: string | null) {
   touch(contactId);
   revalidatePath("/people");
   revalidatePath("/people/friends");
 }
 
-const acquaintanceSchema = z.object({
+const associateSchema = z.object({
   name: z.string().trim().min(1, "Give them a name.").max(191),
   // Bounded to the column width so an over-long value comes back as a field
   // error rather than a database rejection thrown out of the action.
@@ -700,7 +700,7 @@ const promoteSchema = z.object({
   lastName: z.string().trim().max(120).optional(),
 });
 
-export async function createAcquaintance(
+export async function createAssociate(
   form: FormData,
 ): Promise<ActionResult<{ id: string }>> {
   const { ownerId } = await owner();
@@ -708,13 +708,13 @@ export async function createAcquaintance(
   if (!contactId) return fail("Contact not found.");
   if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
 
-  const parsed = acquaintanceSchema.safeParse({
+  const parsed = associateSchema.safeParse({
     name: str(form, "name") ?? "",
     howTheyKnow: str(form, "howTheyKnow"),
   });
   if (!parsed.success) return invalid(parsed.error);
 
-  const created = await prisma.acquaintance.create({
+  const created = await prisma.associate.create({
     data: {
       ownerId,
       contactId,
@@ -725,11 +725,11 @@ export async function createAcquaintance(
     },
   });
 
-  touchAcquaintance(contactId);
+  touchAssociate(contactId);
   return ok({ id: created.id });
 }
 
-export async function updateAcquaintance(form: FormData): Promise<ActionResult> {
+export async function updateAssociate(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
   const id = str(form, "id");
   if (!id) return fail("Not found.");
@@ -738,11 +738,11 @@ export async function updateAcquaintance(form: FormData): Promise<ActionResult> 
   // marker and hangs off someone who may be private, and an id remembered from
   // an unlocked session must not be a way back into either.
   const scope = await privacyScope();
-  const existing = await prisma.acquaintance.findFirst({
+  const existing = await prisma.associate.findFirst({
     where: {
       id,
       ownerId,
-      ...acquaintancePrivacyWhere(scope),
+      ...associatePrivacyWhere(scope),
       ...viaContactPrivacyWhere(scope),
     },
     select: { contactId: true, isPrivate: true, promotedContactId: true },
@@ -755,7 +755,7 @@ export async function updateAcquaintance(form: FormData): Promise<ActionResult> 
     return fail("They're tracked as a person now — edit their profile.");
   }
 
-  const parsed = acquaintanceSchema.safeParse({
+  const parsed = associateSchema.safeParse({
     name: str(form, "name") ?? "",
     howTheyKnow: str(form, "howTheyKnow"),
   });
@@ -764,7 +764,7 @@ export async function updateAcquaintance(form: FormData): Promise<ActionResult> 
   const marker = await privacyMarker(form, existing.isPrivate);
   if (!marker.ok) return fail(marker.error);
 
-  await prisma.acquaintance.update({
+  await prisma.associate.update({
     where: { id },
     data: {
       name: parsed.data.name,
@@ -774,7 +774,7 @@ export async function updateAcquaintance(form: FormData): Promise<ActionResult> 
     },
   });
 
-  touchAcquaintance(existing.contactId);
+  touchAssociate(existing.contactId);
   return ok();
 }
 
@@ -783,22 +783,22 @@ export async function updateAcquaintance(form: FormData): Promise<ActionResult> 
  * the profile now supersedes is not an edit of it, and it touches nothing
  * about the person it created.
  */
-export async function deleteAcquaintance(id: string): Promise<ActionResult> {
+export async function deleteAssociate(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
   const scope = await privacyScope();
-  const existing = await prisma.acquaintance.findFirst({
+  const existing = await prisma.associate.findFirst({
     where: {
       id,
       ownerId,
-      ...acquaintancePrivacyWhere(scope),
+      ...associatePrivacyWhere(scope),
       ...viaContactPrivacyWhere(scope),
     },
     select: { contactId: true },
   });
   if (!existing) return fail("Not found.");
 
-  await prisma.acquaintance.delete({ where: { id } });
-  touchAcquaintance(existing.contactId);
+  await prisma.associate.delete({ where: { id } });
+  touchAssociate(existing.contactId);
   return ok();
 }
 
@@ -815,7 +815,7 @@ export async function deleteAcquaintance(id: string): Promise<ActionResult> {
  * blocks on the first writer's row lock, then matches nothing and rolls its own
  * half-built person away. One person, one reciprocal pair, either way.
  */
-export async function promoteAcquaintance(
+export async function promoteAssociate(
   form: FormData,
 ): Promise<ActionResult<{ contactId: string }>> {
   const { ownerId } = await owner();
@@ -826,11 +826,11 @@ export async function promoteAcquaintance(
 
   // Read before the transaction opens rather than inside it.
   const scope = await privacyScope();
-  const existing = await prisma.acquaintance.findFirst({
+  const existing = await prisma.associate.findFirst({
     where: {
       id,
       ownerId,
-      ...acquaintancePrivacyWhere(scope),
+      ...associatePrivacyWhere(scope),
       ...viaContactPrivacyWhere(scope),
     },
     select: {
@@ -877,7 +877,7 @@ export async function promoteAcquaintance(
         },
       });
 
-      const claimed = await tx.acquaintance.updateMany({
+      const claimed = await tx.associate.updateMany({
         where: { id, ownerId, promotedContactId: null },
         data: { promotedContactId: person.id },
       });
@@ -897,7 +897,7 @@ export async function promoteAcquaintance(
     });
   } catch (error) {
     if (error instanceof AlreadyPromoted) {
-      const row = await prisma.acquaintance.findFirst({
+      const row = await prisma.associate.findFirst({
         where: { id, ownerId },
         select: { promotedContactId: true },
       });
@@ -907,7 +907,7 @@ export async function promoteAcquaintance(
     throw error;
   }
 
-  touchAcquaintance(existing.contactId);
+  touchAssociate(existing.contactId);
   touch(personId);
   return ok({ contactId: personId });
 }

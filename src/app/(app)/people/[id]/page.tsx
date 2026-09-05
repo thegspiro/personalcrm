@@ -30,7 +30,7 @@ import { DietarySection } from "@/components/contacts/sections/dietary";
 import { FactsSection } from "@/components/contacts/sections/facts";
 import { GiftsSection } from "@/components/contacts/sections/gifts";
 import { IdeasSection } from "@/components/contacts/sections/ideas";
-import { AcquaintancesSection } from "@/components/contacts/sections/acquaintances";
+import { AssociatesSection } from "@/components/contacts/sections/associates";
 import { LifeEventsSection } from "@/components/contacts/sections/life-events";
 import { HappeningsSection } from "@/components/contacts/sections/happenings";
 import { RelationshipsSection } from "@/components/contacts/sections/relationships";
@@ -504,10 +504,10 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           }))}
         />
 
-        <AcquaintancesSection
+        <AssociatesSection
           contactId={contact.id}
           contactName={displayName(contact)}
-          acquaintances={contact.acquaintances.map((entry) => ({
+          associates={contact.associates.map((entry) => ({
             id: entry.id,
             name: entry.name,
             howTheyKnow: entry.howTheyKnow,

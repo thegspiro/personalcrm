@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  acquaintancePrivacyWhere,
+  associatePrivacyWhere,
   householdPrivacyWhere,
   interactionPrivacyWhere,
   lifeEventPrivacyWhere,
@@ -12,25 +12,25 @@ const LOCKED: PrivacyScope = { enabled: true, unlocked: false };
 const UNLOCKED: PrivacyScope = { enabled: true, unlocked: true };
 const OFF: PrivacyScope = { enabled: false, unlocked: true };
 
-describe("acquaintance privacy where-fragment", () => {
+describe("associate privacy where-fragment", () => {
   it("withholds an entry marked private while locked", () => {
-    expect(acquaintancePrivacyWhere(LOCKED)).toEqual({ isPrivate: false });
+    expect(associatePrivacyWhere(LOCKED)).toEqual({ isPrivate: false });
   });
 
   it("does not filter entries while unlocked or when the lock is off", () => {
     // The empty object matters: spread into a where-clause it must widen
     // nothing, and dropped into an OR it would match nothing instead.
-    expect(acquaintancePrivacyWhere(UNLOCKED)).toEqual({});
-    expect(acquaintancePrivacyWhere(OFF)).toEqual({});
+    expect(associatePrivacyWhere(UNLOCKED)).toEqual({});
+    expect(associatePrivacyWhere(OFF)).toEqual({});
   });
 
   it("says nothing about the contact it hangs off", () => {
     // Deliberately only half the answer. The entry's own marker and the
     // person's are separate questions, and every caller spreads
     // viaContactPrivacyWhere beside this one; folding them together here
-    // would be wrong inside `Contact.acquaintances.some(...)`, where the
+    // would be wrong inside `Contact.associates.some(...)`, where the
     // contact half is already applied to the outer query.
-    expect(acquaintancePrivacyWhere(LOCKED)).not.toHaveProperty("contact");
+    expect(associatePrivacyWhere(LOCKED)).not.toHaveProperty("contact");
   });
 });
 

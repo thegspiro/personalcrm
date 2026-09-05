@@ -1,6 +1,6 @@
 ### People in their life — 2026-09-05
 
-*Schema: `20260905140434_add_acquaintances`*
+*Schema: `20260905153056_add_associates`*
 
 #### Added
 

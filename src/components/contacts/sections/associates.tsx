@@ -10,13 +10,13 @@ import { SectionCard, SectionEmpty, SectionRow } from "../section-card";
 import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { splitName } from "@/lib/names";
 import {
-  createAcquaintance,
-  deleteAcquaintance,
-  promoteAcquaintance,
-  updateAcquaintance,
+  createAssociate,
+  deleteAssociate,
+  promoteAssociate,
+  updateAssociate,
 } from "@/server/actions/details";
 
-export interface AcquaintanceItem {
+export interface AssociateItem {
   id: string;
   name: string;
   howTheyKnow: string | null;
@@ -35,12 +35,12 @@ export interface AcquaintanceItem {
  * in is a field an edit silently clears, because the action reads the whole
  * form and writes what it finds.
  */
-function AcquaintanceFields({
+function AssociateFields({
   formId,
   entry,
 }: {
   formId: string;
-  entry?: AcquaintanceItem;
+  entry?: AssociateItem;
 }) {
   return (
     <>
@@ -94,16 +94,16 @@ function AcquaintanceFields({
  * until an entry is promoted, and that absence is the clearest signal that
  * these are notes rather than people.
  */
-export function AcquaintancesSection({
+export function AssociatesSection({
   contactId,
   contactName,
-  acquaintances,
+  associates,
   types,
 }: {
   contactId: string;
   /** For the promote form's label: "Bob is Alice's…". */
   contactName: string;
-  acquaintances: AcquaintanceItem[];
+  associates: AssociateItem[];
   types: TermOption[];
 }) {
   const run = useAction();
@@ -118,27 +118,27 @@ export function AcquaintancesSection({
     <SectionCard
       title="People in their life"
       icon="UsersRound"
-      count={acquaintances.length}
+      count={associates.length}
       addLabel="Add someone"
       form={(close) => (
-        <form action={add(createAcquaintance, close, "Noted")} className="grid gap-2.5">
+        <form action={add(createAssociate, close, "Noted")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
-          <AcquaintanceFields formId="acq-new" />
+          <AssociateFields formId="acq-new" />
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
       )}
     >
-      {acquaintances.length === 0 ? (
+      {associates.length === 0 ? (
         <SectionEmpty>
           No one noted yet. Add the people they talk about, so you can ask after them.
         </SectionEmpty>
       ) : (
-        acquaintances.map((entry) => {
+        associates.map((entry) => {
           const suggested = splitName(entry.name);
           return (
             <SectionRow
               key={entry.id}
-              onDelete={() => void run(() => deleteAcquaintance(entry.id), "Removed")}
+              onDelete={() => void run(() => deleteAssociate(entry.id), "Removed")}
               deleteLabel="Remove entry"
               deleteConfirm={
                 entry.isPromoted
@@ -154,11 +154,11 @@ export function AcquaintancesSection({
                   ? undefined
                   : (close) => (
                       <form
-                        action={edit(updateAcquaintance, close, "Saved")}
+                        action={edit(updateAssociate, close, "Saved")}
                         className="grid gap-2.5"
                       >
                         <input type="hidden" name="id" value={entry.id} />
-                        <AcquaintanceFields formId={`acq-${entry.id}`} entry={entry} />
+                        <AssociateFields formId={`acq-${entry.id}`} entry={entry} />
                         <SubmitButton size="sm">Save</SubmitButton>
                       </form>
                     )
@@ -195,7 +195,7 @@ export function AcquaintancesSection({
 
               {entry.isPromoted ? null : promoting === entry.id ? (
                 <form
-                  action={add(promoteAcquaintance, () => setPromoting(null), "Now tracked")}
+                  action={add(promoteAssociate, () => setPromoting(null), "Now tracked")}
                   className="mt-2 grid gap-2.5"
                 >
                   <input type="hidden" name="id" value={entry.id} />

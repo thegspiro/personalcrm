@@ -30,15 +30,15 @@ export function factPrivacyWhere(scope: PrivacyScope): Prisma.FactWhereInput {
 }
 
 /**
- * Applied to Acquaintance queries.
+ * Applied to Associate queries.
  *
  * Only the row's own marker: the person it hangs off may be private too, and
  * that is a separate question answered by `viaContactPrivacyWhere` alongside
  * this one — exactly as a fact is filtered.
  */
-export function acquaintancePrivacyWhere(
+export function associatePrivacyWhere(
   scope: PrivacyScope,
-): Prisma.AcquaintanceWhereInput {
+): Prisma.AssociateWhereInput {
   return scope.unlocked ? {} : { isPrivate: false };
 }
 

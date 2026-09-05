@@ -42,12 +42,12 @@ vi.mock("@/server/privacy/lock", () => ({
 }));
 
 const {
-  createAcquaintance,
-  deleteAcquaintance,
-  promoteAcquaintance,
-  updateAcquaintance,
+  createAssociate,
+  deleteAssociate,
+  promoteAssociate,
+  updateAssociate,
 } = await import("@/server/actions/details");
-const { listAcquaintanceGroups } = await import("@/server/queries/acquaintances");
+const { listAssociateGroups } = await import("@/server/queries/associates");
 const { listContacts, getContact } = await import("@/server/queries/contacts");
 const { countPrivateRows } = await import("@/server/privacy/counts");
 
@@ -104,7 +104,7 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
   }
 
   async function add(over: Record<string, string | undefined> = {}) {
-    const result = await createAcquaintance(
+    const result = await createAssociate(
       form({ contactId: aliceId, name: "Bob", howTheyKnow: "Colleague", ...over }),
     );
     if (!result.ok || !result.data) throw new Error(result.error ?? "create failed");
@@ -115,7 +115,7 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
     it("keeps the name, the connection and the note", async () => {
       const id = await add({ notes: "On night shifts until March." });
 
-      const row = await prisma.acquaintance.findUniqueOrThrow({ where: { id } });
+      const row = await prisma.associate.findUniqueOrThrow({ where: { id } });
       expect(row).toMatchObject({
         name: "Bob",
         howTheyKnow: "Colleague",
@@ -126,7 +126,7 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
     });
 
     it("refuses a nameless entry", async () => {
-      expect(await createAcquaintance(form({ contactId: aliceId, name: "" }))).toMatchObject({
+      expect(await createAssociate(form({ contactId: aliceId, name: "" }))).toMatchObject({
         ok: false,
       });
     });
@@ -137,9 +137,9 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       });
 
       expect(
-        await createAcquaintance(form({ contactId: theirs.id, name: "Bob" })),
+        await createAssociate(form({ contactId: theirs.id, name: "Bob" })),
       ).toMatchObject({ ok: false });
-      expect(await prisma.acquaintance.count()).toBe(0);
+      expect(await prisma.associate.count()).toBe(0);
     });
 
     it("refuses a private contact while the lock is closed", async () => {
@@ -147,9 +147,9 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       // writing to someone the lock is currently hiding.
       lock();
       expect(
-        await createAcquaintance(form({ contactId: hiddenId, name: "Bob" })),
+        await createAssociate(form({ contactId: hiddenId, name: "Bob" })),
       ).toMatchObject({ ok: false });
-      expect(await prisma.acquaintance.count()).toBe(0);
+      expect(await prisma.associate.count()).toBe(0);
     });
   });
 
@@ -160,9 +160,9 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       // it finds in the whole form.
       const id = await add();
 
-      expect(await updateAcquaintance(form({ id, name: "Bob" }))).toMatchObject({ ok: true });
+      expect(await updateAssociate(form({ id, name: "Bob" }))).toMatchObject({ ok: true });
       expect(
-        (await prisma.acquaintance.findUniqueOrThrow({ where: { id } })).howTheyKnow,
+        (await prisma.associate.findUniqueOrThrow({ where: { id } })).howTheyKnow,
       ).toBeNull();
     });
 
@@ -170,15 +170,15 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       const theirs = await prisma.contact.create({
         data: { ownerId: strangerId, firstName: "Nobody" },
       });
-      const entry = await prisma.acquaintance.create({
+      const entry = await prisma.associate.create({
         data: { ownerId: strangerId, contactId: theirs.id, name: "Not yours" },
       });
 
-      expect(await updateAcquaintance(form({ id: entry.id, name: "Mine now" }))).toMatchObject({
+      expect(await updateAssociate(form({ id: entry.id, name: "Mine now" }))).toMatchObject({
         ok: false,
       });
       expect(
-        (await prisma.acquaintance.findUniqueOrThrow({ where: { id: entry.id } })).name,
+        (await prisma.associate.findUniqueOrThrow({ where: { id: entry.id } })).name,
       ).toBe("Not yours");
     });
 
@@ -186,10 +186,10 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       const id = await add({ isPrivate: "true" });
       lock();
 
-      expect(await updateAcquaintance(form({ id, name: "Robert" }))).toMatchObject({
+      expect(await updateAssociate(form({ id, name: "Robert" }))).toMatchObject({
         ok: false,
       });
-      expect((await prisma.acquaintance.findUniqueOrThrow({ where: { id } })).name).toBe("Bob");
+      expect((await prisma.associate.findUniqueOrThrow({ where: { id } })).name).toBe("Bob");
     });
 
     it("will not hide a visible row while the lock is closed", async () => {
@@ -199,9 +199,9 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       lock();
 
       expect(
-        await updateAcquaintance(form({ id, name: "Bob", isPrivate: "true" })),
+        await updateAssociate(form({ id, name: "Bob", isPrivate: "true" })),
       ).toMatchObject({ ok: false });
-      expect((await prisma.acquaintance.findUniqueOrThrow({ where: { id } })).isPrivate).toBe(
+      expect((await prisma.associate.findUniqueOrThrow({ where: { id } })).isPrivate).toBe(
         false,
       );
     });
@@ -210,8 +210,8 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       const id = await add();
       lock();
 
-      expect(await updateAcquaintance(form({ id, name: "Robert" }))).toMatchObject({ ok: true });
-      expect((await prisma.acquaintance.findUniqueOrThrow({ where: { id } })).name).toBe(
+      expect(await updateAssociate(form({ id, name: "Robert" }))).toMatchObject({ ok: true });
+      expect((await prisma.associate.findUniqueOrThrow({ where: { id } })).name).toBe(
         "Robert",
       );
     });
@@ -222,22 +222,22 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       await add({ isPrivate: "true" });
       await add({ name: "Priya" });
 
-      expect((await listAcquaintanceGroups(ownerId)).items[0]?.entries).toHaveLength(2);
+      expect((await listAssociateGroups(ownerId)).items[0]?.entries).toHaveLength(2);
       lock();
-      const locked = await listAcquaintanceGroups(ownerId);
+      const locked = await listAssociateGroups(ownerId);
       expect(locked.items.flatMap((group) => group.entries).map((entry) => entry.name)).toEqual(
         ["Priya"],
       );
     });
 
     it("withholds an unmarked entry belonging to a private person", async () => {
-      await prisma.acquaintance.create({
+      await prisma.associate.create({
         data: { ownerId, contactId: hiddenId, name: "Dana" },
       });
 
-      expect((await listAcquaintanceGroups(ownerId)).items).toHaveLength(1);
+      expect((await listAssociateGroups(ownerId)).items).toHaveLength(1);
       lock();
-      expect((await listAcquaintanceGroups(ownerId)).items).toHaveLength(0);
+      expect((await listAssociateGroups(ownerId)).items).toHaveLength(0);
     });
 
     it("keeps an ordinary entry on an ordinary person in both states", async () => {
@@ -246,9 +246,9 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       // accounts entitled to see all of it.
       await add();
 
-      expect((await listAcquaintanceGroups(ownerId)).items).toHaveLength(1);
+      expect((await listAssociateGroups(ownerId)).items).toHaveLength(1);
       lock();
-      expect((await listAcquaintanceGroups(ownerId)).items).toHaveLength(1);
+      expect((await listAssociateGroups(ownerId)).items).toHaveLength(1);
     });
 
     it("never serialises a private entry into the person's page payload", async () => {
@@ -259,7 +259,7 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       lock();
 
       const contact = await getContact(ownerId, aliceId);
-      expect(contact?.acquaintances).toHaveLength(0);
+      expect(contact?.associates).toHaveLength(0);
     });
 
     it("does not surface someone through a private entry's name in search", async () => {
@@ -296,7 +296,7 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
 
   describe("promoting one into a person", () => {
     async function promote(id: string, over: Record<string, string | undefined> = {}) {
-      return promoteAcquaintance(
+      return promoteAssociate(
         form({ id, firstName: "Bob", lastName: "Ellis", typeId: friendTypeId, ...over }),
       );
     }
@@ -324,7 +324,7 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       ).toEqual([`${aliceId}->${personId}`, `${personId}->${aliceId}`].sort());
 
       expect(
-        (await prisma.acquaintance.findUniqueOrThrow({ where: { id } })).promotedContactId,
+        (await prisma.associate.findUniqueOrThrow({ where: { id } })).promotedContactId,
       ).toBe(personId);
     });
 
@@ -332,10 +332,10 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       const id = await add();
       await promote(id);
 
-      expect(await updateAcquaintance(form({ id, name: "Robert" }))).toMatchObject({
+      expect(await updateAssociate(form({ id, name: "Robert" }))).toMatchObject({
         ok: false,
       });
-      expect((await prisma.acquaintance.findUniqueOrThrow({ where: { id } })).name).toBe("Bob");
+      expect((await prisma.associate.findUniqueOrThrow({ where: { id } })).name).toBe("Bob");
     });
 
     it("makes one person, not two, when the form is submitted twice", async () => {
@@ -395,7 +395,7 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
     });
 
     it("marks the new person private when the person they belong to is", async () => {
-      const entry = await prisma.acquaintance.create({
+      const entry = await prisma.associate.create({
         data: { ownerId, contactId: hiddenId, name: "Dana" },
       });
 
@@ -407,7 +407,7 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
     });
 
     it("cannot reach an entry on a private person while the lock is closed", async () => {
-      const entry = await prisma.acquaintance.create({
+      const entry = await prisma.associate.create({
         data: { ownerId, contactId: hiddenId, name: "Dana" },
       });
       lock();
@@ -423,9 +423,9 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       const result = await promote(id);
       await prisma.contact.delete({ where: { id: result.data!.contactId } });
 
-      const row = await prisma.acquaintance.findUniqueOrThrow({ where: { id } });
+      const row = await prisma.associate.findUniqueOrThrow({ where: { id } });
       expect(row).toMatchObject({ name: "Bob", notes: "On night shifts.", promotedContactId: null });
-      expect(await updateAcquaintance(form({ id, name: "Robert" }))).toMatchObject({ ok: true });
+      expect(await updateAssociate(form({ id, name: "Robert" }))).toMatchObject({ ok: true });
     });
 
     it("drops a promotion pointer aimed at another account's person", async () => {
@@ -435,42 +435,42 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       const theirs = await prisma.contact.create({
         data: { ownerId: strangerId, firstName: "Nobody" },
       });
-      await prisma.acquaintance.update({
+      await prisma.associate.update({
         where: { id },
         data: { promotedContactId: theirs.id },
       });
 
-      const [group] = (await listAcquaintanceGroups(ownerId)).items;
+      const [group] = (await listAssociateGroups(ownerId)).items;
       expect(group.entries[0]).toMatchObject({ isPromoted: true, promoted: null });
 
       const contact = await getContact(ownerId, aliceId);
-      expect(contact?.acquaintances[0]?.promoted).toBeNull();
+      expect(contact?.associates[0]?.promoted).toBeNull();
     });
   });
 
   describe("removing one", () => {
     it("deletes it", async () => {
       const id = await add();
-      expect(await deleteAcquaintance(id)).toMatchObject({ ok: true });
-      expect(await prisma.acquaintance.count()).toBe(0);
+      expect(await deleteAssociate(id)).toMatchObject({ ok: true });
+      expect(await prisma.associate.count()).toBe(0);
     });
 
     it("goes when the person it belongs to goes", async () => {
       await add();
       await prisma.contact.delete({ where: { id: aliceId } });
-      expect(await prisma.acquaintance.count()).toBe(0);
+      expect(await prisma.associate.count()).toBe(0);
     });
 
     it("refuses another account's row", async () => {
       const theirs = await prisma.contact.create({
         data: { ownerId: strangerId, firstName: "Nobody" },
       });
-      const entry = await prisma.acquaintance.create({
+      const entry = await prisma.associate.create({
         data: { ownerId: strangerId, contactId: theirs.id, name: "Not yours" },
       });
 
-      expect(await deleteAcquaintance(entry.id)).toMatchObject({ ok: false });
-      expect(await prisma.acquaintance.count({ where: { id: entry.id } })).toBe(1);
+      expect(await deleteAssociate(entry.id)).toMatchObject({ ok: false });
+      expect(await prisma.associate.count({ where: { id: entry.id } })).toBe(1);
     });
   });
 });

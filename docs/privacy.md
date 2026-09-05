@@ -137,11 +137,11 @@ supplies the live scope.
 ### What "private" applies to
 
 `isPrivate` exists on `Contact`, `Fact`, `Interaction`, `Debt` and
-`Acquaintance`. Marking a contact private hides everything beneath them.
+`Associate`. Marking a contact private hides everything beneath them.
 
-An `Acquaintance` — someone in a contact's life who is not tracked themselves —
+An `Associate` — someone in a contact's life who is not tracked themselves —
 is withheld for its own marker *and* for the person it hangs off, which is two
-fragments at every call site rather than one: `acquaintancePrivacyWhere` beside
+fragments at every call site rather than one: `associatePrivacyWhere` beside
 `viaContactPrivacyWhere`. Either alone lets the other's rows through. The name
 is filtered out of people-search for the same reason a private fact's text is:
 finding someone by a name only a hidden note carries would answer "is something
