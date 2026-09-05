@@ -232,10 +232,16 @@ that write to the plan itself also name the day and start time they read, since
 `occurredAt` is derived from those — a reschedule for the same person changes
 neither status nor contact, so on those alone the evening would be filed on the
 old day and the newly arranged one marked done before it happened. The shared
-path re-reads the source inside the transaction before writing anything from it,
-and — when the idea was itself `PLANNED` — releases it back to the list as its
-claim, reading the row count and aborting on nought, all before either record is
-created. What each predicate expects lives in one `planAsRead` fragment rather
+path claims the source with an `UPDATE` rather than re-reading it, before either
+record is created: it leaves the row in circulation so there is no status to
+consume, and a read under REPEATABLE READ takes no lock, but an `UPDATE` locks
+every row it matches even when the value it writes is the one already there, and
+its row count is the refusal. A `PLANNED` idea is released back to the list by
+that same statement. An unreadable `occurredAt` is refused rather than falling
+through to the scheduled time, the way `planFields` already refuses a malformed
+day, and scheduling writes `plannedDurationMinutes` only when the form carried
+one — the sheet has no duration control, so writing back what was read would
+undo an edit to the one field the claim does not watch. What each predicate expects lives in one `planAsRead` fragment rather
 than being restated at each site, because restating it is how four of these
 paths each ended up missing a different field.
 

@@ -1251,7 +1251,10 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
 
   const startMinute = parsePlanMinute(str(form, "plannedStartTime"));
   if (!startMinute.ok) return fail("That is not a time.");
-  const duration = parsePlanDuration(str(form, "plannedDurationMinutes"));
+  // Raw, not just parsed: the parser reads an absent field and a cleared one
+  // alike as null, and only one of those is an instruction.
+  const durationRaw = str(form, "plannedDurationMinutes");
+  const duration = parsePlanDuration(durationRaw);
   if (!duration.ok) return fail("That is not a length.");
 
   const withContactId = str(form, "contactId") ?? null;
@@ -1262,8 +1265,12 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
   const scheduled = {
     plannedFor,
     plannedStartMinute: startMinute.value,
-    plannedDurationMinutes: duration.value ?? existing.plannedDurationMinutes,
     status: "PLANNED" as const,
+    // Only when the form actually carried one. The schedule sheet has no
+    // duration control, so writing `existing`'s value back would undo another
+    // tab's edit to the one field this claim does not watch — and it is the
+    // one field that legitimately changes without the evening changing.
+    ...(durationRaw === undefined ? {} : { plannedDurationMinutes: duration.value }),
   };
 
   // Copy only when there is a person to attach and an original worth keeping.
@@ -1325,6 +1332,9 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
       // nobody did for this evening.
       checklist: [],
       ...scheduled,
+      // A new row, so there is nothing to undo: it inherits the length unless
+      // this submission named one.
+      plannedDurationMinutes: duration.value ?? existing.plannedDurationMinutes,
     },
   });
 
@@ -1393,7 +1403,16 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
   // would sit stale until some unrelated write happened to recompute it.
   // Nothing schedules that recomputation when the instant arrives.
   const now = new Date();
-  const candidate = instant(form, "occurredAt") ?? scheduledAt ?? now;
+  // An unreadable override is refused, not ignored. `instant` answers undefined
+  // for a value it cannot parse just as it does for one that was never sent, so
+  // falling through would file the evening at the scheduled time or at now —
+  // irreversibly, and at a moment the caller did not ask for. The same stance
+  // `planFields` takes on a malformed day.
+  const overrideRaw = str(form, "occurredAt");
+  const override = instant(form, "occurredAt");
+  if (overrideRaw && !override) return fail("That is not a date and time.");
+
+  const candidate = override ?? scheduledAt ?? now;
   const occurredAt = candidate > now ? now : candidate;
 
   // Computed above this branch, not below it. The unattached case returns
@@ -1462,41 +1481,38 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
 
   const completed = await transact(async (tx) => {
     if (sharedCopy) {
-      // The precondition above is outside the transaction, and this path has no
-      // claim to fall back on, so read the source again here before writing
-      // anything from it. The transaction's snapshot is taken at this statement
-      // — after that outer read — so anything committed in between is seen, and
-      // the window narrows to the transaction itself. It is a snapshot read and
-      // not a lock: what it buys is that a plan archived or finished while this
-      // request was deciding no longer produces an evening out of it.
-      const source = await tx.plan.findFirst({
-        where: { id, ownerId, ...planAsRead(existing), status: PLAN_STILL_OPEN },
-        select: { id: true },
-      });
-      if (!source) return false;
-
-      // The original is not consumed, but it does have to stop claiming to be
-      // arranged. A shared idea scheduled through "Nobody yet" stays
-      // `contactId: null` and `PLANNED`; once that evening has happened with
-      // somebody, leaving the day on it presents a spent arrangement as an
-      // outstanding one on every person's list. The day is not lost — the copy
-      // below carries it, along with what it became. The duration stays: how
-      // long a thing takes belongs to the thing, not to the evening.
+      // Claim the original before writing anything from it — an `UPDATE`, not a
+      // `SELECT`, and that is the whole point. This path leaves the shared row
+      // in circulation, so there is no status to consume and it would be
+      // natural to re-read instead; but a read under REPEATABLE READ takes no
+      // lock, so a request archiving the idea a moment later would still let
+      // this transaction commit an evening out of it. An `UPDATE` locks every
+      // row it matches even when the value it writes is the one already there,
+      // and its row count is the refusal when the row moved.
       //
-      // This runs *before* the writes, not after, because it is the only claim
-      // this path has. On MariaDB 11 a write to a row that moved since the
-      // snapshot raises 1020 and `transact` starts again; on the 10.11 the
-      // container bundles there is no 1020 and the write simply matches
-      // nothing, so the row count is what has to be read. Either way a
-      // rescheduling that landed after the read above aborts here rather than
-      // having its new day quietly wiped by a copy made from the old one.
-      if (existing.status === "PLANNED") {
-        const released = await tx.plan.updateMany({
-          where: { id, ownerId, ...planAsRead(existing), status: "PLANNED" },
-          data: { status: "OPEN", plannedFor: null, plannedStartMinute: null },
-        });
-        if (released.count === 0) return false;
-      }
+      // A `PLANNED` idea is released back to the list by the same statement.
+      // Scheduled through "Nobody yet" it stays `contactId: null` and
+      // `PLANNED`; once that evening has happened with somebody, leaving the
+      // day on it presents a spent arrangement as an outstanding one on every
+      // person's list. The day is not lost — the copy below carries it, with
+      // what it became. The duration stays: how long a thing takes belongs to
+      // the thing, not to the evening.
+      //
+      // Before the writes, not after, so a refusal has nothing to undo. On
+      // MariaDB 11 a write to a row that moved since the snapshot raises 1020
+      // and `transact` starts again; on the 10.11 the container bundles there
+      // is no 1020 and the write simply matches nothing, so the count is what
+      // has to be read. `listPlans` orders by status and `createdAt`, so
+      // holding an open idea with its own status does not move it in anyone's
+      // list.
+      const claimed = await tx.plan.updateMany({
+        where: { id, ownerId, ...planAsRead(existing), status: PLAN_STILL_OPEN },
+        data:
+          existing.status === "PLANNED"
+            ? { status: "OPEN", plannedFor: null, plannedStartMinute: null }
+            : { status: existing.status },
+      });
+      if (claimed.count === 0) return false;
 
       const interaction = await tx.interaction.create({ data: interactionData });
       await tx.plan.create({

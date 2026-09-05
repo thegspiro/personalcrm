@@ -53,3 +53,13 @@
 - **Moving only the time of a shared arrangement is no longer overwritten.**
   Ticking it off from a page loaded before the move recorded the old time and
   wiped the new one.
+- **A length changed in another tab survives being scheduled.** Arranging a day
+  for something wrote back the length as it was when the page loaded.
+- **A completion time that cannot be read is refused.** It used to be ignored,
+  and the evening filed at whatever time the plan already carried.
+
+#### Changed
+- **The schedule sheet builds itself when you open it.** On a large account the
+  Things to do page was shipping a copy of the whole contact list inside every
+  shared idea's collapsed scheduler, which made the page slow to load and slow
+  to respond long before anybody arranged anything.

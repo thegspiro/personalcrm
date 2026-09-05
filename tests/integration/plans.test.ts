@@ -682,6 +682,46 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     expect(after.plannedStartMinute).toBe(1230);
   });
 
+  it("refuses a completion time it cannot read rather than filing it at now", async () => {
+    // `instant` answers undefined for a value it cannot parse exactly as it
+    // does for one that was never sent, so falling through would record the
+    // evening at a moment nobody asked for — and completion is not undoable.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id);
+
+    expect(
+      await completePlan(actionForm({ id: plan.id, occurredAt: "the other Tuesday" })),
+    ).toMatchObject({ ok: false });
+
+    expect(await prisma.interaction.count()).toBe(0);
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.status).toBe("OPEN");
+  });
+
+  it("leaves a length edited elsewhere alone when it schedules", async () => {
+    // The schedule sheet has no duration control, so this submission says
+    // nothing about how long to set aside. Writing the value that was read back
+    // would undo an edit to the one field the claim deliberately does not
+    // watch — the field that legitimately changes without the evening changing.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id, { plannedDurationMinutes: 60 });
+
+    afterPlanRead.current = async () => {
+      await prisma.plan.update({
+        where: { id: plan.id },
+        data: { plannedDurationMinutes: 180 },
+      });
+    };
+
+    expect(
+      await schedulePlan(actionForm({ id: plan.id, plannedFor: "2026-12-01" })),
+    ).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.plannedDurationMinutes).toBe(180);
+    expect(after.status).toBe("PLANNED");
+  });
+
   it("finishing the same shared idea twice in a day records it once", async () => {
     // The shared path writes a copy and leaves the original open, so there is
     // no row whose status could claim it. The unique key on the copy is what
