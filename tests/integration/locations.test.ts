@@ -1060,6 +1060,31 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
     expect(Number(saved.latitude)).toBeCloseTo(53.8008, 4);
   });
 
+  it("survives a correction that committed before the save reached the place", async () => {
+    // The other order, and the one CI caught: the correction commits *before*
+    // resolveLocation gets to the row rather than while it waits. A locking read
+    // here raises MariaDB 1020 — "Record has changed since last read" — because
+    // the transaction has already taken snapshot reads to find this place, and
+    // the whole save dies. Deciding in the WHERE has nothing to go stale.
+    const first = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "Corner Cafe"),
+    );
+
+    const saving = prisma.$transaction(async (tx) => {
+      // Force the snapshot, the way the real resolution reads do.
+      await tx.location.findFirst({ where: { ownerId: state.ownerId } });
+      await prisma.location.update({
+        where: { id: first!.id },
+        data: { city: "Wetherby" },
+      });
+      return resolveLocation(tx, state.ownerId, "Corner Cafe", { city: "Leeds" });
+    });
+
+    await expect(saving).resolves.toBeTruthy();
+    const saved = await prisma.location.findUniqueOrThrow({ where: { id: first!.id } });
+    expect(saved.city).toBe("Wetherby");
+  });
+
   it("carries a lookup's locality and coordinates onto a place it creates", async () => {
     // Before this, `resolveLocation` took only an address and a URL, so an
     // accepted candidate flowing through a plan or a date save had its city and

@@ -51,6 +51,7 @@
   time.** The rule that a place's city and coordinates are filled in but never
   rewritten was decided from a snapshot read, so an edit committing in the
   meantime was overwritten rather than respected — including coordinates set
-  deliberately on the place's own page. The row is now held for the length of
-  the save, so the rule holds under a concurrent edit rather than only when
-  nobody else is working.
+  deliberately on the place's own page. Each write now carries its own condition
+  and the database checks it at the moment of writing, so the rule holds under a
+  concurrent edit rather than only when nobody else is working — and holds the
+  same way whichever MariaDB version an installation runs against.

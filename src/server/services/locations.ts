@@ -58,14 +58,11 @@ function textUpdates(details: LocationDetails): Record<string, string> {
  * their older overwrite-when-given behaviour — they are edited from the place
  * page and passed by `Plan`, which is a different relationship to the row.
  */
-function localityUpdates(
-  details: LocationDetails,
-  current: { city: string | null; region: string | null; country: string | null },
-): Record<string, string> {
+function localityUpdates(details: LocationDetails): Record<string, string> {
   const updates: Record<string, string> = {};
   for (const key of ["city", "region", "country"] as const) {
     const value = details[key];
-    if (typeof value === "string" && value.trim() && !current[key]?.trim()) {
+    if (typeof value === "string" && value.trim()) {
       updates[key] = value.trim();
     }
   }
@@ -182,50 +179,52 @@ export async function resolveLocation(
   if (canonical && (claimIsStale || !claimed))
     await claimCanonical(canonical.id, canonical.name);
   if (existing) {
-    // Read once, so both "is it already placed" and "does it already say where"
-    // are answered from the same row rather than guessed at — and read `FOR
-    // UPDATE`, so the answer is still true when it is acted on.
+    // Three writes, not a read followed by one write.
     //
-    // A plain read here is a snapshot one: two transactions could both see a
-    // blank city, the place page could commit a correction, and this could then
-    // write the old date's wording over it — the update blocks on the other's
-    // row lock and then applies, so the rule was lost quietly rather than
-    // refused. The same shape guarded the coordinates, so a place somebody
-    // geocoded deliberately could be moved by a save that read it as unplaced.
+    // Deciding from a read is what made the fill-only rule lose a race: a plain
+    // read is a snapshot one, so a date save and the place page could both see a
+    // blank city, the page could commit its correction, and the save would then
+    // write the old wording over it. Reading `FOR UPDATE` instead does not fix
+    // it either — `resolveLocation` has already taken snapshot reads above to
+    // find this row, so a locking read of a row that moved since raises MariaDB
+    // 1020, `Record has changed since last read`, and the whole save dies rather
+    // than the rule holding.
     //
-    // `FOR UPDATE` is a current read that holds the row for the rest of the
-    // transaction, which is what `lockTags` in `actions/tags.ts` does and for
-    // the same reason. Everything below is therefore reasoning about a row that
-    // cannot move underneath it.
-    const [current] = await tx.$queryRaw<
-      Array<{
-        latitude: unknown;
-        longitude: unknown;
-        city: string | null;
-        region: string | null;
-        country: string | null;
-      }>
-    >`
-      SELECT latitude, longitude, city, region, country
-      FROM \`Location\`
-      WHERE id = ${existing.id}
-      FOR UPDATE
-    `;
-
-    // Coordinates are filled in, never overwritten. Typing a venue's name into
-    // an interaction must not move a place the user geocoded deliberately on
-    // its own page — the name is evidence of which place is meant, not of
-    // where it is. The locality now follows the same rule; see above.
-    const unplaced = current?.latitude === null && current.longitude === null;
-    const data = {
-      ...textUpdates(details),
-      ...(current ? localityUpdates(details, current) : {}),
-      ...(unplaced ? identityUpdates(details) ?? {} : {}),
-    };
-
-    if (Object.keys(data).length > 0) {
-      await tx.location.update({ where: { id: existing.id }, data });
+    // So the condition goes in the `WHERE` and the database evaluates it at the
+    // moment of writing, against the row as it is then. Nothing is decided from
+    // a value that may already be stale, which makes this immune by shape rather
+    // than by isolation level — it behaves the same on every version.
+    const text = textUpdates(details);
+    if (Object.keys(text).length > 0) {
+      // `address` and `url` overwrite when given, as they always have: they are
+      // edited from the place page and passed by `Plan`, which is a statement
+      // about the place rather than one record's recollection of it.
+      await tx.location.update({ where: { id: existing.id }, data: text });
     }
+
+    // The locality is shared by everything naming this place, while what a
+    // caller passes is one record's wording — often an old one. Each field is
+    // written only while it is still empty, so a correction already made cannot
+    // be undone. Usually one statement: a date save carries only a city.
+    for (const [column, value] of Object.entries(localityUpdates(details))) {
+      await tx.location.updateMany({
+        where: { id: existing.id, [column]: null },
+        data: { [column]: value },
+      });
+    }
+
+    // Coordinates are filled in, never overwritten, and always as a pair.
+    // Typing a venue's name into an interaction must not move a place the user
+    // geocoded deliberately — the name is evidence of which place is meant, not
+    // of where it is.
+    const identity = identityUpdates(details);
+    if (identity) {
+      await tx.location.updateMany({
+        where: { id: existing.id, latitude: null, longitude: null },
+        data: identity,
+      });
+    }
+
     return existing;
   }
   const created = await tx.location.create({
@@ -236,7 +235,7 @@ export async function resolveLocation(
       ...textUpdates(details),
       // Nothing is set yet, so "fill in what is missing" is everything given —
       // which is how a place first seen by logging a date gets its city.
-      ...localityUpdates(details, { city: null, region: null, country: null }),
+      ...localityUpdates(details),
       ...(identityUpdates(details) ?? {}),
     },
     select: { id: true, name: true },

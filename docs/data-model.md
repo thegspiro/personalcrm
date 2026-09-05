@@ -465,13 +465,21 @@ ever cleared by a blank, and two rules govern what a non-blank may do:
   meant, not where it is, so a stray save must not move one geocoded
   deliberately.
 
-The row is read `FOR UPDATE` before either rule is applied. A plain read is a
-snapshot one, so without the lock both a date save and a place-page correction
-could see the same blank field, and the save would write the old wording over
-the correction after it committed — the rule held in the common case and lost
-quietly under a concurrent edit. `lockTags` in `actions/tags.ts` takes the same
-approach for the same reason. `resolveLocation` therefore has to be called
-inside a transaction, which all six of its call sites do.
+**Both fill-only rules are expressed in the `WHERE` clause, not decided from a
+read.** A plain read is a snapshot one, so deciding from it loses a race: a date
+save and a place-page correction could see the same blank field, and the save
+would write the old wording over the correction after it committed. Reading
+`FOR UPDATE` instead does not fix it — `resolveLocation` has already taken
+snapshot reads to find the row, and a locking read of a row that moved since
+raises MariaDB **1020**, `Record has changed since last read`, killing the save.
+That is version-dependent (10.11 returns the newer row; 11.x raises), which for
+software that runs against whatever MariaDB an operator points it at is the
+worst of both.
+
+So each write carries its own condition — `city: null`, or both coordinate
+columns null — and the database evaluates it at the moment of writing against
+the row as it is then. Nothing is decided from a value that may already be
+stale, which makes the rule hold by shape rather than by isolation level.
 
 **Distances are computed in process, not in SQL.** MariaDB has
 `ST_Distance_Sphere`, but reaching it means raw SQL, which would lose Prisma's
