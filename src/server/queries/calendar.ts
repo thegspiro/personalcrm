@@ -10,9 +10,11 @@ import {
   plainDateKey,
   plainDateToDb,
   projectDateOccurrences,
+  zonedMinuteOfDay,
   zonedStartOfDay,
 } from "@/lib/dates";
 import { isWithin } from "@/lib/calendar-grid";
+import { hasKnownYear } from "@/lib/date-precision";
 import { happeningSpan } from "@/lib/happenings";
 import { prisma } from "@/server/db/client";
 import { happeningDatesOf } from "@/server/services/happenings";
@@ -117,6 +119,13 @@ export async function getCalendarEntries(
         where: {
           ownerId,
           plannedFor: { gte: plainDateToDb(window.from), lte: plainDateToDb(window.to) },
+          // Only the two statuses `/ideas` actually lists. A `DONE` plan is
+          // already on the calendar as the interaction `completePlan` wrote
+          // from it — showing the plan too would double the same evening — and
+          // an `ARCHIVED` one has been put away on purpose. Neither is
+          // reachable from the link this entry carries, and an entry that goes
+          // nowhere is worse than one that is not there.
+          status: { in: ["OPEN", "PLANNED"] },
           ...(planClauses.length > 0 ? { AND: planClauses } : {}),
         },
         select: {
@@ -137,9 +146,29 @@ export async function getCalendarEntries(
       prisma.importantDate.findMany({
         where: {
           ownerId,
-          contact: { isArchived: false },
-          ...viaContactPrivacyWhere(scope),
+          // Merged into one `contact` object, not spread beside it: both
+          // conditions want that key, and a second spread would silently
+          // replace the first — dropping the archive filter entirely, and only
+          // while the lock was closed.
+          contact: { isArchived: false, ...(scope.unlocked ? {} : { isPrivate: false }) },
+          // A one-off date cannot move, so it is bounded here like every other
+          // dated row — widened by the same reach-back, because a `YEAR`
+          // anchor sits up to a year before the day it means. Only the
+          // recurring ones have to be fetched whole and narrowed by the
+          // projection, which is what keeps the cap below off the rows that
+          // could not have been in this window anyway.
+          OR: [
+            { recurrence: { not: "NONE" } },
+            {
+              recurrence: "NONE",
+              date: {
+                gte: plainDateToDb(addPlainDays(window.from, -HAPPENING_REACH_BACK_DAYS)),
+                lte: plainDateToDb(window.to),
+              },
+            },
+          ],
         },
+        orderBy: { date: "asc" },
         select: {
           id: true,
           label: true,
@@ -173,8 +202,18 @@ export async function getCalendarEntries(
         where: {
           ownerId,
           date: { lte: plainDateToDb(window.to) },
+          // Both bounds reach back, and the end one has to: an end recorded as
+          // "in 2026" is stored as 1 January and only `happeningSpan` widens it
+          // to 31 December, so comparing the stored anchor against the window
+          // dropped a trip that is still running through March. The reach-back
+          // is the prefilter's whole job — the exact answer is worked out in
+          // memory below.
           OR: [
-            { endDate: { gte: plainDateToDb(window.from) } },
+            {
+              endDate: {
+                gte: plainDateToDb(addPlainDays(window.from, -HAPPENING_REACH_BACK_DAYS)),
+              },
+            },
             {
               endDate: null,
               date: { gte: plainDateToDb(addPlainDays(window.from, -HAPPENING_REACH_BACK_DAYS)) },
@@ -191,6 +230,10 @@ export async function getCalendarEntries(
           endPrecision: true,
           contact: { select: { id: true, firstName: true, lastName: true } },
         },
+        // Newest anchor first, so if the cap ever bites it keeps the rows
+        // nearest the window rather than an arbitrary slice of the year the
+        // reach-back reopened.
+        orderBy: { date: "desc" },
         take: PER_SOURCE_CAP,
       }),
       prisma.interaction.findMany({
@@ -225,7 +268,7 @@ export async function getCalendarEntries(
       href: "/ideas",
       contact: plan.contact,
       minute: plan.plannedStartMinute,
-      note: plan.status === "DONE" ? "done" : plan.status === "PLANNED" ? "planned" : null,
+      note: plan.status === "PLANNED" ? "planned" : null,
     });
   }
 
@@ -286,6 +329,13 @@ export async function getCalendarEntries(
       window.from,
       window,
     )) {
+      // Defeating the `today` clamp above buys past months their birthdays; it
+      // also lets a recurrence run backwards past its own anchor, so somebody
+      // born in 1990 acquired a birthday in the 1980 calendar. Only where the
+      // year is real, though: a `MONTH_DAY` anchor stores `UNKNOWN_YEAR`
+      // precisely because nobody knows it, and dropping those would empty the
+      // grid of every birthday whose year was never recorded.
+      if (hasKnownYear(row.precision) && diffPlainDays(row.anchor, day) < 0) continue;
       entries.push({
         id: `${row.id}@${plainDateKey(day)}`,
         kind: "date",
@@ -346,7 +396,6 @@ export async function getCalendarEntries(
     // this should never exclude anything. It costs nothing and it is the check
     // that would catch a bound computed against the wrong zone.
     if (!isWithin(day, window)) continue;
-    const startOfDay = zonedStartOfDay(day, timezone);
     entries.push({
       id: `interaction:${interaction.id}`,
       kind: "interaction",
@@ -354,7 +403,10 @@ export async function getCalendarEntries(
       title: interaction.title ?? "Caught up",
       href: "/timeline",
       contact: interaction.participants[0]?.contact ?? null,
-      minute: Math.floor((interaction.occurredAt.getTime() - startOfDay.getTime()) / 60_000),
+      // Read off the clock rather than measured from midnight — see
+      // `zonedMinuteOfDay`. The two disagree by an hour on the days that are
+      // not 24 hours long, and it is the minute that is displayed and sorted.
+      minute: zonedMinuteOfDay(interaction.occurredAt, timezone),
       note: null,
     });
   }

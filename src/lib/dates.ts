@@ -49,6 +49,23 @@ export function tzOffsetMs(instant: Date, timeZone: string): number {
   return asIfUtc - Math.floor(instant.getTime() / 1000) * 1000;
 }
 
+/**
+ * The wall-clock minute past midnight an instant reads as, in `timeZone`.
+ *
+ * Read off the clock, not measured from midnight. Subtracting the day's start
+ * gives *elapsed* minutes, and on the two days a year that are not 24 hours
+ * long those are different numbers: after New York's fall-back, 7:30 PM is
+ * 20½ hours after local midnight and would read as 8:30 PM; after
+ * spring-forward it would read an hour early. Invariant 2 is about anchoring
+ * to the account's zone, and this is the half of it that a duration cannot do.
+ */
+export function zonedMinuteOfDay(instant: Date, timeZone: string): number {
+  const parts = formatterFor(timeZone).formatToParts(instant);
+  const v: Record<string, number> = {};
+  for (const p of parts) if (p.type !== "literal") v[p.type] = Number(p.value);
+  return v.hour * 60 + v.minute;
+}
+
 /** The calendar date an instant falls on, as seen in `timeZone`. */
 export function calendarDateInTz(instant: Date, timeZone: string): PlainDate {
   const parts = formatterFor(timeZone).formatToParts(instant);

@@ -20,12 +20,17 @@ export function DayEntries({ entries }: { entries: CalendarEntry[] }) {
     <ul className="grid min-w-0 gap-1">
       {entries.map((entry) => (
         <li key={entry.id} className="flex min-w-0 items-center gap-2">
-          <span className="w-20 shrink-0 text-[11px] text-muted-foreground">
+          <span className="w-14 shrink-0 truncate text-[11px] text-muted-foreground sm:w-20">
             {KIND_LABEL[entry.kind]}
           </span>
           <EntryChip entry={entry} className="min-w-0 flex-1" />
+          {/* Shown at every width, not from `sm` up. Every canonical birthday
+              is titled "Birthday", so on a phone two of them on one day were
+              two identical rows; the name is the only thing telling them
+              apart. It takes at most two fifths of the row and truncates, so
+              it cannot push the title off the screen instead. */}
           {entry.contact ? (
-            <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
+            <span className="max-w-[40%] shrink-0 truncate text-[11px] text-muted-foreground">
               {displayName(entry.contact)}
             </span>
           ) : null}

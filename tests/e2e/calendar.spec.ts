@@ -99,7 +99,13 @@ test("something pencilled in for today reaches the calendar", async ({ page }) =
   });
 
   await page.goto(`/calendar?day=${today}`);
-  await expect(page.getByRole("link", { name: new RegExp(title) })).toBeVisible();
+  // Scoped to the day section, and it has to be: the plan is now rendered
+  // twice at every width — once here and once in the grid or the month agenda
+  // behind it — so an unscoped locator is a strict-mode violation rather than
+  // a passing assertion. Scoping also makes the test say what it means, which
+  // is that the day view is the complete one.
+  const daySection = page.locator("section", { has: page.locator("#calendar-day-heading") });
+  await expect(daySection.getByRole("link", { name: new RegExp(title) })).toBeVisible();
 });
 
 test("a day opens from the grid and closes again", async ({ page }) => {

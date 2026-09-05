@@ -36,8 +36,19 @@ describe("month keys", () => {
     expect(parsePlainMonth("2026-00")).toBeNull();
     expect(parsePlainMonth("2026-3")).toBeNull();
     expect(parsePlainMonth("not-a-month")).toBeNull();
-    // A typed URL rather than a navigation. Answering null sends it to today.
+  });
+
+  it("refuses years that would be reinterpreted or could not be stored", () => {
+    // `Date.UTC(50, ...)` is 1950, so a two-digit year would head the page
+    // "March 50" while every cell underneath said 1950.
+    expect(parsePlainMonth("0050-03")).toBeNull();
     expect(parsePlainMonth("0000-05")).toBeNull();
+    // The six-week grid overruns its month by a few days at each end, so the
+    // very edges of MariaDB's DATE range are out too.
+    expect(parsePlainMonth("1000-01")).toBeNull();
+    expect(parsePlainMonth("9999-12")).toBeNull();
+    expect(parsePlainMonth("1001-01")).toEqual({ year: 1001, month: 1 });
+    expect(parsePlainMonth("9998-12")).toEqual({ year: 9998, month: 12 });
   });
 });
 

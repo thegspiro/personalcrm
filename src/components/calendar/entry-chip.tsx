@@ -49,6 +49,10 @@ export function EntryChip({ entry, className }: { entry: CalendarEntry; classNam
     >
       {time ? <span className="tabular-nums">{time} </span> : null}
       {entry.title}
+      {/* The state the query went to the trouble of working out. Without it a
+          finished follow-up reads exactly like an outstanding one, and the
+          distinction was being carried all the way here and thrown away. */}
+      {entry.note ? <span className="opacity-70"> · {entry.note}</span> : null}
     </Link>
   );
 }

@@ -52,9 +52,14 @@ export function parsePlainMonth(raw: string | undefined | null): PlainMonth | nu
   const year = Number(match[1]);
   const month = Number(match[2]);
   if (month < 1 || month > 12) return null;
-  // The same range `clampPlainDate` works in. A year outside it is a typed URL,
-  // not a navigation, and answering null sends it back to today.
-  if (year < 1 || year > 9999) return null;
+  // Two separate reasons for this range, and one of them is a trap. `Date.UTC`
+  // maps years 0-99 onto 1900-1999, so `?month=0050-03` would head the page
+  // "March 50" while every cell and every query used 1950. And MariaDB's DATE
+  // spans 1000-01-01 to 9999-12-31, which the six-week grid can overrun by a
+  // few days at either end — hence the year either side of the limits rather
+  // than the limits themselves. A year outside this is a typed URL rather than
+  // a navigation, and answering null sends it back to today.
+  if (year < 1001 || year > 9998) return null;
   return { year, month };
 }
 
