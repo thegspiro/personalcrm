@@ -478,6 +478,111 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     expect(interaction.participants.map((p) => p.contactId)).toEqual([friend.id]);
   });
 
+  it("abandons an unattached completion when someone claimed the plan first", async () => {
+    // The nobody-attached branch has its own claim, and it needs the contact
+    // just as much: another request attaching this shared row between the read
+    // and the write would otherwise have their plan marked done with no
+    // interaction and no cadence recomputed for the person now on it.
+    const bob = await makeContact("Bob");
+    const plan = await planFor(null);
+
+    afterPlanRead.current = async () => {
+      await prisma.plan.update({ where: { id: plan.id }, data: { contactId: bob.id } });
+    };
+
+    expect(await completePlan(actionForm({ id: plan.id }))).toMatchObject({ ok: false });
+
+    expect(await prisma.interaction.count()).toBe(0);
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.status).toBe("OPEN");
+    expect(after.contactId).toBe(bob.id);
+  });
+
+  it("refuses to finish a shared idea that has already been closed", async () => {
+    // The shared path writes a copy and never touches the original, so it has
+    // no claim of its own. Without the precondition a stale form or a direct
+    // POST against an archived idea would file another evening from it.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(null, { status: "ARCHIVED" });
+
+    expect(
+      await completePlan(actionForm({ id: plan.id, contactId: friend.id })),
+    ).toMatchObject({ ok: false });
+
+    expect(await prisma.interaction.count()).toBe(0);
+    expect(await prisma.plan.count()).toBe(1);
+  });
+
+  it("hands a scheduled shared idea back to the list once it has happened", async () => {
+    // Scheduled through "Nobody yet", so the original stays unattached and
+    // PLANNED. Once that evening has happened with somebody, leaving the day on
+    // it would present a spent arrangement as an outstanding one on everyone's
+    // list. The copy keeps the day; the original goes back to being an idea.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(null, {
+      status: "PLANNED",
+      plannedFor: daysAgo(3),
+      plannedStartMinute: 1170,
+      plannedDurationMinutes: 120,
+    });
+
+    expect(
+      await completePlan(actionForm({ id: plan.id, contactId: friend.id })),
+    ).toMatchObject({ ok: true });
+
+    const original = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(original.status).toBe("OPEN");
+    expect(original.contactId).toBeNull();
+    expect(original.plannedFor).toBeNull();
+    expect(original.plannedStartMinute).toBeNull();
+    // How long a thing takes belongs to the thing, not to the evening.
+    expect(original.plannedDurationMinutes).toBe(120);
+
+    const copy = await prisma.plan.findFirstOrThrow({
+      where: { ownerId, contactId: friend.id },
+    });
+    expect(copy.status).toBe("DONE");
+    expect(copy.plannedFor).not.toBeNull();
+    expect(copy.plannedStartMinute).toBe(1170);
+  });
+
+  it("drops another owner's place when a shared idea is copied to schedule it", async () => {
+    // Same re-check as completion. Copying the pointer would mint a second
+    // cross-owner reference for listPlans to load and for a delete over there
+    // to reach through.
+    const stranger = await createTestUser();
+    const theirs = await prisma.location.create({
+      data: {
+        ownerId: stranger.id,
+        name: "Griffith Observatory",
+        normalizedName: "griffith observatory",
+      },
+    });
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(null);
+    await prisma.plan.update({
+      where: { id: plan.id },
+      data: { location: "Griffith Observatory", locationId: theirs.id },
+    });
+
+    expect(
+      await schedulePlan(
+        actionForm({
+          id: plan.id,
+          plannedFor: "2026-12-01",
+          contactId: friend.id,
+          keepInList: "true",
+        }),
+      ),
+    ).toMatchObject({ ok: true });
+
+    const copy = await prisma.plan.findFirstOrThrow({
+      where: { ownerId, contactId: friend.id },
+    });
+    expect(copy.locationId).toBeNull();
+    expect(copy.location).toBe("Griffith Observatory");
+  });
+
   it("finishing the same shared idea twice in a day records it once", async () => {
     // The shared path writes a copy and leaves the original open, so there is
     // no row whose status could claim it. The unique key on the copy is what

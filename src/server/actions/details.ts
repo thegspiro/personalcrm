@@ -1235,6 +1235,21 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
   // the original's status cannot be made contradictory by it. A copy taken
   // from a plan someone finished a moment ago is simply a new evening.
 
+  // The location is re-checked against the owner first, exactly as
+  // `completePlan` does it. `Plan.place` is keyed on the location id alone, so
+  // a restored or imported shared plan can point at another account's row, and
+  // copying it unchecked would mint a second cross-owner reference for
+  // `listPlans` to load and for a delete over there to reach through. The
+  // free-text venue name is kept either way.
+  const placeId =
+    existing.locationId &&
+    (await prisma.location.findFirst({
+      where: { id: existing.locationId, ownerId },
+      select: { id: true },
+    }))
+      ? existing.locationId
+      : null;
+
   const copy = await prisma.plan.create({
     data: {
       ownerId,
@@ -1242,7 +1257,7 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
       title: existing.title,
       categoryId: existing.categoryId,
       location: existing.location,
-      locationId: existing.locationId,
+      locationId: placeId,
       address: existing.address,
       url: existing.url,
       estimatedCostCents: existing.estimatedCostCents,
@@ -1287,6 +1302,14 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
   });
   if (!existing) return fail("Not found.");
 
+  // Both claims below carry the status, but the shared-idea path has no claim —
+  // it never touches the original — so a stale form or a direct POST against a
+  // plan somebody already closed or archived would file a second evening from
+  // it. The precondition belongs here, where every path passes through.
+  if (existing.status === "DONE" || existing.status === "ARCHIVED") {
+    return fail("That one is already done — save it again as a new plan.");
+  }
+
   const named = str(form, "contactId") ?? null;
   if (named && !(await ownsContact(ownerId, named))) return fail("Contact not found.");
   const contactId = existing.contactId ?? named;
@@ -1321,11 +1344,17 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
   // plan for nobody, ticked on Sunday, recorded Sunday, and an explicit
   // `occurredAt` never reached it at all.
   if (!contactId) {
+    // `contactId: null` in the predicate for the same reason the other two
+    // claims name theirs: another request attaching this shared row to somebody
+    // between the read and here would otherwise have its plan marked done with
+    // no interaction and no cadence recomputed for the person now on it.
     const claimed = await prisma.plan.updateMany({
-      where: { id, ownerId, status: { notIn: ["DONE", "ARCHIVED"] } },
+      where: { id, ownerId, contactId: null, status: { notIn: ["DONE", "ARCHIVED"] } },
       data: { status: "DONE", usedAt: occurredAt },
     });
-    if (claimed.count === 0) return fail("That one is already done.");
+    if (claimed.count === 0) {
+      return fail("That plan changed while you were finishing it — open it again.");
+    }
     touchPlans(null);
     return ok();
   }
@@ -1408,6 +1437,28 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
           completionKey,
         },
       });
+
+      // The original is not consumed, but it does have to stop claiming to be
+      // arranged. A shared idea scheduled through "Nobody yet" stays
+      // `contactId: null` and `PLANNED`; once that evening has happened with
+      // somebody, leaving the day on it presents a spent arrangement as an
+      // outstanding one on every person's list. The day is not lost — the copy
+      // carries it, along with what it became. The duration stays: how long a
+      // thing takes belongs to the thing, not to the evening.
+      //
+      // Claimed on the exact state that was read, so a re-scheduling that
+      // landed in between keeps its newer day rather than being wiped by this.
+      await tx.plan.updateMany({
+        where: {
+          id,
+          ownerId,
+          contactId: null,
+          status: "PLANNED",
+          plannedFor: existing.plannedFor,
+        },
+        data: { status: "OPEN", plannedFor: null, plannedStartMinute: null },
+      });
+
       await recomputeContactActivity(tx, [contactId]);
       return true;
     }

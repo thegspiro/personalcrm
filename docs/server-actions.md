@@ -218,7 +218,16 @@ unticked checklist, because inherited ticks would claim a booking nobody made.
 The write is a compare-and-set on both the status *and* the contact, not just an
 update after the read: several awaits separate the two, and on status alone a
 second stale form would overwrite the person the first one attached and still
-report success.
+report success. The copy re-checks the plan's `locationId` against the owner
+before taking it, for the reason given under `completePlan` below.
+
+`completePlan` refuses outright on a plan that is already `DONE` or `ARCHIVED`.
+Both of its claims carry the status, but the shared-idea path has no claim — it
+never writes to the original — so that precondition is what stops a stale form
+or a direct POST filing a second evening from a closed idea. All three write
+paths name the contact they read as well as the status, including the
+nobody-attached one: a request attaching the row in between would otherwise have
+*their* plan marked done with no interaction and no cadence recomputed.
 
 `completePlan` records what a plan became. `setPlanStatus(id, "DONE")` closes a
 plan and *clears* `usedInInteractionId` — right for undoing a mistake, wrong for
@@ -235,7 +244,14 @@ does: `listPlans` offers a contact-less plan on everyone's page, so closing the
 shared row because one evening happened would take it off every other person's
 list. The copy is the evening; the original stays open. `createDateEntry` still
 consumes in that case — pre-existing behaviour, deliberately left alone. The
-copy path has no row to claim, so the copy instead carries a `completionKey` —
+A shared idea scheduled through "Nobody yet" stays unattached and `PLANNED`, so
+once that evening has happened with somebody the original is handed back to the
+list: `OPEN`, with the day and start time cleared and the duration kept, claimed
+on the day that was read so a re-scheduling in between keeps its newer one. The
+day is not lost — the copy carries it, along with what it became. Leaving it
+would present a spent arrangement as an outstanding one on every person's list.
+
+The copy path has no row to claim, so the copy instead carries a `completionKey` —
 `<sourcePlanId>:<contactId>:<local day>`, unique per owner — and a replayed POST
 or a second tab collides on it rather than filing the evening twice. The key is
 derived on the server, not minted by the browser: a client token would stop only

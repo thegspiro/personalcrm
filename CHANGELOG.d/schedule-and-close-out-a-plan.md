@@ -36,3 +36,11 @@
   yours; finishing it copied that pointer into your timeline, where the entry
   silently lost its venue and a deletion over there could reach into it. The
   name is kept, the stray pointer is not.
+- **A shared idea arranged for nobody goes back on the list once it happens.**
+  Scheduling one with "Nobody yet" and later ticking it off on somebody's page
+  left the idea itself still showing that day, so a spent evening kept appearing
+  as an outstanding arrangement on everyone's list. It returns to being an idea;
+  the day stays on the record of what actually happened.
+- **A closed idea cannot be finished a second time.** Ticking off something
+  already done or archived — from a stale page, or a resent request — filed
+  another evening from it.
