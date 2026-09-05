@@ -136,10 +136,18 @@ the other.
 
 The claim is a compare-and-set on `promotedContactId: null` rather than a
 read-then-write. A second submission — two tabs, or a retried request, neither
-of which a disabled button catches — blocks on the first writer's row lock,
-matches nothing, and throws to roll its own half-built person away. The action
-then answers with the contact that already exists rather than an error, because
-a stale tab should land on the person, not on a red toast. Once the pointer is
+of which a disabled button catches — blocks on the first writer's row lock and
+then loses, and the action answers with the contact that already exists rather
+than an error, because a stale tab should land on the person, not on a red
+toast.
+
+**Losing that race looks different on different servers, and both have to be
+handled.** MariaDB 10 reports nought rows matched, so the claim throws and
+rolls its own half-built person away. MariaDB 11 refuses the write outright
+with 1020 (`ER_CHECKREAD`, "Record has changed since last read") and never
+returns a count at all. `isConcurrentRowChange` (`src/lib/db-errors.ts`)
+recognises the second; both then re-read the row and let its committed state
+decide the answer, rather than either branch guessing who won. Once the pointer is
 set the entry refuses `updateAssociate`: it is a record of what was written
 before the profile existed, and the profile is where that person is edited now.
 Deleting is still allowed, and takes nothing about the created person with it.

@@ -27,6 +27,7 @@ import {
   dietaryKindOf,
   validAllergyCombination,
 } from "@/lib/dietary";
+import { isConcurrentRowChange } from "@/lib/db-errors";
 import { parseReminderDays } from "@/lib/reminders";
 import { AVAILABILITY_IMPACTS, type AvailabilityImpact } from "@/lib/happenings";
 import {
@@ -896,7 +897,14 @@ export async function promoteAssociate(
       return person.id;
     });
   } catch (error) {
-    if (error instanceof AlreadyPromoted) {
+    // Two ways to lose the same race, and they are not interchangeable across
+    // server versions: MariaDB 10 reports nought rows matched, so the claim
+    // throws `AlreadyPromoted` above; MariaDB 11 refuses the write outright
+    // with 1020 and never returns a count at all. Only the first was handled,
+    // which left the loser on 11 throwing out of the action rather than being
+    // handed the person that already exists. Found by CI, which runs 11.
+    if (error instanceof AlreadyPromoted || isConcurrentRowChange(error)) {
+      // The committed row decides, not our guess about who won.
       const row = await prisma.associate.findFirst({
         where: { id, ownerId },
         select: { promotedContactId: true },
