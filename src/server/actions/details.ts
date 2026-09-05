@@ -20,7 +20,7 @@ import {
   viaContactPrivacyWhere,
   viaOptionalContactPrivacyWhere,
 } from "@/server/privacy/filter";
-import { calendarDateInTz, plainDateFromDb, plainDateToDb } from "@/lib/dates";
+import { calendarDateInTz, plainDateFromDb, plainDateKey, plainDateToDb } from "@/lib/dates";
 import { isValidPartialDateRange } from "@/lib/date-precision";
 import {
   allergyCategoryOf,
@@ -37,13 +37,17 @@ import {
   syncFollowUpTask,
 } from "@/server/services/happenings";
 import { planChecklistSchema } from "@/lib/plan-checklist";
-import { PLAN_MINUTE_MAX, parsePlanDuration, parsePlanMinute } from "@/lib/plan-time";
+import { PLAN_MINUTE_MAX, parsePlanDuration, parsePlanMinute, planInstant } from "@/lib/plan-time";
+import { closePlanAsInteraction } from "@/server/services/plans";
+import { recomputeContactActivity } from "@/server/services/contact-activity";
+import { findTermBySlug } from "@/server/taxonomy/queries";
 import {
   type ActionResult,
   bool,
   invalid,
   fail,
   fieldError,
+  instant,
   num,
   ok,
   owner,
@@ -1066,6 +1070,13 @@ export async function createPlan(form: FormData): Promise<ActionResult<{ id: str
     const place = await resolveLocation(tx, ownerId, fields.location ?? undefined, {
       address: fields.address,
       url: fields.url,
+      // Locality, and it has to arrive as one. `resolveLocation` fills a blank
+      // city and never overwrites it, while an address given here replaces the
+      // place's own — so "Plan this again", carrying a date's remembered
+      // "Leeds", would flatten "12 High Street, Leeds" for every record naming
+      // that venue if this were passed as an address. Plan has no city column;
+      // the value belongs to the place, not to the plan.
+      city: str(form, "city"),
     });
     return tx.plan.create({
       data: { ownerId, contactId, title, status: planStatusOf(str(form, "status")), ...fields, locationId: place?.id ?? null },
@@ -1128,6 +1139,480 @@ export async function setPlanStatus(id: string, status: PlanStatusValue): Promis
   });
 
   touchPlans(existing.contactId);
+  return ok();
+}
+
+/**
+ * The state a plan was read in, as a `where` fragment for the write that follows.
+ *
+ * Every path that arranges or finishes a plan reads the row, spends several
+ * awaits deciding — an ownership check, a taxonomy lookup, a transaction — and
+ * only then writes. Each of those windows is long enough for another tab to
+ * change the row, and a predicate that names only some of what was read lets
+ * that change be silently overwritten: the evening filed on a day that had
+ * already been replaced, or a person dropped from a plan somebody else had just
+ * attached them to.
+ *
+ * Five separate predicates each had to remember the same three fields, and four
+ * rounds of review found four different ones with a field missing. Naming them
+ * in one place is the fix: adding a field to the expectation now reaches every
+ * site instead of the ones somebody remembered. The status is left to the
+ * caller, because the reset below wants exactly `PLANNED` where the claims want
+ * "not already closed".
+ */
+function planAsRead(plan: {
+  contactId: string | null;
+  plannedFor: Date | null;
+  plannedStartMinute: number | null;
+}) {
+  return {
+    contactId: plan.contactId,
+    plannedFor: plan.plannedFor,
+    plannedStartMinute: plan.plannedStartMinute,
+  };
+}
+
+/** Not already closed: the status half of every plan claim. */
+const PLAN_STILL_OPEN: Prisma.EnumPlanStatusFilter = { notIn: ["DONE", "ARCHIVED"] };
+
+/**
+ * The pointers on a plan that are safe to carry onward, and only those.
+ *
+ * `Plan.place` and `Plan.category` are keyed on the target id alone rather than
+ * on `(ownerId, id)` — `SET NULL` needs every column of the key nullable and
+ * `ownerId` is not — so a restored or imported plan can point at another
+ * account's `Location` or `TaxonomyTerm`. Copying either onward mints a further
+ * cross-owner reference: `listPlans` loads both with no owner predicate, so the
+ * other account's label, colour and coordinates surface here, and a delete over
+ * there reaches through `ON DELETE SET NULL` into this account's rows.
+ *
+ * Callers keep the free-text `location` name either way. What is dropped is
+ * only a foreign key that should never have been stored.
+ */
+async function ownedPlanRefs(
+  ownerId: string,
+  plan: { locationId: string | null; categoryId: string | null },
+): Promise<{ locationId: string | null; categoryId: string | null }> {
+  const [place, category] = await Promise.all([
+    plan.locationId
+      ? prisma.location.findFirst({
+          where: { id: plan.locationId, ownerId },
+          select: { id: true },
+        })
+      : null,
+    plan.categoryId
+      ? prisma.taxonomyTerm.findFirst({
+          where: { id: plan.categoryId, ownerId, kind: "PLAN_CATEGORY" },
+          select: { id: true },
+        })
+      : null,
+  ]);
+  return { locationId: place?.id ?? null, categoryId: category?.id ?? null };
+}
+
+/**
+ * Pencil a plan in for a day, and optionally a time and a person.
+ *
+ * The awkward part is who it is with. `updatePlan` deliberately never moves a
+ * plan between people, and a plan saved against nobody is a shared library —
+ * `listPlans` offers it on everyone's page — so scheduling one with Robin by
+ * writing `contactId` would take "go to the observatory" out of circulation for
+ * everybody else.
+ *
+ * So an attached plan is scheduled where it stands, and an unattached one being
+ * given a person is **copied**: the copy is the evening with Robin, the original
+ * stays open for the next time. `keepInList` is what the form calls that, and it
+ * only has a say when the plan is unattached — there is nothing to keep a copy
+ * of otherwise. The copy takes a fresh, unticked checklist: inherited ticks
+ * would claim you had already booked.
+ */
+export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: string }>> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  if (!id) return fail("Missing plan.");
+
+  const existing = await prisma.plan.findFirst({
+    where: { id, ownerId, ...viaOptionalContactPrivacyWhere(await privacyScope()) },
+  });
+  if (!existing) return fail("Not found.");
+
+  // A plan already carried out is not reschedulable. `usedAt` and
+  // `usedInInteractionId` still point at what it became, so putting it back to
+  // PLANNED would leave one row both arranged for the future and already done.
+  // Refusing keeps that record; clearing it to allow the move would destroy it.
+  if (existing.status === "DONE" || existing.status === "ARCHIVED") {
+    return fail("That one is already done — save it again as a new plan.");
+  }
+
+  const plannedForRaw = str(form, "plannedFor");
+  if (!plannedForRaw) return fail("Which day?");
+  const plannedFor = plainDate(form, "plannedFor");
+  if (!plannedFor) return fail("That is not a day.");
+
+  const startMinute = parsePlanMinute(str(form, "plannedStartTime"));
+  if (!startMinute.ok) return fail("That is not a time.");
+  // Raw, not just parsed: the parser reads an absent field and a cleared one
+  // alike as null, and only one of those is an instruction.
+  const durationRaw = str(form, "plannedDurationMinutes");
+  const duration = parsePlanDuration(durationRaw);
+  if (!duration.ok) return fail("That is not a length.");
+
+  const withContactId = str(form, "contactId") ?? null;
+  if (withContactId && !(await ownsContact(ownerId, withContactId))) {
+    return fail("Contact not found.");
+  }
+
+  const scheduled = {
+    plannedFor,
+    plannedStartMinute: startMinute.value,
+    status: "PLANNED" as const,
+    // Only when the form actually carried one. The schedule sheet has no
+    // duration control, so writing `existing`'s value back would undo another
+    // tab's edit to the one field this claim does not watch — and it is the
+    // one field that legitimately changes without the evening changing.
+    ...(durationRaw === undefined ? {} : { plannedDurationMinutes: duration.value }),
+  };
+
+  // Copy only when there is a person to attach and an original worth keeping.
+  const copying = existing.contactId === null && withContactId !== null && bool(form, "keepInList");
+
+  if (!copying) {
+    // The status goes in the predicate, not only in the check above: several
+    // awaits separate that read from this write, and another tab completing
+    // the plan in between would otherwise see it restored to PLANNED with
+    // `usedAt` and `usedInInteractionId` still pointing at what it became —
+    // the contradictory row the check exists to prevent.
+    //
+    // The contact is in it for the same reason. Two stale forms both read this
+    // row as unattached; on status alone both claims match, and the second one
+    // overwrites the person the first attached while still reporting success —
+    // against the rule, three lines below, that an attached plan never moves
+    // between people.
+    const moved = await prisma.plan.updateMany({
+      where: { id, ownerId, ...planAsRead(existing), status: PLAN_STILL_OPEN },
+      data: {
+        ...scheduled,
+        // The one place a plan changes hands, and only ever from nobody to
+        // somebody: an attached plan still never moves between people.
+        ...(existing.contactId === null && withContactId ? { contactId: withContactId } : {}),
+      },
+    });
+    // Not "already done" any more: the claim can also miss because the plan
+    // changed hands. Say something true of both rather than guessing which.
+    if (moved.count === 0) {
+      return fail("That plan changed while you were arranging it — open it again.");
+    }
+    touchPlans(withContactId ?? existing.contactId);
+    return ok({ id });
+  }
+
+  // The copy path needs no such predicate: it never writes to the original, so
+  // the original's status cannot be made contradictory by it. A copy taken
+  // from a plan someone finished a moment ago is simply a new evening.
+
+  // Both of the plan's foreign keys are re-checked against the owner before the
+  // copy takes them; see `ownedPlanRefs`.
+  const refs = await ownedPlanRefs(ownerId, existing);
+
+  const copy = await prisma.plan.create({
+    data: {
+      ownerId,
+      contactId: withContactId,
+      title: existing.title,
+      categoryId: refs.categoryId,
+      location: existing.location,
+      locationId: refs.locationId,
+      address: existing.address,
+      url: existing.url,
+      estimatedCostCents: existing.estimatedCostCents,
+      currency: existing.currency,
+      notes: existing.notes,
+      // Deliberately not `existing.checklist`: a copy that arrived with
+      // "Reserve or buy tickets" already ticked would be claiming something
+      // nobody did for this evening.
+      checklist: [],
+      ...scheduled,
+      // A new row, so there is nothing to undo: it inherits the length unless
+      // this submission named one.
+      plannedDurationMinutes: duration.value ?? existing.plannedDurationMinutes,
+    },
+  });
+
+  touchPlans(withContactId);
+  return ok({ id: copy.id });
+}
+
+/**
+ * Mark a plan done by recording what it became.
+ *
+ * `setPlanStatus(id, "DONE")` closes a plan and clears `usedInInteractionId`,
+ * which is right for correcting a mistake and wrong for actually doing the
+ * thing: until now only `createDateEntry` ever pointed a plan at an
+ * interaction, so a hike with a friend ended as a status and nothing else.
+ *
+ * It writes a plain `Interaction`, never a `DateEntry`, even when the person is
+ * someone you are dating. Plans are deliberately not behind the privacy lock —
+ * locking them would put your own hiking list behind a PIN — and a `DateEntry`
+ * is, so writing one from here would be a way round the lock. Logging a date
+ * properly is still the date log's "From a saved idea", which is guarded.
+ *
+ * A plan with nobody attached and nobody named just closes: an interaction with
+ * no participants would sit in the timeline belonging to no one.
+ */
+export async function completePlan(form: FormData): Promise<ActionResult> {
+  const { ownerId, timezone } = await owner();
+  const id = str(form, "id");
+  if (!id) return fail("Missing plan.");
+
+  const existing = await prisma.plan.findFirst({
+    where: { id, ownerId, ...viaOptionalContactPrivacyWhere(await privacyScope()) },
+  });
+  if (!existing) return fail("Not found.");
+
+  // Both claims below carry the status, but the shared-idea path has no claim —
+  // it never touches the original — so a stale form or a direct POST against a
+  // plan somebody already closed or archived would file a second evening from
+  // it. The precondition belongs here, where every path passes through.
+  if (existing.status === "DONE" || existing.status === "ARCHIVED") {
+    return fail("That one is already done — save it again as a new plan.");
+  }
+
+  const named = str(form, "contactId") ?? null;
+  if (named && !(await ownsContact(ownerId, named))) return fail("Contact not found.");
+  const contactId = existing.contactId ?? named;
+
+  // When it happened, in this order: what the form says, else the day it is
+  // scheduled for resolved in the account's timezone, else now. The middle one
+  // is the point — a plan carries its own answer, and asking again for a date
+  // already on the row is a question with a right answer nobody should retype.
+  //
+  // Only while the plan is actually PLANNED, though. "Not planned after all"
+  // returns it to OPEN and leaves `plannedFor` behind, so trusting the date on
+  // an open row would file the evening on a day it was called off — and hand
+  // that instant to the cadence, which is the one thing invariant 1 exists to
+  // stop. An open plan carrying a date the user still means is one click from
+  // being scheduled again, or can say so through `occurredAt`.
+  const scheduledAt =
+    existing.status === "PLANNED" && existing.plannedFor
+      ? planInstant(plainDateFromDb(existing.plannedFor), existing.plannedStartMinute, timezone)
+      : null;
+  // Never in the future, whichever source won. Marked done before the day it
+  // was set for — done early, or tidied up — recording that future instant
+  // would badge a finished outing "Upcoming" in the timeline, and
+  // `recomputeContactActivity` excludes future interactions, so the cadence
+  // would sit stale until some unrelated write happened to recompute it.
+  // Nothing schedules that recomputation when the instant arrives.
+  const now = new Date();
+  // An unreadable override is refused, not ignored. `instant` answers undefined
+  // for a value it cannot parse just as it does for one that was never sent, so
+  // falling through would file the evening at the scheduled time or at now —
+  // irreversibly, and at a moment the caller did not ask for. The same stance
+  // `planFields` takes on a malformed day.
+  const overrideRaw = str(form, "occurredAt");
+  const override = instant(form, "occurredAt");
+  if (overrideRaw && !override) return fail("That is not a date and time.");
+
+  const candidate = override ?? scheduledAt ?? now;
+  const occurredAt = candidate > now ? now : candidate;
+
+  // Computed above this branch, not below it. The unattached case returns
+  // early, so working it out afterwards stamped `usedAt` with now — a Friday
+  // plan for nobody, ticked on Sunday, recorded Sunday, and an explicit
+  // `occurredAt` never reached it at all.
+  if (!contactId) {
+    // `contactId: null` in the predicate for the same reason the other two
+    // claims name theirs: another request attaching this shared row to somebody
+    // between the read and here would otherwise have its plan marked done with
+    // no interaction and no cadence recomputed for the person now on it.
+    const claimed = await prisma.plan.updateMany({
+      // `usedAt` was derived from the day and time on the row, so a reschedule
+      // that landed since the read has to abort this rather than stamp the
+      // evening that was replaced.
+      where: { id, ownerId, ...planAsRead(existing), status: PLAN_STILL_OPEN },
+      data: { status: "DONE", usedAt: occurredAt },
+    });
+    if (claimed.count === 0) {
+      return fail("That plan changed while you were finishing it — open it again.");
+    }
+    touchPlans(null);
+    return ok();
+  }
+
+  const hangout = await findTermBySlug(ownerId, "INTERACTION_TYPE", "hangout");
+
+  // `Interaction.place` has the same single-column key, so the outing inherits
+  // the problem `ownedPlanRefs` describes: copied unchecked, the timeline drops
+  // the mismatched place and the evening loses its venue, and a delete in the
+  // other account reaches across `ON DELETE SET NULL` into this one.
+  const refs = await ownedPlanRefs(ownerId, existing);
+
+  const interactionData = {
+    ownerId,
+    typeId: hangout?.id ?? null,
+    occurredAt,
+    title: existing.title,
+    notes: str(form, "notes") ?? null,
+    location: existing.location,
+    locationId: refs.locationId,
+    participants: { create: [{ contactId }] },
+  };
+
+  // Finishing a shared idea with somebody copies it, exactly as scheduling one
+  // does. `listPlans` offers a contact-less plan on everyone's page, so closing
+  // the shared row because one evening happened would take "go to the
+  // observatory" off every other person's list too. The copy is the evening
+  // with Robin; the original stays open for the next time.
+  //
+  // `createDateEntry` still consumes in this case. That is pre-existing and
+  // deliberately left alone here — changing it would rewrite behaviour that
+  // shipped long before this and the e2e assertion built on it.
+  const sharedCopy = existing.contactId === null;
+
+  // The copy carries an idempotency key, because there is no original row whose
+  // status could guard this path. Derived here rather than minted by the
+  // browser: a client token would only stop a literal replay, since two tabs
+  // would mint two of them and duplicate anyway. This says "this idea, finished
+  // with this person, on this day", so a replay and a second tab both collide
+  // on the unique index while going to the observatory with Robin again in July
+  // gets a different day and a copy of its own.
+  //
+  // The day is the one this is being *recorded* on, or the one the form named —
+  // deliberately not `occurredAt`, which folds in the plan's own schedule. A
+  // Friday plan ticked off on Sunday keyed itself to Friday, and the claim
+  // below then cleared that schedule from the source, so a replay read an open
+  // plan, fell back to Sunday, and keyed itself somewhere new: the index it was
+  // supposed to collide on never saw it, and a further copy could be added
+  // every day after. Nothing the completion itself changes can be allowed into
+  // the key. Two different past evenings can still be told apart, because the
+  // only way to say "this happened then" is the explicit override, and that is
+  // what the key reads when it is given.
+  const completionKey = sharedCopy
+    ? `${existing.id}:${contactId}:${plainDateKey(calendarDateInTz(override ?? now, timezone))}`
+    : null;
+
+  const completed = await transact(async (tx) => {
+    if (sharedCopy) {
+      // Claim the original before writing anything from it — an `UPDATE`, not a
+      // `SELECT`, and that is the whole point. This path leaves the shared row
+      // in circulation, so there is no status to consume and it would be
+      // natural to re-read instead; but a read under REPEATABLE READ takes no
+      // lock, so a request archiving the idea a moment later would still let
+      // this transaction commit an evening out of it. An `UPDATE` locks every
+      // row it matches even when the value it writes is the one already there,
+      // and its row count is the refusal when the row moved.
+      //
+      // A `PLANNED` idea is released back to the list by the same statement.
+      // Scheduled through "Nobody yet" it stays `contactId: null` and
+      // `PLANNED`; once that evening has happened with somebody, leaving the
+      // day on it presents a spent arrangement as an outstanding one on every
+      // person's list. The day is not lost — the copy below carries it, with
+      // what it became. The duration stays: how long a thing takes belongs to
+      // the thing, not to the evening.
+      //
+      // Before the writes, not after, so a refusal has nothing to undo. On
+      // MariaDB 11 a write to a row that moved since the snapshot raises 1020
+      // and `transact` starts again; on the 10.11 the container bundles there
+      // is no 1020 and the write simply matches nothing, so the count is what
+      // has to be read. `listPlans` orders by status and `createdAt`, so
+      // holding an open idea with its own status does not move it in anyone's
+      // list.
+      const claimed = await tx.plan.updateMany({
+        where: { id, ownerId, ...planAsRead(existing), status: PLAN_STILL_OPEN },
+        data:
+          existing.status === "PLANNED"
+            ? { status: "OPEN", plannedFor: null, plannedStartMinute: null }
+            : { status: existing.status },
+      });
+      if (claimed.count === 0) return false;
+
+      const interaction = await tx.interaction.create({ data: interactionData });
+      await tx.plan.create({
+        data: {
+          ownerId,
+          contactId,
+          title: existing.title,
+          categoryId: refs.categoryId,
+          location: existing.location,
+          locationId: refs.locationId,
+          address: existing.address,
+          url: existing.url,
+          estimatedCostCents: existing.estimatedCostCents,
+          currency: existing.currency,
+          notes: existing.notes,
+          checklist: [],
+          plannedFor: existing.plannedFor,
+          plannedStartMinute: existing.plannedStartMinute,
+          plannedDurationMinutes: existing.plannedDurationMinutes,
+          status: "DONE",
+          usedAt: occurredAt,
+          usedInInteractionId: interaction.id,
+          completionKey,
+        },
+      });
+
+      await recomputeContactActivity(tx, [contactId]);
+      return true;
+    }
+
+    // Claim it first, and only if it is not already done. The checkbox is
+    // disabled only while a completion is in flight, so two clicks before the refresh lands
+    // — or a replayed POST — would otherwise each create an interaction, the
+    // second overwriting `usedInInteractionId` and leaving the first adrift in
+    // the timeline with nothing pointing at it. A rolled-back `transact` retry
+    // undoes the claim, so restarting re-runs this honestly.
+    //
+    // The contact is in the predicate as well as the status. Another request
+    // scheduling this same row onto somebody else between the read and the
+    // claim would otherwise still match: the interaction would name the person
+    // read a moment ago while `closePlanAsInteraction` matched nothing against
+    // the row as it now is, committing the plan done with no link and leaving
+    // that interaction adrift.
+    //
+    // The day and time are in it too. Another tab rescheduling this plan for
+    // the same person changes neither the status nor the contact, so on those
+    // alone the claim would still match: the interaction would be filed on the
+    // day that was read rather than the day now on the row, and the freshly
+    // arranged evening would be marked done before it happened.
+    const claimed = await tx.plan.updateMany({
+      where: { id, ownerId, ...planAsRead(existing), status: PLAN_STILL_OPEN },
+      data: { status: "DONE", usedAt: occurredAt },
+    });
+    if (claimed.count === 0) return false;
+
+    const interaction = await tx.interaction.create({ data: interactionData });
+
+    await closePlanAsInteraction(tx, {
+      ownerId,
+      planId: id,
+      contactId: existing.contactId,
+      interactionId: interaction.id,
+      occurredAt,
+    });
+
+    // Invariant 1: never assign the date just written. A plan completed with a
+    // day in the past must not read as "spoke today".
+    await recomputeContactActivity(tx, [contactId]);
+    return true;
+  }).catch((error: unknown) => {
+    // The unique index on `(ownerId, completionKey)` is the shared path's
+    // guard, so a violation here means this exact completion already landed —
+    // a replayed POST, or a second tab. Note where this is caught: outside
+    // `transact`, on a transaction the database has already rolled back.
+    // Catching it inside and carrying on is the trap invariant 9 describes, and
+    // `transact` itself retries only MariaDB 1020, so nothing loops.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return "duplicate" as const;
+    }
+    throw error;
+  });
+
+  if (completed === "duplicate") return fail("That one is already marked done.");
+  // Same two reasons as the scheduling claim: already finished, or moved to
+  // somebody else while this request was in flight.
+  if (!completed) return fail("That plan changed while you were finishing it — open it again.");
+
+  touchPlans(contactId);
+  revalidatePath("/timeline");
   return ok();
 }
 
