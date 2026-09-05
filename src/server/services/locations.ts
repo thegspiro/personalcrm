@@ -37,9 +37,37 @@ export interface LocationDetails {
  */
 function textUpdates(details: LocationDetails): Record<string, string> {
   const updates: Record<string, string> = {};
-  for (const key of ["address", "url", "city", "region", "country"] as const) {
+  for (const key of ["address", "url"] as const) {
     const value = details[key];
     if (typeof value === "string" && value.trim()) updates[key] = value.trim();
+  }
+  return updates;
+}
+
+/**
+ * Where the place is, filled in but never rewritten.
+ *
+ * The locality is shared by every interaction and plan that names this place,
+ * while what a caller passes is the wording from one of them — often an old one.
+ * Editing a date's rating resubmits the city typed at the time, and overwriting
+ * on that would undo a correction made on the place's own page, or leave a venue
+ * holding coordinates for one city and text naming another, for everybody.
+ *
+ * So this behaves like the coordinates below: it completes a place that is
+ * missing something, and otherwise leaves it alone. `address` and `url` keep
+ * their older overwrite-when-given behaviour — they are edited from the place
+ * page and passed by `Plan`, which is a different relationship to the row.
+ */
+function localityUpdates(
+  details: LocationDetails,
+  current: { city: string | null; region: string | null; country: string | null },
+): Record<string, string> {
+  const updates: Record<string, string> = {};
+  for (const key of ["city", "region", "country"] as const) {
+    const value = details[key];
+    if (typeof value === "string" && value.trim() && !current[key]?.trim()) {
+      updates[key] = value.trim();
+    }
   }
   return updates;
 }
@@ -154,20 +182,29 @@ export async function resolveLocation(
   if (canonical && (claimIsStale || !claimed))
     await claimCanonical(canonical.id, canonical.name);
   if (existing) {
-    const text = textUpdates(details);
-    const identity = identityUpdates(details);
+    // Read once, so both "is it already placed" and "does it already say where"
+    // are answered from the same row rather than guessed at.
+    const current = await tx.location.findUnique({
+      where: { id: existing.id },
+      select: {
+        latitude: true,
+        longitude: true,
+        city: true,
+        region: true,
+        country: true,
+      },
+    });
+
     // Coordinates are filled in, never overwritten. Typing a venue's name into
     // an interaction must not move a place the user geocoded deliberately on
     // its own page — the name is evidence of which place is meant, not of
-    // where it is. Text is still overwritten when given, as it always was.
-    const placed =
-      identity === null
-        ? null
-        : await tx.location.findFirst({
-            where: { id: existing.id, latitude: null, longitude: null },
-            select: { id: true },
-          });
-    const data = { ...text, ...(placed ? identity : {}) };
+    // where it is. The locality now follows the same rule; see above.
+    const unplaced = current?.latitude === null && current.longitude === null;
+    const data = {
+      ...textUpdates(details),
+      ...(current ? localityUpdates(details, current) : {}),
+      ...(unplaced ? identityUpdates(details) ?? {} : {}),
+    };
 
     if (Object.keys(data).length > 0) {
       await tx.location.update({ where: { id: existing.id }, data });
@@ -180,6 +217,9 @@ export async function resolveLocation(
       name,
       normalizedName,
       ...textUpdates(details),
+      // Nothing is set yet, so "fill in what is missing" is everything given —
+      // which is how a place first seen by logging a date gets its city.
+      ...localityUpdates(details, { city: null, region: null, country: null }),
       ...(identityUpdates(details) ?? {}),
     },
     select: { id: true, name: true },

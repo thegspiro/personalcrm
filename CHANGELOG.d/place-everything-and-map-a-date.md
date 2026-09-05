@@ -36,3 +36,14 @@
   yours to type: where their address is placed and you have a home base, the
   measured distance is shown beside it rather than replacing it, since one is
   arithmetic and the other is what somebody said.
+
+#### Security
+- **A place belonging to another account can no longer surface on a logged
+  date.** `Interaction.place` is the one reference the database cannot make
+  same-owner — a `SET NULL` key needs every column nullable, and `ownerId` is
+  not — so a restore can leave one pointing across accounts. The timeline
+  already dropped a mismatch; the new read of a date's venue now does too.
+- **A place hidden by the privacy lock is no longer counted or sent.** The bulk
+  pass selected places by owner alone, so one known only through a private
+  interaction appeared in the count and had its name and address sent to the
+  geocoder. It now uses the same visibility predicate as the places list.

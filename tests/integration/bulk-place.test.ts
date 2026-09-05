@@ -68,6 +68,7 @@ vi.mock("@/server/geo/providers", async () => {
 });
 
 const { placeUnplaced } = await import("@/server/actions/bulk-place");
+const { countUnplaced } = await import("@/server/queries/unplaced");
 
 function form(values: Record<string, string | undefined>): FormData {
   const data = new FormData();
@@ -120,10 +121,28 @@ describe.skipIf(!hasTestDatabase)("placing rows in bulk", () => {
     await prisma.$disconnect();
   });
 
+  /**
+   * A place, reached the way the app reaches one.
+   *
+   * The visit is not decoration: a `Location` is only visible through the
+   * interactions and plans that name it, so a bare row is invisible to the
+   * places list and to this pass alike. `resolveLocation` never makes an orphan
+   * either, so a test that made one was testing a row the app cannot produce.
+   */
   async function place(name: string, extra: Record<string, unknown> = {}) {
-    return prisma.location.create({
+    const location = await prisma.location.create({
       data: { ownerId, name, normalizedName: name.toLowerCase(), ...extra },
     });
+    await prisma.interaction.create({
+      data: {
+        ownerId,
+        occurredAt: new Date(),
+        locationId: location.id,
+        location: name,
+        isPrivate: false,
+      },
+    });
+    return location;
   }
 
   it("writes only an unambiguous match, and leaves the rest for a person", async () => {
@@ -259,6 +278,90 @@ describe.skipIf(!hasTestDatabase)("placing rows in bulk", () => {
     const result = await placeUnplaced(form({ kind: "places" }));
     expect(result.data).toMatchObject({ placed: 0, skipped: 1 });
     expect((await prisma.location.findFirstOrThrow({ where: { name: "Half Answer" } })).latitude).toBeNull();
+  });
+
+  it("never offers or sends a place hidden by the privacy lock", async () => {
+    // A place is reachable only through the interactions and plans naming it,
+    // so one known solely through a private interaction is hidden while the
+    // lock is closed. Filtering on ownerId alone put its name in the count and
+    // then sent it — and its address — to the geocoder.
+    // Not through `place()`: the only thing naming this one has to be the
+    // private interaction, or it would be visible by another route.
+    const secret = await prisma.location.create({
+      data: { ownerId, name: "Secret Bar", normalizedName: "secret bar" },
+    });
+    await prisma.interaction.create({
+      data: {
+        ownerId,
+        occurredAt: new Date(),
+        locationId: secret.id,
+        location: "Secret Bar",
+        isPrivate: true,
+      },
+    });
+    state.answers.set("Secret Bar", [candidate("53.8008", "-1.5491")]);
+
+    state.enabled = true;
+    state.unlocked = false;
+    expect(await countUnplaced(ownerId, "places")).toBe(0);
+
+    const locked = await placeUnplaced(form({ kind: "places" }));
+    expect(locked.data?.processed).toBe(0);
+    expect(state.sent).toHaveLength(0);
+    expect((await prisma.location.findUniqueOrThrow({ where: { id: secret.id } })).latitude).toBeNull();
+
+    // Unlocked it is ordinary work again, which is what makes the count above a
+    // withholding rather than a permanent exclusion.
+    state.unlocked = true;
+    expect(await countUnplaced(ownerId, "places")).toBe(1);
+  });
+
+  it("skips a lone candidate that names a different city", async () => {
+    // One answer is not proof of a match: a geocoder handed a half-written
+    // address returns a single fallback, often the wrong locality entirely.
+    const wrong = await place("Ambiguous Cafe", { city: "Leeds" });
+    state.answers.set("Ambiguous Cafe, Leeds", [
+      candidate("48.8566", "2.3522", { city: "Paris" }),
+    ]);
+
+    const result = await placeUnplaced(form({ kind: "places" }));
+    expect(result.data).toMatchObject({ placed: 0, skipped: 1 });
+    expect((await prisma.location.findUniqueOrThrow({ where: { id: wrong.id } })).latitude).toBeNull();
+  });
+
+  it("still places a row that says no locality of its own", async () => {
+    // Nothing to compare against, so the single answer stands as it did before.
+    const bare = await place("Bare Cafe");
+    state.answers.set("Bare Cafe", [candidate("53.8008", "-1.5491", { city: "Leeds" })]);
+
+    const result = await placeUnplaced(form({ kind: "places" }));
+    expect(result.data).toMatchObject({ placed: 1 });
+    expect(
+      Number((await prisma.location.findUniqueOrThrow({ where: { id: bare.id } })).latitude),
+    ).toBeCloseTo(53.8008, 4);
+  });
+
+  it("survives an OSM id the column would refuse, rather than dying mid-batch", async () => {
+    // A custom endpoint can return anything. `BigInt("not-a-number")` throws
+    // where nothing catches it, which killed the whole batch for one bad row.
+    const bad = await place("Bad Id Cafe");
+    const huge = await place("Huge Id Cafe");
+    state.answers.set("Bad Id Cafe", [candidate("53.8008", "-1.5491", { osmId: "not-a-number" })]);
+    state.answers.set("Huge Id Cafe", [
+      candidate("53.8008", "-1.5491", { osmId: "99999999999999999999" }),
+    ]);
+
+    const result = await placeUnplaced(form({ kind: "places" }));
+    expect(result.ok).toBe(true);
+    expect(result.data?.placed).toBe(2);
+
+    // Placed on the coordinates, which are sound; the unusable reference is
+    // dropped rather than taking the row down with it.
+    for (const id of [bad.id, huge.id]) {
+      const row = await prisma.location.findUniqueOrThrow({ where: { id } });
+      expect(Number(row.latitude)).toBeCloseTo(53.8008, 4);
+      expect(row.osmId).toBeNull();
+    }
   });
 
   it("rejects a kind it does not recognise", async () => {

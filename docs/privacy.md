@@ -532,7 +532,10 @@ when the endpoint is not the public OpenStreetMap service** — whose usage poli
 asks applications not to geocode in bulk against donated hardware — and it still
 has to be pressed. Rule 4 above holds unchanged: private contacts are excluded by
 the query that feeds the pass, so their addresses are never among the rows sent,
-locked or not.
+locked or not. Places are filtered through `locationVisibleWhere` on the same
+principle: a venue known only through a private interaction is withheld from the
+count *and* never sent, because a total that shifts on unlock is itself a
+disclosure and an address leaving the machine is worse than one.
 
 It sends the same thing a single lookup does and nothing more: the address parts
 for an address, the place's name and address for a place. Never a label, never
