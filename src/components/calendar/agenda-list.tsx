@@ -4,7 +4,7 @@ import { type PlainDate, plainDateKey } from "@/lib/dates";
 import { formatPartialDate } from "@/lib/date-precision";
 import { relativeDay } from "@/lib/format";
 import type { CalendarEntry } from "@/server/queries/calendar";
-import { EntryChip, KIND_LABEL, displayName } from "@/components/calendar/entry-chip";
+import { EntryChip, KIND_LABEL } from "@/components/calendar/entry-chip";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/nav/icon";
 
@@ -23,17 +23,10 @@ export function DayEntries({ entries }: { entries: CalendarEntry[] }) {
           <span className="w-14 shrink-0 truncate text-[11px] text-muted-foreground sm:w-20">
             {KIND_LABEL[entry.kind]}
           </span>
+          {/* The name lives in the chip now, so there is no separate column
+              here: it was showing the same thing twice, and only at widths
+              where there was room for a column. */}
           <EntryChip entry={entry} className="min-w-0 flex-1" />
-          {/* Shown at every width, not from `sm` up. Every canonical birthday
-              is titled "Birthday", so on a phone two of them on one day were
-              two identical rows; the name is the only thing telling them
-              apart. It takes at most two fifths of the row and truncates, so
-              it cannot push the title off the screen instead. */}
-          {entry.contact ? (
-            <span className="max-w-[40%] shrink-0 truncate text-[11px] text-muted-foreground">
-              {displayName(entry.contact)}
-            </span>
-          ) : null}
         </li>
       ))}
     </ul>

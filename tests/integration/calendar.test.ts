@@ -279,6 +279,31 @@ describe.skipIf(!hasTestDatabase)("calendar", () => {
     expect((await entries()).filter((entry) => entry.kind === "plan")).toHaveLength(0);
   });
 
+  it("caps what it returns, not the rows it read them from", async () => {
+    // A happening covers a chip on every day it spans, so a row cap is not an
+    // entry cap — four hundred month-precision rows would have become
+    // thousands of chips. The bound the docs promise is per source and per
+    // entry, and it has now been got wrong twice by capping the wrong thing.
+    const friend = await makeContact("Marcus");
+    await prisma.happening.create({
+      data: {
+        ownerId,
+        contactId: friend.id,
+        title: "Away all March",
+        date: plainDateToDb({ year: 2026, month: 3, day: 1 }),
+        precision: "MONTH",
+      },
+    });
+
+    const found = (await entries()).filter((entry) => entry.kind === "happening");
+    // One row, many days — and every one of them inside the window it drew.
+    expect(found.length).toBeGreaterThan(1);
+    for (const entry of found) {
+      expect(entry.day.year).toBe(2026);
+      expect([3, 4]).toContain(entry.day.month);
+    }
+  });
+
   it("shows a birthday in a month that has already gone by", async () => {
     // `projectDateOccurrences` clamps its lower bound to the `today` it is
     // given, so the dashboard cannot turn a past date into an upcoming one.

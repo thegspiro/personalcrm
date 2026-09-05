@@ -34,6 +34,7 @@ export function displayName(contact: { firstName: string; lastName: string | nul
 
 export function EntryChip({ entry, className }: { entry: CalendarEntry; className?: string }) {
   const time = entry.minute === null ? null : formatPlanTime(entry.minute);
+  const who = entry.contact ? displayName(entry.contact) : null;
   return (
     <Link
       href={entry.href}
@@ -45,10 +46,16 @@ export function EntryChip({ entry, className }: { entry: CalendarEntry; classNam
         KIND_CLASS[entry.kind],
         className,
       )}
-      title={`${KIND_LABEL[entry.kind]}: ${entry.title}`}
+      title={[`${KIND_LABEL[entry.kind]}: ${entry.title}`, who].filter(Boolean).join(" — ")}
     >
       {time ? <span className="tabular-nums">{time} </span> : null}
       {entry.title}
+      {/* Whose it is, in the chip rather than beside it. Every canonical
+          birthday is titled "Birthday", so two on one day were two identical
+          links — and in a grid square there is no room for a separate column
+          to carry the name, which is why it belongs here and not in the
+          layouts. The agenda used to add its own and no longer needs to. */}
+      {who ? <span className="opacity-70"> · {who}</span> : null}
       {/* The state the query went to the trouble of working out. Without it a
           finished follow-up reads exactly like an outstanding one, and the
           distinction was being carried all the way here and thrown away. */}

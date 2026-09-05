@@ -256,11 +256,24 @@ export async function getCalendarEntries(
       }),
     ]);
 
-  const entries: CalendarEntry[] = [];
+  // One bucket per kind, and the cap is applied to every one of them at the
+  // end. Capping the database rows instead is the mistake this has now been
+  // through twice: a birthday row projects into as many occurrences as the
+  // window holds, and a happening row expands to a chip on every day it
+  // covers, so four hundred rows of either became thousands of entries and the
+  // documented per-source bound meant nothing. Bucketing makes the bound true
+  // by construction rather than true wherever somebody remembered it.
+  const byKind: Record<CalendarKind, CalendarEntry[]> = {
+    plan: [],
+    date: [],
+    task: [],
+    happening: [],
+    interaction: [],
+  };
 
   for (const plan of planRows) {
     if (!plan.plannedFor) continue;
-    entries.push({
+    byKind.plan.push({
       id: `plan:${plan.id}`,
       kind: "plan",
       day: plainDateFromDb(plan.plannedFor),
@@ -309,14 +322,6 @@ export async function getCalendarEntries(
     });
   }
 
-  // Collected before they join the rest, so the cap can be applied to the
-  // occurrences that actually land in this window rather than to the rows they
-  // were projected from. Birthdays come from `fetchContactBirthdays`, which
-  // takes no `take` — the same whole-table read the dashboard already does on
-  // every page load — so without this the one source that cannot be bounded in
-  // SQL was also the one escaping the bound afterwards.
-  const dateEntries: CalendarEntry[] = [];
-
   for (const row of projected) {
     // Invariant 8: a partial date stays partial. "Sometime in 2019" has no
     // honest square, and `projectDateOccurrences` would answer with the first
@@ -344,7 +349,7 @@ export async function getCalendarEntries(
       // precisely because nobody knows it, and dropping those would empty the
       // grid of every birthday whose year was never recorded.
       if (hasKnownYear(row.precision) && diffPlainDays(row.anchor, day) < 0) continue;
-      dateEntries.push({
+      byKind.date.push({
         id: `${row.id}@${plainDateKey(day)}`,
         kind: "date",
         day,
@@ -357,14 +362,9 @@ export async function getCalendarEntries(
     }
   }
 
-  // Earliest first before the cap bites, so a month that somehow holds more
-  // than this keeps the start of it rather than an arbitrary scatter.
-  dateEntries.sort((a, b) => diffPlainDays(b.day, a.day));
-  entries.push(...dateEntries.slice(0, PER_SOURCE_CAP));
-
   for (const task of taskRows) {
     if (!task.dueDate) continue;
-    entries.push({
+    byKind.task.push({
       id: `task:${task.id}`,
       kind: "task",
       day: plainDateFromDb(task.dueDate),
@@ -390,7 +390,7 @@ export async function getCalendarEntries(
     const first = diffPlainDays(window.from, span.start) >= 0 ? span.start : window.from;
     const last = diffPlainDays(span.end, window.to) >= 0 ? span.end : window.to;
     for (let day = first; diffPlainDays(day, last) >= 0; day = addPlainDays(day, 1)) {
-      entries.push({
+      byKind.happening.push({
         id: `happening:${happening.id}@${plainDateKey(day)}`,
         kind: "happening",
         day,
@@ -409,7 +409,7 @@ export async function getCalendarEntries(
     // this should never exclude anything. It costs nothing and it is the check
     // that would catch a bound computed against the wrong zone.
     if (!isWithin(day, window)) continue;
-    entries.push({
+    byKind.interaction.push({
       id: `interaction:${interaction.id}`,
       kind: "interaction",
       day,
@@ -422,6 +422,16 @@ export async function getCalendarEntries(
       minute: zonedMinuteOfDay(interaction.occurredAt, timezone),
       note: null,
     });
+  }
+
+  // Earliest first inside each bucket before its cap bites, so a month that
+  // somehow holds more than the cap keeps the start of it rather than an
+  // arbitrary scatter of whichever rows the database happened to return.
+  const entries: CalendarEntry[] = [];
+  for (const kind of Object.keys(byKind) as CalendarKind[]) {
+    const bucket = byKind[kind];
+    bucket.sort((a, b) => diffPlainDays(b.day, a.day));
+    entries.push(...bucket.slice(0, PER_SOURCE_CAP));
   }
 
   // Within a day: timed things first in clock order, then the all-day ones
