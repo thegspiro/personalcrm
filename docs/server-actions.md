@@ -225,6 +225,14 @@ else. It writes a plain `Interaction` through
 and time already on the row when the form does not override it, and runs
 `recomputeContactActivity` rather than assigning the date it just wrote.
 
+Finishing a shared idea *with somebody* copies it, the same way scheduling one
+does: `listPlans` offers a contact-less plan on everyone's page, so closing the
+shared row because one evening happened would take it off every other person's
+list. The copy is the evening; the original stays open. `createDateEntry` still
+consumes in that case — pre-existing behaviour, deliberately left alone. The
+copy path has no row to claim, so it is not single-use server-side; the checkbox
+guards the double click.
+
 It never writes a `DateEntry`, even for someone romantic: plans are deliberately
 not behind the privacy lock and a `DateEntry` is, so writing one from here would
 be a way round the lock. Logging a date properly stays the date log's "From a

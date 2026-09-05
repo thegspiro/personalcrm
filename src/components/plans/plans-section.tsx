@@ -302,6 +302,10 @@ export function PlansSection({
   defaultOpen?: boolean;
 }) {
   const run = useAction();
+  // Which rows have a completion in flight. `useAction` does not expose its
+  // pending state, and the shared-idea path creates a copy rather than
+  // claiming a row, so the server cannot make that one single-use.
+  const [completing, setCompleting] = React.useState<ReadonlySet<string>>(new Set());
   const add = useAddAction();
   const edit = useEditAction();
 
@@ -366,7 +370,14 @@ export function PlansSection({
                   it, so the evening lands in the timeline. */}
               <Checkbox
                 checked={false}
+                disabled={completing.has(plan.id)}
                 onCheckedChange={() => {
+                  // Completing a shared idea creates a copy, and a copy has no
+                  // row to claim — so unlike the in-place path the server
+                  // cannot make this single-use. Two clicks before the refresh
+                  // lands would make two finished copies.
+                  if (completing.has(plan.id)) return;
+                  setCompleting((ids) => new Set(ids).add(plan.id));
                   const form = new FormData();
                   form.set("id", plan.id);
                   // A shared row on someone's page is being finished *with*
@@ -374,7 +385,13 @@ export function PlansSection({
                   // closes the plan, and the evening never reaches their
                   // timeline or their cadence.
                   if (contactId && plan.contact === null) form.set("contactId", contactId);
-                  void run(() => completePlan(form), "Marked done");
+                  void run(() => completePlan(form), "Marked done").finally(() => {
+                    setCompleting((ids) => {
+                      const next = new Set(ids);
+                      next.delete(plan.id);
+                      return next;
+                    });
+                  });
                 }}
                 aria-label="Mark as done"
                 className="mt-0.5"

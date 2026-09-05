@@ -9,6 +9,10 @@
   someone copies it and leaves the original on the list for next time — the copy
   starts with a clean checklist, because inherited ticks would claim a booking
   nobody made. Untick "Keep this in Things to do" to move it instead.
+- **Finishing a shared idea keeps it on the list.** Something saved against
+  nobody is offered on everyone's page, so ticking it off on one person's page
+  files that evening against them and leaves the idea itself where it was — the
+  same rule scheduling already follows.
 - **Marking something done now records what it became.** It writes the outing
   into your timeline and points the plan at it, so "we did this on the 4th"
   survives. Before, only a date logged through the dating pages did that; a hike

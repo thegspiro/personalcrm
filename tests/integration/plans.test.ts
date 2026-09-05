@@ -407,6 +407,67 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     expect(await prisma.interaction.count()).toBe(1);
   });
 
+  it("completing a shared idea with someone copies it rather than consuming it", async () => {
+    // Same rule as scheduling: listPlans offers a contact-less plan on every
+    // person's page, so finishing one evening must not take it off everyone
+    // else's list.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(null);
+
+    expect(
+      await completePlan(actionForm({ id: plan.id, contactId: friend.id })),
+    ).toMatchObject({ ok: true });
+
+    const original = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(original.status).toBe("OPEN");
+    expect(original.contactId).toBeNull();
+    expect(original.usedInInteractionId).toBeNull();
+
+    const copy = await prisma.plan.findFirstOrThrow({
+      where: { ownerId, contactId: friend.id },
+    });
+    expect(copy.status).toBe("DONE");
+    expect(copy.usedInInteractionId).not.toBeNull();
+
+    const interaction = await prisma.interaction.findUniqueOrThrow({
+      where: { id: copy.usedInInteractionId! },
+      include: { participants: true },
+    });
+    expect(interaction.participants.map((p) => p.contactId)).toEqual([friend.id]);
+  });
+
+  it("abandons a completion when the plan changed hands mid-request", async () => {
+    // The claim pins the contact as well as the status. Another request
+    // scheduling this row onto someone else between the read and the claim
+    // would otherwise commit it done with no link, and leave the interaction
+    // naming the person read a moment earlier adrift in the timeline.
+    const alice = await makeContact("Alice");
+    const bob = await makeContact("Bob");
+    const plan = await planFor(alice.id);
+
+    // Stand in for the racing writer: the row is Bob's by the time the claim
+    // runs, while `existing` still says Alice.
+    // Cast: Prisma's method type is a thenable client, not a bare promise, and
+    // the mock only has to resolve to the same row.
+    const original = prisma.plan.findFirst.bind(prisma.plan);
+    const spy = vi.spyOn(prisma.plan, "findFirst").mockImplementationOnce((async (
+      args: unknown,
+    ) => {
+      const row = await original(args as never);
+      await prisma.plan.update({ where: { id: plan.id }, data: { contactId: bob.id } });
+      return row;
+    }) as never);
+
+    const result = await completePlan(actionForm({ id: plan.id }));
+    spy.mockRestore();
+
+    expect(result).toMatchObject({ ok: false });
+    expect(await prisma.interaction.count()).toBe(0);
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.status).toBe("OPEN");
+    expect(after.contactId).toBe(bob.id);
+  });
+
   it("completing a plan saved for nobody closes it without an orphan interaction", async () => {
     const plan = await planFor(null);
 

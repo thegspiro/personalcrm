@@ -1324,31 +1324,87 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
 
   const hangout = await findTermBySlug(ownerId, "INTERACTION_TYPE", "hangout");
 
+  const interactionData = {
+    ownerId,
+    typeId: hangout?.id ?? null,
+    occurredAt,
+    title: existing.title,
+    notes: str(form, "notes") ?? null,
+    location: existing.location,
+    locationId: existing.locationId,
+    participants: { create: [{ contactId }] },
+  };
+
+  // Finishing a shared idea with somebody copies it, exactly as scheduling one
+  // does. `listPlans` offers a contact-less plan on everyone's page, so closing
+  // the shared row because one evening happened would take "go to the
+  // observatory" off every other person's list too. The copy is the evening
+  // with Robin; the original stays open for the next time.
+  //
+  // `createDateEntry` still consumes in this case. That is pre-existing and
+  // deliberately left alone here — changing it would rewrite behaviour that
+  // shipped long before this and the e2e assertion built on it.
+  const sharedCopy = existing.contactId === null;
+
   const completed = await transact(async (tx) => {
+    if (sharedCopy) {
+      // Nothing to claim: the original is not touched, so there is no row whose
+      // status could guard this. Two clicks before the refresh lands would make
+      // two completed copies — visible duplication rather than the orphaned
+      // interaction the in-place path had, and the checkbox guards against it
+      // client-side.
+      const interaction = await tx.interaction.create({ data: interactionData });
+      await tx.plan.create({
+        data: {
+          ownerId,
+          contactId,
+          title: existing.title,
+          categoryId: existing.categoryId,
+          location: existing.location,
+          locationId: existing.locationId,
+          address: existing.address,
+          url: existing.url,
+          estimatedCostCents: existing.estimatedCostCents,
+          currency: existing.currency,
+          notes: existing.notes,
+          checklist: [],
+          plannedFor: existing.plannedFor,
+          plannedStartMinute: existing.plannedStartMinute,
+          plannedDurationMinutes: existing.plannedDurationMinutes,
+          status: "DONE",
+          usedAt: occurredAt,
+          usedInInteractionId: interaction.id,
+        },
+      });
+      await recomputeContactActivity(tx, [contactId]);
+      return true;
+    }
+
     // Claim it first, and only if it is not already done. The checkbox stays
     // controlled and is never disabled, so two clicks before the refresh lands
     // — or a replayed POST — would otherwise each create an interaction, the
     // second overwriting `usedInInteractionId` and leaving the first adrift in
     // the timeline with nothing pointing at it. A rolled-back `transact` retry
     // undoes the claim, so restarting re-runs this honestly.
+    //
+    // The contact is in the predicate as well as the status. Another request
+    // scheduling this same row onto somebody else between the read and the
+    // claim would otherwise still match: the interaction would name the person
+    // read a moment ago while `closePlanAsInteraction` matched nothing against
+    // the row as it now is, committing the plan done with no link and leaving
+    // that interaction adrift.
     const claimed = await tx.plan.updateMany({
-      where: { id, ownerId, status: { notIn: ["DONE", "ARCHIVED"] } },
+      where: {
+        id,
+        ownerId,
+        contactId: existing.contactId,
+        status: { notIn: ["DONE", "ARCHIVED"] },
+      },
       data: { status: "DONE", usedAt: occurredAt },
     });
     if (claimed.count === 0) return false;
 
-    const interaction = await tx.interaction.create({
-      data: {
-        ownerId,
-        typeId: hangout?.id ?? null,
-        occurredAt,
-        title: existing.title,
-        notes: str(form, "notes") ?? null,
-        location: existing.location,
-        locationId: existing.locationId,
-        participants: { create: [{ contactId }] },
-      },
-    });
+    const interaction = await tx.interaction.create({ data: interactionData });
 
     await closePlanAsInteraction(tx, {
       ownerId,
