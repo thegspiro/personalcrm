@@ -142,6 +142,25 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       expect(await prisma.associate.count()).toBe(0);
     });
 
+    it("refuses to write a hidden entry while the lock is closed", async () => {
+      // It would land somewhere the writer cannot reach to undo it, and the
+      // identical transition on an edit is refused a moment later.
+      lock();
+
+      expect(
+        await createAssociate(form({ contactId: aliceId, name: "Bob", isPrivate: "true" })),
+      ).toMatchObject({ ok: false });
+      expect(await prisma.associate.count()).toBe(0);
+    });
+
+    it("still writes an ordinary entry while the lock is closed", async () => {
+      lock();
+
+      expect(await createAssociate(form({ contactId: aliceId, name: "Bob" }))).toMatchObject({
+        ok: true,
+      });
+    });
+
     it("refuses a private contact while the lock is closed", async () => {
       // An id remembered from an unlocked session is not a way to go on
       // writing to someone the lock is currently hiding.
@@ -414,6 +433,53 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
 
       expect(await promote(entry.id, { firstName: "Dana" })).toMatchObject({ ok: false });
       expect(await prisma.contact.count({ where: { ownerId, firstName: "Dana" } })).toBe(0);
+    });
+
+    it("withholds the whole entry once the person it became is private", async () => {
+      // Not merely the link. The entry still carries the name it was written
+      // under, and that name is now a private contact's — leaving the row
+      // says "there is someone called Bob, and he is tracked" from a page the
+      // lock does not gate.
+      const id = await add();
+      const result = await promote(id);
+      await prisma.contact.update({
+        where: { id: result.data!.contactId },
+        data: { isPrivate: true },
+      });
+
+      lock();
+      expect((await listAssociateGroups(ownerId)).items).toHaveLength(0);
+      expect((await getContact(ownerId, aliceId))?.associates).toHaveLength(0);
+      // And it cannot be found by the name either.
+      expect((await listContacts(ownerId, { search: "Bob" }, TZ)).items).toHaveLength(0);
+    });
+
+    it("pins the claim to the privacy it read, so a moved marker matches nothing", async () => {
+      // White-box on purpose. The new contact's privacy is derived before the
+      // transaction opens, and the claim carries both markers so that a tab
+      // marking either one private in between is answered with a retry rather
+      // than a public profile whose summary holds the note. The interleaving
+      // itself cannot be forced from here, so what is asserted is the
+      // predicate the action depends on: once the marker moves, the claim
+      // matches nothing.
+      const id = await add();
+      await prisma.contact.update({ where: { id: aliceId }, data: { isPrivate: true } });
+
+      const claimed = await prisma.associate.updateMany({
+        where: {
+          id,
+          ownerId,
+          promotedContactId: null,
+          isPrivate: false,
+          contact: { isPrivate: false },
+        },
+        data: { promotedContactId: aliceId },
+      });
+
+      expect(claimed.count).toBe(0);
+      expect(
+        (await prisma.associate.findUniqueOrThrow({ where: { id } })).promotedContactId,
+      ).toBeNull();
     });
 
     it("survives the promoted person being deleted, and becomes editable again", async () => {

@@ -146,8 +146,15 @@ fragments at every call site rather than one: `associatePrivacyWhere` beside
 is filtered out of people-search for the same reason a private fact's text is:
 finding someone by a name only a hidden note carries would answer "is something
 hidden here, and about whom" from a page the lock does not gate. A promotion
-link names a real person, so where the person it created is private, the link
-is withheld while the entry itself still reads as tracked.
+link names a real person, so where the person it created is private the
+**whole entry** is withheld, not merely the link: the row still carries the
+name it was written under, and leaving it would say "there is someone called
+Bob, and he is tracked" — the same disclosure the relationship filter in
+`getContact` refuses by dropping the row rather than the join.
+
+Creating an entry already marked private is refused while the lock is closed,
+as changing the marker is: it would land somewhere the writer cannot reach to
+undo it.
 
 `DietaryNeed` deliberately has no `isPrivate` — an allergen or emergency
 instruction behind a PIN is decorative safety information. This includes food,

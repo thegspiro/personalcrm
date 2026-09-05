@@ -60,10 +60,11 @@ function toEntry(
     } | null;
   },
   ownerId: string,
-  unlocked: boolean,
 ): AssociateEntry {
+  // Privacy is settled in the query by `associatePrivacyWhere`; what is left
+  // here is the owner check, which the single-column promotion key cannot make
+  // for itself.
   const foreign = row.promoted !== null && row.promoted.ownerId !== ownerId;
-  const withheld = row.promoted !== null && row.promoted.isPrivate && !unlocked;
   return {
     id: row.id,
     name: row.name,
@@ -72,7 +73,7 @@ function toEntry(
     isPrivate: row.isPrivate,
     isPromoted: row.promotedContactId !== null,
     promoted:
-      row.promoted && !foreign && !withheld
+      row.promoted && !foreign
         ? { id: row.promoted.id, name: displayName(row.promoted) }
         : null,
   };
@@ -109,9 +110,16 @@ export async function listAssociateGroups(
     },
     // Ordered through the contact so rows for one person arrive contiguous and
     // grouping is a single pass rather than a map keyed on id.
+    //
+    // `contactId` breaks the tie before any entry-level field, and it is not
+    // cosmetic: two people can share a first and last name, and without it
+    // their rows interleave. The grouping below only compares with the row
+    // before it, so one person would then open several sections — rendered
+    // with the same React key, and each holding part of their list.
     orderBy: [
       { contact: { firstName: "asc" } },
       { contact: { lastName: "asc" } },
+      { contactId: "asc" },
       { name: "asc" },
       { id: "asc" },
     ],
@@ -122,7 +130,7 @@ export async function listAssociateGroups(
 
   const groups: AssociateGroup[] = [];
   for (const row of items) {
-    const entry = toEntry(row, ownerId, scope.unlocked);
+    const entry = toEntry(row, ownerId);
     const last = groups.at(-1);
     if (last && last.contact.id === row.contact.id) {
       last.entries.push(entry);

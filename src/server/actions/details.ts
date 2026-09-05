@@ -715,6 +715,18 @@ export async function createAssociate(
   });
   if (!parsed.success) return invalid(parsed.error);
 
+  // The same refusal `privacyMarker` makes on the way in rather than only on
+  // an edit: writing a hidden row while the lock is closed puts it somewhere
+  // the writer cannot reach to undo it, and an edit that tried the identical
+  // transition would have been rejected a moment later.
+  const isPrivate = bool(form, "isPrivate");
+  if (isPrivate) {
+    const scope = await privacyScope();
+    if (scope.enabled && !scope.unlocked) {
+      return fail("Unlock privacy before adding a hidden entry.");
+    }
+  }
+
   const created = await prisma.associate.create({
     data: {
       ownerId,
@@ -722,7 +734,7 @@ export async function createAssociate(
       name: parsed.data.name,
       howTheyKnow: parsed.data.howTheyKnow ?? null,
       notes: str(form, "notes") ?? null,
-      isPrivate: bool(form, "isPrivate"),
+      isPrivate,
     },
   });
 
@@ -878,8 +890,21 @@ export async function promoteAssociate(
         },
       });
 
+      // The claim pins the two markers the new contact's privacy was derived
+      // from, not just the promotion pointer. Both were read before this
+      // transaction opened, so without them another tab marking either one
+      // private in between would be answered with a public profile whose
+      // summary carries the note — a leak the claim can refuse for free.
+      // A moved marker matches nothing here, so it lands on the same recovery
+      // as a lost race and the retry reads the privacy that now holds.
       const claimed = await tx.associate.updateMany({
-        where: { id, ownerId, promotedContactId: null },
+        where: {
+          id,
+          ownerId,
+          promotedContactId: null,
+          isPrivate: existing.isPrivate,
+          contact: { isPrivate: existing.contact.isPrivate },
+        },
         data: { promotedContactId: person.id },
       });
       if (claimed.count === 0) throw new AlreadyPromoted();

@@ -348,16 +348,13 @@ export const getContact = cache(
       // would not help here: without this the private debt is serialised into
       // the page payload even though the section never renders it.
       contact.debts = contact.debts.filter((debt) => !debt.isPrivate);
-      contact.associates = contact.associates
-        .filter((entry) => !entry.isPrivate)
-        // The promotion link names a real person, so a private one would be
-        // readable from an ordinary contact's page — the same leak the
-        // relationship filter above closes. The entry itself still shows, and
-        // still reads as tracked: dropping that would make it editable again
-        // and invite a second promotion.
-        .map((entry) =>
-          entry.promoted?.isPrivate ? { ...entry, promoted: null } : entry,
-        );
+      // Its own marker, and the person it was promoted into. Withholding only
+      // the link would leave the row still naming that person and still
+      // reading as tracked, which is the same leak the relationship filter
+      // above closes by dropping the row rather than the join.
+      contact.associates = contact.associates.filter(
+        (entry) => !entry.isPrivate && !entry.promoted?.isPrivate,
+      );
     }
 
     // Unconditional, outside the lock block: the promotion pointer is reached
