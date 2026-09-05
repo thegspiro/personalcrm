@@ -99,3 +99,38 @@ test("a plan checklist can be created, edited, checked and deleted without mobil
   await row.getByRole("button", { name: "Edit plan" }).click();
   await expect(plans.locator('input[value="Pack a picnic blanket"]')).toHaveCount(0);
 });
+
+test("a duration survives an edit that does not touch it", async ({ page }) => {
+  // Guards the plumbing this fix runs through: the editor has to re-offer the
+  // stored duration, or an unrelated save clears it. The specific case that
+  // broke — a stored value outside the seven presets, which matched no option
+  // and fell back to the blank one — cannot be reached from this form, since
+  // the picker only offers presets. `tests/integration/plans.test.ts` covers
+  // the server accepting such a value; the re-offering itself is read, not run.
+  await ensureSignedIn(page);
+  await page.goto("/ideas");
+
+  const title = `Duration round-trip ${Date.now()}`;
+  const plans = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Add something to do" }) })
+    .first();
+
+  await plans.getByRole("button", { name: "Add something to do" }).click();
+  await plans.getByLabel("What do you want to do?").fill(title);
+  await plans.getByLabel("Set aside").selectOption("120");
+  await plans.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(plans.getByText(title)).toBeVisible();
+
+  const row = plans.locator("li").filter({ hasText: title }).first();
+  await expect(row.getByText("2h")).toBeVisible();
+
+  // Reopen, change something else entirely, and save.
+  await row.getByRole("button", { name: "Edit plan" }).click();
+  await expect(plans.getByLabel("Set aside")).toHaveValue("120");
+  await plans.getByLabel("Venue").fill("The park");
+  await plans.getByRole("button", { name: "Save", exact: true }).click();
+
+  await expect(row.getByText("The park")).toBeVisible();
+  await expect(row.getByText("2h")).toBeVisible();
+});

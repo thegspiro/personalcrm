@@ -743,7 +743,15 @@ async function planFields(ownerId: string, form: FormData) {
   if (!duration.ok) return null;
 
   const cost = num(form, "estimatedCost");
-  const plannedFor = plainDate(form, "plannedFor") ?? null;
+
+  // An unreadable day is not an empty one. `plainDate` answers `undefined` to
+  // both, and folding them together let a malformed "2026-02-30" save as a
+  // plan with no date at all — quietly taking the time and duration with it,
+  // and reporting success.
+  const plannedForRaw = str(form, "plannedFor");
+  const plannedFor = plannedForRaw ? plainDate(form, "plannedFor") : null;
+  if (plannedForRaw && !plannedFor) return null;
+
   return {
     categoryId,
     location: str(form, "location") ?? null,
@@ -758,7 +766,11 @@ async function planFields(ownerId: string, form: FormData) {
     // and understand, and leaves nothing behind to surface later as an hour
     // against a plan with no date.
     plannedStartMinute: plannedFor ? startMinute.value : null,
-    plannedDurationMinutes: plannedFor ? duration.value : null,
+    // How long a thing takes is a property of the thing, not of the day you
+    // picked for it: "the observatory takes most of an evening" is worth
+    // keeping on a plan nobody has scheduled yet. Only the start time needs a
+    // day to hang on.
+    plannedDurationMinutes: duration.value,
   };
 }
 

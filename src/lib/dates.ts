@@ -100,25 +100,48 @@ export function zonedStartOfDay(date: PlainDate, timeZone: string): Date {
 }
 
 /**
- * The instant a local wall-clock minute of `date` falls on in `timeZone`.
+ * The instant at which a local wall-clock minute of `date` occurs in `timeZone`.
  *
- * Built on `zonedStartOfDay` rather than repeating its search, so the two agree
- * about where a day begins. Both daylight-saving transitions are then decided
- * by the arithmetic, deliberately and in the way calendar apps settle them:
+ * The wall clock is searched for, not counted to. Adding the minute count to
+ * the day's start is only the same answer when the day is 24 hours long: on a
+ * fall-back day it is an hour early for everything after the transition, so
+ * asking for 19:30 on 2026-11-01 in New York returned 18:30 — a reminder an
+ * hour out, one day a year. The search is `zonedStartOfDay`'s, with the same
+ * earliest-candidate rule, applied to the whole wall clock rather than to
+ * midnight: keep only an instant whose *actual* offset is the one that produced
+ * it, because that is what makes its local reading the time asked for.
  *
- *  * Clocks jump forward, so a local time in the skipped hour never happens —
- *    02:30 on a spring-forward day lands on 03:30, an hour of real time after
- *    the day started, which is what "two and a half hours in" means.
+ * The two transitions then fall out of the search rather than out of
+ * arithmetic:
+ *
  *  * Clocks roll back, so a local time in the repeated hour happens twice —
- *    01:30 takes the first, matching `zonedStartOfDay`'s own earliest-candidate
- *    rule.
+ *    two offsets satisfy it and 01:30 takes the first.
+ *  * Clocks jump forward, so a local time in the skipped hour never happens —
+ *    no offset satisfies it, and the elapsed-time answer stands in, putting
+ *    02:30 at 03:30 the way calendar apps do.
  *
- * A minute outside 0-1439 is not rejected here: it is simply that many minutes
- * from the day's start, so a caller that means "the end of the day" can say
+ * A minute outside 0-1439 is not rejected: it names no wall clock, so it falls
+ * to the elapsed-time answer, and a caller meaning "the end of the day" can say
  * 1440. Storage validates the range instead.
  */
 export function zonedTimeOfDay(date: PlainDate, minute: number, timeZone: string): Date {
-  return new Date(zonedStartOfDay(date, timeZone).getTime() + minute * 60_000);
+  const elapsed = new Date(zonedStartOfDay(date, timeZone).getTime() + minute * 60_000);
+
+  const naive = Date.UTC(date.year, date.month - 1, date.day, 0, 0, 0, 0) + minute * 60_000;
+  const offsets = [
+    tzOffsetMs(new Date(naive - MS_PER_DAY), timeZone),
+    tzOffsetMs(new Date(naive), timeZone),
+    tzOffsetMs(new Date(naive + MS_PER_DAY), timeZone),
+    tzOffsetMs(elapsed, timeZone),
+  ];
+
+  let best: number | null = null;
+  for (const offset of offsets) {
+    const candidate = naive - offset;
+    if (best !== null && candidate >= best) continue;
+    if (tzOffsetMs(new Date(candidate), timeZone) === offset) best = candidate;
+  }
+  return best === null ? elapsed : new Date(best);
 }
 
 export function startOfDayInTz(instant: Date, timeZone: string): Date {
