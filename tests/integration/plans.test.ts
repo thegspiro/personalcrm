@@ -416,12 +416,45 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     expect(await prisma.interaction.count()).toBe(0);
   });
 
-  it("completing a plan pencilled in for the past does not read as spoke today", async () => {
+  it("a plan for nobody still closes on the day it was scheduled", async () => {
+    // The nobody-attached branch returns early, so it has to see the same
+    // occurrence the rest of the action does. Computed after it, `usedAt` was
+    // stamped with now — a Friday plan ticked on Sunday recorded Sunday.
+    const plan = await planFor(null, {
+      status: "PLANNED",
+      plannedFor: new Date("2026-10-02T00:00:00.000Z"),
+      plannedStartMinute: 19 * 60 + 30,
+    });
+
+    expect(await completePlan(actionForm({ id: plan.id }))).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.usedAt?.toISOString()).toBe("2026-10-02T23:30:00.000Z");
+  });
+
+  it("an explicit occurredAt reaches a plan saved for nobody", async () => {
+    const plan = await planFor(null);
+    const when = new Date("2026-08-01T18:00:00.000Z");
+
+    expect(
+      await completePlan(actionForm({ id: plan.id, occurredAt: when.toISOString() })),
+    ).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.usedAt?.toISOString()).toBe(when.toISOString());
+  });
+
+  it("completing a plan scheduled in the past does not read as spoke today", async () => {
     // Invariant 1. The cadence has to come from the full history, not from the
     // row just written.
+    //
+    // PLANNED explicitly: `planFor` leaves the default OPEN, and completePlan
+    // reads the saved schedule only while a plan is actually scheduled — so an
+    // open fixture would record now and assert nothing about the cadence. The
+    // open case is its own test, directly below.
     const friend = await makeContact("Marcus");
     await prisma.contact.update({ where: { id: friend.id }, data: { cadenceDays: 7 } });
-    const plan = await planFor(friend.id, { plannedFor: daysAgo(40) });
+    const plan = await planFor(friend.id, { status: "PLANNED", plannedFor: daysAgo(40) });
 
     expect(await completePlan(actionForm({ id: plan.id }))).toMatchObject({ ok: true });
 

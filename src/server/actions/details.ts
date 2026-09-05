@@ -1271,16 +1271,6 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
   if (named && !(await ownsContact(ownerId, named))) return fail("Contact not found.");
   const contactId = existing.contactId ?? named;
 
-  if (!contactId) {
-    const claimed = await prisma.plan.updateMany({
-      where: { id, ownerId, status: { notIn: ["DONE", "ARCHIVED"] } },
-      data: { status: "DONE", usedAt: new Date() },
-    });
-    if (claimed.count === 0) return fail("That one is already done.");
-    touchPlans(null);
-    return ok();
-  }
-
   // When it happened, in this order: what the form says, else the day it is
   // scheduled for resolved in the account's timezone, else now. The middle one
   // is the point — a plan carries its own answer, and asking again for a date
@@ -1297,6 +1287,20 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
       ? planInstant(plainDateFromDb(existing.plannedFor), existing.plannedStartMinute, timezone)
       : null;
   const occurredAt = instant(form, "occurredAt") ?? scheduledAt ?? new Date();
+
+  // Computed above this branch, not below it. The unattached case returns
+  // early, so working it out afterwards stamped `usedAt` with now — a Friday
+  // plan for nobody, ticked on Sunday, recorded Sunday, and an explicit
+  // `occurredAt` never reached it at all.
+  if (!contactId) {
+    const claimed = await prisma.plan.updateMany({
+      where: { id, ownerId, status: { notIn: ["DONE", "ARCHIVED"] } },
+      data: { status: "DONE", usedAt: occurredAt },
+    });
+    if (claimed.count === 0) return fail("That one is already done.");
+    touchPlans(null);
+    return ok();
+  }
 
   const hangout = await findTermBySlug(ownerId, "INTERACTION_TYPE", "hangout");
 
