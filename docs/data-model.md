@@ -465,6 +465,14 @@ ever cleared by a blank, and two rules govern what a non-blank may do:
   meant, not where it is, so a stray save must not move one geocoded
   deliberately.
 
+The row is read `FOR UPDATE` before either rule is applied. A plain read is a
+snapshot one, so without the lock both a date save and a place-page correction
+could see the same blank field, and the save would write the old wording over
+the correction after it committed — the rule held in the common case and lost
+quietly under a concurrent edit. `lockTags` in `actions/tags.ts` takes the same
+approach for the same reason. `resolveLocation` therefore has to be called
+inside a transaction, which all six of its call sites do.
+
 **Distances are computed in process, not in SQL.** MariaDB has
 `ST_Distance_Sphere`, but reaching it means raw SQL, which would lose Prisma's
 typing and — the part that decides it — the privacy where-fragments this app

@@ -1,5 +1,13 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { asARestoreWould, createTestUser, hasTestDatabase, prisma, reset } from "./db";
+import {
+  asARestoreWould,
+  createTestUser,
+  hasTestDatabase,
+  holdUncommitted,
+  prisma,
+  releaseAfterItBlocks,
+  reset,
+} from "./db";
 
 const state = vi.hoisted(() => ({
   ownerId: "",
@@ -1000,6 +1008,56 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       expect(saved.latitude).toBeNull();
       expect(saved.longitude).toBeNull();
     });
+  });
+
+  it("keeps a correction made while a date save was deciding what to fill in", async () => {
+    // The fill-only rule is a read followed by a write, and a snapshot read sees
+    // nothing of a correction committing in between. Held uncommitted, the
+    // correction's row lock is real: `resolveLocation` must wait for it rather
+    // than deciding from a value that has already been replaced.
+    const first = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "Corner Cafe"),
+    );
+
+    const held = await holdUncommitted((tx) =>
+      tx.location.update({ where: { id: first!.id }, data: { city: "Wetherby" } }),
+    );
+
+    const saving = prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "Corner Cafe", { city: "Leeds" }),
+    );
+    await releaseAfterItBlocks(held.release);
+    await Promise.all([held.settled, saving]);
+
+    const saved = await prisma.location.findUniqueOrThrow({ where: { id: first!.id } });
+    expect(saved.city).toBe("Wetherby");
+  });
+
+  it("keeps coordinates set while a date save was deciding whether to place it", async () => {
+    // The same race, on the half that shipped earlier: a place geocoded
+    // deliberately must not be moved by a save that read it as unplaced.
+    const first = await prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "Corner Cafe"),
+    );
+
+    const held = await holdUncommitted((tx) =>
+      tx.location.update({
+        where: { id: first!.id },
+        data: { latitude: 53.8008, longitude: -1.5491 },
+      }),
+    );
+
+    const saving = prisma.$transaction((tx) =>
+      resolveLocation(tx, state.ownerId, "Corner Cafe", {
+        latitude: "48.8566",
+        longitude: "2.3522",
+      }),
+    );
+    await releaseAfterItBlocks(held.release);
+    await Promise.all([held.settled, saving]);
+
+    const saved = await prisma.location.findUniqueOrThrow({ where: { id: first!.id } });
+    expect(Number(saved.latitude)).toBeCloseTo(53.8008, 4);
   });
 
   it("carries a lookup's locality and coordinates onto a place it creates", async () => {

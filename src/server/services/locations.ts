@@ -183,17 +183,34 @@ export async function resolveLocation(
     await claimCanonical(canonical.id, canonical.name);
   if (existing) {
     // Read once, so both "is it already placed" and "does it already say where"
-    // are answered from the same row rather than guessed at.
-    const current = await tx.location.findUnique({
-      where: { id: existing.id },
-      select: {
-        latitude: true,
-        longitude: true,
-        city: true,
-        region: true,
-        country: true,
-      },
-    });
+    // are answered from the same row rather than guessed at — and read `FOR
+    // UPDATE`, so the answer is still true when it is acted on.
+    //
+    // A plain read here is a snapshot one: two transactions could both see a
+    // blank city, the place page could commit a correction, and this could then
+    // write the old date's wording over it — the update blocks on the other's
+    // row lock and then applies, so the rule was lost quietly rather than
+    // refused. The same shape guarded the coordinates, so a place somebody
+    // geocoded deliberately could be moved by a save that read it as unplaced.
+    //
+    // `FOR UPDATE` is a current read that holds the row for the rest of the
+    // transaction, which is what `lockTags` in `actions/tags.ts` does and for
+    // the same reason. Everything below is therefore reasoning about a row that
+    // cannot move underneath it.
+    const [current] = await tx.$queryRaw<
+      Array<{
+        latitude: unknown;
+        longitude: unknown;
+        city: string | null;
+        region: string | null;
+        country: string | null;
+      }>
+    >`
+      SELECT latitude, longitude, city, region, country
+      FROM \`Location\`
+      WHERE id = ${existing.id}
+      FOR UPDATE
+    `;
 
     // Coordinates are filled in, never overwritten. Typing a venue's name into
     // an interaction must not move a place the user geocoded deliberately on
