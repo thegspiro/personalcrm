@@ -16,12 +16,15 @@
 - **A day that could not be read is no longer treated as no day at all.** A
   malformed date submitted directly to the server saved as a plan with no date,
   reported success, and quietly dropped the time with it. It is now refused.
-- **"Dating or interested" no longer appears on an archived person.** The
+- **Someone archived can no longer be added to the dating pipeline.** The
   pipeline leaves archived people out, so the action said it had added them and
-  they never appeared. Restore them first.
+  they never appeared. The menu no longer offers it, and the action itself
+  refuses and says to restore them first — so a second tab or a page left open
+  cannot slip past the menu.
 
 #### Changed
 - **How long something takes no longer needs a date.** It is a property of the
   outing, not of the day you picked for it, so "the observatory takes most of an
   evening" is worth keeping on a plan nobody has scheduled yet. Only the start
-  time still needs a day to hang on.
+  time still needs a day to hang on, and the length now shows on the row whether
+  or not a day is set.

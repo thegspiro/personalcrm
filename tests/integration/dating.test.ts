@@ -352,6 +352,22 @@ describe.skipIf(!hasTestDatabase)("dating", () => {
     expect(after.isRomantic).toBe(false);
   });
 
+  it("refuses to add an archived contact, rather than reporting a success nobody can see", async () => {
+    // The pipeline leaves archived people out, so the flag alone would be a
+    // lie. The menu hides the action, but a second tab archiving them — or a
+    // form left open — still reaches the endpoint.
+    const contact = await prisma.contact.create({
+      data: { ownerId, firstName: "Sam", isArchived: true },
+    });
+
+    const result = await markAsRomantic(contact.id);
+
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { error?: string }).error).toMatch(/restore them first/i);
+    const after = await prisma.contact.findUniqueOrThrow({ where: { id: contact.id } });
+    expect(after.isRomantic).toBe(false);
+  });
+
   it("the pipeline keys on isRomantic, so an ex does not reappear", async () => {
     const current = await makeRomantic();
     const ex = await makeRomantic();

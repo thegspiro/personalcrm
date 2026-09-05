@@ -406,11 +406,17 @@ export function PlansSection({
                       {[
                         formatPartialDate(plan.plannedFor, "DAY", { short: true }),
                         formatPlanTime(plan.plannedStartMinute),
-                        formatPlanDuration(plan.plannedDurationMinutes),
                       ]
                         .filter(Boolean)
                         .join(" · ")}
                     </span>
+                  ) : null}
+                  {/* Its own chip rather than part of the day's. A duration is
+                      kept when no day is set — how long a thing takes belongs
+                      to the thing — so folding it in here would store the
+                      value and then never show it. */}
+                  {plan.plannedDurationMinutes ? (
+                    <span>{formatPlanDuration(plan.plannedDurationMinutes)}</span>
                   ) : null}
                   {formatMoney(plan.estimatedCostCents, plan.currency) ? (
                     <span>

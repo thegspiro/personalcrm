@@ -100,12 +100,15 @@ test("a plan checklist can be created, edited, checked and deleted without mobil
   await expect(plans.locator('input[value="Pack a picnic blanket"]')).toHaveCount(0);
 });
 
-test("a duration survives an edit that does not touch it", async ({ page }) => {
-  // Guards the plumbing this fix runs through: the editor has to re-offer the
-  // stored duration, or an unrelated save clears it. The specific case that
-  // broke — a stored value outside the seven presets, which matched no option
-  // and fell back to the blank one — cannot be reached from this form, since
-  // the picker only offers presets. `tests/integration/plans.test.ts` covers
+test("a duration with no day shows, and survives an edit that does not touch it", async ({ page }) => {
+  // Two things at once, both of which this spec caught by failing. A duration
+  // is kept when no day is set, so the row has to render it outside the day's
+  // chip; and the editor has to re-offer the stored value, or an unrelated
+  // save clears it.
+  //
+  // What it does not reach: a stored value outside the seven presets, which is
+  // the case that broke the re-offering. The picker only offers presets, so it
+  // cannot be produced from this form. `tests/integration/plans.test.ts` covers
   // the server accepting such a value; the re-offering itself is read, not run.
   await ensureSignedIn(page);
   await page.goto("/ideas");
@@ -122,7 +125,9 @@ test("a duration survives an edit that does not touch it", async ({ page }) => {
   await plans.getByRole("button", { name: "Save", exact: true }).click();
   await expect(plans.getByText(title)).toBeVisible();
 
-  const row = plans.locator("li").filter({ hasText: title }).first();
+  // `SectionRow` renders a div with tabindex="-1", not an <li> — the same
+  // locator the two tests above use.
+  const row = plans.locator("[tabindex='-1']").filter({ hasText: title }).first();
   await expect(row.getByText("2h")).toBeVisible();
 
   // Reopen, change something else entirely, and save.
