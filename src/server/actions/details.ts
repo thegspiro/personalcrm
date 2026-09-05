@@ -20,7 +20,7 @@ import {
   viaContactPrivacyWhere,
   viaOptionalContactPrivacyWhere,
 } from "@/server/privacy/filter";
-import { calendarDateInTz, plainDateFromDb, plainDateToDb } from "@/lib/dates";
+import { calendarDateInTz, plainDateFromDb, plainDateKey, plainDateToDb } from "@/lib/dates";
 import { isValidPartialDateRange } from "@/lib/date-precision";
 import {
   allergyCategoryOf,
@@ -1207,8 +1207,14 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
     // the plan in between would otherwise see it restored to PLANNED with
     // `usedAt` and `usedInInteractionId` still pointing at what it became —
     // the contradictory row the check exists to prevent.
+    //
+    // The contact is in it for the same reason. Two stale forms both read this
+    // row as unattached; on status alone both claims match, and the second one
+    // overwrites the person the first attached while still reporting success —
+    // against the rule, three lines below, that an attached plan never moves
+    // between people.
     const moved = await prisma.plan.updateMany({
-      where: { id, ownerId, status: { notIn: ["DONE", "ARCHIVED"] } },
+      where: { id, ownerId, contactId: existing.contactId, status: { notIn: ["DONE", "ARCHIVED"] } },
       data: {
         ...scheduled,
         // The one place a plan changes hands, and only ever from nobody to
@@ -1216,8 +1222,10 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
         ...(existing.contactId === null && withContactId ? { contactId: withContactId } : {}),
       },
     });
+    // Not "already done" any more: the claim can also miss because the plan
+    // changed hands. Say something true of both rather than guessing which.
     if (moved.count === 0) {
-      return fail("That one is already done — save it again as a new plan.");
+      return fail("That plan changed while you were arranging it — open it again.");
     }
     touchPlans(withContactId ?? existing.contactId);
     return ok({ id });
@@ -1324,6 +1332,23 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
 
   const hangout = await findTermBySlug(ownerId, "INTERACTION_TYPE", "hangout");
 
+  // `Interaction.place` is keyed on the location id alone, not on
+  // `[ownerId, id]` the way `LocationAlias` is, so a restored or imported plan
+  // can carry another account's `locationId` — the same cross-owner state
+  // `queries/timeline.ts` already guards its place search against. Copied
+  // unchecked, the timeline drops the mismatched place and the outing loses its
+  // venue, and a delete in the other account reaches across `ON DELETE SET
+  // NULL` into this one. The free-text name is kept either way: what is dropped
+  // is only a foreign key that should never have been there.
+  const placeId =
+    existing.locationId &&
+    (await prisma.location.findFirst({
+      where: { id: existing.locationId, ownerId },
+      select: { id: true },
+    }))
+      ? existing.locationId
+      : null;
+
   const interactionData = {
     ownerId,
     typeId: hangout?.id ?? null,
@@ -1331,7 +1356,7 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
     title: existing.title,
     notes: str(form, "notes") ?? null,
     location: existing.location,
-    locationId: existing.locationId,
+    locationId: placeId,
     participants: { create: [{ contactId }] },
   };
 
@@ -1346,13 +1371,19 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
   // shipped long before this and the e2e assertion built on it.
   const sharedCopy = existing.contactId === null;
 
+  // The copy carries an idempotency key, because there is no original row whose
+  // status could guard this path. Derived here rather than minted by the
+  // browser: a client token would only stop a literal replay, since two tabs
+  // would mint two of them and duplicate anyway. This says "this idea, finished
+  // with this person, on this day", so a replay and a second tab both collide
+  // on the unique index while going to the observatory with Robin again in July
+  // gets a different day and a copy of its own.
+  const completionKey = sharedCopy
+    ? `${existing.id}:${contactId}:${plainDateKey(calendarDateInTz(occurredAt, timezone))}`
+    : null;
+
   const completed = await transact(async (tx) => {
     if (sharedCopy) {
-      // Nothing to claim: the original is not touched, so there is no row whose
-      // status could guard this. Two clicks before the refresh lands would make
-      // two completed copies — visible duplication rather than the orphaned
-      // interaction the in-place path had, and the checkbox guards against it
-      // client-side.
       const interaction = await tx.interaction.create({ data: interactionData });
       await tx.plan.create({
         data: {
@@ -1361,7 +1392,7 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
           title: existing.title,
           categoryId: existing.categoryId,
           location: existing.location,
-          locationId: existing.locationId,
+          locationId: placeId,
           address: existing.address,
           url: existing.url,
           estimatedCostCents: existing.estimatedCostCents,
@@ -1374,14 +1405,15 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
           status: "DONE",
           usedAt: occurredAt,
           usedInInteractionId: interaction.id,
+          completionKey,
         },
       });
       await recomputeContactActivity(tx, [contactId]);
       return true;
     }
 
-    // Claim it first, and only if it is not already done. The checkbox stays
-    // controlled and is never disabled, so two clicks before the refresh lands
+    // Claim it first, and only if it is not already done. The checkbox is
+    // disabled only while a completion is in flight, so two clicks before the refresh lands
     // — or a replayed POST — would otherwise each create an interaction, the
     // second overwriting `usedInInteractionId` and leaving the first adrift in
     // the timeline with nothing pointing at it. A rolled-back `transact` retry
@@ -1418,9 +1450,23 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
     // day in the past must not read as "spoke today".
     await recomputeContactActivity(tx, [contactId]);
     return true;
+  }).catch((error: unknown) => {
+    // The unique index on `(ownerId, completionKey)` is the shared path's
+    // guard, so a violation here means this exact completion already landed —
+    // a replayed POST, or a second tab. Note where this is caught: outside
+    // `transact`, on a transaction the database has already rolled back.
+    // Catching it inside and carrying on is the trap invariant 9 describes, and
+    // `transact` itself retries only MariaDB 1020, so nothing loops.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return "duplicate" as const;
+    }
+    throw error;
   });
 
-  if (!completed) return fail("That one is already done.");
+  if (completed === "duplicate") return fail("That one is already marked done.");
+  // Same two reasons as the scheduling claim: already finished, or moved to
+  // somebody else while this request was in flight.
+  if (!completed) return fail("That plan changed while you were finishing it — open it again.");
 
   touchPlans(contactId);
   revalidatePath("/timeline");

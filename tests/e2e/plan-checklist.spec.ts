@@ -163,7 +163,17 @@ test("a plan can be scheduled and then closed out", async ({ page }) => {
   // The disclosure and the submit both read "Schedule it", so the summary is
   // located by its element and the submit by its role.
   await row.locator("summary").filter({ hasText: "Schedule it" }).click();
-  await row.getByRole("button", { name: "Today" }).click();
+
+  // The day goes in through the popover's own text box, as in happenings.spec.
+  // `DateField` portals its content, so the trigger is inside the row and
+  // everything it opens — the presets included — is at page scope. Enter
+  // commits and closes, so there is nothing to dismiss afterwards.
+  await row.getByRole("button", { name: "Which day?", exact: true }).click();
+  const day = page.getByLabel("Type a date");
+  await day.fill("today");
+  await day.press("Enter");
+  await expect(day).toBeHidden();
+
   await row.getByLabel("Start time").fill("19:30");
   await row.getByRole("button", { name: "Schedule it", exact: true }).click();
 

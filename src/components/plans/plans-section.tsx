@@ -303,8 +303,9 @@ export function PlansSection({
 }) {
   const run = useAction();
   // Which rows have a completion in flight. `useAction` does not expose its
-  // pending state, and the shared-idea path creates a copy rather than
-  // claiming a row, so the server cannot make that one single-use.
+  // pending state, and a second click is a wasted round trip even though the
+  // server refuses it — the in-place path by its atomic claim, the shared-idea
+  // path by the unique key on the copy it writes.
   const [completing, setCompleting] = React.useState<ReadonlySet<string>>(new Set());
   const add = useAddAction();
   const edit = useEditAction();
@@ -372,10 +373,8 @@ export function PlansSection({
                 checked={false}
                 disabled={completing.has(plan.id)}
                 onCheckedChange={() => {
-                  // Completing a shared idea creates a copy, and a copy has no
-                  // row to claim — so unlike the in-place path the server
-                  // cannot make this single-use. Two clicks before the refresh
-                  // lands would make two finished copies.
+                  // Both completion paths are single-use on the server, so
+                  // this only saves the round trip and the second toast.
                   if (completing.has(plan.id)) return;
                   setCompleting((ids) => new Set(ids).add(plan.id));
                   const form = new FormData();

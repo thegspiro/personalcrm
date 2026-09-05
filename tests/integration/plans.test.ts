@@ -4,7 +4,47 @@ import { createTestUser, daysAgo, hasTestDatabase, prisma, reset } from "./db";
 // The time-of-day rules live in `planFields`, so those cases drive the real
 // actions rather than Prisma. Everything else here stays a direct write.
 const actionState = vi.hoisted(() => ({ ownerId: "", locked: false }));
-vi.mock("@/server/db/client", async () => ({ prisma: (await import("./db")).prisma }));
+/**
+ * A seam for the read-then-claim races below.
+ *
+ * `schedulePlan` and `completePlan` both read the plan with
+ * `prisma.plan.findFirst` and then compare-and-set it several awaits later, so
+ * a hook that fires just after the read stands in for another request landing
+ * in that window.
+ *
+ * Wrapped, never spied. A Prisma model delegate is a Proxy whose own-property
+ * descriptor reports no `value`, so `vi.spyOn(prisma.plan, "findFirst")` reads
+ * the original as `undefined` and its restore writes `value: undefined` over
+ * the method — permanently shadowing the get trap, so every later call in the
+ * file dies with "prisma.plan.findFirst is not a function". A wrapper the test
+ * owns has nothing to restore.
+ */
+const afterPlanRead = vi.hoisted(() => ({ current: null as null | (() => Promise<void>) }));
+
+vi.mock("@/server/db/client", async () => {
+  const { prisma } = await import("./db");
+  const plan = new Proxy(prisma.plan, {
+    get: (target, prop, receiver) =>
+      prop === "findFirst"
+        ? async (...args: unknown[]) => {
+            const row = await (
+              target.findFirst as unknown as (...a: unknown[]) => Promise<unknown>
+            )(...args);
+            const hook = afterPlanRead.current;
+            afterPlanRead.current = null;
+            if (hook) await hook();
+            return row;
+          }
+        : Reflect.get(target, prop, receiver),
+  });
+  return {
+    // Receiver is the target, not this proxy: `$transaction` and the other
+    // client methods have to keep their own `this`.
+    prisma: new Proxy(prisma, {
+      get: (target, prop) => (prop === "plan" ? plan : Reflect.get(target, prop, target)),
+    }),
+  };
+});
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/server/user/context", () => ({
   getUserContext: async () => ({
@@ -45,6 +85,8 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     ownerId = user.id;
     actionState.ownerId = user.id;
     actionState.locked = false;
+    // A race case that never reached its read must not arm the next test.
+    afterPlanRead.current = null;
   });
 
   afterAll(async () => {
@@ -436,6 +478,77 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     expect(interaction.participants.map((p) => p.contactId)).toEqual([friend.id]);
   });
 
+  it("finishing the same shared idea twice in a day records it once", async () => {
+    // The shared path writes a copy and leaves the original open, so there is
+    // no row whose status could claim it. The unique key on the copy is what
+    // makes a replayed POST — or a second tab — collide instead of writing a
+    // second finished copy and a second timeline entry.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(null);
+
+    expect(
+      await completePlan(actionForm({ id: plan.id, contactId: friend.id })),
+    ).toMatchObject({ ok: true });
+    expect(
+      await completePlan(actionForm({ id: plan.id, contactId: friend.id })),
+    ).toMatchObject({ ok: false });
+
+    expect(await prisma.plan.count({ where: { contactId: friend.id } })).toBe(1);
+    expect(await prisma.interaction.count()).toBe(1);
+    const original = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(original.status).toBe("OPEN");
+  });
+
+  it("lets the same shared idea happen again on another day", async () => {
+    // The key is the idea, the person and the day — not the idea and the
+    // person — so going to the observatory with Marcus again in July is a
+    // second evening, not a duplicate.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(null);
+
+    expect(
+      await completePlan(
+        actionForm({ id: plan.id, contactId: friend.id, occurredAt: daysAgo(40).toISOString() }),
+      ),
+    ).toMatchObject({ ok: true });
+    expect(
+      await completePlan(actionForm({ id: plan.id, contactId: friend.id })),
+    ).toMatchObject({ ok: true });
+
+    expect(await prisma.plan.count({ where: { contactId: friend.id } })).toBe(2);
+    expect(await prisma.interaction.count()).toBe(2);
+  });
+
+  it("drops a place belonging to someone else rather than copying it over", async () => {
+    // `Interaction.place` is keyed on the location id alone, so a restored or
+    // imported plan can carry another account's `locationId`. Copied unchecked,
+    // the timeline drops the mismatched place and a delete over there reaches
+    // across `ON DELETE SET NULL` into here. The name still has to survive.
+    const stranger = await createTestUser();
+    const theirs = await prisma.location.create({
+      data: {
+        ownerId: stranger.id,
+        name: "Griffith Observatory",
+        normalizedName: "griffith observatory",
+      },
+    });
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id);
+    await prisma.plan.update({
+      where: { id: plan.id },
+      data: { location: "Griffith Observatory", locationId: theirs.id },
+    });
+
+    expect(await completePlan(actionForm({ id: plan.id }))).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    const interaction = await prisma.interaction.findUniqueOrThrow({
+      where: { id: after.usedInInteractionId! },
+    });
+    expect(interaction.locationId).toBeNull();
+    expect(interaction.location).toBe("Griffith Observatory");
+  });
+
   it("abandons a completion when the plan changed hands mid-request", async () => {
     // The claim pins the contact as well as the status. Another request
     // scheduling this row onto someone else between the read and the claim
@@ -447,25 +560,42 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
 
     // Stand in for the racing writer: the row is Bob's by the time the claim
     // runs, while `existing` still says Alice.
-    // Cast: Prisma's method type is a thenable client, not a bare promise, and
-    // the mock only has to resolve to the same row.
-    const original = prisma.plan.findFirst.bind(prisma.plan);
-    const spy = vi.spyOn(prisma.plan, "findFirst").mockImplementationOnce((async (
-      args: unknown,
-    ) => {
-      const row = await original(args as never);
+    afterPlanRead.current = async () => {
       await prisma.plan.update({ where: { id: plan.id }, data: { contactId: bob.id } });
-      return row;
-    }) as never);
+    };
 
     const result = await completePlan(actionForm({ id: plan.id }));
-    spy.mockRestore();
 
     expect(result).toMatchObject({ ok: false });
     expect(await prisma.interaction.count()).toBe(0);
     const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
     expect(after.status).toBe("OPEN");
     expect(after.contactId).toBe(bob.id);
+  });
+
+  it("refuses to schedule a shared plan that someone else just claimed", async () => {
+    // Same shape on the scheduling side. Two stale forms both read the row as
+    // unattached; without the contact in the predicate the second one would
+    // overwrite the person the first attached and still report success —
+    // against the rule that an attached plan never moves between people.
+    const charlie = await makeContact("Charlie");
+    const dana = await makeContact("Dana");
+    const plan = await planFor(null);
+
+    afterPlanRead.current = async () => {
+      await prisma.plan.update({
+        where: { id: plan.id },
+        data: { contactId: charlie.id, status: "PLANNED" },
+      });
+    };
+
+    const result = await schedulePlan(
+      actionForm({ id: plan.id, plannedFor: "2026-12-01", contactId: dana.id }),
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.contactId).toBe(charlie.id);
   });
 
   it("completing a plan saved for nobody closes it without an orphan interaction", async () => {

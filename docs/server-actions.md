@@ -215,6 +215,11 @@ default and leaves the original open for next time; the copy takes a fresh,
 unticked checklist, because inherited ticks would claim a booking nobody made.
 `keepInList` chooses, and only has a say when the plan is unattached.
 
+The write is a compare-and-set on both the status *and* the contact, not just an
+update after the read: several awaits separate the two, and on status alone a
+second stale form would overwrite the person the first one attached and still
+report success.
+
 `completePlan` records what a plan became. `setPlanStatus(id, "DONE")` closes a
 plan and *clears* `usedInInteractionId` — right for undoing a mistake, wrong for
 actually doing the thing — and until now only `createDateEntry` ever pointed a
@@ -230,8 +235,19 @@ does: `listPlans` offers a contact-less plan on everyone's page, so closing the
 shared row because one evening happened would take it off every other person's
 list. The copy is the evening; the original stays open. `createDateEntry` still
 consumes in that case — pre-existing behaviour, deliberately left alone. The
-copy path has no row to claim, so it is not single-use server-side; the checkbox
-guards the double click.
+copy path has no row to claim, so the copy instead carries a `completionKey` —
+`<sourcePlanId>:<contactId>:<local day>`, unique per owner — and a replayed POST
+or a second tab collides on it rather than filing the evening twice. The key is
+derived on the server, not minted by the browser: a client token would stop only
+a literal replay, because two tabs would mint two of them. The violation is
+caught *outside* `transact`, on a transaction the database has already rolled
+back — catching it inside and carrying on is the trap invariant 9 describes.
+
+A `locationId` on the plan is re-checked against the owner before it is copied
+into the interaction or the copy. `Interaction.place` and `Plan.place` are keyed
+on the location id alone, so a restored or imported row can point at another
+account's `Location`; the free-text venue name is kept either way, and only the
+foreign key is dropped.
 
 It never writes a `DateEntry`, even for someone romantic: plans are deliberately
 not behind the privacy lock and a `DateEntry` is, so writing one from here would

@@ -1,6 +1,6 @@
 ### Scheduling something, and closing it out — 2026-09-05
 
-*Schema: none*
+*Schema: `Plan.completionKey`, nullable, unique per owner*
 
 #### Added
 - **A plan can be scheduled.** "Schedule it" on anything in Things to do sets the
@@ -12,7 +12,9 @@
 - **Finishing a shared idea keeps it on the list.** Something saved against
   nobody is offered on everyone's page, so ticking it off on one person's page
   files that evening against them and leaves the idea itself where it was — the
-  same rule scheduling already follows.
+  same rule scheduling already follows. Ticking the same idea off twice for the
+  same person on the same day records it once, whether that is a double click, a
+  second tab or a resent request; the same evening in July is a new one.
 - **Marking something done now records what it became.** It writes the outing
   into your timeline and points the plan at it, so "we did this on the 4th"
   survives. Before, only a date logged through the dating pages did that; a hike
@@ -26,3 +28,11 @@
   save had stopped reading, so nothing was copied while the box looked ticked. The
   city now reaches the place itself, filling in a blank one and never replacing an
   address somebody has already written down for that venue.
+- **Arranging something two ways at once no longer loses one of them.** Two
+  stale forms scheduling the same shared idea with different people would both
+  report success, and the second quietly took the plan off the first person.
+- **A venue that belongs to another account is no longer copied onto your
+  outing.** A plan restored from a backup could point at a place that is not
+  yours; finishing it copied that pointer into your timeline, where the entry
+  silently lost its venue and a deletion over there could reach into it. The
+  name is kept, the stray pointer is not.
