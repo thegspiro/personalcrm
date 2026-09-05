@@ -319,8 +319,13 @@ export async function getCalendarEntries(
     // looks like on a calendar. The span is already widened to cover a vague
     // end, so this is the honest reading of "away from the 3rd to the 10th"
     // rather than a single marker on the 3rd.
+    // Clamped to the window at both ends: the later of the two starts, the
+    // earlier of the two ends. Reading `diffPlainDays(a, b)` as "b minus a" is
+    // what makes these two lines look symmetrical when they are opposites, and
+    // getting the second one backwards spread a three-day trip across every
+    // remaining square of the month.
     const first = diffPlainDays(window.from, span.start) >= 0 ? span.start : window.from;
-    const last = diffPlainDays(span.end, window.to) >= 0 ? window.to : span.end;
+    const last = diffPlainDays(span.end, window.to) >= 0 ? span.end : window.to;
     for (let day = first; diffPlainDays(day, last) >= 0; day = addPlainDays(day, 1)) {
       entries.push({
         id: `happening:${happening.id}@${plainDateKey(day)}`,
@@ -358,8 +363,11 @@ export async function getCalendarEntries(
   // alphabetically, so the order is stable between renders rather than however
   // the five queries happened to come back.
   entries.sort((a, b) => {
+    // `diffPlainDays(b.day, a.day)` is a minus b, which is already the sign a
+    // comparator wants for ascending order. Negating it — the obvious-looking
+    // thing to do — sorts the whole calendar backwards.
     const byDate = diffPlainDays(b.day, a.day);
-    if (byDate !== 0) return -byDate;
+    if (byDate !== 0) return byDate;
     if (a.minute !== b.minute) {
       if (a.minute === null) return 1;
       if (b.minute === null) return -1;

@@ -7,7 +7,7 @@ import { CacheThisPage } from "@/components/offline/offline";
 import { MonthGrid } from "@/components/calendar/month-grid";
 import { AgendaList } from "@/components/calendar/agenda-list";
 import { Icon } from "@/components/nav/icon";
-import { buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   type PlainMonth,
   type WeekStart,
@@ -18,7 +18,6 @@ import {
   plainMonthKey,
 } from "@/lib/calendar-grid";
 import { todayInTz } from "@/lib/dates";
-import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Calendar" };
 export const dynamic = "force-dynamic";
@@ -96,29 +95,28 @@ export default async function CalendarPage({
             you have logged.
           </p>
         </div>
+        {/* `<Button asChild>` rather than `buttonVariants(...)` applied to a
+            plain link. `button.tsx` is a client module, so its exports reach a
+            server component as client references — rendering the component is
+            fine, but *calling* one of its functions here throws at request
+            time, which builds clean and 500s live. Every other server page
+            that wants a link shaped like a button does it this way. */}
         <nav aria-label="Change month" className="flex shrink-0 items-center gap-1">
-          <Link
-            href={`/calendar?month=${previous}`}
-            aria-label="Previous month"
-            className={cn(buttonVariants({ variant: "outline", size: "icon" }))}
-          >
-            <Icon name="ChevronLeft" />
-          </Link>
-          {isThisMonth ? null : (
-            <Link
-              href="/calendar"
-              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-            >
-              Today
+          <Button asChild variant="outline" size="icon-sm" aria-label="Previous month">
+            <Link href={`/calendar?month=${previous}`}>
+              <Icon name="ChevronLeft" />
             </Link>
+          </Button>
+          {isThisMonth ? null : (
+            <Button asChild variant="outline" size="sm">
+              <Link href="/calendar">Today</Link>
+            </Button>
           )}
-          <Link
-            href={`/calendar?month=${next}`}
-            aria-label="Next month"
-            className={cn(buttonVariants({ variant: "outline", size: "icon" }))}
-          >
-            <Icon name="ChevronRight" />
-          </Link>
+          <Button asChild variant="outline" size="icon-sm" aria-label="Next month">
+            <Link href={`/calendar?month=${next}`}>
+              <Icon name="ChevronRight" />
+            </Link>
+          </Button>
         </nav>
       </div>
 
