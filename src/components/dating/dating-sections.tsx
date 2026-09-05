@@ -704,7 +704,10 @@ export function DateLogSection({
                   form.set("contactId", contactId);
                   form.set("title", form.has("copyActivity") ? (entry.activityLabel ?? "Repeat a great date") : "Repeat a great date");
                   if (form.has("copyVenue")) form.set("location", entry.venue ?? "");
-                  if (form.has("copyAddress")) form.set("city", entry.city ?? "");
+                  // `address`, not `city`: Plan.city became the wider
+                  // Plan.address, and this went on writing a field the action
+                  // no longer reads, so the box was ticked and nothing copied.
+                  if (form.has("copyAddress")) form.set("address", entry.city ?? "");
                   await run(() => createPlan(form), "Plan saved for next time");
                 }}
                 className="grid gap-2 rounded-md bg-muted/30 p-2 text-xs"

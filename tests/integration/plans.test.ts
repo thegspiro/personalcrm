@@ -20,7 +20,9 @@ vi.mock("@/server/privacy/lock", () => ({
     actionState.locked ? { ok: false, error: "Unlock to continue." } : { ok: true },
 }));
 
-const { createPlan, updatePlan } = await import("@/server/actions/details");
+const { completePlan, createPlan, schedulePlan, updatePlan } = await import(
+  "@/server/actions/details"
+);
 
 function actionForm(values: Record<string, string>) {
   const form = new FormData();
@@ -283,5 +285,169 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
 
     expect(result).toMatchObject({ ok: false });
     expect(await prisma.plan.count()).toBe(0);
+  });
+
+  async function planFor(contactId: string | null, extra: Record<string, unknown> = {}) {
+    return prisma.plan.create({
+      data: {
+        ownerId,
+        contactId,
+        title: "Go to the observatory",
+        checklist: [{ id: "tickets", text: "Reserve or buy tickets", completed: true }],
+        ...extra,
+      },
+    });
+  }
+
+  it("schedules a plan that already names someone where it stands", async () => {
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id);
+
+    expect(
+      await schedulePlan(
+        actionForm({ id: plan.id, plannedFor: "2026-10-02", plannedStartTime: "19:30" }),
+      ),
+    ).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.status).toBe("PLANNED");
+    expect(after.contactId).toBe(friend.id);
+    expect(after.plannedStartMinute).toBe(19 * 60 + 30);
+    expect(await prisma.plan.count()).toBe(1);
+  });
+
+  it("copies an Anyone plan rather than taking it out of everyone else's list", async () => {
+    // `listPlans` offers a contactId-null plan on every person's page, so
+    // scheduling it with one of them must not consume the shared one.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(null);
+
+    const result = await schedulePlan(
+      actionForm({
+        id: plan.id,
+        plannedFor: "2026-10-02",
+        contactId: friend.id,
+        keepInList: "true",
+      }),
+    );
+    expect(result).toMatchObject({ ok: true });
+
+    const original = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(original.status).toBe("OPEN");
+    expect(original.contactId).toBeNull();
+    expect(original.plannedFor).toBeNull();
+
+    const copyId = (result as { data?: { id: string } }).data!.id;
+    expect(copyId).not.toBe(plan.id);
+    const copy = await prisma.plan.findUniqueOrThrow({ where: { id: copyId } });
+    expect(copy.contactId).toBe(friend.id);
+    expect(copy.status).toBe("PLANNED");
+    expect(copy.title).toBe("Go to the observatory");
+    // A copy arriving with "Reserve or buy tickets" already ticked would claim
+    // something nobody did for this evening.
+    expect(copy.checklist).toEqual([]);
+  });
+
+  it("moves an Anyone plan in place when the list copy is not wanted", async () => {
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(null);
+
+    expect(
+      await schedulePlan(
+        actionForm({ id: plan.id, plannedFor: "2026-10-02", contactId: friend.id }),
+      ),
+    ).toMatchObject({ ok: true });
+
+    expect(await prisma.plan.count()).toBe(1);
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.contactId).toBe(friend.id);
+    expect(after.status).toBe("PLANNED");
+  });
+
+  it("completing a plan records what it became, for an ordinary friend", async () => {
+    // The gap this closes: setPlanStatus(DONE) clears usedInInteractionId, and
+    // only createDateEntry ever set it, so a hike with a friend ended as a
+    // status and nothing else.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id, {
+      plannedFor: new Date("2026-10-02T00:00:00.000Z"),
+      plannedStartMinute: 19 * 60 + 30,
+      location: "Rock Creek",
+    });
+
+    expect(await completePlan(actionForm({ id: plan.id }))).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.status).toBe("DONE");
+    expect(after.usedInInteractionId).not.toBeNull();
+
+    const interaction = await prisma.interaction.findUniqueOrThrow({
+      where: { id: after.usedInInteractionId! },
+      include: { participants: true },
+    });
+    expect(interaction.title).toBe("Go to the observatory");
+    expect(interaction.location).toBe("Rock Creek");
+    expect(interaction.participants.map((p) => p.contactId)).toEqual([friend.id]);
+    // The day and time already on the row, resolved in the account's zone —
+    // 19:30 in New York on a standard-time day.
+    expect(interaction.occurredAt.toISOString()).toBe("2026-10-02T23:30:00.000Z");
+  });
+
+  it("never writes a DateEntry, even for someone romantic", async () => {
+    // Plans are deliberately not behind the privacy lock; DateEntry is. Writing
+    // one from here would be a way round the lock.
+    const partner = await makeContact("Robin", true);
+    const plan = await planFor(partner.id);
+
+    expect(await completePlan(actionForm({ id: plan.id }))).toMatchObject({ ok: true });
+
+    expect(await prisma.dateEntry.count()).toBe(0);
+    expect(await prisma.interaction.count()).toBe(1);
+  });
+
+  it("completing a plan saved for nobody closes it without an orphan interaction", async () => {
+    const plan = await planFor(null);
+
+    expect(await completePlan(actionForm({ id: plan.id }))).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.status).toBe("DONE");
+    expect(after.usedAt).not.toBeNull();
+    expect(await prisma.interaction.count()).toBe(0);
+  });
+
+  it("completing a plan pencilled in for the past does not read as spoke today", async () => {
+    // Invariant 1. The cadence has to come from the full history, not from the
+    // row just written.
+    const friend = await makeContact("Marcus");
+    await prisma.contact.update({ where: { id: friend.id }, data: { cadenceDays: 7 } });
+    const plan = await planFor(friend.id, { plannedFor: daysAgo(40) });
+
+    expect(await completePlan(actionForm({ id: plan.id }))).toMatchObject({ ok: true });
+
+    const after = await prisma.contact.findUniqueOrThrow({ where: { id: friend.id } });
+    expect(after.lastInteractionAt).not.toBeNull();
+    const daysSince = Math.round(
+      (Date.now() - after.lastInteractionAt!.getTime()) / 86_400_000,
+    );
+    expect(daysSince).toBeGreaterThan(30);
+  });
+
+  it("refuses to schedule or complete another owner's plan", async () => {
+    const stranger = await createTestUser();
+    const theirs = await prisma.plan.create({
+      data: { ownerId: stranger.id, title: "Not mine" },
+    });
+
+    expect(
+      await schedulePlan(actionForm({ id: theirs.id, plannedFor: "2026-10-02" })),
+    ).toMatchObject({ ok: false, error: "Not found." });
+    expect(await completePlan(actionForm({ id: theirs.id }))).toMatchObject({
+      ok: false,
+      error: "Not found.",
+    });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: theirs.id } });
+    expect(after.status).toBe("OPEN");
   });
 });

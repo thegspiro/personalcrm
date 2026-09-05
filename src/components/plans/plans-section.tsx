@@ -33,8 +33,10 @@ import {
   planMinuteToInput,
 } from "@/lib/plan-time";
 import {
+  completePlan,
   createPlan,
   deletePlan,
+  schedulePlan,
   setPlanStatus,
   updatePlan,
 } from "@/server/actions/details";
@@ -359,11 +361,16 @@ export function PlansSection({
             )}
           >
             <div className="flex items-start gap-2">
+              {/* Records what the plan became, not just that it is over:
+                  `completePlan` writes the interaction and points the plan at
+                  it, so the evening lands in the timeline. */}
               <Checkbox
                 checked={false}
-                onCheckedChange={() =>
-                  void run(() => setPlanStatus(plan.id, "DONE"), "Marked done")
-                }
+                onCheckedChange={() => {
+                  const form = new FormData();
+                  form.set("id", plan.id);
+                  void run(() => completePlan(form), "Marked done");
+                }}
                 aria-label="Mark as done"
                 className="mt-0.5"
               />
@@ -455,26 +462,83 @@ export function PlansSection({
                   </p>
                 ) : null}
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    void run(
-                      () =>
-                        setPlanStatus(
-                          plan.id,
-                          plan.status === "PLANNED" ? "OPEN" : "PLANNED",
-                        ),
-                      plan.status === "PLANNED"
-                        ? "Back on the list"
-                        : "Pencilled in",
-                    )
-                  }
-                  className="mt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                >
-                  {plan.status === "PLANNED"
-                    ? "Not planned after all"
-                    : "Pencil it in"}
-                </button>
+                {plan.status === "PLANNED" ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void run(() => setPlanStatus(plan.id, "OPEN"), "Back on the list")
+                    }
+                    className="mt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    Not planned after all
+                  </button>
+                ) : (
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+                      Schedule it
+                    </summary>
+                    <form
+                      action={async (form) => {
+                        form.set("id", plan.id);
+                        await run(() => schedulePlan(form), "Scheduled");
+                      }}
+                      className="mt-2 grid gap-2.5 rounded-md bg-muted/30 p-2"
+                    >
+                      <DateField
+                        name="plannedFor"
+                        idPrefix={`schedule-${plan.id}-plannedFor`}
+                        label="Which day?"
+                        allowPrecision={false}
+                        presets={["today"]}
+                        required
+                        defaultValue={plan.plannedFor ? plainDateKey(plan.plannedFor) : undefined}
+                      />
+                      <Field label="Start time" htmlFor={`schedule-${plan.id}-time`}>
+                        <Input
+                          id={`schedule-${plan.id}-time`}
+                          name="plannedStartTime"
+                          type="time"
+                          defaultValue={planMinuteToInput(plan.plannedStartMinute)}
+                        />
+                      </Field>
+                      {plan.contact === null && people.length > 0 ? (
+                        <>
+                          <Field label="Who with?" htmlFor={`schedule-${plan.id}-contact`}>
+                            <select
+                              id={`schedule-${plan.id}-contact`}
+                              name="contactId"
+                              defaultValue=""
+                              className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+                            >
+                              <option value="">Nobody yet</option>
+                              {people.map((person) => (
+                                <option key={person.id} value={person.id}>
+                                  {displayName(person)}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+                          {/* Saved against nobody, so it is offered on
+                              everyone's page. Scheduling it with one person
+                              would take it out of circulation for the rest,
+                              so by default the evening becomes a copy and
+                              this stays on the list. */}
+                          <label className="flex items-start gap-2 text-xs text-muted-foreground">
+                            <input
+                              type="checkbox"
+                              name="keepInList"
+                              value="true"
+                              defaultChecked
+                              className="mt-0.5"
+                            />
+                            <span>Keep this in Things to do for next time</span>
+                          </label>
+                        </>
+                      ) : null}
+                      <SubmitButton size="sm">Schedule it</SubmitButton>
+                    </form>
+                  </details>
+                )}
               </div>
             </div>
           </SectionRow>

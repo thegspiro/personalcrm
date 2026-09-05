@@ -35,13 +35,17 @@ import {
   syncFollowUpTask,
 } from "@/server/services/happenings";
 import { planChecklistSchema } from "@/lib/plan-checklist";
-import { PLAN_MINUTE_MAX, parsePlanDuration, parsePlanMinute } from "@/lib/plan-time";
+import { PLAN_MINUTE_MAX, parsePlanDuration, parsePlanMinute, planInstant } from "@/lib/plan-time";
+import { closePlanAsInteraction } from "@/server/services/plans";
+import { recomputeContactActivity } from "@/server/services/contact-activity";
+import { findTermBySlug } from "@/server/taxonomy/queries";
 import {
   type ActionResult,
   bool,
   invalid,
   fail,
   fieldError,
+  instant,
   num,
   ok,
   owner,
@@ -852,6 +856,181 @@ export async function setPlanStatus(id: string, status: PlanStatusValue): Promis
   });
 
   touchPlans(existing.contactId);
+  return ok();
+}
+
+/**
+ * Pencil a plan in for a day, and optionally a time and a person.
+ *
+ * The awkward part is who it is with. `updatePlan` deliberately never moves a
+ * plan between people, and a plan saved against nobody is a shared library —
+ * `listPlans` offers it on everyone's page — so scheduling one with Robin by
+ * writing `contactId` would take "go to the observatory" out of circulation for
+ * everybody else.
+ *
+ * So an attached plan is scheduled where it stands, and an unattached one being
+ * given a person is **copied**: the copy is the evening with Robin, the original
+ * stays open for the next time. `keepInList` is what the form calls that, and it
+ * only has a say when the plan is unattached — there is nothing to keep a copy
+ * of otherwise. The copy takes a fresh, unticked checklist: inherited ticks
+ * would claim you had already booked.
+ */
+export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: string }>> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  if (!id) return fail("Missing plan.");
+
+  const existing = await prisma.plan.findFirst({
+    where: { id, ownerId, ...viaOptionalContactPrivacyWhere(await privacyScope()) },
+  });
+  if (!existing) return fail("Not found.");
+
+  const plannedForRaw = str(form, "plannedFor");
+  if (!plannedForRaw) return fail("Which day?");
+  const plannedFor = plainDate(form, "plannedFor");
+  if (!plannedFor) return fail("That is not a day.");
+
+  const startMinute = parsePlanMinute(str(form, "plannedStartTime"));
+  if (!startMinute.ok) return fail("That is not a time.");
+  const duration = parsePlanDuration(str(form, "plannedDurationMinutes"));
+  if (!duration.ok) return fail("That is not a length.");
+
+  const withContactId = str(form, "contactId") ?? null;
+  if (withContactId && !(await ownsContact(ownerId, withContactId))) {
+    return fail("Contact not found.");
+  }
+
+  const scheduled = {
+    plannedFor,
+    plannedStartMinute: startMinute.value,
+    plannedDurationMinutes: duration.value ?? existing.plannedDurationMinutes,
+    status: "PLANNED" as const,
+  };
+
+  // Copy only when there is a person to attach and an original worth keeping.
+  const copying = existing.contactId === null && withContactId !== null && bool(form, "keepInList");
+
+  if (!copying) {
+    await prisma.plan.update({
+      where: { id },
+      data: {
+        ...scheduled,
+        // The one place a plan changes hands, and only ever from nobody to
+        // somebody: an attached plan still never moves between people.
+        ...(existing.contactId === null && withContactId ? { contactId: withContactId } : {}),
+      },
+    });
+    touchPlans(withContactId ?? existing.contactId);
+    return ok({ id });
+  }
+
+  const copy = await prisma.plan.create({
+    data: {
+      ownerId,
+      contactId: withContactId,
+      title: existing.title,
+      categoryId: existing.categoryId,
+      location: existing.location,
+      locationId: existing.locationId,
+      address: existing.address,
+      url: existing.url,
+      estimatedCostCents: existing.estimatedCostCents,
+      currency: existing.currency,
+      notes: existing.notes,
+      // Deliberately not `existing.checklist`: a copy that arrived with
+      // "Reserve or buy tickets" already ticked would be claiming something
+      // nobody did for this evening.
+      checklist: [],
+      ...scheduled,
+    },
+  });
+
+  touchPlans(withContactId);
+  return ok({ id: copy.id });
+}
+
+/**
+ * Mark a plan done by recording what it became.
+ *
+ * `setPlanStatus(id, "DONE")` closes a plan and clears `usedInInteractionId`,
+ * which is right for correcting a mistake and wrong for actually doing the
+ * thing: until now only `createDateEntry` ever pointed a plan at an
+ * interaction, so a hike with a friend ended as a status and nothing else.
+ *
+ * It writes a plain `Interaction`, never a `DateEntry`, even when the person is
+ * someone you are dating. Plans are deliberately not behind the privacy lock —
+ * locking them would put your own hiking list behind a PIN — and a `DateEntry`
+ * is, so writing one from here would be a way round the lock. Logging a date
+ * properly is still the date log's "From a saved idea", which is guarded.
+ *
+ * A plan with nobody attached and nobody named just closes: an interaction with
+ * no participants would sit in the timeline belonging to no one.
+ */
+export async function completePlan(form: FormData): Promise<ActionResult> {
+  const { ownerId, timezone } = await owner();
+  const id = str(form, "id");
+  if (!id) return fail("Missing plan.");
+
+  const existing = await prisma.plan.findFirst({
+    where: { id, ownerId, ...viaOptionalContactPrivacyWhere(await privacyScope()) },
+  });
+  if (!existing) return fail("Not found.");
+
+  const named = str(form, "contactId") ?? null;
+  if (named && !(await ownsContact(ownerId, named))) return fail("Contact not found.");
+  const contactId = existing.contactId ?? named;
+
+  if (!contactId) {
+    await prisma.plan.update({
+      where: { id },
+      data: { status: "DONE", usedAt: new Date() },
+    });
+    touchPlans(null);
+    return ok();
+  }
+
+  // When it happened, in this order: what the form says, else the day it was
+  // pencilled in for resolved in the account's timezone, else now. The middle
+  // one is the point — a plan carries its own answer, and asking again for a
+  // date already on the row is a question with a right answer nobody should
+  // have to retype.
+  const occurredAt =
+    instant(form, "occurredAt") ??
+    (existing.plannedFor
+      ? planInstant(plainDateFromDb(existing.plannedFor), existing.plannedStartMinute, timezone)
+      : new Date());
+
+  const hangout = await findTermBySlug(ownerId, "INTERACTION_TYPE", "hangout");
+
+  await transact(async (tx) => {
+    const interaction = await tx.interaction.create({
+      data: {
+        ownerId,
+        typeId: hangout?.id ?? null,
+        occurredAt,
+        title: existing.title,
+        notes: str(form, "notes") ?? null,
+        location: existing.location,
+        locationId: existing.locationId,
+        participants: { create: [{ contactId }] },
+      },
+    });
+
+    await closePlanAsInteraction(tx, {
+      ownerId,
+      planId: id,
+      contactId: existing.contactId,
+      interactionId: interaction.id,
+      occurredAt,
+    });
+
+    // Invariant 1: never assign the date just written. A plan completed with a
+    // day in the past must not read as "spoke today".
+    await recomputeContactActivity(tx, [contactId]);
+  });
+
+  touchPlans(contactId);
+  revalidatePath("/timeline");
   return ok();
 }
 

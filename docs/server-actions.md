@@ -120,7 +120,7 @@ list, because a person missing from the form would be silently dropped on save.
 | Significant moments (`LifeEvent`) | `createLifeEvent`, `updateLifeEvent`, `deleteLifeEvent` |
 | Going on in their life (`Happening`) | `createHappening`, `updateHappening`, `acknowledgeHappening`, `deleteHappening` |
 | Ideas | `createIdea`, `updateIdea`, `setIdeaStatus`, `deleteIdea` |
-| Plans | `createPlan`, `updatePlan`, `setPlanStatus`, `deletePlan` |
+| Plans | `createPlan`, `updatePlan`, `schedulePlan`, `completePlan`, `setPlanStatus`, `deletePlan` |
 | Tasks | `createTask`, `updateTask`, `setTaskDone`, `deleteTask` |
 | Gifts | `createGift`, `updateGift`, `setGiftStatus`, `deleteGift` |
 | Debts | `createDebt`, `updateDebt`, `settleDebt`, `deleteDebt` |
@@ -178,6 +178,31 @@ kept: how long a thing takes belongs to the thing, not to the day picked for it,
 so "the observatory takes most of an evening" survives on a plan nobody has
 scheduled. Only the start minute needs a day to hang on, and it is stored as a
 local wall-clock reading against that day, never converted to an instant here.
+
+`schedulePlan` pencils a plan in and is the one place a plan changes hands —
+only ever from nobody to somebody. `updatePlan` still never moves a plan between
+people, and a plan saved against nobody is a shared library that `listPlans`
+offers on everyone's page, so scheduling one *with* a person copies it by
+default and leaves the original open for next time; the copy takes a fresh,
+unticked checklist, because inherited ticks would claim a booking nobody made.
+`keepInList` chooses, and only has a say when the plan is unattached.
+
+`completePlan` records what a plan became. `setPlanStatus(id, "DONE")` closes a
+plan and *clears* `usedInInteractionId` — right for undoing a mistake, wrong for
+actually doing the thing — and until now only `createDateEntry` ever pointed a
+plan at an interaction, so a hike with a friend ended as a status and nothing
+else. It writes a plain `Interaction` through
+`closePlanAsInteraction` (`src/server/services/plans.ts`, shared with
+`createDateEntry` so the scoping cannot drift), takes `occurredAt` from the day
+and time already on the row when the form does not override it, and runs
+`recomputeContactActivity` rather than assigning the date it just wrote.
+
+It never writes a `DateEntry`, even for someone romantic: plans are deliberately
+not behind the privacy lock and a `DateEntry` is, so writing one from here would
+be a way round the lock. Logging a date properly stays the date log's "From a
+saved idea", which is guarded. A plan with nobody attached and nobody named just
+closes — an interaction with no participants would sit in the timeline belonging
+to no one.
 
 Important-date and life-event updates and deletes also filter through their
 contact's privacy marker. The timeline exposes these controls, so an id retained

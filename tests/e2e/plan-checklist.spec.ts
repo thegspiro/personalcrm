@@ -139,3 +139,39 @@ test("a duration with no day shows, and survives an edit that does not touch it"
   await expect(row.getByText("The park")).toBeVisible();
   await expect(row.getByText("2h")).toBeVisible();
 });
+
+test("a plan can be scheduled and then closed out", async ({ page }) => {
+  // The two new actions through the UI. The copy-versus-in-place rule for a
+  // plan saved against nobody is covered in tests/integration/plans.test.ts,
+  // which can assert on both rows; this drives the controls.
+  await ensureSignedIn(page);
+  await page.goto("/ideas");
+
+  const title = `Schedule and finish ${Date.now()}`;
+  const plans = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Add something to do" }) })
+    .first();
+
+  await plans.getByRole("button", { name: "Add something to do" }).click();
+  await plans.getByLabel("What do you want to do?").fill(title);
+  await plans.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(plans.getByText(title)).toBeVisible();
+
+  const row = plans.locator("[tabindex='-1']").filter({ hasText: title }).first();
+
+  // The disclosure and the submit both read "Schedule it", so the summary is
+  // located by its element and the submit by its role.
+  await row.locator("summary").filter({ hasText: "Schedule it" }).click();
+  await row.getByRole("button", { name: "Today" }).click();
+  await row.getByLabel("Start time").fill("19:30");
+  await row.getByRole("button", { name: "Schedule it", exact: true }).click();
+
+  // Exact: "Not planned after all" contains "planned" too.
+  await expect(row.getByText("planned", { exact: true })).toBeVisible();
+  await expect(row.getByText("7:30 PM")).toBeVisible();
+
+  // Closing it out records what it became, so it leaves the open list.
+  await row.getByLabel("Mark as done").click();
+  await expect(plans.getByText(title)).toHaveCount(0);
+});
