@@ -18,6 +18,7 @@
   it happened, not the day you got round to ticking it.
 
 #### Fixed
-- **"Plan this again" now copies the address.** The tickbox wrote to a field the
-  save no longer read, so the address was quietly dropped while the box looked
-  ticked. It was renamed when plans gained a full address, and this was missed.
+- **"Plan this again" now copies where it was.** The tickbox wrote to a field the
+  save had stopped reading, so nothing was copied while the box looked ticked. The
+  city now reaches the place itself, filling in a blank one and never replacing an
+  address somebody has already written down for that venue.

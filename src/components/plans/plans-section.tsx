@@ -369,6 +369,11 @@ export function PlansSection({
                 onCheckedChange={() => {
                   const form = new FormData();
                   form.set("id", plan.id);
+                  // A shared row on someone's page is being finished *with*
+                  // them. Without this the action takes its no-contact branch,
+                  // closes the plan, and the evening never reaches their
+                  // timeline or their cadence.
+                  if (contactId && plan.contact === null) form.set("contactId", contactId);
                   void run(() => completePlan(form), "Marked done");
                 }}
                 aria-label="Mark as done"
@@ -501,7 +506,17 @@ export function PlansSection({
                           defaultValue={planMinuteToInput(plan.plannedStartMinute)}
                         />
                       </Field>
-                      {plan.contact === null && people.length > 0 ? (
+                      {/* A person's page scopes the section but passes no
+                          `people`, so there is no picker here — and scheduling
+                          a shared row would otherwise mark it planned for
+                          nobody. The page already knows who it is about. */}
+                      {plan.contact === null && contactId ? (
+                        <>
+                          <input type="hidden" name="contactId" value={contactId} />
+                          <input type="hidden" name="keepInList" value="true" />
+                        </>
+                      ) : null}
+                      {plan.contact === null && contactId === null && people.length > 0 ? (
                         <>
                           <Field label="Who with?" htmlFor={`schedule-${plan.id}-contact`}>
                             <select

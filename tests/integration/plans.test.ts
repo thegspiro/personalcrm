@@ -450,4 +450,96 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     const after = await prisma.plan.findUniqueOrThrow({ where: { id: theirs.id } });
     expect(after.status).toBe("OPEN");
   });
+
+  it("completing a plan twice records it once", async () => {
+    // The checkbox is controlled and never disabled, so two clicks before the
+    // refresh lands both reach the action. Without an atomic claim each made
+    // an interaction and the second overwrote usedInInteractionId, leaving the
+    // first adrift in the timeline with nothing pointing at it.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id);
+
+    expect(await completePlan(actionForm({ id: plan.id }))).toMatchObject({ ok: true });
+    expect(await completePlan(actionForm({ id: plan.id }))).toMatchObject({ ok: false });
+
+    expect(await prisma.interaction.count()).toBe(1);
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.usedInInteractionId).not.toBeNull();
+  });
+
+  it("does not file a completed plan on a day it was called off", async () => {
+    // "Not planned after all" returns the plan to OPEN and leaves plannedFor
+    // behind. Trusting it would put the evening on a day it did not happen and
+    // hand that instant to the cadence — the one thing invariant 1 exists for.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id, { status: "OPEN", plannedFor: daysAgo(40) });
+
+    expect(await completePlan(actionForm({ id: plan.id }))).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    const interaction = await prisma.interaction.findUniqueOrThrow({
+      where: { id: after.usedInInteractionId! },
+    });
+    const daysOld = (Date.now() - interaction.occurredAt.getTime()) / 86_400_000;
+    expect(daysOld).toBeLessThan(1);
+  });
+
+  it("still uses the schedule while the plan is actually planned", async () => {
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id, {
+      status: "PLANNED",
+      plannedFor: new Date("2026-10-02T00:00:00.000Z"),
+      plannedStartMinute: 19 * 60 + 30,
+    });
+
+    expect(await completePlan(actionForm({ id: plan.id }))).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    const interaction = await prisma.interaction.findUniqueOrThrow({
+      where: { id: after.usedInInteractionId! },
+    });
+    expect(interaction.occurredAt.toISOString()).toBe("2026-10-02T23:30:00.000Z");
+  });
+
+  it("refuses to reschedule something already carried out", async () => {
+    // usedAt and usedInInteractionId still point at what it became, so putting
+    // it back to PLANNED would leave one row both arranged and already done.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id);
+    await completePlan(actionForm({ id: plan.id }));
+
+    const result = await schedulePlan(
+      actionForm({ id: plan.id, plannedFor: "2026-12-01" }),
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.status).toBe("DONE");
+    expect(after.usedInInteractionId).not.toBeNull();
+  });
+
+  it("a repeated date's city reaches the place as locality, never as its address", async () => {
+    // "Plan this again" carries the date's remembered city. An address given to
+    // resolveLocation replaces the place's own, so passing it there would
+    // flatten "12 High Street, Leeds" to "Leeds" for every record naming the
+    // venue. A city fills a blank one and never overwrites.
+    const place = await prisma.location.create({
+      data: {
+        ownerId,
+        name: "The Brudenell",
+        normalizedName: "the brudenell",
+        address: "33 Queens Road, Leeds",
+      },
+    });
+
+    expect(
+      await createPlan(
+        actionForm({ title: "Go again", location: "The Brudenell", city: "Leeds" }),
+      ),
+    ).toMatchObject({ ok: true });
+
+    const after = await prisma.location.findUniqueOrThrow({ where: { id: place.id } });
+    expect(after.address).toBe("33 Queens Road, Leeds");
+    expect(after.city).toBe("Leeds");
+  });
 });

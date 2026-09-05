@@ -704,10 +704,16 @@ export function DateLogSection({
                   form.set("contactId", contactId);
                   form.set("title", form.has("copyActivity") ? (entry.activityLabel ?? "Repeat a great date") : "Repeat a great date");
                   if (form.has("copyVenue")) form.set("location", entry.venue ?? "");
-                  // `address`, not `city`: Plan.city became the wider
-                  // Plan.address, and this went on writing a field the action
-                  // no longer reads, so the box was ticked and nothing copied.
-                  if (form.has("copyAddress")) form.set("address", entry.city ?? "");
+                  // `city`, and deliberately not `address`. Plan.city became
+                  // the wider Plan.address, so this wrote a field nothing read
+                  // and the box copied nothing — but moving it to `address`
+                  // would be worse than the no-op: an address given to
+                  // `resolveLocation` replaces the place's own, so a
+                  // remembered "Leeds" would flatten "12 High Street, Leeds"
+                  // for every record naming that venue. It is locality, so
+                  // `createPlan` now forwards it to the place as a city, which
+                  // fills a blank one and never overwrites.
+                  if (form.has("copyAddress")) form.set("city", entry.city ?? "");
                   await run(() => createPlan(form), "Plan saved for next time");
                 }}
                 className="grid gap-2 rounded-md bg-muted/30 p-2 text-xs"

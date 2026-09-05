@@ -794,6 +794,13 @@ export async function createPlan(form: FormData): Promise<ActionResult<{ id: str
     const place = await resolveLocation(tx, ownerId, fields.location ?? undefined, {
       address: fields.address,
       url: fields.url,
+      // Locality, and it has to arrive as one. `resolveLocation` fills a blank
+      // city and never overwrites it, while an address given here replaces the
+      // place's own — so "Plan this again", carrying a date's remembered
+      // "Leeds", would flatten "12 High Street, Leeds" for every record naming
+      // that venue if this were passed as an address. Plan has no city column;
+      // the value belongs to the place, not to the plan.
+      city: str(form, "city"),
     });
     return tx.plan.create({
       data: { ownerId, contactId, title, status: planStatusOf(str(form, "status")), ...fields, locationId: place?.id ?? null },
@@ -884,6 +891,14 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
     where: { id, ownerId, ...viaOptionalContactPrivacyWhere(await privacyScope()) },
   });
   if (!existing) return fail("Not found.");
+
+  // A plan already carried out is not reschedulable. `usedAt` and
+  // `usedInInteractionId` still point at what it became, so putting it back to
+  // PLANNED would leave one row both arranged for the future and already done.
+  // Refusing keeps that record; clearing it to allow the move would destroy it.
+  if (existing.status === "DONE" || existing.status === "ARCHIVED") {
+    return fail("That one is already done — save it again as a new plan.");
+  }
 
   const plannedForRaw = str(form, "plannedFor");
   if (!plannedForRaw) return fail("Which day?");
@@ -981,28 +996,47 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
   const contactId = existing.contactId ?? named;
 
   if (!contactId) {
-    await prisma.plan.update({
-      where: { id },
+    const claimed = await prisma.plan.updateMany({
+      where: { id, ownerId, status: { notIn: ["DONE", "ARCHIVED"] } },
       data: { status: "DONE", usedAt: new Date() },
     });
+    if (claimed.count === 0) return fail("That one is already done.");
     touchPlans(null);
     return ok();
   }
 
-  // When it happened, in this order: what the form says, else the day it was
-  // pencilled in for resolved in the account's timezone, else now. The middle
-  // one is the point — a plan carries its own answer, and asking again for a
-  // date already on the row is a question with a right answer nobody should
-  // have to retype.
-  const occurredAt =
-    instant(form, "occurredAt") ??
-    (existing.plannedFor
+  // When it happened, in this order: what the form says, else the day it is
+  // scheduled for resolved in the account's timezone, else now. The middle one
+  // is the point — a plan carries its own answer, and asking again for a date
+  // already on the row is a question with a right answer nobody should retype.
+  //
+  // Only while the plan is actually PLANNED, though. "Not planned after all"
+  // returns it to OPEN and leaves `plannedFor` behind, so trusting the date on
+  // an open row would file the evening on a day it was called off — and hand
+  // that instant to the cadence, which is the one thing invariant 1 exists to
+  // stop. An open plan carrying a date the user still means is one click from
+  // being scheduled again, or can say so through `occurredAt`.
+  const scheduledAt =
+    existing.status === "PLANNED" && existing.plannedFor
       ? planInstant(plainDateFromDb(existing.plannedFor), existing.plannedStartMinute, timezone)
-      : new Date());
+      : null;
+  const occurredAt = instant(form, "occurredAt") ?? scheduledAt ?? new Date();
 
   const hangout = await findTermBySlug(ownerId, "INTERACTION_TYPE", "hangout");
 
-  await transact(async (tx) => {
+  const completed = await transact(async (tx) => {
+    // Claim it first, and only if it is not already done. The checkbox stays
+    // controlled and is never disabled, so two clicks before the refresh lands
+    // — or a replayed POST — would otherwise each create an interaction, the
+    // second overwriting `usedInInteractionId` and leaving the first adrift in
+    // the timeline with nothing pointing at it. A rolled-back `transact` retry
+    // undoes the claim, so restarting re-runs this honestly.
+    const claimed = await tx.plan.updateMany({
+      where: { id, ownerId, status: { notIn: ["DONE", "ARCHIVED"] } },
+      data: { status: "DONE", usedAt: occurredAt },
+    });
+    if (claimed.count === 0) return false;
+
     const interaction = await tx.interaction.create({
       data: {
         ownerId,
@@ -1027,7 +1061,10 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
     // Invariant 1: never assign the date just written. A plan completed with a
     // day in the past must not read as "spoke today".
     await recomputeContactActivity(tx, [contactId]);
+    return true;
   });
+
+  if (!completed) return fail("That one is already done.");
 
   touchPlans(contactId);
   revalidatePath("/timeline");
