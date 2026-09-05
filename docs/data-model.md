@@ -883,6 +883,45 @@ owner's local day — the same reading as the overdue count and the People
 filter — task rows use an incomplete task's due date, and digest rows use the
 user's local calendar date.
 
+Important-date rows come from two sources, joined by `dateSourcesForUser` in
+`src/server/services/reminders.ts`: `ImportantDate` rows, and the canonical
+birthday projected from `Contact.birthDate` by
+[`src/server/queries/birthdays.ts`](../src/server/queries/birthdays.ts). The
+contact form writes no `ImportantDate` shadow row, so reading that table alone
+meant a birthday entered the normal way was shown on every screen and never
+sent anywhere. Where a contact has both, the legacy `ImportantDate` birthday is
+suppressed and the projection carries the reminder — otherwise the same
+birthday arrives twice, and an edited birthday would still be announced on the
+old row's date. The projection inherits the legacy row's `reminderDaysBefore`,
+so an account that configured offsets keeps them.
+
+A canonical birthday is stored in the ledger under
+`contact-birthday:<contactId>` — `entityId` is a 64-character column and the
+prefixed cuid fits — and it stays that for the life of the contact, whatever
+rows come and go around it.
+
+An install upgrading into canonical birthdays has already sent the occurrence
+in flight under the legacy row's id, which the ledger cannot match under the
+new key. So the scheduler *reads* that old identity rather than adopting it:
+where legacy birthday rows exist, a delivery is skipped if one for the same
+occurrence, offset **and channel** already exists under any of them — sent, or
+still being retried. Per channel, because the ledger is keyed that way: an
+owner whose email had the legacy reminder and who adds a webhook the same day
+should still get it there. Across *every* such row, not the first, since any of
+them could be the one holding the history. A cancelled row does not count;
+nothing will deliver it, and suppressing on one would lose the birthday rather
+than repeat it. Borrowing the
+legacy id as the key instead would look like continuity and is not: adding a
+birthday-typed date to a contact whose birthday had already gone out would move
+the identity out from under the ledger row and send the occurrence again.
+
+Only `DAY` and `MONTH_DAY` precision produce a reminder: `MONTH` and `YEAR`
+have no day to name, and `projectDateOccurrences` likewise declines to invent
+one. The legacy row is suppressed by the *existence* of a canonical birthday,
+not by whether it is precise enough to remind — otherwise a birthday recorded
+as a month would leave that row live to announce an exact day the contact page
+does not show. An unknown day means silence, not a fallback to the stale row.
+
 A digest reaches two days past today: cadences whose `nextTouchAt` falls before
 the end of that third local day, incomplete tasks due on or before it, and
 important-date occurrences whose own `reminderDaysBefore` policy would speak on

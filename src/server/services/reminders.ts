@@ -1,5 +1,5 @@
 import "server-only";
-import { Prisma, type ReminderEntity } from "@prisma/client";
+import { Prisma, type DatePrecision, type ReminderEntity } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import {
   addPlainDays,
@@ -13,8 +13,16 @@ import {
   todayInTz,
   zonedStartOfDay,
   type PlainDate,
+  type Recurrence,
 } from "@/lib/dates";
 import { dueOccurrence, effectiveReminderDays, type ReminderPolicy } from "@/lib/reminders";
+import {
+  birthdayContactSelect,
+  birthdayProjectionId,
+  contactIdFromBirthdayProjectionId,
+  isBirthdayImportantDate,
+  projectContactBirthday,
+} from "@/server/queries/birthdays";
 import {
   cadenceMessage,
   dailyOccurrence,
@@ -50,6 +58,8 @@ type Channel = Awaited<ReturnType<Db["notificationChannel"]["findFirstOrThrow"]>
 
 /** One thing owed to one owner on one occurrence; fanned out per channel. */
 type Candidate = ReminderMessage & {
+  /** Legacy identities this candidate took over; see `supersededPairs`. */
+  supersedes?: string[];
   entityType: ReminderEntity;
   entityId: string;
   policy: SchedulingPolicy;
@@ -144,6 +154,215 @@ function taskWhere(user: Pick<ScheduledUser, "id">, schedule: Schedule) {
 }
 
 /**
+ * A birthday is `Contact.birthDate`, not an `ImportantDate` row — see
+ * `src/server/queries/birthdays.ts`. Every screen already reads it that way;
+ * the scheduler did not, so a birthday entered on the contact form produced no
+ * reminder and no digest line at all. Both paths below go through one source
+ * so they cannot drift apart again: what the digest lists is what gets sent.
+ */
+type DateSource = {
+  /** `ImportantDate.id`, or the birthday projection id. Stored as `entityId`. */
+  key: string;
+  /**
+   * A legacy birthday row whose ledger history this source continues.
+   *
+   * The key itself never changes — it is the projection id for the life of the
+   * contact, whatever rows come and go around it. Borrowing the legacy row's id
+   * instead looks like continuity and is not: adding a birthday-typed date to a
+   * contact whose birthday had already been sent would move the identity out
+   * from under the ledger row and send the occurrence a second time. So the old
+   * identity is read, never adopted.
+   */
+  supersedes?: string[];
+  contactId: string;
+  label: string;
+  contactName: string;
+  anchor: PlainDate;
+  recurrence: Recurrence;
+  reminderDaysBefore: unknown;
+};
+
+/**
+ * A reminder has to name a day. `DAY` and `MONTH_DAY` have one — `MONTH_DAY`
+ * is a birthday whose year is unknown, which is still every year on the same
+ * date. `MONTH` and `YEAR` do not, and `projectDateOccurrences` refuses to
+ * invent one for them; announcing "today" off a stored placeholder day is the
+ * lie that `DatePrecision` exists to prevent.
+ */
+const REMINDABLE_PRECISION: ReadonlySet<DatePrecision> = new Set(["DAY", "MONTH_DAY"]);
+
+const IMPORTANT_DATE_SELECT = {
+  id: true, contactId: true, label: true, date: true, recurrence: true, reminderDaysBefore: true,
+  contact: { select: { firstName: true, lastName: true } },
+  type: { select: { slug: true } },
+} as const;
+
+function birthdaySource(
+  contact: Parameters<typeof projectContactBirthday>[0],
+  supersedes?: string[],
+): DateSource | null {
+  const birthday = projectContactBirthday(contact);
+  if (!birthday || !REMINDABLE_PRECISION.has(birthday.precision)) return null;
+  return {
+    key: birthdayProjectionId(birthday.contactId),
+    supersedes,
+    contactId: birthday.contactId,
+    label: birthday.label,
+    contactName: personName(birthday.contact),
+    anchor: birthday.date,
+    recurrence: birthday.recurrence,
+    // A legacy birthday row lends its offsets, exactly as it lends them to the
+    // projection on screen, so an account that configured one keeps them.
+    reminderDaysBefore: birthday.reminderDaysBefore,
+  };
+}
+
+/**
+ * Every dated thing this owner could be reminded about, canonical birthdays
+ * included and legacy birthday rows suppressed behind them.
+ *
+ * The suppression matters twice over: two reminders for one birthday, and a
+ * reminder fired off a stale duplicate row after the contact form updated the
+ * canonical date. `dashboard.ts` and the contact page draw the same line.
+ */
+async function dateSourcesForUser(
+  db: Db,
+  user: Pick<ScheduledUser, "id">,
+  schedule: Schedule,
+): Promise<DateSource[]> {
+  const [rows, contacts] = await Promise.all([
+    db.importantDate.findMany({
+      where: { ownerId: user.id, contact: { ownerId: user.id, ...visibleContact(schedule.locked) } },
+      select: IMPORTANT_DATE_SELECT,
+    }),
+    db.contact.findMany({
+      where: { ownerId: user.id, birthDate: { not: null }, ...visibleContact(schedule.locked) },
+      select: birthdayContactSelect,
+    }),
+  ]);
+  // Every contact holding a canonical birthday, precise enough to remind or
+  // not. Keyed off the remindable ones instead, a birthday recorded as a month
+  // would leave its legacy row live — and that row would announce an exact day
+  // the contact page does not show, which is the invention this all exists to
+  // prevent. An unknown day means silence, not a fallback to the stale row.
+  const canonical = new Set(contacts.map((contact) => contact.id));
+  // Every birthday-typed row for the contact, not the first: they are all
+  // suppressed, so any of them could be the one holding the ledger history for
+  // the occurrence in flight, and missing it sends the birthday again.
+  const legacyBirthdayIds = new Map<string, string[]>();
+  for (const row of rows) {
+    if (!isBirthdayImportantDate(row)) continue;
+    legacyBirthdayIds.set(row.contactId, [...(legacyBirthdayIds.get(row.contactId) ?? []), row.id]);
+  }
+  const birthdays = contacts
+    .map((contact) => birthdaySource(contact, legacyBirthdayIds.get(contact.id)))
+    .filter((row): row is DateSource => row !== null);
+  const dates = rows
+    .filter((row) => !(canonical.has(row.contactId) && isBirthdayImportantDate(row)))
+    .map((row) => ({
+      key: row.id,
+      contactId: row.contactId,
+      label: row.label,
+      contactName: personName(row.contact),
+      anchor: plainDateFromDb(row.date),
+      recurrence: row.recurrence,
+      reminderDaysBefore: row.reminderDaysBefore,
+    }));
+  return [...dates, ...birthdays];
+}
+
+/**
+ * Deliveries a superseded identity is already carrying, keyed per channel.
+ *
+ * An install upgrading into canonical birthdays has already sent the occurrence
+ * in flight under the legacy row's id, which the ledger cannot match under the
+ * new key. Rather than moving the identity — which only relocates the problem —
+ * the old one is read and its deliveries are skipped.
+ *
+ * Per channel, because the candidate is fanned out per channel and the ledger
+ * is keyed that way: an owner whose email had the legacy reminder and who adds
+ * a webhook the same day should still get it there. Sent or still being
+ * retried both count; a *cancelled* row does not, since nothing will deliver it
+ * and suppressing on one would lose the birthday rather than repeat it.
+ */
+async function supersededPairs(
+  db: Db,
+  ownerId: string,
+  candidates: Candidate[],
+): Promise<Set<string>> {
+  const ids = [...new Set(candidates.flatMap((candidate) => candidate.supersedes ?? []))];
+  if (ids.length === 0) return new Set();
+  const rows = await db.reminderLog.findMany({
+    where: {
+      ownerId,
+      entityType: "IMPORTANT_DATE",
+      entityId: { in: ids },
+      OR: [{ ok: true }, { nextAttemptAt: { not: null } }],
+    },
+    select: { entityId: true, scheduledFor: true, offsetDays: true, channelId: true },
+  });
+  return new Set(rows.map((row) =>
+    supersededKey(row.entityId, row.scheduledFor, row.offsetDays, row.channelId),
+  ));
+}
+
+function supersededKey(entityId: string, scheduledFor: Date, offsetDays: number, channelId: string | null): string {
+  return [entityId, scheduledFor.toISOString().slice(0, 10), offsetDays, channelId ?? ""].join("\u0000");
+}
+
+/** The same source, re-read for one stored `entityId` when a retry claims it. */
+async function dateSourceById(
+  db: Db,
+  user: Pick<ScheduledUser, "id">,
+  schedule: Schedule,
+  entityId: string,
+): Promise<DateSource | null> {
+  const contactId = contactIdFromBirthdayProjectionId(entityId);
+  if (contactId) {
+    const contact = await db.contact.findFirst({
+      where: { id: contactId, ownerId: user.id, birthDate: { not: null }, ...visibleContact(schedule.locked) },
+      select: birthdayContactSelect,
+    });
+    return contact ? birthdaySource(contact) : null;
+  }
+  const row = await db.importantDate.findFirst({
+    where: { id: entityId, ownerId: user.id, contact: { ownerId: user.id, ...visibleContact(schedule.locked) } },
+    select: IMPORTANT_DATE_SELECT,
+  });
+  if (!row) return null;
+  // A birthday row superseded by a canonical birthday no longer speaks for
+  // itself: the canonical date answers, still under this row's ledger identity
+  // so the retry keeps its dedup key. If the canonical birthday has no day to
+  // name, nothing is owed — the stale row must not stand in for it.
+  if (isBirthdayImportantDate(row)) {
+    const contact = await db.contact.findFirst({
+      // The same visibility predicate as the row read above. Defensive rather
+      // than load-bearing: the read above gates this one on the identical
+      // predicate, so no caller can reach here with a contact this would
+      // exclude. It is here because a reader should not have to prove that,
+      // and because the projection-id branch already reads this way — two
+      // lookups of the same thing filtering differently is how the next
+      // change to either one goes wrong.
+      where: {
+        id: row.contactId, ownerId: user.id, birthDate: { not: null },
+        ...visibleContact(schedule.locked),
+      },
+      select: birthdayContactSelect,
+    });
+    if (contact) return birthdaySource(contact, [row.id]);
+  }
+  return {
+    key: row.id,
+    contactId: row.contactId,
+    label: row.label,
+    contactName: personName(row.contact),
+    anchor: plainDateFromDb(row.date),
+    recurrence: row.recurrence,
+    reminderDaysBefore: row.reminderDaysBefore,
+  };
+}
+
+/**
  * How far past today the digest looks. Standalone reminders are unaffected:
  * each still fires on its own policy, on its own day.
  */
@@ -178,16 +397,16 @@ function digestTaskWhere(user: Pick<ScheduledUser, "id">, schedule: Schedule, th
 }
 
 /** Selects only fields that are permitted to leave the server in a digest. */
-async function digestItemsForUser(db: Db, user: Pick<ScheduledUser, "id">, schedule: Schedule): Promise<DigestItem[]> {
+async function digestItemsForUser(
+  db: Db,
+  user: Pick<ScheduledUser, "id">,
+  schedule: Schedule,
+  // Passed in rather than re-read: a scheduled pass has already built these to
+  // decide what is owed, and the digest must describe that same set.
+  dates: DateSource[],
+): Promise<DigestItem[]> {
   const through = addPlainDays(schedule.today, DIGEST_LOOKAHEAD_DAYS);
-  const [dates, cadence, tasks] = await Promise.all([
-    db.importantDate.findMany({
-      where: { ownerId: user.id, contact: { ownerId: user.id, ...visibleContact(schedule.locked) } },
-      select: {
-        id: true, label: true, date: true, recurrence: true, reminderDaysBefore: true,
-        contact: { select: { firstName: true, lastName: true } },
-      },
-    }),
+  const [cadence, tasks] = await Promise.all([
     db.contact.findMany({
       where: digestCadenceWhere(user, schedule, through),
       select: { firstName: true, lastName: true, nextTouchAt: true },
@@ -212,17 +431,17 @@ async function digestItemsForUser(db: Db, user: Pick<ScheduledUser, "id">, sched
     for (const date of dates) {
       for (const offset of effectiveReminderDays(reminderPolicy(date.reminderDaysBefore))) {
         const occurrence = dueOccurrence(
-          plainDateFromDb(date.date), date.recurrence, addPlainDays(schedule.today, ahead), offset,
+          date.anchor, date.recurrence, addPlainDays(schedule.today, ahead), offset,
         );
         if (!occurrence) continue;
         // Two offsets on two different days can name the same occurrence.
         // Keyed by row id, not by what is displayed: two people with the same
         // name sharing a birthday are two entries, not one.
-        const key = `${date.id}\u0000${plainDateKey(occurrence)}`;
+        const key = `${date.key}\u0000${plainDateKey(occurrence)}`;
         if (seen.has(key)) continue;
         seen.add(key);
         items.push({
-          kind: "IMPORTANT_DATE", label: date.label, contactName: personName(date.contact),
+          kind: "IMPORTANT_DATE", label: date.label, contactName: date.contactName,
           date: occurrence, preview: ahead > 0,
         });
       }
@@ -254,22 +473,20 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
   const schedule = scheduleFor(user, now);
   const candidates: Candidate[] = [];
 
-  const dates = await db.importantDate.findMany({
-    where: { ownerId: user.id, contact: { ownerId: user.id, ...visibleContact(schedule.locked) } },
-    include: { contact: CONTACT_NAME },
-  });
+  const dates = await dateSourcesForUser(db, user, schedule);
   for (const date of dates) {
     for (const offset of effectiveReminderDays(reminderPolicy(date.reminderDaysBefore))) {
-      const occurrence = dueOccurrence(plainDateFromDb(date.date), date.recurrence, schedule.today, offset);
+      const occurrence = dueOccurrence(date.anchor, date.recurrence, schedule.today, offset);
       if (!occurrence) continue;
       candidates.push({
+        supersedes: date.supersedes,
         entityType: "IMPORTANT_DATE",
-        entityId: date.id,
+        entityId: date.key,
         policy: "IMPORTANT_DATE_OFFSET",
         occurrence: plainDateKey(occurrence),
         scheduledFor: plainDateToDb(occurrence),
         offsetDays: offset,
-        ...importantDateMessage(date.label, personName(date.contact), occurrence, schedule.today),
+        ...importantDateMessage(date.label, date.contactName, occurrence, schedule.today),
       });
     }
   }
@@ -311,7 +528,7 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
   }
 
   if (user.preference.digestEnabled && digestIsDue(now, schedule.timezone, user.preference.digestHour)) {
-    const digestItems = await digestItemsForUser(db, user, schedule);
+    const digestItems = await digestItemsForUser(db, user, schedule, dates);
     candidates.push({
       entityType: "DIGEST",
       entityId: user.id,
@@ -359,24 +576,21 @@ async function currentMessage(
 
   switch (log.schedulingPolicy as SchedulingPolicy) {
     case "IMPORTANT_DATE_OFFSET": {
-      const date = await db.importantDate.findFirst({
-        where: { id: log.entityId, ownerId: user.id, contact: { ownerId: user.id, ...visibleContact(schedule.locked) } },
-        include: { contact: CONTACT_NAME },
-      });
+      const date = await dateSourceById(db, user, schedule, log.entityId);
       if (!date || !effectiveReminderDays(reminderPolicy(date.reminderDaysBefore)).includes(log.offsetDays)) {
         return null;
       }
       // The date may have been corrected since: it is still owed only if it
       // still falls on the occurrence this row was written for.
       const occurrence = dueOccurrence(
-        plainDateFromDb(date.date),
+        date.anchor,
         date.recurrence,
         addPlainDays(scheduled, -log.offsetDays),
         log.offsetDays,
       );
       if (!occurrence || plainDateKey(occurrence) !== plainDateKey(scheduled)) return null;
       if (diffPlainDays(schedule.today, occurrence) > log.offsetDays) return NOT_YET;
-      return importantDateMessage(date.label, personName(date.contact), occurrence, schedule.today);
+      return importantDateMessage(date.label, date.contactName, occurrence, schedule.today);
     }
     case "OVERDUE_CADENCE": {
       const contact = await db.contact.findFirst({
@@ -423,7 +637,10 @@ async function currentMessage(
       // candidate would wait for it; so does the retry, keeping its row and
       // its key rather than sending early or being cancelled outright.
       if (!digestIsDue(now, schedule.timezone, user.preference.digestHour)) return NOT_YET;
-      return digestMessage(await digestItemsForUser(db, user, schedule), schedule.today);
+      return digestMessage(
+        await digestItemsForUser(db, user, schedule, await dateSourcesForUser(db, user, schedule)),
+        schedule.today,
+      );
     }
     default:
       return null;
@@ -606,6 +823,7 @@ export async function processReminderDeliveries(
       select: { id: true, dedupKey: true, ok: true, nextAttemptAt: true, attemptCount: true },
     });
     const ledgered = new Set(rows.map((row) => row.dedupKey));
+    const superseded = await supersededPairs(db, user.id, candidates);
 
     // A row cancelled while its reminder was ineligible — the task completed,
     // the person made private — keeps its key, so the candidate it matches
@@ -622,6 +840,11 @@ export async function processReminderDeliveries(
     }
     for (const { candidate, channel, dedupKey } of pairs) {
       if (ledgered.has(dedupKey)) continue;
+      // Delivered already under an identity this candidate took over — for
+      // this channel specifically, so a channel added since still gets its own.
+      if (candidate.supersedes?.some((id) =>
+        superseded.has(supersededKey(id, candidate.scheduledFor, candidate.offsetDays, channel.id)),
+      )) continue;
       const result = await createAndDeliver(db, send, user, candidate, channel, dedupKey, now, clock);
       if (result === true) sent += 1;
       if (result === false) failed += 1;
