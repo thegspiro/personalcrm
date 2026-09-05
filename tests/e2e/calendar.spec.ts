@@ -104,7 +104,11 @@ test("something pencilled in for today reaches the calendar", async ({ page }) =
   // behind it — so an unscoped locator is a strict-mode violation rather than
   // a passing assertion. Scoping also makes the test say what it means, which
   // is that the day view is the complete one.
-  const daySection = page.locator("section", { has: page.locator("#calendar-day-heading") });
+  // By the section's own attribute, not by "a section containing that
+  // heading": the day view used to be nested inside the month's section, so
+  // the containment filter matched the outer one too and picked up the agenda
+  // behind it. The markup is siblings now and the locator names one element.
+  const daySection = page.locator("section[aria-labelledby='calendar-day-heading']");
   await expect(daySection.getByRole("link", { name: new RegExp(title) })).toBeVisible();
 });
 

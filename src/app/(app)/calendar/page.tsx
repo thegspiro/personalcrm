@@ -152,34 +152,6 @@ export default async function CalendarPage({
           className="hidden lg:block"
         />
 
-        {/* The day a cell was opened on, in full. The grid holds three entries
-            to a square before it would start to scroll, so on a busy day this
-            is the only place the rest of them exist. Rendered at every width:
-            on a phone the month agenda is already complete, but a link into a
-            particular day still has to lead somewhere. */}
-        {selected ? (
-          <section
-            aria-labelledby="calendar-day-heading"
-            className="grid min-w-0 gap-1.5 rounded-xl border border-border bg-card p-4"
-          >
-            <div className="flex min-w-0 items-baseline justify-between gap-2">
-              <h3 id="calendar-day-heading" className="min-w-0 truncate text-sm font-semibold tracking-tight">
-                {formatPartialDate(selected, "DAY", { weekday: true })}
-              </h3>
-              <Link
-                href={`/calendar?month=${plainMonthKey(month)}`}
-                className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:underline"
-              >
-                Close
-              </Link>
-            </div>
-            {selectedEntries.length > 0 ? (
-              <DayEntries entries={selectedEntries} />
-            ) : (
-              <p className="text-xs text-muted-foreground">Nothing on this day.</p>
-            )}
-          </section>
-        ) : null}
         <div className="lg:hidden">
           <AgendaList
             month={month}
@@ -189,6 +161,35 @@ export default async function CalendarPage({
           />
         </div>
       </section>
+
+      {/* The day a cell was opened on, in full. The grid holds three entries
+          to a square before it would start to scroll, so on a busy day this
+          is the only place the rest of them exist. Rendered at every width:
+          on a phone the month agenda is already complete, but a link into a
+          particular day still has to lead somewhere. */}
+      {selected ? (
+        <section
+          aria-labelledby="calendar-day-heading"
+          className="grid min-w-0 gap-1.5 rounded-xl border border-border bg-card p-4"
+        >
+          <div className="flex min-w-0 items-baseline justify-between gap-2">
+            <h3 id="calendar-day-heading" className="min-w-0 truncate text-sm font-semibold tracking-tight">
+              {formatPartialDate(selected, "DAY", { weekday: true })}
+            </h3>
+            <Link
+              href={`/calendar?month=${plainMonthKey(month)}`}
+              className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:underline"
+            >
+              Close
+            </Link>
+          </div>
+          {selectedEntries.length > 0 ? (
+            <DayEntries entries={selectedEntries} />
+          ) : (
+            <p className="text-xs text-muted-foreground">Nothing on this day.</p>
+          )}
+        </section>
+      ) : null}
 
       {cacheable ? <CacheThisPage /> : null}
     </div>
