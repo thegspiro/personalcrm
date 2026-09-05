@@ -29,6 +29,35 @@ export function factPrivacyWhere(scope: PrivacyScope): Prisma.FactWhereInput {
   return scope.unlocked ? {} : { isPrivate: false };
 }
 
+/**
+ * Applied to Associate queries.
+ *
+ * Two conditions, and the second is not obvious. The row's own marker is the
+ * first; the person it was *promoted into* is the second, because a promoted
+ * entry keeps the name it was written under, and that name is now a private
+ * contact's. Withholding only the join and leaving the row would still say
+ * "there is someone called Bob, and he is tracked" from a page the lock does
+ * not gate — the same disclosure `lifeEventPrivacyWhere` and the relationship
+ * filter in `getContact` refuse, so the whole entry goes.
+ *
+ * The person the entry hangs off is a third question, answered by
+ * `viaContactPrivacyWhere` alongside this one, exactly as a fact is filtered.
+ *
+ * The `OR` is built only inside the locked branch. Spread into a where-clause
+ * from the unlocked branch it would be an empty member that matches nothing
+ * rather than everything — the inversion `viaOptionalContactPrivacyWhere`
+ * documents below.
+ */
+export function associatePrivacyWhere(
+  scope: PrivacyScope,
+): Prisma.AssociateWhereInput {
+  if (scope.unlocked) return {};
+  return {
+    isPrivate: false,
+    OR: [{ promotedContactId: null }, { promoted: { isPrivate: false } }],
+  };
+}
+
 /** Applied to Debt queries. */
 export function debtPrivacyWhere(scope: PrivacyScope): Prisma.DebtWhereInput {
   return scope.unlocked ? {} : { isPrivate: false };

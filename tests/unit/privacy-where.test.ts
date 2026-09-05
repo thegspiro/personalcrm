@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  associatePrivacyWhere,
   householdPrivacyWhere,
   interactionPrivacyWhere,
   lifeEventPrivacyWhere,
@@ -10,6 +11,41 @@ import {
 const LOCKED: PrivacyScope = { enabled: true, unlocked: false };
 const UNLOCKED: PrivacyScope = { enabled: true, unlocked: true };
 const OFF: PrivacyScope = { enabled: false, unlocked: true };
+
+describe("associate privacy where-fragment", () => {
+  it("withholds an entry marked private, or one promoted into a private person", () => {
+    // The second condition is the non-obvious one: a promoted entry keeps the
+    // name it was written under, and that name is now a private contact's.
+    // Withholding only the join would leave the row still saying it.
+    expect(associatePrivacyWhere(LOCKED)).toEqual({
+      isPrivate: false,
+      OR: [{ promotedContactId: null }, { promoted: { isPrivate: false } }],
+    });
+  });
+
+  it("keeps an unpromoted entry reachable while locked", () => {
+    // The OR's first member. Without it every entry that was never promoted
+    // would be filtered out, which is most of them.
+    const [unpromoted] = associatePrivacyWhere(LOCKED).OR!;
+    expect(unpromoted).toEqual({ promotedContactId: null });
+  });
+
+  it("does not filter entries while unlocked or when the lock is off", () => {
+    // The empty object matters: spread into a where-clause it must widen
+    // nothing, and dropped into an OR it would match nothing instead.
+    expect(associatePrivacyWhere(UNLOCKED)).toEqual({});
+    expect(associatePrivacyWhere(OFF)).toEqual({});
+  });
+
+  it("says nothing about the contact it hangs off", () => {
+    // Deliberately only half the answer. The entry's own marker and the
+    // person's are separate questions, and every caller spreads
+    // viaContactPrivacyWhere beside this one; folding them together here
+    // would be wrong inside `Contact.associates.some(...)`, where the
+    // contact half is already applied to the outer query.
+    expect(associatePrivacyWhere(LOCKED)).not.toHaveProperty("contact");
+  });
+});
 
 describe("household privacy where-fragment", () => {
   it("excludes every household with a private member while locked", () => {

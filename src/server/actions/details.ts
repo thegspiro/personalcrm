@@ -11,6 +11,7 @@ import { resolveLocation } from "@/server/services/locations";
 // shape lives beside the provider table.
 import type { GeoCandidateView } from "@/server/geo/providers";
 import {
+  associatePrivacyWhere,
   contactPrivacyWhere,
   debtPrivacyWhere,
   factPrivacyWhere,
@@ -27,6 +28,7 @@ import {
   dietaryKindOf,
   validAllergyCombination,
 } from "@/lib/dietary";
+import { isConcurrentRowChange } from "@/lib/db-errors";
 import { parseReminderDays } from "@/lib/reminders";
 import { AVAILABILITY_IMPACTS, type AvailabilityImpact } from "@/lib/happenings";
 import {
@@ -57,7 +59,8 @@ import {
 
 /**
  * Everything that hangs off a contact: facts, important dates, life events,
- * ideas, plans, tasks, gifts, debts, dietary needs, and relationships.
+ * ideas, the people in their life, plans, tasks, gifts, debts, dietary needs,
+ * and relationships.
  *
  * None of these touch interaction history, so none of them recompute contact
  * activity — only interactions move the keep-in-touch clock.
@@ -677,6 +680,279 @@ export async function deleteIdea(id: string): Promise<ActionResult> {
   touch(existing.contactId);
   revalidatePath("/ideas");
   return ok();
+}
+
+// --- people in their life ---------------------------------------------------
+
+/**
+ * Entries appear on the person's page and on the roll-up, and a promotion adds
+ * someone to the people list, so the shared `touch` is not enough on its own.
+ */
+function touchAssociate(contactId?: string | null) {
+  touch(contactId);
+  revalidatePath("/people");
+  revalidatePath("/people/friends");
+}
+
+const associateSchema = z.object({
+  name: z.string().trim().min(1, "Give them a name.").max(191),
+  // Bounded to the column width so an over-long value comes back as a field
+  // error rather than a database rejection thrown out of the action.
+  howTheyKnow: z.string().trim().max(191).optional(),
+});
+
+const promoteSchema = z.object({
+  firstName: z.string().trim().min(1, "A first name is required.").max(120),
+  lastName: z.string().trim().max(120).optional(),
+});
+
+export async function createAssociate(
+  form: FormData,
+): Promise<ActionResult<{ id: string }>> {
+  const { ownerId } = await owner();
+  const contactId = str(form, "contactId");
+  if (!contactId) return fail("Contact not found.");
+  if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
+
+  const parsed = associateSchema.safeParse({
+    name: str(form, "name") ?? "",
+    howTheyKnow: str(form, "howTheyKnow"),
+  });
+  if (!parsed.success) return invalid(parsed.error);
+
+  // The same refusal `privacyMarker` makes on the way in rather than only on
+  // an edit: writing a hidden row while the lock is closed puts it somewhere
+  // the writer cannot reach to undo it, and an edit that tried the identical
+  // transition would have been rejected a moment later.
+  const isPrivate = bool(form, "isPrivate");
+  if (isPrivate) {
+    const scope = await privacyScope();
+    if (scope.enabled && !scope.unlocked) {
+      return fail("Unlock privacy before adding a hidden entry.");
+    }
+  }
+
+  const created = await prisma.associate.create({
+    data: {
+      ownerId,
+      contactId,
+      name: parsed.data.name,
+      howTheyKnow: parsed.data.howTheyKnow ?? null,
+      notes: str(form, "notes") ?? null,
+      isPrivate,
+    },
+  });
+
+  touchAssociate(contactId);
+  return ok({ id: created.id });
+}
+
+export async function updateAssociate(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  if (!id) return fail("Not found.");
+
+  // Scoped by both fragments as well as the owner: the entry carries its own
+  // marker and hangs off someone who may be private, and an id remembered from
+  // an unlocked session must not be a way back into either.
+  const scope = await privacyScope();
+  const existing = await prisma.associate.findFirst({
+    where: {
+      id,
+      ownerId,
+      ...associatePrivacyWhere(scope),
+      ...viaContactPrivacyWhere(scope),
+    },
+    select: { contactId: true, isPrivate: true, promotedContactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  // Once promoted the entry is a record of what was written at the time, not a
+  // live note; the profile it produced is where this person is edited now.
+  if (existing.promotedContactId) {
+    return fail("They're tracked as a person now — edit their profile.");
+  }
+
+  const parsed = associateSchema.safeParse({
+    name: str(form, "name") ?? "",
+    howTheyKnow: str(form, "howTheyKnow"),
+  });
+  if (!parsed.success) return invalid(parsed.error);
+
+  const marker = await privacyMarker(form, existing.isPrivate);
+  if (!marker.ok) return fail(marker.error);
+
+  await prisma.associate.update({
+    where: { id },
+    data: {
+      name: parsed.data.name,
+      howTheyKnow: parsed.data.howTheyKnow ?? null,
+      notes: str(form, "notes") ?? null,
+      isPrivate: marker.isPrivate,
+    },
+  });
+
+  touchAssociate(existing.contactId);
+  return ok();
+}
+
+/**
+ * Removing the note. Allowed even once promoted — throwing away a note that
+ * the profile now supersedes is not an edit of it, and it touches nothing
+ * about the person it created.
+ */
+export async function deleteAssociate(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const scope = await privacyScope();
+  const existing = await prisma.associate.findFirst({
+    where: {
+      id,
+      ownerId,
+      ...associatePrivacyWhere(scope),
+      ...viaContactPrivacyWhere(scope),
+    },
+    select: { contactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  await prisma.associate.delete({ where: { id } });
+  touchAssociate(existing.contactId);
+  return ok();
+}
+
+/**
+ * Turn an entry into someone you actually track.
+ *
+ * The entry is kept rather than consumed: it records what was written before
+ * this person had a profile, and deleting it would be a status change that
+ * destroys something. It stops being editable in place instead.
+ *
+ * Idempotent by construction. The claim is a compare-and-set on
+ * `promotedContactId: null` inside the transaction, so a double submit — two
+ * tabs, or a retried request, neither of which a disabled button catches —
+ * blocks on the first writer's row lock, then matches nothing and rolls its own
+ * half-built person away. One person, one reciprocal pair, either way.
+ */
+export async function promoteAssociate(
+  form: FormData,
+): Promise<ActionResult<{ contactId: string }>> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  const typeId = str(form, "typeId");
+  if (!id) return fail("Not found.");
+  if (!typeId) return fail("Pick how they know each other.");
+
+  // Read before the transaction opens rather than inside it.
+  const scope = await privacyScope();
+  const existing = await prisma.associate.findFirst({
+    where: {
+      id,
+      ownerId,
+      ...associatePrivacyWhere(scope),
+      ...viaContactPrivacyWhere(scope),
+    },
+    // Only what is needed before the transaction opens: whether this is
+    // reachable at all, whether it is already done, and whose page it is on.
+    // The note and both privacy markers are read again under a lock inside,
+    // because a value read here can be stale by the time it is used.
+    select: { contactId: true, promotedContactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  // Already done — answer with the person that exists rather than an error.
+  // A stale tab should land on them, not on a red toast.
+  if (existing.promotedContactId) return ok({ contactId: existing.promotedContactId });
+
+  const parsed = promoteSchema.safeParse({
+    firstName: str(form, "firstName") ?? "",
+    lastName: str(form, "lastName"),
+  });
+  if (!parsed.success) return invalid(parsed.error);
+
+  const type = await prisma.taxonomyTerm.findFirst({
+    where: { id: typeId, ownerId, kind: "RELATIONSHIP_TYPE" },
+    select: { id: true, inverseTermId: true },
+  });
+  if (!type) return fail(UNKNOWN_TERM);
+
+  let personId: string;
+  try {
+    personId = await prisma.$transaction(async (tx) => {
+      // Both rows the new contact's privacy is derived from are locked before
+      // it is decided. A plain read inside a transaction is a non-locking
+      // consistent read under MariaDB's default isolation, so the privacy read
+      // taken above can already be stale by the time the row is claimed — and
+      // the answer to a stale read here is a public profile whose summary
+      // carries a note about someone now hidden. `FOR UPDATE` is a current
+      // read: it sees a committed change the snapshot would miss, and waits
+      // for a tab still making one. Same reason `createContactMethod` locks
+      // the contact before deciding a sort order.
+      const [locked] = await tx.$queryRaw<
+        { isPrivate: number; parentPrivate: number; notes: string | null }[]
+      >`SELECT a.isPrivate AS isPrivate, a.notes AS notes, c.isPrivate AS parentPrivate
+          FROM Associate a
+          JOIN Contact c ON c.id = a.contactId
+         WHERE a.id = ${id} AND a.ownerId = ${ownerId} AND a.promotedContactId IS NULL
+         FOR UPDATE`;
+      if (!locked) throw new AlreadyPromoted();
+
+      // Derived from the locked read, never from the one taken before the
+      // transaction opened.
+      const isPrivate = Boolean(locked.isPrivate) || Boolean(locked.parentPrivate);
+
+      const person = await tx.contact.create({
+        data: {
+          ownerId,
+          firstName: parsed.data.firstName,
+          lastName: parsed.data.lastName ?? null,
+          summary: locked.notes,
+          isPrivate,
+        },
+      });
+
+      // Still a compare-and-set rather than a bare update: the lock above
+      // serialises writers, but a request that was already past it and has
+      // committed is only visible here.
+      const claimed = await tx.associate.updateMany({
+        where: { id, ownerId, promotedContactId: null },
+        data: { promotedContactId: person.id },
+      });
+      if (claimed.count === 0) throw new AlreadyPromoted();
+
+      // `from` is the person whose page the entry lives on, matching what
+      // "Connected people" means by "is their…", so the two forms agree.
+      await writeRelationshipPair(tx, {
+        ownerId,
+        fromContactId: existing.contactId,
+        toContactId: person.id,
+        type,
+        notes: null,
+      });
+
+      return person.id;
+    });
+  } catch (error) {
+    // Two ways to lose the same race, and they are not interchangeable across
+    // server versions: MariaDB 10 reports nought rows matched, so the claim
+    // throws `AlreadyPromoted` above; MariaDB 11 refuses the write outright
+    // with 1020 and never returns a count at all. Only the first was handled,
+    // which left the loser on 11 throwing out of the action rather than being
+    // handed the person that already exists. Found by CI, which runs 11.
+    if (error instanceof AlreadyPromoted || isConcurrentRowChange(error)) {
+      // The committed row decides, not our guess about who won.
+      const row = await prisma.associate.findFirst({
+        where: { id, ownerId },
+        select: { promotedContactId: true },
+      });
+      if (row?.promotedContactId) return ok({ contactId: row.promotedContactId });
+      return fail("Could not track them. Try again.");
+    }
+    throw error;
+  }
+
+  touchAssociate(existing.contactId);
+  touch(personId);
+  return ok({ contactId: personId });
 }
 
 // --- plans -----------------------------------------------------------------
@@ -1558,37 +1834,17 @@ export async function createRelationship(form: FormData): Promise<ActionResult> 
   if (!from || !to) return fail("Contact not found.");
   if (!type) return fail("Unknown relationship type.");
 
-  const pairId = randomBytes(8).toString("hex");
-  const inverseTypeId = type.inverseTermId ?? type.id;
   const notes = str(form, "notes") ?? null;
 
-  await prisma.$transaction(async (tx) => {
-    await tx.relationship.upsert({
-      where: {
-        fromContactId_toContactId_typeId: { fromContactId, toContactId, typeId: type.id },
-      },
-      create: { ownerId, fromContactId, toContactId, typeId: type.id, pairId, notes },
-      update: { pairId, notes },
-    });
-    await tx.relationship.upsert({
-      where: {
-        fromContactId_toContactId_typeId: {
-          fromContactId: toContactId,
-          toContactId: fromContactId,
-          typeId: inverseTypeId,
-        },
-      },
-      create: {
-        ownerId,
-        fromContactId: toContactId,
-        toContactId: fromContactId,
-        typeId: inverseTypeId,
-        pairId,
-        notes,
-      },
-      update: { pairId, notes },
-    });
-  });
+  await prisma.$transaction((tx) =>
+    writeRelationshipPair(tx, {
+      ownerId,
+      fromContactId,
+      toContactId,
+      type,
+      notes,
+    }),
+  );
 
   touch(fromContactId);
   touch(toContactId);
@@ -2076,6 +2332,68 @@ export async function lookupContactAddress(
 }
 
 // --- helpers ---------------------------------------------------------------
+
+/**
+ * Write both halves of a relationship, sharing one `pairId`.
+ *
+ * "Bob is Alice's colleague" also records "Alice is Bob's colleague", so the
+ * two rows are created together and removed together — `deleteMany({ pairId })`
+ * is what unlinking runs. Extracted because two callers now write a pair, and
+ * a second hand-rolled copy is how the reciprocal half goes missing on one path
+ * and not the other.
+ *
+ * A type with no configured inverse falls back to itself, which is right for
+ * the symmetric words and is the pre-existing behaviour of this taxonomy.
+ */
+async function writeRelationshipPair(
+  tx: Prisma.TransactionClient,
+  {
+    ownerId,
+    fromContactId,
+    toContactId,
+    type,
+    notes,
+  }: {
+    ownerId: string;
+    fromContactId: string;
+    toContactId: string;
+    type: { id: string; inverseTermId: string | null };
+    notes: string | null;
+  },
+): Promise<void> {
+  const pairId = randomBytes(8).toString("hex");
+  const inverseTypeId = type.inverseTermId ?? type.id;
+
+  await tx.relationship.upsert({
+    where: {
+      fromContactId_toContactId_typeId: { fromContactId, toContactId, typeId: type.id },
+    },
+    create: { ownerId, fromContactId, toContactId, typeId: type.id, pairId, notes },
+    update: { pairId, notes },
+  });
+  await tx.relationship.upsert({
+    where: {
+      fromContactId_toContactId_typeId: {
+        fromContactId: toContactId,
+        toContactId: fromContactId,
+        typeId: inverseTypeId,
+      },
+    },
+    create: {
+      ownerId,
+      fromContactId: toContactId,
+      toContactId: fromContactId,
+      typeId: inverseTypeId,
+      pairId,
+      notes,
+    },
+    update: { pairId, notes },
+  });
+}
+
+/** Thrown to roll a promotion back when another request claimed the entry first. */
+class AlreadyPromoted extends Error {}
+
 
 /**
  * The `isPrivate` value an edit is allowed to write.
