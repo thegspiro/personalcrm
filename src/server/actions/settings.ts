@@ -72,6 +72,11 @@ export async function updateDefaults(form: FormData): Promise<ActionResult> {
   // wipe a cadence set somewhere else.
   const carriesCadence = form.has("defaultCadenceDays");
 
+  // Only 0 and 1 are meanings; anything else is a hand-built request and is
+  // ignored rather than stored, so the calendar never has to defend itself
+  // against a column value that has no column order.
+  const weekStartsOn = num(form, "weekStartsOn");
+
   await prisma.userPreference.update({
     where: { userId: ownerId },
     data: {
@@ -79,6 +84,7 @@ export async function updateDefaults(form: FormData): Promise<ActionResult> {
         ? { defaultCadenceDays: cadence && cadence > 0 ? Math.round(cadence) : null }
         : {}),
       ...(timezone ? { timezone } : {}),
+      ...(weekStartsOn === 0 || weekStartsOn === 1 ? { weekStartsOn } : {}),
     },
   });
 

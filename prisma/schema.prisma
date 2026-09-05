@@ -105,8 +105,9 @@ model UserPreference {
   accent             String  @default("violet") @db.VarChar(24)
   density            String  @default("comfortable") @db.VarChar(16)
   timezone           String  @default("America/New_York") @db.VarChar(64)
-  /// Reserved. Nothing reads this — there is no calendar grid in the app, so
-  /// the control that set it was offering a choice that changed nothing.
+  /// Which day a week starts on: 0 = Sunday, 1 = Monday. Read by the calendar
+  /// grid to decide the column order and how many days of the previous month
+  /// lead the first row. Anything else in the column is treated as Sunday.
   weekStartsOn       Int     @default(0)
   defaultCadenceDays Int?
   digestHour         Int     @default(8)
