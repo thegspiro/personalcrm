@@ -232,10 +232,12 @@ that write to the plan itself also name the day and start time they read, since
 `occurredAt` is derived from those — a reschedule for the same person changes
 neither status nor contact, so on those alone the evening would be filed on the
 old day and the newly arranged one marked done before it happened. The shared
-path has no claim at all, so it re-reads the source inside the transaction
-before writing anything from it: a snapshot read rather than a lock, but taken
-after the precondition, so an idea archived while the request was deciding no
-longer produces an evening out of it.
+path re-reads the source inside the transaction before writing anything from it,
+and — when the idea was itself `PLANNED` — releases it back to the list as its
+claim, reading the row count and aborting on nought, all before either record is
+created. What each predicate expects lives in one `planAsRead` fragment rather
+than being restated at each site, because restating it is how four of these
+paths each ended up missing a different field.
 
 `completePlan` records what a plan became. `setPlanStatus(id, "DONE")` closes a
 plan and *clears* `usedInInteractionId` — right for undoing a mistake, wrong for

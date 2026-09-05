@@ -1143,6 +1143,39 @@ export async function setPlanStatus(id: string, status: PlanStatusValue): Promis
 }
 
 /**
+ * The state a plan was read in, as a `where` fragment for the write that follows.
+ *
+ * Every path that arranges or finishes a plan reads the row, spends several
+ * awaits deciding — an ownership check, a taxonomy lookup, a transaction — and
+ * only then writes. Each of those windows is long enough for another tab to
+ * change the row, and a predicate that names only some of what was read lets
+ * that change be silently overwritten: the evening filed on a day that had
+ * already been replaced, or a person dropped from a plan somebody else had just
+ * attached them to.
+ *
+ * Five separate predicates each had to remember the same three fields, and four
+ * rounds of review found four different ones with a field missing. Naming them
+ * in one place is the fix: adding a field to the expectation now reaches every
+ * site instead of the ones somebody remembered. The status is left to the
+ * caller, because the reset below wants exactly `PLANNED` where the claims want
+ * "not already closed".
+ */
+function planAsRead(plan: {
+  contactId: string | null;
+  plannedFor: Date | null;
+  plannedStartMinute: number | null;
+}) {
+  return {
+    contactId: plan.contactId,
+    plannedFor: plan.plannedFor,
+    plannedStartMinute: plan.plannedStartMinute,
+  };
+}
+
+/** Not already closed: the status half of every plan claim. */
+const PLAN_STILL_OPEN: Prisma.EnumPlanStatusFilter = { notIn: ["DONE", "ARCHIVED"] };
+
+/**
  * The pointers on a plan that are safe to carry onward, and only those.
  *
  * `Plan.place` and `Plan.category` are keyed on the target id alone rather than
@@ -1249,7 +1282,7 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
     // against the rule, three lines below, that an attached plan never moves
     // between people.
     const moved = await prisma.plan.updateMany({
-      where: { id, ownerId, contactId: existing.contactId, status: { notIn: ["DONE", "ARCHIVED"] } },
+      where: { id, ownerId, ...planAsRead(existing), status: PLAN_STILL_OPEN },
       data: {
         ...scheduled,
         // The one place a plan changes hands, and only ever from nobody to
@@ -1373,16 +1406,10 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
     // between the read and here would otherwise have its plan marked done with
     // no interaction and no cadence recomputed for the person now on it.
     const claimed = await prisma.plan.updateMany({
-      where: {
-        id,
-        ownerId,
-        contactId: null,
-        status: { notIn: ["DONE", "ARCHIVED"] },
-        // `usedAt` was derived from these two, so a reschedule that landed
-        // since the read has to abort this rather than stamp the old evening.
-        plannedFor: existing.plannedFor,
-        plannedStartMinute: existing.plannedStartMinute,
-      },
+      // `usedAt` was derived from the day and time on the row, so a reschedule
+      // that landed since the read has to abort this rather than stamp the
+      // evening that was replaced.
+      where: { id, ownerId, ...planAsRead(existing), status: PLAN_STILL_OPEN },
       data: { status: "DONE", usedAt: occurredAt },
     });
     if (claimed.count === 0) {
@@ -1443,10 +1470,33 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
       // not a lock: what it buys is that a plan archived or finished while this
       // request was deciding no longer produces an evening out of it.
       const source = await tx.plan.findFirst({
-        where: { id, ownerId, contactId: null, status: { notIn: ["DONE", "ARCHIVED"] } },
+        where: { id, ownerId, ...planAsRead(existing), status: PLAN_STILL_OPEN },
         select: { id: true },
       });
       if (!source) return false;
+
+      // The original is not consumed, but it does have to stop claiming to be
+      // arranged. A shared idea scheduled through "Nobody yet" stays
+      // `contactId: null` and `PLANNED`; once that evening has happened with
+      // somebody, leaving the day on it presents a spent arrangement as an
+      // outstanding one on every person's list. The day is not lost — the copy
+      // below carries it, along with what it became. The duration stays: how
+      // long a thing takes belongs to the thing, not to the evening.
+      //
+      // This runs *before* the writes, not after, because it is the only claim
+      // this path has. On MariaDB 11 a write to a row that moved since the
+      // snapshot raises 1020 and `transact` starts again; on the 10.11 the
+      // container bundles there is no 1020 and the write simply matches
+      // nothing, so the row count is what has to be read. Either way a
+      // rescheduling that landed after the read above aborts here rather than
+      // having its new day quietly wiped by a copy made from the old one.
+      if (existing.status === "PLANNED") {
+        const released = await tx.plan.updateMany({
+          where: { id, ownerId, ...planAsRead(existing), status: "PLANNED" },
+          data: { status: "OPEN", plannedFor: null, plannedStartMinute: null },
+        });
+        if (released.count === 0) return false;
+      }
 
       const interaction = await tx.interaction.create({ data: interactionData });
       await tx.plan.create({
@@ -1473,27 +1523,6 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
         },
       });
 
-      // The original is not consumed, but it does have to stop claiming to be
-      // arranged. A shared idea scheduled through "Nobody yet" stays
-      // `contactId: null` and `PLANNED`; once that evening has happened with
-      // somebody, leaving the day on it presents a spent arrangement as an
-      // outstanding one on every person's list. The day is not lost — the copy
-      // carries it, along with what it became. The duration stays: how long a
-      // thing takes belongs to the thing, not to the evening.
-      //
-      // Claimed on the exact state that was read, so a re-scheduling that
-      // landed in between keeps its newer day rather than being wiped by this.
-      await tx.plan.updateMany({
-        where: {
-          id,
-          ownerId,
-          contactId: null,
-          status: "PLANNED",
-          plannedFor: existing.plannedFor,
-        },
-        data: { status: "OPEN", plannedFor: null, plannedStartMinute: null },
-      });
-
       await recomputeContactActivity(tx, [contactId]);
       return true;
     }
@@ -1518,14 +1547,7 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
     // day that was read rather than the day now on the row, and the freshly
     // arranged evening would be marked done before it happened.
     const claimed = await tx.plan.updateMany({
-      where: {
-        id,
-        ownerId,
-        contactId: existing.contactId,
-        status: { notIn: ["DONE", "ARCHIVED"] },
-        plannedFor: existing.plannedFor,
-        plannedStartMinute: existing.plannedStartMinute,
-      },
+      where: { id, ownerId, ...planAsRead(existing), status: PLAN_STILL_OPEN },
       data: { status: "DONE", usedAt: occurredAt },
     });
     if (claimed.count === 0) return false;

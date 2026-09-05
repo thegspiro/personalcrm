@@ -50,3 +50,6 @@
 - **A category belonging to another account is no longer copied either.** The
   same restore that could leave a stray venue pointer could leave a stray
   category, which would have shown that account's label and colour on the copy.
+- **Moving only the time of a shared arrangement is no longer overwritten.**
+  Ticking it off from a page loaded before the move recorded the old time and
+  wiped the new one.

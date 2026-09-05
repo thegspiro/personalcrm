@@ -653,6 +653,35 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     expect(copy.categoryId).toBeNull();
   });
 
+  it("abandons a shared completion when only the time was moved", async () => {
+    // Same day, same nobody, still PLANNED — so status and contact alone are
+    // not enough. The copy would have been filed at the time that had just been
+    // replaced, and the reset would have wiped the new one on the way past.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(null, {
+      status: "PLANNED",
+      plannedFor: daysAgo(2),
+      plannedStartMinute: 1170,
+    });
+
+    afterPlanRead.current = async () => {
+      await prisma.plan.update({
+        where: { id: plan.id },
+        data: { plannedStartMinute: 1230 },
+      });
+    };
+
+    expect(
+      await completePlan(actionForm({ id: plan.id, contactId: friend.id })),
+    ).toMatchObject({ ok: false });
+
+    expect(await prisma.interaction.count()).toBe(0);
+    expect(await prisma.plan.count()).toBe(1);
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.status).toBe("PLANNED");
+    expect(after.plannedStartMinute).toBe(1230);
+  });
+
   it("finishing the same shared idea twice in a day records it once", async () => {
     // The shared path writes a copy and leaves the original open, so there is
     // no row whose status could claim it. The unique key on the copy is what
