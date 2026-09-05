@@ -93,6 +93,16 @@ function identityUpdates(details: LocationDetails) {
   };
 }
 
+/**
+ * Get-or-create the place a save names, and fill in what it knows about it.
+ *
+ * Call this inside `transact`, not a bare `prisma.$transaction`. A `Location` is
+ * the most contended row in the schema — every interaction, plan and date that
+ * names a venue writes it — and on MariaDB 11.6.2 and later a write to a row
+ * that moved since the transaction's snapshot rolls that transaction back. The
+ * fill-only rules below say what must not be overwritten; `transact` is what
+ * keeps the save alive while they hold.
+ */
 export async function resolveLocation(
   tx: Prisma.TransactionClient,
   ownerId: string,
@@ -184,16 +194,21 @@ export async function resolveLocation(
     // Deciding from a read is what made the fill-only rule lose a race: a plain
     // read is a snapshot one, so a date save and the place page could both see a
     // blank city, the page could commit its correction, and the save would then
-    // write the old wording over it. Reading `FOR UPDATE` instead does not fix
-    // it either — `resolveLocation` has already taken snapshot reads above to
-    // find this row, so a locking read of a row that moved since raises MariaDB
-    // 1020, `Record has changed since last read`, and the whole save dies rather
-    // than the rule holding.
+    // write the old wording over it. The condition therefore goes in the `WHERE`,
+    // where the database evaluates it at the moment of writing against the row as
+    // it is then, and nothing is decided from a value that may already be stale.
     //
-    // So the condition goes in the `WHERE` and the database evaluates it at the
-    // moment of writing, against the row as it is then. Nothing is decided from
-    // a value that may already be stale, which makes this immune by shape rather
-    // than by isolation level — it behaves the same on every version.
+    // That is the whole of the rule on MariaDB 10.11, which the container
+    // bundles: the update simply matches no rows and the correction stands.
+    //
+    // It is not the whole of it on 11.6.2 and later, where
+    // `innodb_snapshot_isolation` is on by default. There the row still has to be
+    // locked before the `WHERE` can be evaluated, and locking one that moved
+    // since this transaction's snapshot raises 1020 — so putting the condition in
+    // the `WHERE` does not dodge the error, it only stops the write. Since 1020
+    // rolls the transaction back, the answer cannot live here at all: callers
+    // reach `resolveLocation` through `transact`, which starts the transaction
+    // again against a fresh snapshot. Either way the correction survives.
     const text = textUpdates(details);
     if (Object.keys(text).length > 0) {
       // `address` and `url` overwrite when given, as they always have: they are

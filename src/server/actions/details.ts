@@ -5,6 +5,7 @@ import { z } from "zod";
 import { Prisma, type TaxonomyKind } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
+import { transact } from "@/server/db/transaction";
 import { resolveLocation } from "@/server/services/locations";
 // A "use server" module may only export async functions, so the candidate
 // shape lives beside the provider table.
@@ -773,7 +774,7 @@ export async function createPlan(form: FormData): Promise<ActionResult<{ id: str
   const fields = await planFields(ownerId, form);
   if (!fields) return fail("Check the category, checklist and time.");
 
-  const created = await prisma.$transaction(async (tx) => {
+  const created = await transact(async (tx) => {
     const place = await resolveLocation(tx, ownerId, fields.location ?? undefined, {
       address: fields.address,
       url: fields.url,
@@ -804,7 +805,7 @@ export async function updatePlan(form: FormData): Promise<ActionResult> {
   const fields = await planFields(ownerId, form);
   if (!fields) return fail("Check the category, checklist and time.");
 
-  await prisma.$transaction(async (tx) => {
+  await transact(async (tx) => {
     const place = await resolveLocation(tx, ownerId, fields.location ?? undefined, {
       address: fields.address,
       url: fields.url,

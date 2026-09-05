@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/server/db/client";
+import { transact } from "@/server/db/transaction";
 import {
   participantsOf,
   recomputeContactActivity,
@@ -113,7 +114,7 @@ export async function createInteraction(
 
   let interaction: { id: string };
   try {
-    interaction = await prisma.$transaction(async (tx) => {
+    interaction = await transact(async (tx) => {
     const place = await resolveLocation(tx, ownerId, str(form, "location"));
     const created = await tx.interaction.create({
       data: {
@@ -201,7 +202,7 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
   const previousContactIds = existing.participants.map((p) => p.contactId);
 
   try {
-    await prisma.$transaction(async (tx) => {
+    await transact(async (tx) => {
       const place = await resolveLocation(tx, ownerId, str(form, "location"));
       await tx.interaction.update({
         where: { id },

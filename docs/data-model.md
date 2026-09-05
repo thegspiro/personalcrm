@@ -468,18 +468,32 @@ ever cleared by a blank, and two rules govern what a non-blank may do:
 **Both fill-only rules are expressed in the `WHERE` clause, not decided from a
 read.** A plain read is a snapshot one, so deciding from it loses a race: a date
 save and a place-page correction could see the same blank field, and the save
-would write the old wording over the correction after it committed. Reading
-`FOR UPDATE` instead does not fix it — `resolveLocation` has already taken
-snapshot reads to find the row, and a locking read of a row that moved since
-raises MariaDB **1020**, `Record has changed since last read`, killing the save.
-That is version-dependent (10.11 returns the newer row; 11.x raises), which for
-software that runs against whatever MariaDB an operator points it at is the
-worst of both.
+would write the old wording over the correction after it committed. Each write
+therefore carries its own condition — `city: null`, or both coordinate columns
+null — and the database evaluates it at the moment of writing against the row as
+it is then, so nothing is decided from a value that may already be stale.
 
-So each write carries its own condition — `city: null`, or both coordinate
-columns null — and the database evaluates it at the moment of writing against
-the row as it is then. Nothing is decided from a value that may already be
-stale, which makes the rule hold by shape rather than by isolation level.
+**And every caller reaches `resolveLocation` through `transact`, not a bare
+`prisma.$transaction`.** The `WHERE` clause is the whole rule on MariaDB 10.11,
+which the container bundles: the update matches no rows and the correction
+stands. It is not the whole rule from 11.6.2 on, where
+`innodb_snapshot_isolation` is on by default and REPEATABLE READ is a true
+snapshot. There the row must still be locked before any condition of ours is
+evaluated, and locking one that moved since the transaction's snapshot raises
+**1020**, `Record has changed since last read` — so putting the condition in the
+`WHERE` does not avoid the error, it only stops the write. A locking read avoids
+it no better; that was tried first.
+
+1020 is not a statement-level failure. Measured against 11.8.3:
+`@@in_transaction` reads 0 afterwards, and the next statement commits on its own,
+outside any transaction and untouched by a later `ROLLBACK`. So it cannot be
+caught and stepped over — doing that would autocommit the remainder of a save one
+statement at a time — and the answer is the one the server's own message asks
+for: start the transaction again. `src/server/db/transaction.ts` does that, up to
+three attempts, only for 1020. The restart takes a fresh snapshot, sees the
+correction that displaced it, and fills nothing in. Both versions therefore keep
+the correction; a Location is the most contended row in the schema, since every
+interaction, plan and date that names a venue writes it.
 
 **Distances are computed in process, not in SQL.** MariaDB has
 `ST_Distance_Sphere`, but reaching it means raw SQL, which would lose Prisma's

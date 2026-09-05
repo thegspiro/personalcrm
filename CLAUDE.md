@@ -127,6 +127,14 @@ Path alias `@/*` → `./src/*`.
 8. **Partial dates stay partial.** Every historical date carries a
    `DatePrecision`; storing "in 2019" as `2019-01-01` turns a vague memory into
    a confident-looking lie.
+9. **A write that resolves a place goes through `transact`**
+   (`src/server/db/transaction.ts`), never a bare `prisma.$transaction`.
+   `Location` is the schema's most contended row — every interaction, plan and
+   date naming a venue writes it — and from MariaDB 11.6.2 a write to a row that
+   moved since the transaction's snapshot rolls the *whole transaction* back
+   rather than failing the statement. Catching that and carrying on is the trap:
+   the connection is no longer in a transaction, so the rest of the save
+   autocommits one statement at a time. Starting again is the only answer.
 
 ## Adding a table
 

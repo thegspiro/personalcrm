@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
+import { transact } from "@/server/db/transaction";
 import { type ActionResult, fail, ok, owner, str, strList } from "./helpers";
 import { listTerms } from "@/server/taxonomy/queries";
 import { listLocationOptions } from "@/server/queries/locations";
@@ -224,7 +225,7 @@ export async function confirmQuickAdd(form: FormData): Promise<ActionResult<{ id
   // midnight sits close enough to a boundary to land on the wrong date.
   const occurredAt = new Date(zonedStartOfDay(parsedDate, timezone).getTime() + 12 * 3_600_000);
 
-  const interaction = await prisma.$transaction(async (tx) => {
+  const interaction = await transact(async (tx) => {
     const created: string[] = [];
     for (const name of newNames) {
       const trimmed = name.trim();

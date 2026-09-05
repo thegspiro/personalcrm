@@ -24,6 +24,13 @@ interface Progress {
   done: boolean;
 }
 
+/** What a stopped pass left behind for the next press to carry on from. */
+interface Resumed {
+  cursor: string | null;
+  placed: number;
+  skipped: number;
+}
+
 const KINDS = [
   { kind: "places" as const, noun: "saved place" },
   { kind: "addresses" as const, noun: "address" },
@@ -51,15 +58,20 @@ export function BulkPlaceSettings({
   // batch finishes rather than being abandoned half-written.
   const stop = React.useRef(false);
   /**
-   * Where each kind got to, kept across presses.
+   * Where each kind got to, and what it has done, kept across presses.
    *
    * Starting from null every time looked resumable and was not: a row the
    * lookup could not match stays unplaced, so it is selected again, and ten
    * unmatchable rows at the front meant every resumed pass re-tried the same
    * ten and never reached the eleventh. Cleared when a pass runs to the end, so
    * pressing again after that starts over rather than finding nothing.
+   *
+   * The tallies travel with the cursor rather than beside it. Kept apart, a
+   * resumed pass counted only its own segment: stopping after ten rows nobody
+   * could match and then finishing two more reported "2 need a look" when the
+   * true answer was twelve, which is worse than no number at all.
    */
-  const cursors = React.useRef<Record<string, string | null>>({});
+  const resume = React.useRef<Record<string, Resumed>>({});
 
   if (!usable) return null;
 
@@ -67,14 +79,17 @@ export function BulkPlaceSettings({
     stop.current = false;
     setRunning(kind);
     setError(undefined);
+    // Picked up where the last press left off, so the running total is of the
+    // whole pass rather than of this segment of it.
+    const carried = resume.current[kind];
+    let cursor: string | null = carried?.cursor ?? null;
+    let placed = carried?.placed ?? 0;
+    let skipped = carried?.skipped ?? 0;
+
     setProgress((current) => ({
       ...current,
-      [kind]: { placed: 0, skipped: 0, remaining: total, done: false },
+      [kind]: { placed, skipped, remaining: total, done: false },
     }));
-
-    let cursor: string | null = cursors.current[kind] ?? null;
-    let placed = 0;
-    let skipped = 0;
 
     try {
       // Bounded by the row count: every call either advances the cursor or ends
@@ -96,7 +111,11 @@ export function BulkPlaceSettings({
         placed += data.placed;
         skipped += data.skipped;
         cursor = data.nextCursor;
-        cursors.current[kind] = cursor;
+        // Stored together: a cursor without its tallies is what produced the
+        // misleading count above. Cleared at the end of a pass, so the next
+        // press starts a fresh one rather than resuming a finished one.
+        if (cursor) resume.current[kind] = { cursor, placed, skipped };
+        else delete resume.current[kind];
         setProgress((current) => ({
           ...current,
           [kind]: { placed, skipped, remaining: data.remaining, done: !data.nextCursor },

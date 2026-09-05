@@ -53,5 +53,11 @@
   meantime was overwritten rather than respected — including coordinates set
   deliberately on the place's own page. Each write now carries its own condition
   and the database checks it at the moment of writing, so the rule holds under a
-  concurrent edit rather than only when nobody else is working — and holds the
-  same way whichever MariaDB version an installation runs against.
+  concurrent edit rather than only when nobody else is working.
+
+  On MariaDB 11.6.2 and later that is not sufficient by itself: with snapshot
+  isolation on by default, the database answers the contention by throwing the
+  whole save out, so it would have kept the correction at the cost of losing what
+  was being saved. Saves that name a place now start again on a fresh snapshot
+  and go through. Nothing changes on the MariaDB the container bundles, which has
+  no such behaviour, and either way the correction survives.
