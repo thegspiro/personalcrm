@@ -370,7 +370,9 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     // status and nothing else.
     const friend = await makeContact("Marcus");
     const plan = await planFor(friend.id, {
-      plannedFor: new Date("2026-10-02T00:00:00.000Z"),
+      // PLANNED, or the schedule is not read at all and this asserts nothing.
+      status: "PLANNED",
+      plannedFor: new Date("2026-08-02T00:00:00.000Z"),
       plannedStartMinute: 19 * 60 + 30,
       location: "Rock Creek",
     });
@@ -390,7 +392,7 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     expect(interaction.participants.map((p) => p.contactId)).toEqual([friend.id]);
     // The day and time already on the row, resolved in the account's zone —
     // 19:30 in New York on a standard-time day.
-    expect(interaction.occurredAt.toISOString()).toBe("2026-10-02T23:30:00.000Z");
+    expect(interaction.occurredAt.toISOString()).toBe("2026-08-02T23:30:00.000Z");
   });
 
   it("never writes a DateEntry, even for someone romantic", async () => {
@@ -422,14 +424,14 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     // stamped with now — a Friday plan ticked on Sunday recorded Sunday.
     const plan = await planFor(null, {
       status: "PLANNED",
-      plannedFor: new Date("2026-10-02T00:00:00.000Z"),
+      plannedFor: new Date("2026-08-02T00:00:00.000Z"),
       plannedStartMinute: 19 * 60 + 30,
     });
 
     expect(await completePlan(actionForm({ id: plan.id }))).toMatchObject({ ok: true });
 
     const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
-    expect(after.usedAt?.toISOString()).toBe("2026-10-02T23:30:00.000Z");
+    expect(after.usedAt?.toISOString()).toBe("2026-08-02T23:30:00.000Z");
   });
 
   it("an explicit occurredAt reaches a plan saved for nobody", async () => {
@@ -521,7 +523,7 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     const friend = await makeContact("Marcus");
     const plan = await planFor(friend.id, {
       status: "PLANNED",
-      plannedFor: new Date("2026-10-02T00:00:00.000Z"),
+      plannedFor: new Date("2026-08-02T00:00:00.000Z"),
       plannedStartMinute: 19 * 60 + 30,
     });
 
@@ -531,7 +533,47 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     const interaction = await prisma.interaction.findUniqueOrThrow({
       where: { id: after.usedInInteractionId! },
     });
-    expect(interaction.occurredAt.toISOString()).toBe("2026-10-02T23:30:00.000Z");
+    expect(interaction.occurredAt.toISOString()).toBe("2026-08-02T23:30:00.000Z");
+  });
+
+  it("does not record a completion at a time that has not happened yet", async () => {
+    // Ticked before the day it was set for. The future instant would badge a
+    // finished outing "Upcoming", and recomputeContactActivity skips future
+    // interactions — so the cadence would stay stale with nothing scheduled to
+    // recompute it when the instant arrived.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id, {
+      status: "PLANNED",
+      plannedFor: new Date("2099-01-01T00:00:00.000Z"),
+      plannedStartMinute: 19 * 60 + 30,
+    });
+
+    expect(await completePlan(actionForm({ id: plan.id }))).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    const interaction = await prisma.interaction.findUniqueOrThrow({
+      where: { id: after.usedInInteractionId! },
+    });
+    expect(interaction.occurredAt.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("refuses a scheduling write when the plan was completed mid-request", async () => {
+    // The status check and the write are separated by several awaits, so the
+    // predicate has to carry it too.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id);
+    await prisma.plan.update({
+      where: { id: plan.id },
+      data: { status: "DONE", usedAt: new Date() },
+    });
+
+    const result = await schedulePlan(
+      actionForm({ id: plan.id, plannedFor: "2026-12-01" }),
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.status).toBe("DONE");
   });
 
   it("refuses to reschedule something already carried out", async () => {

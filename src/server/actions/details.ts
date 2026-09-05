@@ -1202,8 +1202,13 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
   const copying = existing.contactId === null && withContactId !== null && bool(form, "keepInList");
 
   if (!copying) {
-    await prisma.plan.update({
-      where: { id },
+    // The status goes in the predicate, not only in the check above: several
+    // awaits separate that read from this write, and another tab completing
+    // the plan in between would otherwise see it restored to PLANNED with
+    // `usedAt` and `usedInInteractionId` still pointing at what it became —
+    // the contradictory row the check exists to prevent.
+    const moved = await prisma.plan.updateMany({
+      where: { id, ownerId, status: { notIn: ["DONE", "ARCHIVED"] } },
       data: {
         ...scheduled,
         // The one place a plan changes hands, and only ever from nobody to
@@ -1211,9 +1216,16 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
         ...(existing.contactId === null && withContactId ? { contactId: withContactId } : {}),
       },
     });
+    if (moved.count === 0) {
+      return fail("That one is already done — save it again as a new plan.");
+    }
     touchPlans(withContactId ?? existing.contactId);
     return ok({ id });
   }
+
+  // The copy path needs no such predicate: it never writes to the original, so
+  // the original's status cannot be made contradictory by it. A copy taken
+  // from a plan someone finished a moment ago is simply a new evening.
 
   const copy = await prisma.plan.create({
     data: {
@@ -1286,7 +1298,15 @@ export async function completePlan(form: FormData): Promise<ActionResult> {
     existing.status === "PLANNED" && existing.plannedFor
       ? planInstant(plainDateFromDb(existing.plannedFor), existing.plannedStartMinute, timezone)
       : null;
-  const occurredAt = instant(form, "occurredAt") ?? scheduledAt ?? new Date();
+  // Never in the future, whichever source won. Marked done before the day it
+  // was set for — done early, or tidied up — recording that future instant
+  // would badge a finished outing "Upcoming" in the timeline, and
+  // `recomputeContactActivity` excludes future interactions, so the cadence
+  // would sit stale until some unrelated write happened to recompute it.
+  // Nothing schedules that recomputation when the instant arrives.
+  const now = new Date();
+  const candidate = instant(form, "occurredAt") ?? scheduledAt ?? now;
+  const occurredAt = candidate > now ? now : candidate;
 
   // Computed above this branch, not below it. The unattached case returns
   // early, so working it out afterwards stamped `usedAt` with now — a Friday
