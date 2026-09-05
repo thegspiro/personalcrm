@@ -58,6 +58,76 @@ test("a fact can be corrected in place, keeping its category", async ({ page }) 
   await expect(facts.getByText("Reads le Carre", { exact: true })).toHaveCount(0);
 });
 
+test("someone in their life can be corrected in place, keeping the note", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto(personUrl);
+
+  const people = section(page, "People in their life");
+  await people.getByRole("button", { name: "Add someone" }).click();
+  await people.getByLabel("Their name").fill("Bob");
+  await people.getByLabel("How do they know them?").fill("Colleauge");
+  await people.getByLabel("Anything to remember?").fill("On night shifts until March.");
+  await people.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(people.getByText("On night shifts until March.")).toBeVisible();
+
+  // The note is not in the edit form's changed field, so it is exactly what a
+  // form that only carried the name would silently clear.
+  await people.getByRole("button", { name: "Edit entry" }).first().click();
+  await people.getByLabel("How do they know them?").fill("Colleague from the hospital");
+  await people.getByRole("button", { name: "Save", exact: true }).click();
+
+  await expect(people.getByText("Colleague from the hospital")).toBeVisible();
+  await expect(people.getByText("Colleauge", { exact: true })).toHaveCount(0);
+  await expect(people.getByText("On night shifts until March.")).toBeVisible();
+});
+
+test("one of them can be promoted into a person, and stops being editable", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto(personUrl);
+
+  const people = section(page, "People in their life");
+  await people.getByRole("button", { name: "Track as a person" }).first().click();
+  // Pre-split from the one name the entry carries, then confirmed rather than
+  // guessed: the surname was never known, so the form is where it is supplied.
+  await expect(people.getByLabel("First name")).toHaveValue("Bob");
+  await expect(people.getByLabel("Last name")).toHaveValue("");
+  await people.getByLabel("Last name").fill("Ellis");
+
+  // The type is required, so one has to be picked before the form will submit.
+  await people.getByRole("button", { name: "Friend", exact: true }).click();
+  await people.getByRole("button", { name: "Track them" }).click();
+
+  await expect(people.getByText("Now tracked")).toBeVisible();
+  // Read-only comes from the row rendering no edit control at all, rather than
+  // from one that looks live and refuses.
+  await expect(people.getByRole("button", { name: "Edit entry" })).toHaveCount(0);
+  await expect(people.getByRole("button", { name: "Track as a person" })).toHaveCount(0);
+
+  // The reciprocal relationship is real, not just a pointer on the entry.
+  // That section starts collapsed, so it has to be opened to be read.
+  const connected = section(page, "Connected people");
+  await connected.getByRole("button", { name: /Connected people/ }).click();
+  await expect(connected.getByRole("link", { name: /Bob Ellis/ })).toBeVisible();
+});
+
+test("the roll-up lists them under the person whose life they are in", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto("/people");
+
+  await page.getByRole("link", { name: "Their people" }).click();
+  await expect(page).toHaveURL(/\/people\/friends$/);
+
+  // Scoped to this project's own person: the roll-up gathers everyone, so the
+  // other project's identical entry is on the page too.
+  const group = page
+    .locator("section")
+    .filter({ has: page.getByRole("link", { name: PERSON(), exact: true }) });
+
+  await expect(group.getByText("Colleague from the hospital")).toBeVisible();
+  await expect(group.getByRole("link", { name: /Bob Ellis/ })).toBeVisible();
+  await expect(group.getByText("Now tracked")).toBeVisible();
+});
+
 test("a follow-up keeps its due date through an edit", async ({ page }) => {
   await ensureSignedIn(page);
   await page.goto(personUrl);

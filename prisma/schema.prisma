@@ -56,6 +56,7 @@ model User {
   relationships        Relationship[]
   interactions         Interaction[]
   facts                Fact[]
+  associates           Associate[]
   importantDates       ImportantDate[]
   ideas                Idea[]
   tasks                Task[]
@@ -115,15 +116,15 @@ model UserPreference {
   /// the identity ones — your home is somewhere distances are counted from,
   /// not a venue you log visits to, so it must never appear in the places list.
   /// Coordinates are a pair or nothing, like everywhere else that holds them.
-  homeAddress        String?  @db.VarChar(500)
-  homeCity           String?  @db.VarChar(120)
-  homeRegion         String?  @db.VarChar(120)
-  homeCountry        String?  @db.VarChar(120)
-  homeLatitude       Decimal? @db.Decimal(10, 7)
-  homeLongitude      Decimal? @db.Decimal(10, 7)
+  homeAddress   String?  @db.VarChar(500)
+  homeCity      String?  @db.VarChar(120)
+  homeRegion    String?  @db.VarChar(120)
+  homeCountry   String?  @db.VarChar(120)
+  homeLatitude  Decimal? @db.Decimal(10, 7)
+  homeLongitude Decimal? @db.Decimal(10, 7)
   /// How distances read: `mi` or `km`. Defaults to `mi` to match the other
   /// shipped defaults (`America/New_York`, `USD`) rather than to a guess.
-  distanceUnit       String   @default("mi") @db.VarChar(8)
+  distanceUnit  String   @default("mi") @db.VarChar(8)
 
   /// Require the PIN before showing the dating module or anything private.
   privacyLockEnabled Boolean @default(false)
@@ -290,6 +291,8 @@ model Contact {
   dismissalsB             FamilySuggestionDismissal[] @relation("DismissalB")
   relationsFrom           Relationship[]              @relation("RelationshipFrom")
   relationsTo             Relationship[]              @relation("RelationshipTo")
+  associates              Associate[]                 @relation("AssociateOf")
+  namedAsAssociate        Associate[]                 @relation("AssociatePromoted")
 
   /// Referenced by `ContactTag`'s composite key; see the note there.
   @@unique([ownerId, id])
@@ -333,13 +336,13 @@ model Address {
   /// by hand — which is the only route for a private contact, whose address is
   /// never sent anywhere. Stored as a pair or not at all: half a pair places
   /// somewhere confidently wrong, exactly as on `Location`.
-  latitude   Decimal? @db.Decimal(10, 7)
-  longitude  Decimal? @db.Decimal(10, 7)
+  latitude  Decimal? @db.Decimal(10, 7)
+  longitude Decimal? @db.Decimal(10, 7)
   /// The OpenStreetMap object a lookup matched, when one did. Same reasoning as
   /// `Location.osmType`/`osmId`: an OSM node/way/relation reference survives a
   /// reimport where Nominatim's own `place_id` does not.
-  osmType    String?  @db.VarChar(1)
-  osmId      BigInt?
+  osmType   String?  @db.VarChar(1)
+  osmId     BigInt?
 
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
@@ -569,6 +572,57 @@ model Fact {
   @@index([categoryId])
   @@index([ownerId, contactId])
   @@index([sourceInteractionId])
+}
+
+/// Someone in a contact's life who is not tracked as a Contact themselves — a
+/// colleague, a sibling's partner, the flatmate they keep mentioning.
+///
+/// Deliberately not a Contact: these people have no cadence, no overdue state
+/// and no profile to fill in. They exist so a conversation can pick up where it
+/// left off. One occasionally turns out to be someone worth keeping track of,
+/// which is what `promotedContactId` records — the entry is kept rather than
+/// deleted, because nothing here is destroyed by a status change.
+///
+/// Named `Associate` rather than the more natural `Acquaintance` because that
+/// word is already a `CONTACT_CATEGORY` label: being filed as an acquaintance
+/// is a different fact from being someone your contact knows and you do not
+/// track, and one schema should not use one word for both.
+model Associate {
+  id                String   @id @default(cuid())
+  ownerId           String
+  contactId         String
+  name              String   @db.VarChar(191)
+  /// How the contact knows them, in the words used at the time —
+  /// "colleague from the hospital". Free text rather than a taxonomy: the
+  /// useful phrasings are one-offs, and a term list would ask for vocabulary
+  /// to be curated for people who are not even being tracked.
+  howTheyKnow       String?  @db.VarChar(191)
+  notes             String?  @db.Text
+  /// Hidden everywhere until the privacy lock is opened.
+  isPrivate         Boolean  @default(false)
+  /// The Contact this entry became, once promoted.
+  ///
+  /// A single-column key, unlike every other relation to a person here. A
+  /// promoted person may be deleted without taking the note with them, and
+  /// MariaDB refuses a `SET NULL` foreign key unless every column in it is
+  /// nullable — which `ownerId` is not. Same constraint, and the same
+  /// compensation, as `Interaction.place` and `Plan.place`: the owner is
+  /// checked in the query instead.
+  ///
+  /// This pointer is the whole of the "now tracked" state. There is no
+  /// `promotedAt` beside it, because SET NULL can revoke the pointer and a
+  /// timestamp left behind would claim a promotion that no longer exists.
+  promotedContactId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  owner    User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact  Contact  @relation("AssociateOf", fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
+  promoted Contact? @relation("AssociatePromoted", fields: [promotedContactId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, contactId])
+  @@index([contactId, name])
+  @@index([promotedContactId])
 }
 
 enum DateRecurrence {

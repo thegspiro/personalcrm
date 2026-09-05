@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ContactCard } from "@/components/contacts/contact-card";
 import { ContactFilters } from "@/components/contacts/contact-filters";
+import { PeopleTabs } from "@/components/contacts/people-tabs";
 import { ListCapNotice } from "@/components/ui/list-cap-notice";
 import { getUserContext } from "@/server/user/context";
 import { offlineCacheable } from "@/server/privacy/offline";
@@ -76,6 +77,8 @@ export default async function PeoplePage({
           </Link>
         </Button>
       </div>
+
+      <PeopleTabs active="people" />
 
       <ContactFilters
         categories={categories.map((c) => ({ id: c.id, label: c.label }))}
