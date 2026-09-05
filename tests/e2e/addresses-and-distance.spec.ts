@@ -118,3 +118,44 @@ test("a place can be put on the map by hand, and read back as a distance", async
   await expect(row.getByRole("link", { name: venue(), exact: true })).toBeVisible();
   await expect(row.getByText(/^0\.\d km$/)).toBeVisible();
 });
+
+test("a logged date carries the place it happened at", async ({ page }) => {
+  await ensureSignedIn(page);
+
+  // The dating module is the part the whole feature exists for, and was the
+  // last thing in the app that could not be mapped or measured.
+  await page.goto("/people");
+  await page.getByRole("link", { name: new RegExp(person()) }).first().click();
+  // Wait for the person's own page before reading the URL off it: taken too
+  // early this is still /people, and /people/edit is a 404.
+  await page.getByRole("heading", { name: new RegExp(person()), level: 2 }).waitFor();
+  const contactUrl = page.url();
+
+  await page.goto(`${contactUrl}/edit`);
+  await page.getByText("Dating or interested").click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.waitForURL(contactUrl);
+
+  // Scoped by the add button rather than the title: `hasText` is
+  // case-insensitive, so "Dates" also matches "Important dates".
+  const dates = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Log a date" }) })
+    .first();
+
+  await dates.getByRole("button", { name: "Log a date" }).click();
+  await dates.getByRole("button", { name: "Coffee", exact: true }).click();
+  await dates.getByLabel("Where").fill(venue());
+  await dates.getByRole("button", { name: "Log it" }).click();
+
+  // The venue resolves to the place the previous test put on the map, so the
+  // logged date reads its distance back without anything else being typed —
+  // through the interaction it mirrors, since a DateEntry holds no place of
+  // its own.
+  const mapLink = page
+    .getByRole("link", { name: new RegExp(`Open ${venue()} on a map`) })
+    .first();
+  await expect(mapLink).toBeVisible();
+  await expect(mapLink).toHaveAttribute("href", /mlat=53\.7978/);
+  await expect(mapLink).toHaveText(/0\.\d km/);
+});

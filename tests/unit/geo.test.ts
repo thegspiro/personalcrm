@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   distanceBetween,
   formatDistance,
+  formatStoredKm,
   haversineKm,
   isUnit,
   pointOf,
   readCoordinate,
+  unitOf,
   withDistance,
 } from "@/lib/geo";
 
@@ -152,6 +154,39 @@ describe("withDistance", () => {
     const result = withDistance(rows, null, "mi", pointOf, { sort: true });
     expect(result.map((row) => row.id)).toEqual(["far", "unplaced", "near"]);
     expect(result.every((row) => row.distance === null)).toBe(true);
+  });
+});
+
+describe("formatStoredKm", () => {
+  it("reads a stored kilometre figure in the account's unit", () => {
+    // `RomanticProfile.distanceKm` is stored in km whatever the account reads
+    // distances in. It used to render a hardcoded "km", which contradicted the
+    // preference the moment one existed.
+    expect(formatStoredKm(20, "km")).toBe("20 km");
+    expect(formatStoredKm(20, "mi")).toBe("12 mi");
+    expect(formatStoredKm(5, "mi")).toBe("3.1 mi");
+  });
+
+  it("renders nothing for nothing", () => {
+    expect(formatStoredKm(null, "mi")).toBeNull();
+    expect(formatStoredKm(undefined, "mi")).toBeNull();
+    expect(formatStoredKm(Number.NaN, "mi")).toBeNull();
+  });
+
+  it("keeps a zero, which is a real answer", () => {
+    // "They live on my street" is a distance, unlike a blank field.
+    expect(formatStoredKm(0, "mi")).toBe("0 mi");
+  });
+});
+
+describe("unitOf", () => {
+  it("falls back rather than trusting whatever the column holds", () => {
+    expect(unitOf("km")).toBe("km");
+    expect(unitOf("mi")).toBe("mi");
+    // A varchar can hold anything a restore puts in it.
+    expect(unitOf("furlongs")).toBe("mi");
+    expect(unitOf(null)).toBe("mi");
+    expect(unitOf(undefined)).toBe("mi");
   });
 });
 

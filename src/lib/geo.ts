@@ -19,6 +19,17 @@ export function isUnit(value: unknown): value is Unit {
   return value === "mi" || value === "km";
 }
 
+/**
+ * The stored preference, or the default when it is missing or unrecognised.
+ *
+ * A `varchar` can hold anything a restore puts in it, and every reader wants the
+ * same answer for a value that is not one of the two, so the fallback lives here
+ * rather than being spelled out at each call site.
+ */
+export function unitOf(value: unknown): Unit {
+  return isUnit(value) ? value : "mi";
+}
+
 export interface Point {
   lat: number;
   lon: number;
@@ -126,6 +137,25 @@ export function formatDistance(distance: Distance | null | undefined): string | 
   if (!distance) return null;
   const { value, unit } = distance;
   if (!Number.isFinite(value)) return null;
+  const rounded = value < 10 ? Math.round(value * 10) / 10 : Math.round(value);
+  return `${rounded} ${unit}`;
+}
+
+/**
+ * A distance somebody told you, stored in kilometres, read in their unit.
+ *
+ * `RomanticProfile.distanceKm` is hearsay rather than measurement — "she said
+ * she's about twenty minutes away" — so it is deliberately not a `Distance`,
+ * which carries a `source` describing how it was computed. It still has to obey
+ * the account's unit, which it did not before: it was rendered as a hardcoded
+ * "km" and so contradicted the preference the moment one existed.
+ */
+export function formatStoredKm(
+  km: number | null | undefined,
+  unit: Unit,
+): string | null {
+  if (km === null || km === undefined || !Number.isFinite(km)) return null;
+  const value = convertKm(km, unit);
   const rounded = value < 10 ? Math.round(value * 10) / 10 : Math.round(value);
   return `${rounded} ${unit}`;
 }
