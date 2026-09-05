@@ -161,6 +161,17 @@ function taskWhere(user: Pick<ScheduledUser, "id">, schedule: Schedule) {
 type DateSource = {
   /** `ImportantDate.id`, or the birthday projection id. Stored as `entityId`. */
   key: string;
+  /**
+   * A legacy birthday row whose ledger history this source continues.
+   *
+   * The key itself never changes — it is the projection id for the life of the
+   * contact, whatever rows come and go around it. Borrowing the legacy row's id
+   * instead looks like continuity and is not: adding a birthday-typed date to a
+   * contact whose birthday had already been sent would move the identity out
+   * from under the ledger row and send the occurrence a second time. So the old
+   * identity is read, never adopted.
+   */
+  supersedes?: string;
   contactId: string;
   label: string;
   contactName: string;
@@ -184,22 +195,15 @@ const IMPORTANT_DATE_SELECT = {
   type: { select: { slug: true } },
 } as const;
 
-/**
- * `key` is the ledger identity, which is not always the projection id: where a
- * legacy birthday row exists it keeps that row's id. Its ledger history is
- * already written under it, and re-keying an occurrence the legacy row has
- * already sent would make the dedup miss and send the same birthday twice on
- * the upgrade. The date still comes from the canonical field either way — only
- * the identity is inherited.
- */
 function birthdaySource(
   contact: Parameters<typeof projectContactBirthday>[0],
-  legacyKey?: string,
+  supersedes?: string,
 ): DateSource | null {
   const birthday = projectContactBirthday(contact);
   if (!birthday || !REMINDABLE_PRECISION.has(birthday.precision)) return null;
   return {
-    key: legacyKey ?? birthdayProjectionId(birthday.contactId),
+    key: birthdayProjectionId(birthday.contactId),
+    supersedes,
     contactId: birthday.contactId,
     label: birthday.label,
     contactName: personName(birthday.contact),
@@ -240,14 +244,14 @@ async function dateSourcesForUser(
   // the contact page does not show, which is the invention this all exists to
   // prevent. An unknown day means silence, not a fallback to the stale row.
   const canonical = new Set(contacts.map((contact) => contact.id));
-  const legacyBirthdayKey = new Map<string, string>();
+  const legacyBirthdayId = new Map<string, string>();
   for (const row of [...rows].sort((a, b) => a.id.localeCompare(b.id))) {
-    if (isBirthdayImportantDate(row) && !legacyBirthdayKey.has(row.contactId)) {
-      legacyBirthdayKey.set(row.contactId, row.id);
+    if (isBirthdayImportantDate(row) && !legacyBirthdayId.has(row.contactId)) {
+      legacyBirthdayId.set(row.contactId, row.id);
     }
   }
   const birthdays = contacts
-    .map((contact) => birthdaySource(contact, legacyBirthdayKey.get(contact.id)))
+    .map((contact) => birthdaySource(contact, legacyBirthdayId.get(contact.id)))
     .filter((row): row is DateSource => row !== null);
   const dates = rows
     .filter((row) => !(canonical.has(row.contactId) && isBirthdayImportantDate(row)))
@@ -261,6 +265,40 @@ async function dateSourcesForUser(
       reminderDaysBefore: row.reminderDaysBefore,
     }));
   return [...dates, ...birthdays];
+}
+
+/**
+ * Whether a superseded identity is already carrying this occurrence.
+ *
+ * Sent, or still being retried — both mean a delivery exists for it and the
+ * canonical source must not open a second one. A row that was *cancelled* does
+ * not count: nothing will deliver it, so suppressing on it would lose the
+ * birthday entirely rather than merely repeat it.
+ *
+ * Deliberately not per channel: the candidate is built once for the owner and
+ * fanned out afterwards, so this can only answer for the occurrence as a whole.
+ * Erring toward silence is the right way round — a birthday that arrives once
+ * instead of twice costs nothing, and the alternative is the duplicate.
+ */
+async function alreadyHandledAs(
+  db: Db,
+  user: Pick<ScheduledUser, "id">,
+  entityId: string,
+  occurrence: PlainDate,
+  offsetDays: number,
+): Promise<boolean> {
+  const sent = await db.reminderLog.findFirst({
+    where: {
+      ownerId: user.id,
+      entityType: "IMPORTANT_DATE",
+      entityId,
+      scheduledFor: plainDateToDb(occurrence),
+      offsetDays,
+      OR: [{ ok: true }, { nextAttemptAt: { not: null } }],
+    },
+    select: { id: true },
+  });
+  return sent !== null;
 }
 
 /** The same source, re-read for one stored `entityId` when a retry claims it. */
@@ -421,6 +459,12 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
     for (const offset of effectiveReminderDays(reminderPolicy(date.reminderDaysBefore))) {
       const occurrence = dueOccurrence(date.anchor, date.recurrence, schedule.today, offset);
       if (!occurrence) continue;
+      // An install upgrading into canonical birthdays already sent this
+      // occurrence under the legacy row's id. The ledger cannot recognise it
+      // under the new key, so ask it directly rather than sending again.
+      // Only ever true for the occurrence in flight at the upgrade; the
+      // identity is stable from then on and this reads nothing.
+      if (date.supersedes && await alreadyHandledAs(db, user, date.supersedes, occurrence, offset)) continue;
       candidates.push({
         entityType: "IMPORTANT_DATE",
         entityId: date.key,

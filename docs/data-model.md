@@ -807,11 +807,19 @@ so an account that configured offsets keeps them.
 
 A canonical birthday is stored in the ledger under
 `contact-birthday:<contactId>` — `entityId` is a 64-character column and the
-prefixed cuid fits — *unless* a legacy birthday row exists, in which case it
-keeps that row's id. The ledger history for the current occurrence is already
-written under it, and re-keying would make the dedup miss and send the same
-birthday a second time on the upgrade. Only the identity is inherited; the date
-still comes from `Contact.birthDate`.
+prefixed cuid fits — and it stays that for the life of the contact, whatever
+rows come and go around it.
+
+An install upgrading into canonical birthdays has already sent the occurrence
+in flight under the legacy row's id, which the ledger cannot match under the
+new key. So the scheduler *reads* that old identity rather than adopting it:
+where a legacy birthday row exists, a candidate is skipped if a delivery for
+the same occurrence and offset already exists under it — sent, or still being
+retried. A cancelled row does not count; nothing will deliver it, and
+suppressing on one would lose the birthday rather than repeat it. Borrowing the
+legacy id as the key instead would look like continuity and is not: adding a
+birthday-typed date to a contact whose birthday had already gone out would move
+the identity out from under the ledger row and send the occurrence again.
 
 Only `DAY` and `MONTH_DAY` precision produce a reminder: `MONTH` and `YEAR`
 have no day to name, and `projectDateOccurrences` likewise declines to invent
