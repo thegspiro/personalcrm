@@ -99,3 +99,43 @@ test("a plan checklist can be created, edited, checked and deleted without mobil
   await row.getByRole("button", { name: "Edit plan" }).click();
   await expect(plans.locator('input[value="Pack a picnic blanket"]')).toHaveCount(0);
 });
+
+test("a duration with no day shows, and survives an edit that does not touch it", async ({ page }) => {
+  // Two things at once, both of which this spec caught by failing. A duration
+  // is kept when no day is set, so the row has to render it outside the day's
+  // chip; and the editor has to re-offer the stored value, or an unrelated
+  // save clears it.
+  //
+  // What it does not reach: a stored value outside the seven presets, which is
+  // the case that broke the re-offering. The picker only offers presets, so it
+  // cannot be produced from this form. `tests/integration/plans.test.ts` covers
+  // the server accepting such a value; the re-offering itself is read, not run.
+  await ensureSignedIn(page);
+  await page.goto("/ideas");
+
+  const title = `Duration round-trip ${Date.now()}`;
+  const plans = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Add something to do" }) })
+    .first();
+
+  await plans.getByRole("button", { name: "Add something to do" }).click();
+  await plans.getByLabel("What do you want to do?").fill(title);
+  await plans.getByLabel("Set aside").selectOption("120");
+  await plans.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(plans.getByText(title)).toBeVisible();
+
+  // `SectionRow` renders a div with tabindex="-1", not an <li> — the same
+  // locator the two tests above use.
+  const row = plans.locator("[tabindex='-1']").filter({ hasText: title }).first();
+  await expect(row.getByText("2h")).toBeVisible();
+
+  // Reopen, change something else entirely, and save.
+  await row.getByRole("button", { name: "Edit plan" }).click();
+  await expect(plans.getByLabel("Set aside")).toHaveValue("120");
+  await plans.getByLabel("Venue").fill("The park");
+  await plans.getByRole("button", { name: "Save", exact: true }).click();
+
+  await expect(row.getByText("The park")).toBeVisible();
+  await expect(row.getByText("2h")).toBeVisible();
+});

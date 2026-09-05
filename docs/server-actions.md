@@ -167,10 +167,17 @@ scope the checklist. `plannedFor` remains a calendar date parsed by
 `plannedStartTime` and `plannedDurationMinutes` are read by `parsePlanMinute`
 and `parsePlanDuration`, which refuse anything they cannot read rather than
 coercing it — filing a plan at midnight because the form sent "half seven"
-would put it at a time nobody chose. A time arriving without a day is dropped
-instead, so clearing the day does not become an error to understand. The minute
-is stored as a local wall-clock reading against the day, never converted to an
-instant here.
+would put it at a time nobody chose. A day that is present but unreadable is
+refused for the same reason: `plainDate` answers `undefined` to both that and an
+empty field, and folding the two together saved a malformed date as a plan with
+no date at all and reported success.
+
+A time arriving without a day is dropped rather than refused, so clearing the
+day does not become an error to understand. A **duration** without a day is
+kept: how long a thing takes belongs to the thing, not to the day picked for it,
+so "the observatory takes most of an evening" survives on a plan nobody has
+scheduled. Only the start minute needs a day to hang on, and it is stored as a
+local wall-clock reading against that day, never converted to an instant here.
 
 Important-date and life-event updates and deletes also filter through their
 contact's privacy marker. The timeline exposes these controls, so an id retained

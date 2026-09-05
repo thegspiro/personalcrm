@@ -245,6 +245,37 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     expect(await prisma.plan.count()).toBe(0);
   });
 
+  it("keeps a duration chosen before there is a day to hang it on", async () => {
+    // How long a thing takes belongs to the thing, not to the day. Only the
+    // start time needs a day.
+    expect(
+      await createPlan(
+        actionForm({ title: "Go to the observatory", plannedDurationMinutes: "240" }),
+      ),
+    ).toMatchObject({ ok: true });
+
+    const plan = await prisma.plan.findFirstOrThrow({ where: { ownerId } });
+    expect(plan.plannedFor).toBeNull();
+    expect(plan.plannedStartMinute).toBeNull();
+    expect(plan.plannedDurationMinutes).toBe(240);
+  });
+
+  it("refuses a malformed day rather than saving as though none was given", async () => {
+    // `plainDate` answers undefined to both an empty field and "2026-02-30".
+    // Folding them together saved a dateless plan and reported success, taking
+    // the submitted time with it.
+    const result = await createPlan(
+      actionForm({
+        title: "Dinner",
+        plannedFor: "2026-02-30",
+        plannedStartTime: "19:30",
+      }),
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    expect(await prisma.plan.count()).toBe(0);
+  });
+
   it("refuses a duration longer than a day", async () => {
     const result = await createPlan(
       actionForm({ title: "Dinner", plannedFor: "2026-10-02", plannedDurationMinutes: "1441" }),

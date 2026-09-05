@@ -215,13 +215,26 @@ export async function endRelationship(form: FormData): Promise<ActionResult> {
  * refuses it. `patchContact` checks ownership only, which is right for a
  * favourite and wrong for the flag that decides whether a page renders
  * someone's private notes.
+ *
+ * Archived people are refused here, not only hidden from the menu.
+ * `fetchRomanticContacts` leaves them out of the pipeline, so setting the flag
+ * on one reports a success nobody can see; and a menu that is absent on render
+ * is no guarantee, because a second tab archiving them, or a form left open,
+ * still reaches this endpoint.
  */
 export async function markAsRomantic(contactId: string): Promise<ActionResult> {
   const blocked = await guard();
   if (blocked) return fail(blocked);
 
   const { ownerId } = await owner();
-  if (!(await assertOwned(ownerId, contactId))) return fail("Contact not found.");
+  const contact = await prisma.contact.findFirst({
+    where: { id: contactId, ownerId },
+    select: { isArchived: true },
+  });
+  if (!contact) return fail("Contact not found.");
+  // Says what to do rather than "not found", which would be a lie: they exist,
+  // they are just somewhere the pipeline does not look.
+  if (contact.isArchived) return fail("Restore them first — the pipeline leaves archived people out.");
 
   await prisma.contact.update({ where: { id: contactId }, data: { isRomantic: true } });
 

@@ -128,6 +128,42 @@ describe("zonedTimeOfDay", () => {
     expect(at.toISOString()).toBe("2026-11-01T05:30:00.000Z");
   });
 
+  it("holds the wall clock after the fall-back transition, not the elapsed count", () => {
+    // The regression these exist for. 2026-11-01 is 25 hours long, so counting
+    // minutes from midnight runs an hour early for everything past 02:00 —
+    // an evening plan would have reminded at 18:30 for a 19:30 date. Each of
+    // these reads as the time asked for, in local terms.
+    const day = { year: 2026, month: 11, day: 1 };
+    const readsAs = (minute: number) =>
+      zonedTimeOfDay(day, minute, NY).toLocaleTimeString("en-US", {
+        timeZone: NY,
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      });
+
+    expect(readsAs(2 * 60 + 30)).toBe("02:30");
+    expect(readsAs(19 * 60 + 30)).toBe("19:30");
+    expect(readsAs(1439)).toBe("23:59");
+    // ...and still on the day asked for, not spilled into the next.
+    expect(calendarDateInTz(zonedTimeOfDay(day, 1439, NY), NY)).toEqual(day);
+  });
+
+  it("holds the wall clock across a spring-forward day too", () => {
+    const day = { year: 2026, month: 3, day: 8 };
+    const readsAs = (minute: number) =>
+      zonedTimeOfDay(day, minute, NY).toLocaleTimeString("en-US", {
+        timeZone: NY,
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      });
+
+    expect(readsAs(60 + 30)).toBe("01:30");
+    expect(readsAs(19 * 60 + 30)).toBe("19:30");
+    expect(readsAs(1439)).toBe("23:59");
+  });
+
   it("stays on the intended day at one minute to midnight", () => {
     const at = zonedTimeOfDay({ year: 2026, month: 7, day: 15 }, 1439, NY);
     expect(calendarDateInTz(at, NY)).toEqual({ year: 2026, month: 7, day: 15 });

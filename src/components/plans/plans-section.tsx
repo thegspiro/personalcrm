@@ -126,6 +126,19 @@ function PlanFields({
     );
   }
 
+  // The server takes any whole number of minutes, so a stored value that is
+  // not one of the presets has to be offered too. Without it the select falls
+  // back to the blank option, and saving an unrelated edit would silently
+  // clear a duration the user had set.
+  const durationOptions = React.useMemo(() => {
+    const stored = plan?.plannedDurationMinutes;
+    if (!stored || PLAN_DURATIONS.some((option) => option.minutes === stored)) {
+      return [...PLAN_DURATIONS];
+    }
+    return [...PLAN_DURATIONS, { minutes: stored, label: formatPlanDuration(stored) ?? `${stored}m` }]
+      .sort((a, b) => a.minutes - b.minutes);
+  }, [plan?.plannedDurationMinutes]);
+
   function addChecklistItem() {
     if (checklist.length >= 25) return;
     setChecklist((items) => [
@@ -211,7 +224,7 @@ function PlanFields({
               className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
             >
               <option value="">However long it takes</option>
-              {PLAN_DURATIONS.map((option) => (
+              {durationOptions.map((option) => (
                 <option key={option.minutes} value={option.minutes}>
                   {option.label}
                 </option>
@@ -393,11 +406,17 @@ export function PlansSection({
                       {[
                         formatPartialDate(plan.plannedFor, "DAY", { short: true }),
                         formatPlanTime(plan.plannedStartMinute),
-                        formatPlanDuration(plan.plannedDurationMinutes),
                       ]
                         .filter(Boolean)
                         .join(" · ")}
                     </span>
+                  ) : null}
+                  {/* Its own chip rather than part of the day's. A duration is
+                      kept when no day is set — how long a thing takes belongs
+                      to the thing — so folding it in here would store the
+                      value and then never show it. */}
+                  {plan.plannedDurationMinutes ? (
+                    <span>{formatPlanDuration(plan.plannedDurationMinutes)}</span>
                   ) : null}
                   {formatMoney(plan.estimatedCostCents, plan.currency) ? (
                     <span>

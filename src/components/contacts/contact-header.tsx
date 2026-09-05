@@ -225,8 +225,13 @@ export function ContactHeader({
                 is already romantic — two controls for one flag would drift.
                 Gated on the module as a whole rather than on this person, so a
                 label reading either way cannot disclose who is romantic while
-                the lock is closed. */}
-            {datingAvailable && !contact.isRomantic ? (
+                the lock is closed.
+
+                Not offered on an archived contact: the pipeline excludes
+                archived people, so the flag would be set, the toast would say
+                they had been added, and they would not appear. Restore them
+                first — which is what archiving is the opposite of. */}
+            {datingAvailable && !contact.isRomantic && !contact.isArchived ? (
               <DropdownMenuItem
                 onSelect={() =>
                   void run(() => markAsRomantic(contact.id), "Added to your dating pipeline")
