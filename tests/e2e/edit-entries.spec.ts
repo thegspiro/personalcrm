@@ -58,6 +58,61 @@ test("a fact can be corrected in place, keeping its category", async ({ page }) 
   await expect(facts.getByText("Reads le Carre", { exact: true })).toHaveCount(0);
 });
 
+test("someone in their life can be corrected in place, keeping the note", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto(personUrl);
+
+  const people = section(page, "People in their life");
+  await people.getByRole("button", { name: "Add someone" }).click();
+  await people.getByLabel("Their name").fill("Bob");
+  await people.getByLabel("How do they know them?").fill("Colleauge");
+  await people.getByLabel("Anything to remember?").fill("On night shifts until March.");
+  await people.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(people.getByText("On night shifts until March.")).toBeVisible();
+
+  // The note is not in the edit form's changed field, so it is exactly what a
+  // form that only carried the name would silently clear.
+  await people.getByRole("button", { name: "Edit entry" }).first().click();
+  await people.getByLabel("How do they know them?").fill("Colleague from the hospital");
+  await people.getByRole("button", { name: "Save", exact: true }).click();
+
+  await expect(people.getByText("Colleague from the hospital")).toBeVisible();
+  await expect(people.getByText("Colleauge", { exact: true })).toHaveCount(0);
+  await expect(people.getByText("On night shifts until March.")).toBeVisible();
+});
+
+test("one of them can be promoted into a person, and stops being editable", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto(personUrl);
+
+  const people = section(page, "People in their life");
+  await people.getByRole("button", { name: "Track as a person" }).first().click();
+  await expect(people.getByLabel("First name")).toHaveValue("Bob");
+
+  // The relationship type is required, so the first chip stands in for a pick.
+  await people.getByRole("button", { name: /^(?!Track them$).+/ }).last().click();
+  await people.getByRole("button", { name: "Track them" }).click();
+
+  await expect(people.getByText("Now tracked")).toBeVisible();
+  // Read-only comes from the row rendering no edit control at all, rather than
+  // from one that looks live and refuses.
+  await expect(people.getByRole("button", { name: "Edit entry" })).toHaveCount(0);
+  await expect(people.getByRole("button", { name: "Track as a person" })).toHaveCount(0);
+
+  await expect(section(page, "Connected people").getByText("Bob")).toBeVisible();
+});
+
+test("the roll-up lists them under the person whose life they are in", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto("/people");
+
+  await page.getByRole("link", { name: "Their people" }).click();
+  await expect(page).toHaveURL(/\/people\/friends$/);
+
+  await expect(page.getByRole("link", { name: PERSON(), exact: true })).toBeVisible();
+  await expect(page.getByText("Colleague from the hospital")).toBeVisible();
+});
+
 test("a follow-up keeps its due date through an edit", async ({ page }) => {
   await ensureSignedIn(page);
   await page.goto(personUrl);

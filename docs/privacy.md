@@ -136,8 +136,18 @@ supplies the live scope.
 
 ### What "private" applies to
 
-`isPrivate` exists on `Contact`, `Fact`, `Interaction` and `Debt`. Marking a
-contact private hides everything beneath them.
+`isPrivate` exists on `Contact`, `Fact`, `Interaction`, `Debt` and
+`Acquaintance`. Marking a contact private hides everything beneath them.
+
+An `Acquaintance` — someone in a contact's life who is not tracked themselves —
+is withheld for its own marker *and* for the person it hangs off, which is two
+fragments at every call site rather than one: `acquaintancePrivacyWhere` beside
+`viaContactPrivacyWhere`. Either alone lets the other's rows through. The name
+is filtered out of people-search for the same reason a private fact's text is:
+finding someone by a name only a hidden note carries would answer "is something
+hidden here, and about whom" from a page the lock does not gate. A promotion
+link names a real person, so where the person it created is private, the link
+is withheld while the entry itself still reads as tracked.
 
 `DietaryNeed` deliberately has no `isPrivate` — an allergen or emergency
 instruction behind a PIN is decorative safety information. This includes food,

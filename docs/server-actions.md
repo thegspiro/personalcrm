@@ -120,12 +120,32 @@ list, because a person missing from the form would be silently dropped on save.
 | Significant moments (`LifeEvent`) | `createLifeEvent`, `updateLifeEvent`, `deleteLifeEvent` |
 | Going on in their life (`Happening`) | `createHappening`, `updateHappening`, `acknowledgeHappening`, `deleteHappening` |
 | Ideas | `createIdea`, `updateIdea`, `setIdeaStatus`, `deleteIdea` |
+| People in their life (`Acquaintance`) | `createAcquaintance`, `updateAcquaintance`, `promoteAcquaintance`, `deleteAcquaintance` |
 | Plans | `createPlan`, `updatePlan`, `setPlanStatus`, `deletePlan` |
 | Tasks | `createTask`, `updateTask`, `setTaskDone`, `deleteTask` |
 | Gifts | `createGift`, `updateGift`, `setGiftStatus`, `deleteGift` |
 | Debts | `createDebt`, `updateDebt`, `settleDebt`, `deleteDebt` |
 | Dietary needs | `createDietaryNeed`, `updateDietaryNeed`, `deleteDietaryNeed`, `updateAllergyStatus` |
 | Relationships | `createRelationship`, `updateRelationship`, `deleteRelationship` |
+
+`promoteAcquaintance` is the one action here that creates a `Contact`. It runs
+in a transaction that creates the person, claims the entry, and writes both
+halves of the reciprocal `Relationship` — sharing `writeRelationshipPair` with
+`createRelationship` so the second half cannot go missing on one path and not
+the other.
+
+The claim is a compare-and-set on `promotedContactId: null` rather than a
+read-then-write. A second submission — two tabs, or a retried request, neither
+of which a disabled button catches — blocks on the first writer's row lock,
+matches nothing, and throws to roll its own half-built person away. The action
+then answers with the contact that already exists rather than an error, because
+a stale tab should land on the person, not on a red toast. Once the pointer is
+set the entry refuses `updateAcquaintance`: it is a record of what was written
+before the profile existed, and the profile is where that person is edited now.
+Deleting is still allowed, and takes nothing about the created person with it.
+
+The new person inherits privacy from both the entry and the contact it hangs
+off, so promoting a note from behind the lock does not publish the name.
 
 `ContactMethod` and `Address` carry no `ownerId` of their own, so these are the
 actions where the ownership check is indirect: each looks its row up through

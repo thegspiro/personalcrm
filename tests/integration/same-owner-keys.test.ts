@@ -62,6 +62,14 @@ const CASES: Case[] = [
     count: (ownerId) => prisma.fact.count({ where: { ownerId } }),
   },
   {
+    name: "Acquaintance",
+    create: (context, contactId) =>
+      prisma.acquaintance.create({
+        data: { ownerId: context.ownerId, contactId, name: "Bob" },
+      }),
+    count: (ownerId) => prisma.acquaintance.count({ where: { ownerId } }),
+  },
+  {
     name: "ImportantDate",
     create: (context, contactId) =>
       prisma.importantDate.create({

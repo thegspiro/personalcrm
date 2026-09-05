@@ -46,7 +46,8 @@ column, and the mismatch has nowhere to live.
 Every relation into `Contact` uses this shape — `Relationship` (both ends),
 `Fact`, `ImportantDate`, `LifeEvent`, `FamilySuggestionDismissal` (both ends),
 `Idea`, `Task`, `Happening`, `Gift`, `Debt`, `DietaryNeed`, `RomanticProfile`,
-`DateEntry`, `Plan`, `Flag` and `ContactTag` — along with `ContactTag` → `Tag`
+`DateEntry`, `Plan`, `Flag`, `Acquaintance` and `ContactTag` — along with
+`ContactTag` → `Tag`
 and `LocationAlias` → `Location`.
 
 The four join tables that name a contact and something else —
@@ -59,15 +60,17 @@ backfilled from their parent, and key on it from both sides:
 and nothing else makes them agree. `Interaction`, `LifeEvent` and `Household`
 each gained the `@@unique([ownerId, id])` those keys point at.
 
-**Two exceptions, for a reason MariaDB imposes.** `Interaction.place` and
-`Plan.place` are `ON DELETE SET NULL`, and MariaDB refuses a `SET NULL` foreign
+**Three exceptions, for a reason MariaDB imposes.** `Interaction.place`,
+`Plan.place` and `Acquaintance.promotedContactId` are `ON DELETE SET NULL`, and MariaDB refuses a `SET NULL` foreign
 key unless every column in it is nullable; `ownerId` is not, and making it
 nullable would cost the guarantee the key exists to give. Those two keep an
 explicit owner predicate in code instead — `src/server/services/locations.ts`
 on the write path, and `src/server/queries/timeline.ts` on the read, where the
 place is both searched and rendered. Prisma takes no `where` on a to-one
 `include`, so the timeline selects the place's `ownerId` and drops it in the
-mapper rather than filtering in the query.
+mapper rather than filtering in the query. `Acquaintance.promotedContactId` is
+compensated the same way, in `getContact` and `listAcquaintanceGroups`: both
+select the promoted contact's `ownerId` and drop the join in the mapper.
 
 **This does not make the readers' predicates redundant.** `mariadb-dump` writes
 `SET FOREIGN_KEY_CHECKS=0`, so restoring a dump taken before these keys existed
@@ -468,6 +471,24 @@ sorting to the top as zero or vanishing from the list.
 `FACT_CATEGORY` (`SET NULL`), `content` (text), `importance` (0 trivia, 1
 normal, 2 important), `isPrivate`, and `sourceInteractionId` → `Interaction`
 (`SET NULL`) recording the conversation a fact came out of.
+
+### `Acquaintance`
+
+Someone in a contact's life who is not tracked as a contact themselves — a
+colleague, a sibling's partner, the flatmate they keep mentioning. `contactId`
+(cascade), `name`, `howTheyKnow` (short free text, in the words used at the
+time), `notes`, and `isPrivate`.
+
+Deliberately not a `Contact` with a flag on it: these people have no cadence,
+no timeline and no profile, and giving them one turns every name mentioned in
+passing into someone you have failed to keep in touch with.
+
+`promotedContactId` → `Contact` (`SET NULL`) is the whole of the "now tracked"
+state, set when an entry is turned into a real person. The entry is kept rather
+than consumed — it records what was written before that profile existed — and
+stops being editable in place instead. There is no `promotedAt` beside it,
+because `SET NULL` can revoke the pointer and a timestamp left behind would
+claim a promotion that no longer exists.
 
 ### `ImportantDate`
 
@@ -895,9 +916,10 @@ nobody gave.
 | Deleting… | Takes with it | Leaves behind |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | A `User` | Everything they own, by cascade | — |
-| A `Contact` | Methods, addresses, tags, facts, dates, life events, happenings, gifts, debts, dietary needs, flags, ideas, plans, tasks, household memberships, relationships (both halves), participations, romantic profile, date entries, and its avatar file | `CustomFieldValue` rows — **swept explicitly** by the action |
+| A `Contact` | Methods, addresses, tags, facts, dates, life events, happenings, gifts, debts, dietary needs, flags, ideas, plans, tasks, the people noted as being in their life, household memberships, relationships (both halves), participations, romantic profile, date entries, and its avatar file | `CustomFieldValue` rows — **swept explicitly** by the action |
 | An `Interaction` | Participants, its `DateEntry` | `Fact.sourceInteractionId`, `Idea.usedInInteractionId` and `Plan.usedInInteractionId` set to null |
 | A `TaxonomyTerm` | `Relationship` rows of that type (cascade) — which is why deleting a term still in use is blocked; other references are `SET NULL` | The records themselves |
+| A promoted `Contact` | Nothing | The `Acquaintance` it came from, with `promotedContactId` set to null — editable again, note intact |
 | A `Session` | Nothing | The unlock state dies with it |
 
 ---
@@ -932,6 +954,7 @@ the `init-migrate` s6 oneshot).
 | `20260904120000_same_owner_contact_keys` | Extends the same treatment to every remaining reference to a `Contact` — seventeen owned relations, plus `InteractionParticipant`, `InteractionMention`, `LifeEventParticipant` and `HouseholdMember`, which gain an `ownerId` backfilled from their parent. **Hand-edited**: repairs before it constrains, deleting a row whose link is required and clearing only the link where it is optional, sweeping the `CustomFieldValue` rows of anything it deletes, and detaching cross-owner `Interaction.place` / `Plan.place`, which keep a single-column key because `SET NULL` needs every column nullable. Ships a `down.sql` |
 | `20260904150000_add_plan_times` | Additive nullable `Plan.plannedStartMinute` and `plannedDurationMinutes`, so a pencilled-in plan can carry a time of day and a rough length. Purely additive — no existing column is re-expressed, and a plan with a day but no time reads exactly as it did before |
 | `20260905120000_add_address_coordinates_and_home_base` | Adds `latitude`, `longitude`, `osmType` and `osmId` to `Address`, and the home base plus `distanceUnit` to `UserPreference`. Entirely additive — every column nullable or defaulted, nothing removed or renamed, so there is nothing to backfill and nothing that can be lost |
+| `20260905140434_add_acquaintances` | Adds `Acquaintance` — the people in a contact's life who are not tracked themselves. Purely additive: one new table, no existing column re-expressed and no enum modified, so there is nothing to backfill and nothing that can be lost. `promotedContactId` is the third single-column key into `Contact`, for the `SET NULL` reason above |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).

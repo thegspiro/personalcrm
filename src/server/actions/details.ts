@@ -10,6 +10,7 @@ import { resolveLocation } from "@/server/services/locations";
 // shape lives beside the provider table.
 import type { GeoCandidateView } from "@/server/geo/providers";
 import {
+  acquaintancePrivacyWhere,
   contactPrivacyWhere,
   debtPrivacyWhere,
   factPrivacyWhere,
@@ -52,7 +53,8 @@ import {
 
 /**
  * Everything that hangs off a contact: facts, important dates, life events,
- * ideas, plans, tasks, gifts, debts, dietary needs, and relationships.
+ * ideas, the people in their life, plans, tasks, gifts, debts, dietary needs,
+ * and relationships.
  *
  * None of these touch interaction history, so none of them recompute contact
  * activity — only interactions move the keep-in-touch clock.
@@ -672,6 +674,242 @@ export async function deleteIdea(id: string): Promise<ActionResult> {
   touch(existing.contactId);
   revalidatePath("/ideas");
   return ok();
+}
+
+// --- people in their life ---------------------------------------------------
+
+/**
+ * Entries appear on the person's page and on the roll-up, and a promotion adds
+ * someone to the people list, so the shared `touch` is not enough on its own.
+ */
+function touchAcquaintance(contactId?: string | null) {
+  touch(contactId);
+  revalidatePath("/people");
+  revalidatePath("/people/friends");
+}
+
+const acquaintanceSchema = z.object({
+  name: z.string().trim().min(1, "Give them a name.").max(191),
+  // Bounded to the column width so an over-long value comes back as a field
+  // error rather than a database rejection thrown out of the action.
+  howTheyKnow: z.string().trim().max(191).optional(),
+});
+
+const promoteSchema = z.object({
+  firstName: z.string().trim().min(1, "A first name is required.").max(120),
+  lastName: z.string().trim().max(120).optional(),
+});
+
+export async function createAcquaintance(
+  form: FormData,
+): Promise<ActionResult<{ id: string }>> {
+  const { ownerId } = await owner();
+  const contactId = str(form, "contactId");
+  if (!contactId) return fail("Contact not found.");
+  if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
+
+  const parsed = acquaintanceSchema.safeParse({
+    name: str(form, "name") ?? "",
+    howTheyKnow: str(form, "howTheyKnow"),
+  });
+  if (!parsed.success) return invalid(parsed.error);
+
+  const created = await prisma.acquaintance.create({
+    data: {
+      ownerId,
+      contactId,
+      name: parsed.data.name,
+      howTheyKnow: parsed.data.howTheyKnow ?? null,
+      notes: str(form, "notes") ?? null,
+      isPrivate: bool(form, "isPrivate"),
+    },
+  });
+
+  touchAcquaintance(contactId);
+  return ok({ id: created.id });
+}
+
+export async function updateAcquaintance(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  if (!id) return fail("Not found.");
+
+  // Scoped by both fragments as well as the owner: the entry carries its own
+  // marker and hangs off someone who may be private, and an id remembered from
+  // an unlocked session must not be a way back into either.
+  const scope = await privacyScope();
+  const existing = await prisma.acquaintance.findFirst({
+    where: {
+      id,
+      ownerId,
+      ...acquaintancePrivacyWhere(scope),
+      ...viaContactPrivacyWhere(scope),
+    },
+    select: { contactId: true, isPrivate: true, promotedContactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  // Once promoted the entry is a record of what was written at the time, not a
+  // live note; the profile it produced is where this person is edited now.
+  if (existing.promotedContactId) {
+    return fail("They're tracked as a person now — edit their profile.");
+  }
+
+  const parsed = acquaintanceSchema.safeParse({
+    name: str(form, "name") ?? "",
+    howTheyKnow: str(form, "howTheyKnow"),
+  });
+  if (!parsed.success) return invalid(parsed.error);
+
+  const marker = await privacyMarker(form, existing.isPrivate);
+  if (!marker.ok) return fail(marker.error);
+
+  await prisma.acquaintance.update({
+    where: { id },
+    data: {
+      name: parsed.data.name,
+      howTheyKnow: parsed.data.howTheyKnow ?? null,
+      notes: str(form, "notes") ?? null,
+      isPrivate: marker.isPrivate,
+    },
+  });
+
+  touchAcquaintance(existing.contactId);
+  return ok();
+}
+
+/**
+ * Removing the note. Allowed even once promoted — throwing away a note that
+ * the profile now supersedes is not an edit of it, and it touches nothing
+ * about the person it created.
+ */
+export async function deleteAcquaintance(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const scope = await privacyScope();
+  const existing = await prisma.acquaintance.findFirst({
+    where: {
+      id,
+      ownerId,
+      ...acquaintancePrivacyWhere(scope),
+      ...viaContactPrivacyWhere(scope),
+    },
+    select: { contactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  await prisma.acquaintance.delete({ where: { id } });
+  touchAcquaintance(existing.contactId);
+  return ok();
+}
+
+/**
+ * Turn an entry into someone you actually track.
+ *
+ * The entry is kept rather than consumed: it records what was written before
+ * this person had a profile, and deleting it would be a status change that
+ * destroys something. It stops being editable in place instead.
+ *
+ * Idempotent by construction. The claim is a compare-and-set on
+ * `promotedContactId: null` inside the transaction, so a double submit — two
+ * tabs, or a retried request, neither of which a disabled button catches —
+ * blocks on the first writer's row lock, then matches nothing and rolls its own
+ * half-built person away. One person, one reciprocal pair, either way.
+ */
+export async function promoteAcquaintance(
+  form: FormData,
+): Promise<ActionResult<{ contactId: string }>> {
+  const { ownerId } = await owner();
+  const id = str(form, "id");
+  const typeId = str(form, "typeId");
+  if (!id) return fail("Not found.");
+  if (!typeId) return fail("Pick how they know each other.");
+
+  // Read before the transaction opens rather than inside it.
+  const scope = await privacyScope();
+  const existing = await prisma.acquaintance.findFirst({
+    where: {
+      id,
+      ownerId,
+      ...acquaintancePrivacyWhere(scope),
+      ...viaContactPrivacyWhere(scope),
+    },
+    select: {
+      contactId: true,
+      notes: true,
+      isPrivate: true,
+      promotedContactId: true,
+      contact: { select: { isPrivate: true } },
+    },
+  });
+  if (!existing) return fail("Not found.");
+
+  // Already done — answer with the person that exists rather than an error.
+  // A stale tab should land on them, not on a red toast.
+  if (existing.promotedContactId) return ok({ contactId: existing.promotedContactId });
+
+  const parsed = promoteSchema.safeParse({
+    firstName: str(form, "firstName") ?? "",
+    lastName: str(form, "lastName"),
+  });
+  if (!parsed.success) return invalid(parsed.error);
+
+  const type = await prisma.taxonomyTerm.findFirst({
+    where: { id: typeId, ownerId, kind: "RELATIONSHIP_TYPE" },
+    select: { id: true, inverseTermId: true },
+  });
+  if (!type) return fail(UNKNOWN_TERM);
+
+  // A hidden note must not publish a name. The lookup above already refused
+  // anything unreadable, so a closed lock can only have reached a public entry
+  // on a public contact — but the person is marked from both either way.
+  const isPrivate = existing.isPrivate || existing.contact.isPrivate;
+
+  let personId: string;
+  try {
+    personId = await prisma.$transaction(async (tx) => {
+      const person = await tx.contact.create({
+        data: {
+          ownerId,
+          firstName: parsed.data.firstName,
+          lastName: parsed.data.lastName ?? null,
+          summary: existing.notes,
+          isPrivate,
+        },
+      });
+
+      const claimed = await tx.acquaintance.updateMany({
+        where: { id, ownerId, promotedContactId: null },
+        data: { promotedContactId: person.id },
+      });
+      if (claimed.count === 0) throw new AlreadyPromoted();
+
+      // `from` is the person whose page the entry lives on, matching what
+      // "Connected people" means by "is their…", so the two forms agree.
+      await writeRelationshipPair(tx, {
+        ownerId,
+        fromContactId: existing.contactId,
+        toContactId: person.id,
+        type,
+        notes: null,
+      });
+
+      return person.id;
+    });
+  } catch (error) {
+    if (error instanceof AlreadyPromoted) {
+      const row = await prisma.acquaintance.findFirst({
+        where: { id, ownerId },
+        select: { promotedContactId: true },
+      });
+      if (row?.promotedContactId) return ok({ contactId: row.promotedContactId });
+      return fail("Could not track them. Try again.");
+    }
+    throw error;
+  }
+
+  touchAcquaintance(existing.contactId);
+  touch(personId);
+  return ok({ contactId: personId });
 }
 
 // --- plans -----------------------------------------------------------------
@@ -1329,37 +1567,17 @@ export async function createRelationship(form: FormData): Promise<ActionResult> 
   if (!from || !to) return fail("Contact not found.");
   if (!type) return fail("Unknown relationship type.");
 
-  const pairId = randomBytes(8).toString("hex");
-  const inverseTypeId = type.inverseTermId ?? type.id;
   const notes = str(form, "notes") ?? null;
 
-  await prisma.$transaction(async (tx) => {
-    await tx.relationship.upsert({
-      where: {
-        fromContactId_toContactId_typeId: { fromContactId, toContactId, typeId: type.id },
-      },
-      create: { ownerId, fromContactId, toContactId, typeId: type.id, pairId, notes },
-      update: { pairId, notes },
-    });
-    await tx.relationship.upsert({
-      where: {
-        fromContactId_toContactId_typeId: {
-          fromContactId: toContactId,
-          toContactId: fromContactId,
-          typeId: inverseTypeId,
-        },
-      },
-      create: {
-        ownerId,
-        fromContactId: toContactId,
-        toContactId: fromContactId,
-        typeId: inverseTypeId,
-        pairId,
-        notes,
-      },
-      update: { pairId, notes },
-    });
-  });
+  await prisma.$transaction((tx) =>
+    writeRelationshipPair(tx, {
+      ownerId,
+      fromContactId,
+      toContactId,
+      type,
+      notes,
+    }),
+  );
 
   touch(fromContactId);
   touch(toContactId);
@@ -1847,6 +2065,68 @@ export async function lookupContactAddress(
 }
 
 // --- helpers ---------------------------------------------------------------
+
+/**
+ * Write both halves of a relationship, sharing one `pairId`.
+ *
+ * "Bob is Alice's colleague" also records "Alice is Bob's colleague", so the
+ * two rows are created together and removed together — `deleteMany({ pairId })`
+ * is what unlinking runs. Extracted because two callers now write a pair, and
+ * a second hand-rolled copy is how the reciprocal half goes missing on one path
+ * and not the other.
+ *
+ * A type with no configured inverse falls back to itself, which is right for
+ * the symmetric words and is the pre-existing behaviour of this taxonomy.
+ */
+async function writeRelationshipPair(
+  tx: Prisma.TransactionClient,
+  {
+    ownerId,
+    fromContactId,
+    toContactId,
+    type,
+    notes,
+  }: {
+    ownerId: string;
+    fromContactId: string;
+    toContactId: string;
+    type: { id: string; inverseTermId: string | null };
+    notes: string | null;
+  },
+): Promise<void> {
+  const pairId = randomBytes(8).toString("hex");
+  const inverseTypeId = type.inverseTermId ?? type.id;
+
+  await tx.relationship.upsert({
+    where: {
+      fromContactId_toContactId_typeId: { fromContactId, toContactId, typeId: type.id },
+    },
+    create: { ownerId, fromContactId, toContactId, typeId: type.id, pairId, notes },
+    update: { pairId, notes },
+  });
+  await tx.relationship.upsert({
+    where: {
+      fromContactId_toContactId_typeId: {
+        fromContactId: toContactId,
+        toContactId: fromContactId,
+        typeId: inverseTypeId,
+      },
+    },
+    create: {
+      ownerId,
+      fromContactId: toContactId,
+      toContactId: fromContactId,
+      typeId: inverseTypeId,
+      pairId,
+      notes,
+    },
+    update: { pairId, notes },
+  });
+}
+
+/** Thrown to roll a promotion back when another request claimed the entry first. */
+class AlreadyPromoted extends Error {}
+
 
 /**
  * The `isPrivate` value an edit is allowed to write.

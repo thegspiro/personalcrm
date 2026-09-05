@@ -10,6 +10,7 @@ import {
 } from "@/lib/reciprocity";
 import { DUE_SOON_DAYS } from "@/lib/cadence";
 import {
+  acquaintancePrivacyWhere,
   contactPrivacyWhere,
   factPrivacyWhere,
   interactionPrivacyWhere,
@@ -120,6 +121,14 @@ function buildWhere(
       {
         facts: {
           some: { content: { contains: search }, ...factPrivacyWhere(privacy) },
+        },
+      },
+      // Same rule as facts: a private entry must not surface the person it
+      // belongs to, which would answer "is anything hidden here" from a page
+      // the lock does not gate.
+      {
+        acquaintances: {
+          some: { name: { contains: search }, ...acquaintancePrivacyWhere(privacy) },
         },
       },
       { dietaryNeeds: { some: { label: { contains: search } } } },
@@ -246,6 +255,24 @@ const detailInclude = (ownerId: string) =>
       include: { category: true },
       orderBy: [{ importance: "desc" }, { createdAt: "desc" }],
     },
+    // Ordered explicitly, like `addresses` above, for the same reason.
+    acquaintances: {
+      include: {
+        // Selected with its owner: `promotedContactId` is the one key here
+        // that is not same-owner, so the join can reach another account's
+        // person after an import or a hand repair. `getContact` drops it.
+        promoted: {
+          select: {
+            id: true,
+            ownerId: true,
+            firstName: true,
+            lastName: true,
+            isPrivate: true,
+          },
+        },
+      },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+    },
     importantDates: { include: { type: true }, orderBy: { date: "asc" } },
     lifeEvents: {
       include: { type: true, participants: { include: { contact: true } } },
@@ -321,7 +348,26 @@ export const getContact = cache(
       // would not help here: without this the private debt is serialised into
       // the page payload even though the section never renders it.
       contact.debts = contact.debts.filter((debt) => !debt.isPrivate);
+      contact.acquaintances = contact.acquaintances
+        .filter((entry) => !entry.isPrivate)
+        // The promotion link names a real person, so a private one would be
+        // readable from an ordinary contact's page — the same leak the
+        // relationship filter above closes. The entry itself still shows, and
+        // still reads as tracked: dropping that would make it editable again
+        // and invite a second promotion.
+        .map((entry) =>
+          entry.promoted?.isPrivate ? { ...entry, promoted: null } : entry,
+        );
     }
+
+    // Unconditional, outside the lock block: the promotion pointer is reached
+    // through the one key here that the database does not hold to a single
+    // owner, so a foreign row is dropped for everybody, locked or not.
+    contact.acquaintances = contact.acquaintances.map((entry) =>
+      entry.promoted && entry.promoted.ownerId !== ownerId
+        ? { ...entry, promoted: null }
+        : entry,
+    );
     return contact;
   },
 );

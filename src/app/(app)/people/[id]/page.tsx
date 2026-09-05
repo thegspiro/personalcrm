@@ -30,6 +30,7 @@ import { DietarySection } from "@/components/contacts/sections/dietary";
 import { FactsSection } from "@/components/contacts/sections/facts";
 import { GiftsSection } from "@/components/contacts/sections/gifts";
 import { IdeasSection } from "@/components/contacts/sections/ideas";
+import { AcquaintancesSection } from "@/components/contacts/sections/acquaintances";
 import { LifeEventsSection } from "@/components/contacts/sections/life-events";
 import { HappeningsSection } from "@/components/contacts/sections/happenings";
 import { RelationshipsSection } from "@/components/contacts/sections/relationships";
@@ -477,6 +478,27 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             content: idea.content,
             status: idea.status,
           }))}
+        />
+
+        <AcquaintancesSection
+          contactId={contact.id}
+          contactName={displayName(contact)}
+          acquaintances={contact.acquaintances.map((entry) => ({
+            id: entry.id,
+            name: entry.name,
+            howTheyKnow: entry.howTheyKnow,
+            notes: entry.notes,
+            isPrivate: entry.isPrivate,
+            // Read from the column, not from the join: the person may be
+            // withheld while the entry is still tracked, and a row that
+            // forgets that becomes editable again and invites a second
+            // promotion.
+            isPromoted: entry.promotedContactId !== null,
+            promoted: entry.promoted
+              ? { id: entry.promoted.id, name: displayName(entry.promoted) }
+              : null,
+          }))}
+          types={terms.RELATIONSHIP_TYPE}
         />
 
         <PlansSection

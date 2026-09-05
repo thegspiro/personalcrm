@@ -29,6 +29,19 @@ export function factPrivacyWhere(scope: PrivacyScope): Prisma.FactWhereInput {
   return scope.unlocked ? {} : { isPrivate: false };
 }
 
+/**
+ * Applied to Acquaintance queries.
+ *
+ * Only the row's own marker: the person it hangs off may be private too, and
+ * that is a separate question answered by `viaContactPrivacyWhere` alongside
+ * this one — exactly as a fact is filtered.
+ */
+export function acquaintancePrivacyWhere(
+  scope: PrivacyScope,
+): Prisma.AcquaintanceWhereInput {
+  return scope.unlocked ? {} : { isPrivate: false };
+}
+
 /** Applied to Debt queries. */
 export function debtPrivacyWhere(scope: PrivacyScope): Prisma.DebtWhereInput {
   return scope.unlocked ? {} : { isPrivate: false };
