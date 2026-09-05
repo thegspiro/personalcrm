@@ -47,8 +47,7 @@ Every relation into `Contact` uses this shape — `Relationship` (both ends),
 `Fact`, `ImportantDate`, `LifeEvent`, `FamilySuggestionDismissal` (both ends),
 `Idea`, `Task`, `Happening`, `Gift`, `Debt`, `DietaryNeed`, `RomanticProfile`,
 `DateEntry`, `Plan`, `Flag`, `Acquaintance` and `ContactTag` — along with
-`ContactTag` → `Tag`
-and `LocationAlias` → `Location`.
+`ContactTag` → `Tag` and `LocationAlias` → `Location`.
 
 The four join tables that name a contact and something else —
 `InteractionParticipant`, `InteractionMention`, `LifeEventParticipant` and
@@ -61,12 +60,13 @@ and nothing else makes them agree. `Interaction`, `LifeEvent` and `Household`
 each gained the `@@unique([ownerId, id])` those keys point at.
 
 **Three exceptions, for a reason MariaDB imposes.** `Interaction.place`,
-`Plan.place` and `Acquaintance.promotedContactId` are `ON DELETE SET NULL`, and MariaDB refuses a `SET NULL` foreign
-key unless every column in it is nullable; `ownerId` is not, and making it
-nullable would cost the guarantee the key exists to give. Those two keep an
-explicit owner predicate in code instead — `src/server/services/locations.ts`
-on the write path, and `src/server/queries/timeline.ts` on the read, where the
-place is both searched and rendered. Prisma takes no `where` on a to-one
+`Plan.place` and `Acquaintance.promotedContactId` are `ON DELETE SET NULL`, and
+MariaDB refuses a `SET NULL` foreign key unless every column in it is nullable;
+`ownerId` is not, and making it nullable would cost the guarantee the key exists
+to give. The two places keep an explicit owner predicate in code instead —
+`src/server/services/locations.ts` on the write path, and
+`src/server/queries/timeline.ts` on the read, where the place is both searched
+and rendered. Prisma takes no `where` on a to-one
 `include`, so the timeline selects the place's `ownerId` and drops it in the
 mapper rather than filtering in the query. `Acquaintance.promotedContactId` is
 compensated the same way, in `getContact` and `listAcquaintanceGroups`: both
