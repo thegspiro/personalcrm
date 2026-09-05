@@ -675,6 +675,7 @@ you _do_ it.
 | `plannedDurationMinutes` | `int?` | How long to set aside, in minutes. Null = open-ended |
 | `usedAt` | `datetime?` | |
 | `usedInInteractionId` | `cuid?` | → `Interaction`, `SET NULL`. An interaction rather than a `DateEntry`: a plan carried out with a friend never produces one of those |
+| `completionKey` | `varchar(191)?` | `<sourcePlanId>:<contactId>:<local day>`, unique per owner, set only on a completed copy of a shared idea. That path writes a copy and leaves the original open, so it has no row to claim — the index is what makes a replayed POST or a second tab collide instead of filing the evening twice |
 
 Deliberately not confined to the dating layer — a hike with a friend and a first
 date are the same object, so it hangs off any `Contact`, or off nobody.
@@ -1073,6 +1074,7 @@ the `init-migrate` s6 oneshot).
 | `20260904120000_same_owner_contact_keys` | Extends the same treatment to every remaining reference to a `Contact` — seventeen owned relations, plus `InteractionParticipant`, `InteractionMention`, `LifeEventParticipant` and `HouseholdMember`, which gain an `ownerId` backfilled from their parent. **Hand-edited**: repairs before it constrains, deleting a row whose link is required and clearing only the link where it is optional, sweeping the `CustomFieldValue` rows of anything it deletes, and detaching cross-owner `Interaction.place` / `Plan.place`, which keep a single-column key because `SET NULL` needs every column nullable. Ships a `down.sql` |
 | `20260904150000_add_plan_times` | Additive nullable `Plan.plannedStartMinute` and `plannedDurationMinutes`, so a pencilled-in plan can carry a time of day and a rough length. Purely additive — no existing column is re-expressed, and a plan with a day but no time reads exactly as it did before |
 | `20260905120000_add_address_coordinates_and_home_base` | Adds `latitude`, `longitude`, `osmType` and `osmId` to `Address`, and the home base plus `distanceUnit` to `UserPreference`. Entirely additive — every column nullable or defaulted, nothing removed or renamed, so there is nothing to backfill and nothing that can be lost |
+| `20260905180000_add_plan_completion_key` | Additive nullable `Plan.completionKey` and a unique index on `(ownerId, completionKey)`, making the shared-idea completion path replay-safe. Purely additive: the column is null on every existing row, and both MySQL and MariaDB allow unlimited `NULL`s under a unique index, so nothing stored changes meaning |
 | `20260905153056_add_associates` | Adds `Associate` — the people in a contact's life who are not tracked themselves. Purely additive: one new table, no existing column re-expressed and no enum modified, so there is nothing to backfill and nothing that can be lost. `promotedContactId` is the third single-column key into `Contact`, for the `SET NULL` reason above |
 
 Writing a migration that changes the meaning of existing data — not just its
