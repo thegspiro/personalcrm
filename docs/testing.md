@@ -86,7 +86,11 @@ the schema do, not things a mock can:
   it.
 - `reminders.test.ts` — all four delivery policies; that a cadence due later
   in the local day is due; retries that outlive the day they were owed on, and
-  cancellation after task, date or privacy changes; that a digest lists
+  cancellation after task, date or privacy changes; that a birthday set on the
+  contact form is reminded about and digested at all, exactly once where a
+  legacy `ImportantDate` row also exists, on the canonical date rather than a
+  stale row's, never for a birthday with no known day, and never for a locked
+  private or archived contact; that a digest lists
   timezone-local important dates, cadences and tasks two days ahead without
   sending any of that look-ahead as a reminder early, names each occurrence
   once however many offsets reach it, and is retried within its day with a

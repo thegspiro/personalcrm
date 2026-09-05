@@ -793,6 +793,24 @@ owner's local day — the same reading as the overdue count and the People
 filter — task rows use an incomplete task's due date, and digest rows use the
 user's local calendar date.
 
+Important-date rows come from two sources, joined by `dateSourcesForUser` in
+`src/server/services/reminders.ts`: `ImportantDate` rows, and the canonical
+birthday projected from `Contact.birthDate` by
+[`src/server/queries/birthdays.ts`](../src/server/queries/birthdays.ts). The
+contact form writes no `ImportantDate` shadow row, so reading that table alone
+meant a birthday entered the normal way was shown on every screen and never
+sent anywhere. Where a contact has both, the legacy `ImportantDate` birthday is
+suppressed and the projection carries the reminder — otherwise the same
+birthday arrives twice, and an edited birthday would still be announced on the
+old row's date. The projection inherits the legacy row's `reminderDaysBefore`,
+so an account that configured offsets keeps them.
+
+A canonical birthday is stored in the ledger under
+`contact-birthday:<contactId>`, not an `ImportantDate` id; `entityId` is a
+64-character column and the prefixed cuid fits. Only `DAY` and `MONTH_DAY`
+precision produce a reminder: `MONTH` and `YEAR` have no day to name, and
+`projectDateOccurrences` likewise declines to invent one.
+
 A digest reaches two days past today: cadences whose `nextTouchAt` falls before
 the end of that third local day, incomplete tasks due on or before it, and
 important-date occurrences whose own `reminderDaysBefore` policy would speak on
