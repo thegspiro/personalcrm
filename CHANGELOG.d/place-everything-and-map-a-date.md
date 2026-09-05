@@ -36,3 +36,28 @@
   yours to type: where their address is placed and you have a home base, the
   measured distance is shown beside it rather than replacing it, since one is
   arithmetic and the other is what somebody said.
+
+#### Security
+- **A place belonging to another account can no longer surface on a logged
+  date.** `Interaction.place` is the one reference the database cannot make
+  same-owner — a `SET NULL` key needs every column nullable, and `ownerId` is
+  not — so a restore can leave one pointing across accounts. The timeline
+  already dropped a mismatch; the new read of a date's venue now does too.
+- **A place hidden by the privacy lock is no longer counted or sent.** The bulk
+  pass selected places by owner alone, so one known only through a private
+  interaction appeared in the count and had its name and address sent to the
+  geocoder. It now uses the same visibility predicate as the places list.
+- **A correction to a place could still be lost to a save happening at the same
+  time.** The rule that a place's city and coordinates are filled in but never
+  rewritten was decided from a snapshot read, so an edit committing in the
+  meantime was overwritten rather than respected — including coordinates set
+  deliberately on the place's own page. Each write now carries its own condition
+  and the database checks it at the moment of writing, so the rule holds under a
+  concurrent edit rather than only when nobody else is working.
+
+  On MariaDB 11.6.2 and later that is not sufficient by itself: with snapshot
+  isolation on by default, the database answers the contention by throwing the
+  whole save out, so it would have kept the correction at the cost of losing what
+  was being saved. Saves that name a place now start again on a fresh snapshot
+  and go through. Nothing changes on the MariaDB the container bundles, which has
+  no such behaviour, and either way the correction survives.

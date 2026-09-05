@@ -1,6 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Prisma } from "@prisma/client";
-import { asARestoreWould, createTestUser, hasTestDatabase, prisma, reset } from "./db";
+import {
+  asARestoreWould,
+  createTestUser,
+  hasTestDatabase,
+  holdUncommitted,
+  prisma,
+  releaseAfterItBlocks,
+  reset,
+} from "./db";
 
 const state = vi.hoisted(() => ({
   ownerId: "",
@@ -618,44 +626,6 @@ describe.skipIf(!hasTestDatabase)("contact tags", () => {
     expect(result.ok === false && result.error).toBe("Contact or tag not found.");
   });
 });
-
-/**
- * Hold a write open and uncommitted until the returned release is called.
- *
- * The interleavings below are not sleep-timed races. An uncommitted write is
- * invisible to a plain read but its row locks are real, so it puts the action
- * under test in exactly the state a concurrent tab would: the read it takes
- * before the transaction sees nothing, and the moment it wants a lock on the
- * same row it waits. Releasing then decides the order deterministically.
- */
-async function holdUncommitted(
-  write: (tx: Prisma.TransactionClient) => Promise<unknown>,
-): Promise<{ release: () => void; settled: Promise<unknown> }> {
-  let release!: () => void;
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let written!: () => void;
-  const ready = new Promise<void>((resolve) => {
-    written = resolve;
-  });
-  const settled = prisma.$transaction(
-    async (tx) => {
-      await write(tx);
-      written();
-      await held;
-    },
-    { timeout: 20_000 },
-  );
-  await ready;
-  return { release, settled };
-}
-
-/** Let the action reach the lock it is about to wait on, then let go. */
-async function releaseAfterItBlocks(release: () => void): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 400));
-  release();
-}
 
 describe.skipIf(!hasTestDatabase)("tag name validation", () => {
   beforeEach(async () => {

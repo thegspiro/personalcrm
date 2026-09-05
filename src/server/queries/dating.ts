@@ -316,7 +316,7 @@ export async function getDatingSummary(ownerId: string, quietAfterDays = 10): Pr
 
 /** Dates for one person, newest first. */
 export async function listDateEntries(ownerId: string, contactId: string) {
-  return prisma.dateEntry.findMany({
+  const rows = await prisma.dateEntry.findMany({
     where: { ownerId, contactId },
     include: {
       activityType: true,
@@ -347,6 +347,9 @@ export async function listDateEntries(ownerId: string, contactId: string) {
               longitude: true,
               osmType: true,
               osmId: true,
+              // Comes back so a place belonging to another account can be
+              // dropped below — see the note there.
+              ownerId: true,
             },
           },
         },
@@ -354,4 +357,22 @@ export async function listDateEntries(ownerId: string, contactId: string) {
     },
     orderBy: { sequence: "desc" },
   });
+
+  // `Interaction.place` is the one reference in the schema that is not
+  // same-owner keyed: `SET NULL` needs every key column nullable and `ownerId`
+  // is not, so MariaDB refuses the composite. The application cannot write a
+  // cross-owner link, but a restore can — `mariadb-dump` emits
+  // `SET FOREIGN_KEY_CHECKS=0` — and this read would then hand one account
+  // another's venue, address and coordinates. So a mismatch counts as no place
+  // at all, exactly as `interactionEntry` in `queries/timeline.ts` does it.
+  //
+  // Done here rather than in the page, so no future caller has to remember.
+  return rows.map((row) => ({
+    ...row,
+    interaction: {
+      ...row.interaction,
+      place:
+        row.interaction.place?.ownerId === ownerId ? row.interaction.place : null,
+    },
+  }));
 }

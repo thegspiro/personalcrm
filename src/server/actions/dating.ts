@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/server/db/client";
+import { transact } from "@/server/db/transaction";
 import {
   recomputeContactActivity,
   resequenceDateEntries,
@@ -285,7 +286,7 @@ export async function createDateEntry(form: FormData): Promise<ActionResult<{ id
 
   let entry: { id: string };
   try {
-    entry = await prisma.$transaction(async (tx) => {
+    entry = await transact(async (tx) => {
     await ensureProfileTx(tx, ownerId, contactId);
     // The city the form already carries goes to the place too, not only onto
     // the DateEntry. Without it a place first seen by logging a date was born
@@ -387,7 +388,7 @@ export async function updateDateEntry(form: FormData): Promise<ActionResult> {
   }
 
   try {
-    await prisma.$transaction(async (tx) => {
+    await transact(async (tx) => {
     const place = await resolveLocation(tx, ownerId, venue, { city: str(form, "city") });
     await tx.dateEntry.update({
       where: { id },

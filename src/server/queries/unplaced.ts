@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/server/db/client";
 import { contactPrivacyWhere } from "@/server/privacy/where";
 import { privacyScope } from "@/server/privacy/filter";
+import { locationVisibleWhere } from "./locations";
 import type { Prisma } from "@prisma/client";
 
 /**
@@ -24,6 +25,11 @@ export interface UnplacedRow {
   id: string;
   /** What to send to the geocoder. Never a person's name. */
   query: string;
+  /**
+   * The locality this row already claims, so a lone candidate can be checked
+   * against it rather than trusted for being alone. Null when it has none.
+   */
+  city: string | null;
 }
 
 /** Cursor-based so a pass always moves forward and never retries a refusal. */
@@ -36,9 +42,22 @@ async function addressWhere(ownerId: string, after?: string | null) {
   } satisfies Prisma.AddressWhereInput;
 }
 
-function locationWhere(ownerId: string, after?: string | null): Prisma.LocationWhereInput {
+/**
+ * Only places this account can currently see.
+ *
+ * `ownerId` alone is not enough. A place is reachable only through the
+ * interactions and plans that name it, so one known solely through a private
+ * interaction is hidden while the lock is closed — and filtering on the owner
+ * would have put its name and address in the count, and then sent both to the
+ * geocoder. `locationVisibleWhere` is the predicate the places list already
+ * uses; spreading it keeps its `AND`, which is why nothing here sets that key.
+ */
+async function locationWhere(
+  ownerId: string,
+  after?: string | null,
+): Promise<Prisma.LocationWhereInput> {
   return {
-    ownerId,
+    ...locationVisibleWhere(ownerId, await privacyScope()),
     isArchived: false,
     latitude: null,
     longitude: null,
@@ -54,7 +73,7 @@ export async function countUnplaced(
 ): Promise<number> {
   return kind === "addresses"
     ? prisma.address.count({ where: await addressWhere(ownerId, after) })
-    : prisma.location.count({ where: locationWhere(ownerId, after) });
+    : prisma.location.count({ where: await locationWhere(ownerId, after) });
 }
 
 /**
@@ -89,6 +108,7 @@ export async function listUnplaced(
       id: row.id,
       // The address itself and nothing else — no label, no notes, and above all
       // not whose address it is.
+      city: row.city,
       query: [row.line1, row.line2, row.city, row.region, row.postalCode, row.country]
         .map((part) => part?.trim())
         .filter(Boolean)
@@ -97,7 +117,7 @@ export async function listUnplaced(
   }
 
   const rows = await prisma.location.findMany({
-    where: locationWhere(ownerId, after),
+    where: await locationWhere(ownerId, after),
     orderBy: { id: "asc" },
     take,
     select: { id: true, name: true, address: true, city: true, region: true, country: true },
@@ -106,6 +126,7 @@ export async function listUnplaced(
     id: row.id,
     // The name leads: a place is known by what it is called, and the address is
     // often the part that is missing.
+    city: row.city,
     query: [row.name, row.address, row.city, row.region, row.country]
       .map((part) => part?.trim())
       .filter(Boolean)

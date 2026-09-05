@@ -1,5 +1,13 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { asARestoreWould, createTestUser, hasTestDatabase, prisma, reset } from "./db";
+import {
+  asARestoreWould,
+  createTestUser,
+  hasTestDatabase,
+  holdUncommitted,
+  prisma,
+  releaseAfterItBlocks,
+  reset,
+} from "./db";
 
 const state = vi.hoisted(() => ({
   ownerId: "",
@@ -44,6 +52,7 @@ const {
 } = await import("@/server/queries/locations");
 const { normalizeLocationName, resolveLocation } =
   await import("@/server/services/locations");
+const { transact } = await import("@/server/db/transaction");
 const { buildTimeline } = await import("@/server/queries/timeline");
 const { setLocationArchived, updateLocation } =
   await import("@/server/actions/locations");
@@ -1000,6 +1009,99 @@ describe.skipIf(!hasTestDatabase)("location history", () => {
       expect(saved.latitude).toBeNull();
       expect(saved.longitude).toBeNull();
     });
+  });
+
+  it("keeps a correction made while a date save was deciding what to fill in", async () => {
+    // The fill-only rule is a read followed by a write, and a snapshot read sees
+    // nothing of a correction committing in between. Held uncommitted, the
+    // correction's row lock is real: the save must wait for it rather than
+    // deciding from a value that has already been replaced.
+    //
+    // Driven through `transact` rather than a bare transaction because that is
+    // how every caller reaches `resolveLocation`, and on MariaDB 11.6.2 and
+    // later the difference is the whole test: there the database answers the
+    // contention by rolling the save back, and the restart is what carries it.
+    const first = await transact((tx) =>
+      resolveLocation(tx, state.ownerId, "Corner Cafe"),
+    );
+
+    const held = await holdUncommitted((tx) =>
+      tx.location.update({ where: { id: first!.id }, data: { city: "Wetherby" } }),
+    );
+
+    const saving = transact((tx) =>
+      resolveLocation(tx, state.ownerId, "Corner Cafe", { city: "Leeds" }),
+    );
+    await releaseAfterItBlocks(held.release);
+    await Promise.all([held.settled, saving]);
+
+    const saved = await prisma.location.findUniqueOrThrow({ where: { id: first!.id } });
+    expect(saved.city).toBe("Wetherby");
+  });
+
+  it("keeps coordinates set while a date save was deciding whether to place it", async () => {
+    // The same race, on the half that shipped earlier: a place geocoded
+    // deliberately must not be moved by a save that read it as unplaced.
+    const first = await transact((tx) =>
+      resolveLocation(tx, state.ownerId, "Corner Cafe"),
+    );
+
+    const held = await holdUncommitted((tx) =>
+      tx.location.update({
+        where: { id: first!.id },
+        data: { latitude: 53.8008, longitude: -1.5491 },
+      }),
+    );
+
+    const saving = transact((tx) =>
+      resolveLocation(tx, state.ownerId, "Corner Cafe", {
+        latitude: "48.8566",
+        longitude: "2.3522",
+      }),
+    );
+    await releaseAfterItBlocks(held.release);
+    await Promise.all([held.settled, saving]);
+
+    const saved = await prisma.location.findUniqueOrThrow({ where: { id: first!.id } });
+    expect(Number(saved.latitude)).toBeCloseTo(53.8008, 4);
+  });
+
+  it("survives a correction that committed before the save reached the place", async () => {
+    // The other order, and the one CI caught twice: the correction commits
+    // *before* the save reaches the row rather than while it waits.
+    //
+    // On MariaDB 11.6.2 and later this is where the save used to die. The write
+    // has to lock the row before any `WHERE` of ours is evaluated, and locking
+    // one that moved since the transaction's snapshot raises 1020, "Record has
+    // changed since last read" — which does not fail just the statement, it
+    // rolls the transaction back. Neither a locking read nor a condition in the
+    // `WHERE` avoids that; only starting again does, which is what `transact`
+    // does and what this asserts.
+    const first = await transact((tx) =>
+      resolveLocation(tx, state.ownerId, "Corner Cafe"),
+    );
+
+    // The correction lands once, on the first attempt only. Repeating it on a
+    // restart would write the same value, which InnoDB skips rather than
+    // versions — so the test would pass on a technicality instead of on the
+    // restart actually clearing the conflict.
+    let attempts = 0;
+    const saving = transact(async (tx) => {
+      attempts += 1;
+      // Force the snapshot, the way the real resolution reads do.
+      await tx.location.findFirst({ where: { ownerId: state.ownerId } });
+      if (attempts === 1) {
+        await prisma.location.update({
+          where: { id: first!.id },
+          data: { city: "Wetherby" },
+        });
+      }
+      return resolveLocation(tx, state.ownerId, "Corner Cafe", { city: "Leeds" });
+    });
+
+    await expect(saving).resolves.toBeTruthy();
+    const saved = await prisma.location.findUniqueOrThrow({ where: { id: first!.id } });
+    expect(saved.city).toBe("Wetherby");
   });
 
   it("carries a lookup's locality and coordinates onto a place it creates", async () => {
