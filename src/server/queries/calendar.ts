@@ -309,6 +309,14 @@ export async function getCalendarEntries(
     });
   }
 
+  // Collected before they join the rest, so the cap can be applied to the
+  // occurrences that actually land in this window rather than to the rows they
+  // were projected from. Birthdays come from `fetchContactBirthdays`, which
+  // takes no `take` — the same whole-table read the dashboard already does on
+  // every page load — so without this the one source that cannot be bounded in
+  // SQL was also the one escaping the bound afterwards.
+  const dateEntries: CalendarEntry[] = [];
+
   for (const row of projected) {
     // Invariant 8: a partial date stays partial. "Sometime in 2019" has no
     // honest square, and `projectDateOccurrences` would answer with the first
@@ -336,7 +344,7 @@ export async function getCalendarEntries(
       // precisely because nobody knows it, and dropping those would empty the
       // grid of every birthday whose year was never recorded.
       if (hasKnownYear(row.precision) && diffPlainDays(row.anchor, day) < 0) continue;
-      entries.push({
+      dateEntries.push({
         id: `${row.id}@${plainDateKey(day)}`,
         kind: "date",
         day,
@@ -348,6 +356,11 @@ export async function getCalendarEntries(
       });
     }
   }
+
+  // Earliest first before the cap bites, so a month that somehow holds more
+  // than this keeps the start of it rather than an arbitrary scatter.
+  dateEntries.sort((a, b) => diffPlainDays(b.day, a.day));
+  entries.push(...dateEntries.slice(0, PER_SOURCE_CAP));
 
   for (const task of taskRows) {
     if (!task.dueDate) continue;
