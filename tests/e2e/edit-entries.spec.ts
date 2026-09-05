@@ -87,10 +87,14 @@ test("one of them can be promoted into a person, and stops being editable", asyn
 
   const people = section(page, "People in their life");
   await people.getByRole("button", { name: "Track as a person" }).first().click();
+  // Pre-split from the one name the entry carries, then confirmed rather than
+  // guessed: the surname was never known, so the form is where it is supplied.
   await expect(people.getByLabel("First name")).toHaveValue("Bob");
+  await expect(people.getByLabel("Last name")).toHaveValue("");
+  await people.getByLabel("Last name").fill("Ellis");
 
-  // The relationship type is required, so the first chip stands in for a pick.
-  await people.getByRole("button", { name: /^(?!Track them$).+/ }).last().click();
+  // The type is required, so one has to be picked before the form will submit.
+  await people.getByRole("button", { name: "Friend", exact: true }).click();
   await people.getByRole("button", { name: "Track them" }).click();
 
   await expect(people.getByText("Now tracked")).toBeVisible();
@@ -99,7 +103,11 @@ test("one of them can be promoted into a person, and stops being editable", asyn
   await expect(people.getByRole("button", { name: "Edit entry" })).toHaveCount(0);
   await expect(people.getByRole("button", { name: "Track as a person" })).toHaveCount(0);
 
-  await expect(section(page, "Connected people").getByText("Bob")).toBeVisible();
+  // The reciprocal relationship is real, not just a pointer on the entry.
+  // That section starts collapsed, so it has to be opened to be read.
+  const connected = section(page, "Connected people");
+  await connected.getByRole("button", { name: /Connected people/ }).click();
+  await expect(connected.getByRole("link", { name: /Bob Ellis/ })).toBeVisible();
 });
 
 test("the roll-up lists them under the person whose life they are in", async ({ page }) => {
@@ -109,8 +117,15 @@ test("the roll-up lists them under the person whose life they are in", async ({ 
   await page.getByRole("link", { name: "Their people" }).click();
   await expect(page).toHaveURL(/\/people\/friends$/);
 
-  await expect(page.getByRole("link", { name: PERSON(), exact: true })).toBeVisible();
-  await expect(page.getByText("Colleague from the hospital")).toBeVisible();
+  // Scoped to this project's own person: the roll-up gathers everyone, so the
+  // other project's identical entry is on the page too.
+  const group = page
+    .locator("section")
+    .filter({ has: page.getByRole("link", { name: PERSON(), exact: true }) });
+
+  await expect(group.getByText("Colleague from the hospital")).toBeVisible();
+  await expect(group.getByRole("link", { name: /Bob Ellis/ })).toBeVisible();
+  await expect(group.getByText("Now tracked")).toBeVisible();
 });
 
 test("a follow-up keeps its due date through an edit", async ({ page }) => {
