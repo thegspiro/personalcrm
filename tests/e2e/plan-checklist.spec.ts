@@ -128,7 +128,12 @@ test("a duration with no day shows, and survives an edit that does not touch it"
   // `SectionRow` renders a div with tabindex="-1", not an <li> — the same
   // locator the two tests above use.
   const row = plans.locator("[tabindex='-1']").filter({ hasText: title }).first();
-  await expect(row.getByText("2h")).toBeVisible();
+  // Exact, and not for tidiness: the schedule form inside this same row lists
+  // every contact as an <option>, and the e2e fixtures generate names from
+  // random characters. One of them containing "2h" is enough for a substring
+  // match to resolve to two elements and fail on strict mode — which is exactly
+  // how this first went red, on a run where the name was "Ondrelldesktoplocalmtor2hnb".
+  await expect(row.getByText("2h", { exact: true })).toBeVisible();
 
   // Reopen, change something else entirely, and save.
   await row.getByRole("button", { name: "Edit plan" }).click();
@@ -137,5 +142,51 @@ test("a duration with no day shows, and survives an edit that does not touch it"
   await plans.getByRole("button", { name: "Save", exact: true }).click();
 
   await expect(row.getByText("The park")).toBeVisible();
-  await expect(row.getByText("2h")).toBeVisible();
+  await expect(row.getByText("2h", { exact: true })).toBeVisible();
+});
+
+test("a plan can be scheduled and then closed out", async ({ page }) => {
+  // The two new actions through the UI. The copy-versus-in-place rule for a
+  // plan saved against nobody is covered in tests/integration/plans.test.ts,
+  // which can assert on both rows; this drives the controls.
+  await ensureSignedIn(page);
+  await page.goto("/ideas");
+
+  const title = `Schedule and finish ${Date.now()}`;
+  const plans = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Add something to do" }) })
+    .first();
+
+  await plans.getByRole("button", { name: "Add something to do" }).click();
+  await plans.getByLabel("What do you want to do?").fill(title);
+  await plans.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(plans.getByText(title)).toBeVisible();
+
+  const row = plans.locator("[tabindex='-1']").filter({ hasText: title }).first();
+
+  // The disclosure and the submit both read "Schedule it", so the summary is
+  // located by its element and the submit by its role.
+  await row.locator("summary").filter({ hasText: "Schedule it" }).click();
+
+  // The day goes in through the popover's own text box, as in happenings.spec.
+  // `DateField` portals its content, so the trigger is inside the row and
+  // everything it opens — the presets included — is at page scope. Enter
+  // commits and closes, so there is nothing to dismiss afterwards.
+  await row.getByRole("button", { name: "Which day?", exact: true }).click();
+  const day = page.getByLabel("Type a date");
+  await day.fill("today");
+  await day.press("Enter");
+  await expect(day).toBeHidden();
+
+  await row.getByLabel("Start time").fill("19:30");
+  await row.getByRole("button", { name: "Schedule it", exact: true }).click();
+
+  // Exact: "Not planned after all" contains "planned" too.
+  await expect(row.getByText("planned", { exact: true })).toBeVisible();
+  await expect(row.getByText("7:30 PM")).toBeVisible();
+
+  // Closing it out records what it became, so it leaves the open list.
+  await row.getByLabel("Mark as done").click();
+  await expect(plans.getByText(title)).toHaveCount(0);
 });

@@ -121,7 +121,7 @@ list, because a person missing from the form would be silently dropped on save.
 | Going on in their life (`Happening`) | `createHappening`, `updateHappening`, `acknowledgeHappening`, `deleteHappening` |
 | Ideas | `createIdea`, `updateIdea`, `setIdeaStatus`, `deleteIdea` |
 | People in their life (`Associate`) | `createAssociate`, `updateAssociate`, `promoteAssociate`, `deleteAssociate` |
-| Plans | `createPlan`, `updatePlan`, `setPlanStatus`, `deletePlan` |
+| Plans | `createPlan`, `updatePlan`, `schedulePlan`, `completePlan`, `setPlanStatus`, `deletePlan` |
 | Tasks | `createTask`, `updateTask`, `setTaskDone`, `deleteTask` |
 | Gifts | `createGift`, `updateGift`, `setGiftStatus`, `deleteGift` |
 | Debts | `createDebt`, `updateDebt`, `settleDebt`, `deleteDebt` |
@@ -206,6 +206,96 @@ kept: how long a thing takes belongs to the thing, not to the day picked for it,
 so "the observatory takes most of an evening" survives on a plan nobody has
 scheduled. Only the start minute needs a day to hang on, and it is stored as a
 local wall-clock reading against that day, never converted to an instant here.
+
+`schedulePlan` pencils a plan in and is the one place a plan changes hands —
+only ever from nobody to somebody. `updatePlan` still never moves a plan between
+people, and a plan saved against nobody is a shared library that `listPlans`
+offers on everyone's page, so scheduling one *with* a person copies it by
+default and leaves the original open for next time; the copy takes a fresh,
+unticked checklist, because inherited ticks would claim a booking nobody made.
+`keepInList` chooses, and only has a say when the plan is unattached.
+
+The write is a compare-and-set on both the status *and* the contact, not just an
+update after the read: several awaits separate the two, and on status alone a
+second stale form would overwrite the person the first one attached and still
+report success. The copy re-checks both of the plan's foreign keys against the
+owner before taking them — `ownedPlanRefs`.
+
+`completePlan` refuses outright on a plan that is already `DONE` or `ARCHIVED`.
+Both of its claims carry the status, but the shared-idea path has no claim — it
+never writes to the original — so that precondition is what stops a stale form
+or a direct POST filing a second evening from a closed idea. All three write
+paths name the contact they read as well as the status, including the
+nobody-attached one: a request attaching the row in between would otherwise have
+*their* plan marked done with no interaction and no cadence recomputed. The two
+that write to the plan itself also name the day and start time they read, since
+`occurredAt` is derived from those — a reschedule for the same person changes
+neither status nor contact, so on those alone the evening would be filed on the
+old day and the newly arranged one marked done before it happened. The shared
+path claims the source with an `UPDATE` rather than re-reading it, before either
+record is created: it leaves the row in circulation so there is no status to
+consume, and a read under REPEATABLE READ takes no lock, but an `UPDATE` locks
+every row it matches even when the value it writes is the one already there, and
+its row count is the refusal. A `PLANNED` idea is released back to the list by
+that same statement. An unreadable `occurredAt` is refused rather than falling
+through to the scheduled time, the way `planFields` already refuses a malformed
+day, and scheduling writes `plannedDurationMinutes` only when the form carried
+one — the sheet has no duration control, so writing back what was read would
+undo an edit to the one field the claim does not watch. What each predicate expects lives in one `planAsRead` fragment rather
+than being restated at each site, because restating it is how four of these
+paths each ended up missing a different field.
+
+`completePlan` records what a plan became. `setPlanStatus(id, "DONE")` closes a
+plan and *clears* `usedInInteractionId` — right for undoing a mistake, wrong for
+actually doing the thing — and until now only `createDateEntry` ever pointed a
+plan at an interaction, so a hike with a friend ended as a status and nothing
+else. It writes a plain `Interaction` through
+`closePlanAsInteraction` (`src/server/services/plans.ts`, shared with
+`createDateEntry` so the scoping cannot drift), takes `occurredAt` from the day
+and time already on the row when the form does not override it, and runs
+`recomputeContactActivity` rather than assigning the date it just wrote.
+
+Finishing a shared idea *with somebody* copies it, the same way scheduling one
+does: `listPlans` offers a contact-less plan on everyone's page, so closing the
+shared row because one evening happened would take it off every other person's
+list. The copy is the evening; the original stays open. `createDateEntry` still
+consumes in that case — pre-existing behaviour, deliberately left alone. The
+A shared idea scheduled through "Nobody yet" stays unattached and `PLANNED`, so
+once that evening has happened with somebody the original is handed back to the
+list: `OPEN`, with the day and start time cleared and the duration kept, claimed
+on the day that was read so a re-scheduling in between keeps its newer one. The
+day is not lost — the copy carries it, along with what it became. Leaving it
+would present a spent arrangement as an outstanding one on every person's list.
+
+The copy path has no row to claim, so the copy instead carries a `completionKey` —
+`<sourcePlanId>:<contactId>:<local day>`, unique per owner — and a replayed POST
+or a second tab collides on it rather than filing the evening twice. The key is
+derived on the server, not minted by the browser: a client token would stop only
+a literal replay, because two tabs would mint two of them. Its day is the one
+the completion is being recorded on, or the one the form named — never
+`occurredAt`, which folds in the plan's own schedule that this same request then
+clears, so a replay would work out a different day and miss the index
+altogether. Nothing the completion changes may be read into its key. The violation is
+caught *outside* `transact`, on a transaction the database has already rolled
+back — catching it inside and carrying on is the trap invariant 9 describes.
+
+Both of the plan's pointers — `locationId` and `categoryId` — are re-checked
+against the owner by `ownedPlanRefs` before either is copied into the
+interaction or the copy. `Interaction.place`, `Plan.place` and `Plan.category`
+are all keyed on the target id alone rather than on `(ownerId, id)`, because
+`SET NULL` needs every column of the key nullable and `ownerId` is not, so a
+restored or imported row can point at another account's `Location` or
+`TaxonomyTerm`. `listPlans` loads both with no owner predicate, so the other
+account's label, colour and coordinates would surface here, and their delete
+would reach through. The free-text venue name is kept either way; only the
+foreign keys are dropped.
+
+It never writes a `DateEntry`, even for someone romantic: plans are deliberately
+not behind the privacy lock and a `DateEntry` is, so writing one from here would
+be a way round the lock. Logging a date properly stays the date log's "From a
+saved idea", which is guarded. A plan with nobody attached and nobody named just
+closes — an interaction with no participants would sit in the timeline belonging
+to no one.
 
 Important-date and life-event updates and deletes also filter through their
 contact's privacy marker. The timeline exposes these controls, so an id retained

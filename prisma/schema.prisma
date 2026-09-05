@@ -1240,6 +1240,13 @@ model Plan {
   /// What it became. An interaction rather than a DateEntry: a plan carried
   /// out with a friend never produces one of those.
   usedInInteractionId String?
+  /// Set only on a completed copy of a shared ("Anyone") idea, which has no
+  /// original row to claim: `<sourcePlanId>:<contactId>:<local day>`. The
+  /// unique index is what makes that path replay-safe — a second tab or a
+  /// replayed POST collides instead of writing a second finished copy and a
+  /// second timeline entry. Null everywhere else, and MySQL and MariaDB both
+  /// allow unlimited NULLs under a unique index.
+  completionKey       String?   @db.VarChar(191)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1259,6 +1266,7 @@ model Plan {
   @@index([contactId, status])
   @@index([categoryId])
   @@index([usedInInteractionId])
+  @@unique([ownerId, completionKey])
   @@index([ownerId, contactId])
   @@index([locationId])
 }
