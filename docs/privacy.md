@@ -395,6 +395,25 @@ reason the AI layer uses none. Requests identify the application in their
 `User-Agent`, which Nominatim's policy asks for and which is why a stock HTTP
 library's default would be rejected.
 
+## Export and the lock
+
+Getting your data out is under Settings → Data: the whole account as JSON, the
+contacts as a spreadsheet or as vCard, the dates as a calendar.
+
+**A closed lock refuses the export rather than shrinking it.** Every read in
+this app excludes private rows while the lock is shut, which for a page is
+exactly right — a hidden section simply is not there. Applying the same
+filtering to an export produces something worse than a hidden section: a file
+that presents itself as the complete account, is not, and gets carried onto a
+disk somewhere else where nobody will ever notice the difference. So the export
+asks the same question offline caching asks, and answers it the same way. With
+the lock closed and anything private in the account, it declines and says why.
+With nothing private to leave out, it proceeds, because what comes out is
+already everything.
+
+Nothing is transmitted. The server action returns the file's contents and the
+browser saves them; there is no endpoint, and no request leaves the machine.
+
 ## Sign-in throttling
 
 The privacy lock has always backed off after repeated wrong PINs. The front

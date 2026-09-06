@@ -10,6 +10,7 @@ import {
 } from "@/server/queries/custom-fields";
 import { TAXONOMY_KIND_LABELS } from "@/server/taxonomy/defaults";
 import { PrivacySettings } from "@/components/dating/privacy-settings";
+import { ExportSettings } from "@/components/settings/export-settings";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
 import { AppSettings } from "@/components/settings/app-settings";
 import { CustomFieldsSettings } from "@/components/settings/custom-fields-settings";
@@ -22,6 +23,7 @@ import { listChannelsForSettings } from "@/server/queries/notifications";
 import { getAiStatus } from "@/server/ai/config";
 import { getPrivacyState } from "@/server/privacy/lock";
 import { privacyScope } from "@/server/privacy/filter";
+import { countPrivateRows } from "@/server/privacy/counts";
 import { PROVIDERS } from "@/server/ai/providers";
 import { GeoSettings } from "@/components/settings/geo-settings";
 import { getGeoStatus } from "@/server/geo/config";
@@ -45,6 +47,7 @@ export default async function SettingsPage() {
     geo,
     privacyState,
     channels,
+    hiddenRows,
   ] = await Promise.all([
     listTaxonomyAdmin(user.id),
     listAllFieldDefinitions(user.id),
@@ -55,6 +58,10 @@ export default async function SettingsPage() {
     getGeoStatus(),
     getPrivacyState(),
     listChannelsForSettings(user.id),
+    // Whether an export taken right now would be complete. Counted here rather
+    // than inside the export itself so the tab can say so before anyone clicks,
+    // instead of only refusing afterwards.
+    countPrivateRows(prisma, user.id),
   ]);
 
   // Value counts drive the delete warning: deleting a field takes everything
@@ -157,6 +164,11 @@ export default async function SettingsPage() {
             hideDating={prefs.hideDating}
             blurPrivateNotes={prefs.blurPrivateNotes}
             retryAfterSeconds={privacyState.retryAfterSeconds}
+          />
+        }
+        data={
+          <ExportSettings
+            locked={privacyState.enabled && !privacyState.unlocked && hiddenRows > 0}
           />
         }
         app={

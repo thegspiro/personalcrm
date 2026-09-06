@@ -51,6 +51,12 @@ enforces rather than documents:
 | `signupAction` | Refused when `DISABLE_SIGNUP=true` |
 | `logoutAction` | Deletes the session row and clears the cookie |
 
+### Export — `actions/export.ts`
+
+| Action | Notes |
+| --- | --- |
+| `exportAccount` | Returns the file rather than serving one. There is no route handler for it by design — `GET /api/health` stays the only route in the app, and building the download in the browser keeps the export out of the service worker's fetch handling. Refuses outright while the privacy lock is closed over an account that holds anything private: every read here filters those rows, so an export built the same way would be a file that claims to be everything and silently is not |
+
 ### Contacts — `actions/contacts.ts`
 
 `createContact`, `updateContact`, `updateContactBirthday`, `patchContact`,

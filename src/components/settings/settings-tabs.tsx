@@ -13,6 +13,7 @@ const TABS = [
   { value: "quickadd", label: "Quick add", icon: "Zap" },
   { value: "places", label: "Places", icon: "MapPin" },
   { value: "privacy", label: "Privacy", icon: "Lock" },
+  { value: "data", label: "Data", icon: "Download" },
   { value: "app", label: "App", icon: "Smartphone" },
 ] as const;
 
@@ -31,6 +32,7 @@ export function SettingsTabs({
   quickadd,
   places,
   privacy,
+  data,
   app,
 }: Record<(typeof TABS)[number]["value"], React.ReactNode>) {
   // Every entry in TABS needs one here, or its tab renders empty. Two branches
@@ -44,6 +46,7 @@ export function SettingsTabs({
     quickadd,
     places,
     privacy,
+    data,
     app,
   };
 
