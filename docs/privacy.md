@@ -640,11 +640,23 @@ no export.
 **What the export leaves out, and why.** Notification channels are excluded.
 Their configuration holds credentials — an SMTP password, a webhook nobody
 else should be able to post to — and a file people are encouraged to keep
-copies of is the last place those belong. Sessions and the password hash are
-excluded too; they are not account content but the means of reaching it.
+copies of is the last place those belong. Sessions, the password hash and the
+privacy PIN hash are excluded too; they are not account content but the means
+of reaching it, and a backup that hands over the account is not one you can
+leave anywhere. The account's own display name and email *are* included, since
+a restore has to put them back — as a named selection of columns rather than
+the row, so a field added to `User` later has to be opted in instead of
+leaking by default.
+
 Everything else a person has entered is included, and a table that gains rows
 somebody typed has to be added to the export, or it quietly stops being what
 it says it is.
+
+**One thing it cannot carry: images.** Avatars are files under `uploads/`, and
+the database holds only their generated paths, so a JSON file has nothing to
+put them in. [Backup](backup.md) has always said that directory and the
+database must be kept and restored together; the export does not change that,
+and does not pretend to.
 
 **Import is gated the same way, for a different reason.** Nothing is disclosed
 by bringing contacts in — but deciding whether somebody in the file is already
