@@ -224,6 +224,32 @@ describe.skipIf(!hasTestDatabase)("calendar", () => {
     expect(after.filter((entry) => entry.title === "Birthday")).toHaveLength(1);
   });
 
+  it("keeps a one-off whose year nobody recorded off the sentinel's calendar", async () => {
+    // MONTH_DAY stores 1904 as a placeholder. A recurrence projects it into
+    // whichever year is being drawn, which is fine; a one-off has no year to
+    // be projected into, so it would sit on the 1904 grid claiming that as the
+    // year it happened. Precision and recurrence are chosen independently, so
+    // nothing stops this pair being saved.
+    const friend = await makeContact("Marcus");
+    await prisma.importantDate.create({
+      data: {
+        ownerId,
+        contactId: friend.id,
+        label: "The day we met",
+        date: plainDateToDb({ year: 1904, month: 3, day: 9 }),
+        precision: "MONTH_DAY",
+        recurrence: "NONE",
+      },
+    });
+
+    const sentinelYear = await getCalendarEntries(ownerId, TZ, {
+      from: { year: 1904, month: 3, day: 1 },
+      to: { year: 1904, month: 3, day: 31 },
+    });
+    expect(sentinelYear.filter((entry) => entry.kind === "date")).toHaveLength(0);
+    expect((await entries()).filter((entry) => entry.kind === "date")).toHaveLength(0);
+  });
+
   it("keeps projecting a birthday whose year nobody recorded", async () => {
     // MONTH_DAY stores a placeholder year on purpose, so the floor above must
     // not apply to it — or every birthday recorded without a year would vanish

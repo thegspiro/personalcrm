@@ -348,6 +348,15 @@ export async function getCalendarEntries(
     // on a specific Tuesday. Imprecise anchors are left off the grid entirely.
     if (!hasKnownDay(row.precision)) continue;
 
+    // And a one-off needs a known year as well as a known day. `MONTH_DAY`
+    // stores `UNKNOWN_YEAR` — 1904 — as a placeholder, which is harmless while
+    // a recurrence is projecting it into whichever year was asked for, and a
+    // lie the moment it is not: a date that happened once, with no year
+    // recorded, would sit on the 1904 calendar presenting the sentinel as the
+    // year it happened. Precision and recurrence are set independently, so
+    // this combination is one the form will happily produce.
+    if (row.recurrence === "NONE" && !hasKnownYear(row.precision)) continue;
+
     // `today` is the window's own start, not the real today. The projection
     // clamps its lower bound to `today` so that asking for a historical range
     // cannot turn a past one-time date into an upcoming item — right for the
