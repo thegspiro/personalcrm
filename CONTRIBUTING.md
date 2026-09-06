@@ -33,6 +33,32 @@ Add `TEST_DATABASE_URL` to `.env` — pointing at a **throwaway** database whose
 name ends in `_test` — or the integration suites skip. See
 [docs/testing.md](docs/testing.md).
 
+## Working on this in Claude Code
+
+[`.claude/`](.claude/) holds two things, both optional to know about and neither
+of them a second place where the rules live.
+
+`.claude/hooks/session-start.sh` does the setup above for a
+[Claude Code on the web](https://code.claude.com/docs/en/claude-code-on-the-web)
+session, which starts with no `node_modules`, no `.env` and no database: it
+installs the dependencies, brings MariaDB up, creates `personalcrm` and
+`personalcrm_test`, migrates both, and writes the `.env` that
+`tests/setup-env.ts` reads. Without it `npm test` exits 0 while every
+integration suite skips — a passing-looking run that proved nothing. It does
+nothing outside a web session, so a local checkout keeps its own `.env`. Note
+that it installs the MariaDB the distribution ships (10.11) where CI runs 11:
+close enough for the suites, but not for the rollback behaviour behind the
+`transact` invariant in [CLAUDE.md](CLAUDE.md), which is 11.6.2 and up. A green
+local run says nothing about that one.
+
+`.claude/skills/` holds four checklists — `db-change`, `privacy-check`,
+`merge-main` and `ship-it` — that an agent loads when it reaches that part of a
+task instead of carrying all of them all the time. They point at this file,
+[AGENTS.md](AGENTS.md), [Agent.md](Agent.md), [CLAUDE.md](CLAUDE.md) and
+[`docs/`](docs/) rather than restating them, deliberately: a fifth copy of the
+migration rules would be a fifth copy to drift. If you change a rule, change it
+in its own document — the skills will follow it there.
+
 ## Before pushing
 
 ```bash
