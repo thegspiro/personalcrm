@@ -1,0 +1,327 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
+
+const state = vi.hoisted(() => ({ ownerId: "", enabled: true, unlocked: false }));
+
+vi.mock("@/server/db/client", async () => {
+  const { prisma: client } = await import("./db");
+  return { prisma: client };
+});
+
+vi.mock("@/server/user/context", () => ({
+  getUserContext: async () => ({
+    user: { id: state.ownerId },
+    prefs: {},
+    timezone: "America/New_York",
+  }),
+}));
+
+vi.mock("@/server/privacy/lock", () => ({
+  getPrivacyState: async () => ({
+    pinSet: true,
+    enabled: state.enabled,
+    unlocked: state.unlocked,
+    expiresAt: null,
+    retryAfterSeconds: 0,
+  }),
+}));
+
+const { exportAccount } = await import("@/server/actions/export");
+
+/**
+ * The shipped contact-method term, not one the test invents.
+ *
+ * `createTestUser` provisions the default taxonomies, so creating these here
+ * collides on `TaxonomyTerm_ownerId_kind_slug_key` — and looking them up is the
+ * stronger assertion anyway: an export that only matches slugs a test made up
+ * proves nothing about the slugs the app actually writes.
+ */
+async function methodTerm(slug: string) {
+  return prisma.taxonomyTerm.findUniqueOrThrow({
+    where: { ownerId_kind_slug: { ownerId: state.ownerId, kind: "CONTACT_METHOD_TYPE", slug } },
+  });
+}
+
+async function addContact(overrides: Record<string, unknown> = {}) {
+  return prisma.contact.create({
+    data: { ownerId: state.ownerId, firstName: "Dave", lastName: "Kim", ...overrides },
+  });
+}
+
+describe.skipIf(!hasTestDatabase)("account export", () => {
+  beforeEach(async () => {
+    await reset();
+    const user = await createTestUser();
+    state.ownerId = user.id;
+    state.enabled = true;
+    state.unlocked = false;
+  });
+
+  it("refuses while the lock hides something, rather than exporting part of it", async () => {
+    // The failure this guards: every read in the app filters private rows, so
+    // an export built the same way is a file that claims to be everything and
+    // silently is not — carried onto a disk somewhere else.
+    await addContact();
+    await addContact({ firstName: "Hidden", isPrivate: true });
+
+    const result = await exportAccount("json");
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Unlock first");
+  });
+
+  it("refuses behind a closed lock even with nothing marked private", async () => {
+    // An earlier version allowed this, reasoning that with no `isPrivate` rows
+    // there was nothing to leave out. That modelled the lock as the marker,
+    // and it is more: the dating layer is gated by the lock in its own right,
+    // so an account with a romantic profile and no marked rows would have
+    // exported private notes and date entries in a file. Branching on a count
+    // is also itself a disclosure — being refused would answer whether
+    // anything private exists.
+    await addContact();
+
+    const result = await exportAccount("json");
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Unlock first");
+  });
+
+  it("does not leak dating content behind a closed lock", async () => {
+    const contact = await addContact({ isRomantic: true });
+    await prisma.romanticProfile.create({
+      data: {
+        ownerId: state.ownerId,
+        contactId: contact.id,
+        privateNotes: "SECRET-RETROSPECTIVE",
+      },
+    });
+
+    const result = await exportAccount("json");
+    expect(result.ok).toBe(false);
+    expect(result.data).toBeUndefined();
+  });
+
+  it("exports everything once unlocked", async () => {
+    await addContact();
+    await addContact({ firstName: "Hidden", isPrivate: true });
+    state.unlocked = true;
+
+    const result = await exportAccount("json");
+    expect(result.ok).toBe(true);
+    expect(result.data!.content).toContain("Hidden");
+  });
+
+  it("exports when the lock is switched off entirely", async () => {
+    await addContact({ firstName: "Hidden", isPrivate: true });
+    state.enabled = false;
+
+    const result = await exportAccount("json");
+    expect(result.ok).toBe(true);
+    expect(result.data!.content).toContain("Hidden");
+  });
+
+  it("scopes to the owner", async () => {
+    // The invariant every read in this app carries. An export that reached
+    // across accounts would be the worst possible place to break it.
+    const stranger = await createTestUser();
+    await prisma.contact.create({
+      data: { ownerId: stranger.id, firstName: "Somebody", lastName: "Else" },
+    });
+    await addContact();
+    state.unlocked = true;
+
+    const result = await exportAccount("json");
+    expect(result.data!.content).toContain("Dave");
+    expect(result.data!.content).not.toContain("Somebody");
+  });
+
+  it("produces each format with a matching name and type", async () => {
+    await addContact({ birthDate: new Date(Date.UTC(1990, 3, 15)) });
+    state.unlocked = true;
+
+    const json = await exportAccount("json");
+    expect(json.data!.filename).toMatch(/^personalcrm-\d{4}-\d{2}-\d{2}\.json$/);
+    expect(json.data!.mimeType).toBe("application/json");
+    expect(() => JSON.parse(json.data!.content)).not.toThrow();
+
+    const csv = await exportAccount("csv");
+    expect(csv.data!.filename).toMatch(/contacts-.*\.csv$/);
+    expect(csv.data!.content).toContain("first_name");
+    expect(csv.data!.content).toContain("Dave");
+
+    const vcard = await exportAccount("vcard");
+    expect(vcard.data!.filename).toMatch(/\.vcf$/);
+    expect(vcard.data!.content).toContain("BEGIN:VCARD");
+    expect(vcard.data!.content).toContain("BDAY:19900415");
+
+    const ics = await exportAccount("ics");
+    expect(ics.data!.filename).toMatch(/\.ics$/);
+    expect(ics.data!.content).toContain("BEGIN:VCALENDAR");
+    expect(ics.data!.content).toContain("RRULE:FREQ=YEARLY");
+  });
+
+  it("writes a year-less birthday without inventing a year", async () => {
+    // The database stores a sentinel year for these. Printed into a
+    // spreadsheet it reads as real, whatever the precision column beside it
+    // says.
+    state.unlocked = true;
+    await addContact({
+      firstName: "Yearless",
+      birthDate: new Date(Date.UTC(1904, 3, 15)),
+      birthDatePrecision: "MONTH_DAY",
+    });
+
+    const csv = await exportAccount("csv");
+    expect(csv.data!.content).toContain("--04-15");
+    expect(csv.data!.content).not.toContain("1904");
+  });
+
+  it("writes a landline into the CSV phone column", async () => {
+    // The CSV looked for a `phone` term, which the app does not ship. Anyone
+    // whose only number was a home or work line exported with an empty cell —
+    // silently, since the file still had a phone column.
+    state.unlocked = true;
+    const contact = await addContact({ firstName: "Landline" });
+    const term = await methodTerm("home-phone");
+    await prisma.contactMethod.create({
+      data: { contactId: contact.id, typeId: term.id, value: "+15550104477" },
+    });
+
+    const csv = await exportAccount("csv");
+    expect(csv.data!.content).toContain("+15550104477");
+  });
+
+  it("prefers the mobile when a contact has several numbers", async () => {
+    state.unlocked = true;
+    const contact = await addContact({ firstName: "Both" });
+    for (const [slug, value] of [
+      ["home-phone", "+15550100000"],
+      ["mobile", "+15550104477"],
+    ] as const) {
+      const term = await methodTerm(slug);
+      await prisma.contactMethod.create({ data: { contactId: contact.id, typeId: term.id, value } });
+    }
+
+    const csv = await exportAccount("csv");
+    expect(csv.data!.content).toContain("+15550104477");
+    expect(csv.data!.content).not.toContain("+15550100000");
+  });
+
+  it("carries the account profile, without any of its credentials", async () => {
+    // A file whose stated purpose is putting the account back needs the
+    // display name and email. It must not carry what would hand the account
+    // over: the password hash, the privacy PIN, or the lockout counters.
+    state.unlocked = true;
+
+    const result = await exportAccount("json");
+    const parsed = JSON.parse(result.data!.content);
+
+    expect(parsed.account.profile).toMatchObject({ name: "Test User" });
+    expect(parsed.account.profile.email).toContain("@example.com");
+    expect(result.data!.content).not.toContain("passwordHash");
+    expect(result.data!.content).not.toContain("privacyPinHash");
+    expect(result.data!.content).not.toContain("privacyPinFailed");
+    expect(result.data!.content).not.toContain("not-a-real-hash");
+  });
+
+  it("prefers the primary method over an older one with the same slug", async () => {
+    // The relation comes back in whatever order the database chose, so a
+    // `find` could flatten a superseded number into the spreadsheet — and
+    // change its mind between two exports of unchanged data.
+    state.unlocked = true;
+    const contact = await addContact({ firstName: "Twonumbers" });
+    const term = await methodTerm("mobile");
+    await prisma.contactMethod.create({
+      data: { contactId: contact.id, typeId: term.id, value: "+15550100000", sortOrder: 0 },
+    });
+    await prisma.contactMethod.create({
+      data: {
+        contactId: contact.id,
+        typeId: term.id,
+        value: "+15550104477",
+        sortOrder: 1,
+        isPrimary: true,
+      },
+    });
+
+    const csv = await exportAccount("csv");
+    expect(csv.data!.content).toContain("+15550104477");
+    expect(csv.data!.content).not.toContain("+15550100000");
+  });
+
+  it("carries a dismissed family suggestion, which lives nowhere else", async () => {
+    // "These two are not related" is a decision the person made. Leaving it out
+    // means a restore brings back every suggestion they already said no to.
+    state.unlocked = true;
+    const a = await addContact({ firstName: "Ada" });
+    const b = await addContact({ firstName: "Bea" });
+    await prisma.familySuggestionDismissal.create({
+      data: { ownerId: state.ownerId, aContactId: a.id, bContactId: b.id },
+    });
+
+    const result = await exportAccount("json");
+    const parsed = JSON.parse(result.data!.content);
+    expect(parsed.account.familySuggestionDismissals).toHaveLength(1);
+    expect(parsed.account.familySuggestionDismissals[0]).toMatchObject({
+      aContactId: a.id,
+      bContactId: b.id,
+    });
+  });
+
+  it("puts one annual event in the calendar for a birthday, not two", async () => {
+    // A contact with a canonical birthday keeps a legacy birthday-typed row in
+    // storage, which lends it reminder settings and styling. Every other feed
+    // suppresses that row; not doing it here fills the calendar with a second
+    // event per person, possibly on a stale date.
+    state.unlocked = true;
+    const contact = await addContact({
+      firstName: "Birthday",
+      birthDate: new Date(Date.UTC(1990, 3, 15)),
+      birthDatePrecision: "DAY",
+    });
+    const term = await prisma.taxonomyTerm.findUniqueOrThrow({
+      where: {
+        ownerId_kind_slug: { ownerId: state.ownerId, kind: "DATE_TYPE", slug: "birthday" },
+      },
+    });
+    await prisma.importantDate.create({
+      data: {
+        ownerId: state.ownerId,
+        contactId: contact.id,
+        typeId: term.id,
+        label: "Birthday",
+        date: new Date(Date.UTC(1990, 3, 15)),
+        precision: "DAY",
+        recurrence: "ANNUAL",
+      },
+    });
+
+    const ics = await exportAccount("ics");
+    const events = ics.data!.content.match(/BEGIN:VEVENT/g) ?? [];
+    expect(events).toHaveLength(1);
+  });
+
+  it("refuses a format it does not produce", async () => {
+    const result = await exportAccount("pdf");
+    expect(result.ok).toBe(false);
+  });
+
+  it("survives a place carrying an OpenStreetMap id", async () => {
+    // Location.osmId is a BigInt, and JSON.stringify throws on those rather
+    // than skipping them — one optional field on one table would otherwise
+    // fail the entire export.
+    state.unlocked = true;
+    await prisma.location.create({
+      data: {
+        ownerId: state.ownerId,
+        name: "The Anchor",
+        normalizedName: "the anchor",
+        osmType: "N",
+        osmId: BigInt("123456789012"),
+      },
+    });
+
+    const result = await exportAccount("json");
+    expect(result.ok).toBe(true);
+    expect(result.data!.content).toContain("123456789012");
+  });
+});

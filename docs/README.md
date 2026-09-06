@@ -62,7 +62,7 @@ packaged as one container with the database built in.
 | Follow-ups | `/tasks` | Due contact cadences and manual tasks in separate sections |
 | Gifts | `/gifts` | Both directions |
 | Places | `/locations` | Venues shared by interactions and plans; who you saw there, what is planned, and an optional address lookup |
-| Settings | `/settings` | Account, Look, Fields, Types, Home, Reminders, Quick add, Places, Privacy, App |
+| Settings | `/settings` | Account, Look, Fields, Types, Tags, Home, Reminders, Quick add, Places, Privacy, Data, App |
 | Welcome | `/welcome` | First-run onboarding, once per account |
 | Unlock | `/unlock` | The privacy PIN |
 | Offline | `/offline` | What the service worker serves for an uncached page |

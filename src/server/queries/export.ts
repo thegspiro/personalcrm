@@ -1,0 +1,234 @@
+import { isBirthdayImportantDate } from "@/server/queries/birthdays";
+import "server-only";
+import type { Prisma } from "@prisma/client";
+import { prisma } from "@/server/db/client";
+import { plainDateFromDb } from "@/lib/dates";
+import type { VCardContact } from "@/lib/export/vcard";
+import type { IcsEvent } from "@/lib/export/ics";
+
+/**
+ * Reads for the export.
+ *
+ * Deliberately *not* privacy-filtered here. Every other query in this app
+ * excludes private rows by construction, which is right for a page — a hidden
+ * section simply is not there. An export is the one place where quietly
+ * leaving rows out produces a file that claims to be everything and is not,
+ * which is the same silent-truncation failure the list pages had. So the
+ * decision is made once, in the action, and it is binary: either the lock
+ * permits a complete export or the export is refused. Nothing partial.
+ *
+ * Two things are left out on purpose, and both are named in docs/privacy.md so
+ * the omission is stated rather than discovered. Notification channels hold
+ * credentials — an SMTP password, a webhook nobody else should be able to
+ * post to — and a file people are encouraged to keep copies of is the last
+ * place those belong. Sessions and the password hash are not account content
+ * at all; they are the means of reaching it.
+ *
+ * Everything else an account can hold is here. A table that gains rows a
+ * person entered has to be added, or the export quietly stops being what it
+ * says it is — the same failure the list caps had, written to a file.
+ */
+
+const CONTACT_INCLUDE = {
+  category: { select: { label: true } },
+  tags: { include: { tag: { select: { name: true, slug: true, color: true } } } },
+  flags: true,
+  associates: true,
+  happenings: { include: { type: { select: { label: true } } } },
+  meetingSource: { select: { label: true } },
+  methods: { include: { type: { select: { slug: true, label: true } } } },
+  addresses: true,
+  facts: { include: { category: { select: { label: true } } } },
+  importantDates: { include: { type: { select: { slug: true, label: true } } } },
+  lifeEvents: {
+    include: {
+      type: { select: { label: true } },
+      // Without these a shared event loses everyone but its anchor contact,
+      // so a restore could not say whose timelines it belonged to.
+      participants: { select: { contactId: true } },
+    },
+  },
+  gifts: { include: { occasion: { select: { label: true } } } },
+  debts: true,
+  dietaryNeeds: true,
+  romanticProfile: {
+    include: {
+      stage: { select: { label: true } },
+      source: { select: { label: true } },
+    },
+  },
+} as const;
+
+/**
+ * Everything in the account, for the full-fidelity export.
+ *
+ * Read inside one transaction rather than as independent queries. Separate
+ * reads see separate snapshots, so a write committing partway through produces
+ * a document that never existed: an interaction whose contact is not in the
+ * contacts array, for instance. For a file whose stated purpose is being able
+ * to put the account back, internally impossible is worse than slightly stale.
+ *
+ * The timeout is explicit for the same reason the import's is. An interactive
+ * transaction defaults to five seconds, and these are full-table reads with
+ * nested includes over every table in the account — so the default would fail
+ * exactly the large accounts with the most to lose, and only those, which is
+ * the worst possible place for a limit nobody chose to put there.
+ */
+export async function gatherAccount(ownerId: string) {
+  return prisma.$transaction(async (tx) => gatherWithin(tx, ownerId), {
+    timeout: 120_000,
+    maxWait: 10_000,
+  });
+}
+
+async function gatherWithin(prisma: Prisma.TransactionClient, ownerId: string) {
+  const [
+    profile,
+    contacts,
+    interactions,
+    relationships,
+    households,
+    familySuggestionDismissals,
+    ideas,
+    tasks,
+    plans,
+    locations,
+    taxonomyTerms,
+    tags,
+    customFieldDefinitions,
+    customFieldValues,
+    preference,
+    dashboardLayout,
+  ] = await Promise.all([
+    // Named fields, never the whole row. The account's own display name and
+    // email are part of what a restore has to put back; `passwordHash`,
+    // `privacyPinHash` and the failure counters beside it are credentials, and
+    // a file that carries them is a file that hands the account over when it
+    // is copied onto a laptop. Selecting explicitly means a column added to
+    // `User` later has to be opted in rather than leaking by default.
+    prisma.user.findUnique({
+      where: { id: ownerId },
+      select: { name: true, email: true, role: true, createdAt: true },
+    }),
+    prisma.contact.findMany({ where: { ownerId }, include: CONTACT_INCLUDE, orderBy: { createdAt: "asc" } }),
+    prisma.interaction.findMany({
+      where: { ownerId },
+      include: {
+        type: { select: { label: true } },
+        participants: { select: { contactId: true } },
+        mentions: { select: { contactId: true } },
+        dateEntry: true,
+      },
+      orderBy: { occurredAt: "asc" },
+    }),
+    prisma.relationship.findMany({ where: { ownerId }, include: { type: { select: { label: true } } } }),
+    prisma.household.findMany({ where: { ownerId }, include: { members: true } }),
+    // A dismissal is a decision the person made — "these two are not related" —
+    // and it lives nowhere else. Leaving it out means a restore brings back
+    // every suggestion they have already said no to.
+    prisma.familySuggestionDismissal.findMany({ where: { ownerId } }),
+    prisma.idea.findMany({ where: { ownerId } }),
+    prisma.task.findMany({ where: { ownerId } }),
+    prisma.plan.findMany({ where: { ownerId }, include: { category: { select: { label: true } } } }),
+    prisma.location.findMany({ where: { ownerId }, include: { locationAliases: true } }),
+    prisma.taxonomyTerm.findMany({ where: { ownerId }, orderBy: [{ kind: "asc" }, { sortOrder: "asc" }] }),
+    prisma.tag.findMany({ where: { ownerId } }),
+    prisma.customFieldDefinition.findMany({ where: { ownerId } }),
+    prisma.customFieldValue.findMany({ where: { ownerId } }),
+    prisma.userPreference.findUnique({ where: { userId: ownerId } }),
+    prisma.dashboardLayout.findUnique({ where: { userId: ownerId } }),
+  ]);
+
+  return {
+    profile,
+    contacts,
+    interactions,
+    relationships,
+    households,
+    familySuggestionDismissals,
+    ideas,
+    tasks,
+    plans,
+    locations,
+    taxonomyTerms,
+    tags,
+    customFieldDefinitions,
+    customFieldValues,
+    preference,
+    dashboardLayout,
+  };
+}
+
+export type AccountExport = Awaited<ReturnType<typeof gatherAccount>>;
+
+/** The contacts, shaped for a vCard. */
+export function toVCardContacts(account: AccountExport): VCardContact[] {
+  return account.contacts.map((contact) => ({
+    id: contact.id,
+    firstName: contact.firstName,
+    lastName: contact.lastName,
+    nickname: contact.nickname,
+    birthDate: contact.birthDate ? plainDateFromDb(contact.birthDate) : null,
+    birthDatePrecision: contact.birthDatePrecision,
+    occupation: contact.occupation,
+    employer: contact.employer,
+    summary: contact.summary,
+    category: contact.category?.label ?? null,
+    methods: contact.methods.map((method) => ({
+      kind: method.type?.slug ?? null,
+      value: method.value,
+      label: method.label ?? method.type?.label ?? null,
+    })),
+    addresses: contact.addresses.map((address) => ({
+      label: address.label,
+      line1: address.line1,
+      line2: address.line2,
+      city: address.city,
+      region: address.region,
+      postalCode: address.postalCode,
+      country: address.country,
+    })),
+  }));
+}
+
+/**
+ * The dates worth a calendar entry: everything on the important-dates list,
+ * plus the birthdays stored on the contact record itself, which are the ones
+ * people actually want in their phone.
+ */
+export function toCalendarEvents(account: AccountExport): IcsEvent[] {
+  const events: IcsEvent[] = [];
+
+  for (const contact of account.contacts) {
+    const name = [contact.firstName, contact.lastName].filter(Boolean).join(" ");
+    if (contact.birthDate) {
+      events.push({
+        uid: `personalcrm-birthday-${contact.id}`,
+        summary: `${name}'s birthday`,
+        description: null,
+        date: plainDateFromDb(contact.birthDate),
+        precision: contact.birthDatePrecision,
+        recurrence: "ANNUAL",
+      });
+    }
+
+    for (const date of contact.importantDates) {
+      // A contact with a canonical birthday keeps a legacy birthday-typed row
+      // in storage, which lends it reminder settings and styling. Every other
+      // feed suppresses that row where the canonical birthday is shown; not
+      // doing it here puts two annual events in the calendar for one person,
+      // the second of them possibly on a stale date.
+      if (contact.birthDate && isBirthdayImportantDate(date)) continue;
+      events.push({
+        uid: `personalcrm-date-${date.id}`,
+        summary: `${date.label} — ${name}`,
+        description: date.notes,
+        date: plainDateFromDb(date.date),
+        precision: date.precision,
+        recurrence: date.recurrence,
+      });
+    }
+  }
+
+  return events;
+}

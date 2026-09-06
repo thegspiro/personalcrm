@@ -71,6 +71,15 @@ the new cookie, and `changePassword` invokes it after the transaction commits;
 writing it inside would leave the browser holding a token a rollback removed. Individual and bulk revocation predicates include `userId`
 and explicitly exclude the current token hash.
 
+### Export and import — `actions/export.ts`, `actions/import.ts`
+
+| Action | Notes |
+| --- | --- |
+| `previewImport` | Reads a `.vcf` or `.csv` and says what would happen. Writes nothing. Flags rows that match somebody already here, and rows that repeat within the file itself |
+| `commitImport` | Writes the confirmed rows. Parses the file **again** rather than trusting what the browser sends back — the client chooses which rows, never what is in them, so nothing absent from the file can be written by a crafted request. Imported contacts are never private; activity columns are seeded through `contact-activity.ts` rather than written directly |
+| `exportAccount` | Returns the file rather than serving one. There is no route handler for it by design — `GET /api/health` stays the only route in the app, and building the download in the browser keeps the export out of the service worker's fetch handling. Refuses outright while the privacy lock is closed over an account that holds anything private: every read here filters those rows, so an export built the same way would be a file that claims to be everything and silently is not |
+
+
 ### Contacts — `actions/contacts.ts`
 
 `createContact`, `updateContact`, `updateContactBirthday`, `patchContact`,

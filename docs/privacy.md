@@ -615,6 +615,67 @@ reason the AI layer uses none. Requests identify the application in their
 `User-Agent`, which Nominatim's policy asks for and which is why a stock HTTP
 library's default would be rejected.
 
+## Export, import, and the lock
+
+Getting your data out is under Settings → Data: the whole account as JSON, the
+contacts as a spreadsheet or as vCard, the dates as a calendar.
+
+**A closed lock refuses the export rather than shrinking it.** Every read in
+this app excludes private rows while the lock is shut, which for a page is
+exactly right — a hidden section simply is not there. Applying the same
+filtering to an export produces something worse than a hidden section: a file
+that presents itself as the complete account, is not, and gets carried onto a
+disk somewhere else where nobody will ever notice the difference.
+
+**And it refuses without asking how much is behind the lock.** A first version
+allowed the export when nothing carried the `isPrivate` marker, on the grounds
+that there was then nothing to leave out. That modelled the lock as the marker,
+and the lock is more than the marker: the dating layer is gated in its own
+right, so an account with a romantic profile and no marked rows would have
+carried private notes, date entries and flags out in a file. Branching on a
+count is also a disclosure by itself — being allowed or refused would answer
+whether anything private exists. So the rule is the simple one: closed lock,
+no export.
+
+**What the export leaves out, and why.** Notification channels are excluded.
+Their configuration holds credentials — an SMTP password, a webhook nobody
+else should be able to post to — and a file people are encouraged to keep
+copies of is the last place those belong. Sessions, the password hash and the
+privacy PIN hash are excluded too; they are not account content but the means
+of reaching it, and a backup that hands over the account is not one you can
+leave anywhere. The account's own display name and email *are* included, since
+a restore has to put them back — as a named selection of columns rather than
+the row, so a field added to `User` later has to be opted in instead of
+leaking by default.
+
+Everything else a person has entered is included, and a table that gains rows
+somebody typed has to be added to the export, or it quietly stops being what
+it says it is.
+
+**One thing it cannot carry: images.** Avatars are files under `uploads/`, and
+the database holds only their generated paths, so a JSON file has nothing to
+put them in. [Backup](backup.md) has always said that directory and the
+database must be kept and restored together; the export does not change that,
+and does not pretend to.
+
+**Import is gated the same way, for a different reason.** Nothing is disclosed
+by bringing contacts in — but deciding whether somebody in the file is already
+here means comparing against what can be seen, and behind a closed lock private
+contacts cannot be. Importing then would quietly create a second, visible copy
+of somebody deliberately hidden. The gate is the lock alone here too, for the
+same reason as above: a count would be its own answer.
+
+Two things about what import writes. A contact arriving from somewhere else is
+**never** marked private: nothing outside this account has any standing to say
+what is hidden inside it, and a row that arrived marked private would sit
+outside the counts the lock depends on. And the file is parsed again when the
+import is confirmed rather than the browser sending back what it was shown —
+the client chooses which rows, never what is in them.
+
+Nothing is transmitted either way. The export action returns the file's
+contents and the browser saves them; the import action is handed text the
+browser already read. There is no endpoint, and no request leaves the machine.
+
 ## Sign-in throttling
 
 The privacy lock has always backed off after repeated wrong PINs. The front

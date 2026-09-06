@@ -10,6 +10,8 @@ import {
 } from "@/server/queries/custom-fields";
 import { TAXONOMY_KIND_LABELS } from "@/server/taxonomy/defaults";
 import { PrivacySettings } from "@/components/dating/privacy-settings";
+import { ExportSettings } from "@/components/settings/export-settings";
+import { ImportSettings } from "@/components/settings/import-settings";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
 import { AppSettings } from "@/components/settings/app-settings";
 import { CustomFieldsSettings } from "@/components/settings/custom-fields-settings";
@@ -81,6 +83,13 @@ export default async function SettingsPage() {
   // Value counts drive the delete warning: deleting a field takes everything
   // recorded in it with it, so the confirmation has to say how much. Filtered
   // by the lock, because this page is reachable while it is closed.
+  // Export and import are gated together, and on the lock alone rather than on
+  // how much is behind it: the lock covers the dating layer as well as rows
+  // carrying the marker, so counting markers would have let a locked account
+  // export its dating notes. Branching on a count is also a disclosure in its
+  // own right — being allowed or refused would answer the question.
+  const dataLocked = privacyState.enabled && !privacyState.unlocked;
+
   const counts = valueCounts;
   const withCount = (rows: typeof definitions.CONTACT) =>
     rows.map((row) => ({ ...row, valueCount: counts.get(row.id) ?? 0 }));
@@ -221,6 +230,12 @@ export default async function SettingsPage() {
             blurPrivateNotes={prefs.blurPrivateNotes}
             retryAfterSeconds={privacyState.retryAfterSeconds}
           />
+        }
+        data={
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
+            <ExportSettings locked={dataLocked} />
+            <ImportSettings locked={dataLocked} />
+          </div>
         }
         app={
           <AppSettings

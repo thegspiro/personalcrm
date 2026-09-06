@@ -17,6 +17,17 @@ const TEL_SLUGS = new Set(["mobile", "home-phone", "work-phone", "phone", "fax"]
 /** Slugs shipped in `CONTACT_METHOD_TYPE` defaults that open a mail client. */
 const MAIL_SLUGS = new Set(["email", "work-email", "personal-email"]);
 
+/**
+ * Whether a slug names an email address.
+ *
+ * Exported so the import's duplicate check asks the same question `methodLink`
+ * does. Two answers to "is this an email" is how the same address gets imported
+ * twice with no warning.
+ */
+export function isMailSlug(slug: string | null | undefined): boolean {
+  return slug !== null && slug !== undefined && MAIL_SLUGS.has(slug);
+}
+
 /** Where a handle on a named service can be resolved to a profile URL. */
 const HANDLE_HOSTS: Record<string, string> = {
   instagram: "https://instagram.com/",
