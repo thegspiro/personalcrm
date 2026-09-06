@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
+import { asARestoreWould, createTestUser, hasTestDatabase, prisma, reset } from "./db";
 import { plainDateToDb, zonedTimeOfDay } from "@/lib/dates";
 
 const state = vi.hoisted(() => ({ locked: false }));
@@ -439,6 +439,61 @@ describe.skipIf(!hasTestDatabase)("calendar", () => {
     const found = (await entries()).filter((entry) => entry.kind === "plan");
     expect(found).toHaveLength(1);
     expect(found[0].contact).toBeNull();
+  });
+
+  it("survives a restored row naming another account's contact", async () => {
+    // `mariadb-dump` emits SET FOREIGN_KEY_CHECKS=0, so restoring a dump taken
+    // before the composite keys existed can bring in a row the schema now
+    // forbids. `Happening.contact` and `InteractionParticipant.contact` are
+    // *required* relations, so such a row does not quietly render wrong — it
+    // makes Prisma refuse to return a required relation as null, which
+    // rejected the whole Promise.all and took the page down.
+    const stranger = await createTestUser();
+    const theirs = await prisma.contact.create({
+      data: { ownerId: stranger.id, firstName: "Nobody" },
+    });
+    const mine = await makeContact("Marcus");
+
+    await asARestoreWould(async (tx) => {
+      await tx.happening.create({
+        data: {
+          ownerId,
+          contactId: theirs.id,
+          title: "Restored from a dump",
+          date: plainDateToDb({ year: 2026, month: 3, day: 16 }),
+          precision: "DAY",
+        },
+      });
+      const interaction = await tx.interaction.create({
+        data: {
+          ownerId,
+          title: "Also restored",
+          occurredAt: zonedTimeOfDay({ year: 2026, month: 3, day: 17 }, 600, TZ),
+        },
+      });
+      await tx.interactionParticipant.create({
+        data: { ownerId, interactionId: interaction.id, contactId: theirs.id },
+      });
+    });
+
+    // The page still answers, and the unresolvable rows simply are not on it.
+    const found = await entries();
+    expect(found.filter((entry) => entry.kind === "happening")).toHaveLength(0);
+    const interactions = found.filter((entry) => entry.kind === "interaction");
+    expect(interactions).toHaveLength(1);
+    expect(interactions[0].contact).toBeNull();
+
+    // And nothing owned was lost along the way.
+    await prisma.plan.create({
+      data: {
+        ownerId,
+        contactId: mine.id,
+        title: "Still here",
+        plannedFor: plainDateToDb({ year: 2026, month: 3, day: 4 }),
+        status: "PLANNED",
+      },
+    });
+    expect((await entries()).filter((entry) => entry.kind === "plan")).toHaveLength(1);
   });
 
   it("never reaches into another account", async () => {

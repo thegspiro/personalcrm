@@ -219,7 +219,15 @@ export async function getCalendarEntries(
               date: { gte: plainDateToDb(addPlainDays(window.from, -HAPPENING_REACH_BACK_DAYS)) },
             },
           ],
-          ...viaContactPrivacyWhere(scope),
+          // Owned first, privacy second — not the privacy fragment alone.
+          // `Happening.contact` is a *required* relation on the composite
+          // `(ownerId, contactId)` key, and a dump restored with foreign-key
+          // checks off can leave a row pointing at a contact that resolves
+          // only in another account. Unlocked, the fragment is `{}`, so such a
+          // row reached the select and Prisma refused to return a required
+          // relation as null — rejecting the whole `Promise.all` and taking
+          // the page down rather than dropping one row.
+          contact: { ownerId, ...(scope.unlocked ? {} : { isPrivate: false }) },
         },
         select: {
           id: true,
@@ -247,6 +255,11 @@ export async function getCalendarEntries(
           title: true,
           occurredAt: true,
           participants: {
+            // Same requirement as the happening above, one level down:
+            // `InteractionParticipant.contact` is required on the same
+            // composite key, so a restored participant naming another
+            // account's contact would fail the select rather than be skipped.
+            where: { contact: { ownerId } },
             select: { contact: { select: { id: true, firstName: true, lastName: true } } },
             take: 1,
           },
@@ -281,7 +294,13 @@ export async function getCalendarEntries(
       href: "/ideas",
       contact: plan.contact,
       minute: plan.plannedStartMinute,
-      note: plan.status === "PLANNED" ? "planned" : null,
+      // "Pencilled in" and "planned" are different promises, and the column
+      // cannot tell them apart on its own: "Not planned after all" returns a
+      // plan to OPEN and deliberately leaves `plannedFor` behind, so a day
+      // that was called off looks exactly like one somebody roughly intends.
+      // The status is the only thing that separates them, so it is said out
+      // loud rather than left for the reader to assume the stronger one.
+      note: plan.status === "PLANNED" ? "planned" : "pencilled in",
     });
   }
 

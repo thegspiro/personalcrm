@@ -191,7 +191,18 @@ export default async function CalendarPage({
         </section>
       ) : null}
 
-      {cacheable ? <CacheThisPage /> : null}
+      {/* Keyed by the month and day, so stepping between them remounts it.
+          Month and day navigation only changes the search parameters, so the
+          App Router keeps this component mounted while it reconciles the new
+          server result — and its effect reads the URL once, on mount. The
+          service worker stores exact URLs, so without the key only the first
+          calendar page anybody opened was ever offered offline and every
+          other month fell through to the generic offline screen. */}
+      {cacheable ? (
+        <CacheThisPage
+          key={`${plainMonthKey(month)}:${selected ? plainDateKey(selected) : ""}`}
+        />
+      ) : null}
     </div>
   );
 }
