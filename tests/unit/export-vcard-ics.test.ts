@@ -136,7 +136,17 @@ describe("vcardFor", () => {
       }),
     );
     expect(lines).toContain("EMAIL:dave@example.com");
-    expect(lines).toContain("TEL;TYPE=cell:+15550104477");
+    // A vCard 4.0 TEL is a URI by default, and a number as somebody typed it
+    // is not one. Declaring it text keeps the number in the shape they chose
+    // and still parses strictly. EMAIL is already text, so it says nothing.
+    expect(lines).toContain("TEL;TYPE=cell;VALUE=text:+15550104477");
+  });
+
+  it("declares a landline as text too, not just a mobile", () => {
+    const lines = vcardFor(
+      contact({ methods: [{ kind: "home-phone", value: "+1 555 0100", label: null }] }),
+    );
+    expect(lines).toContain("TEL;TYPE=home;VALUE=text:+1 555 0100");
   });
 
   it("keeps a method it cannot map instead of dropping it", () => {
@@ -268,6 +278,62 @@ describe("icsEvent", () => {
 
   it("returns nothing for a date that cannot be placed", () => {
     expect(icsEvent(event({ precision: "YEAR" }), 2026, STAMP)).toBeNull();
+  });
+});
+
+describe("a one-time date whose year nobody supplied", () => {
+  it("is left out rather than anchored into the export year", () => {
+    // Anchoring is only honest because the event then recurs from there. With
+    // no RRULE the same anchor asserts that something happened in a year the
+    // person never gave.
+    expect(
+      icsEvent(
+        {
+          uid: "u1",
+          summary: "Met at the conference",
+          description: null,
+          date: { year: 1904, month: 4, day: 15 },
+          precision: "MONTH_DAY",
+          recurrence: "NONE",
+        },
+        2026,
+        new Date("2026-09-06T00:00:00Z"),
+      ),
+    ).toBeNull();
+  });
+
+  it("still anchors the same date when it recurs", () => {
+    const lines = icsEvent(
+      {
+        uid: "u2",
+        summary: "Birthday",
+        description: null,
+        date: { year: 1904, month: 4, day: 15 },
+        precision: "MONTH_DAY",
+        recurrence: "ANNUAL",
+      },
+      2026,
+      new Date("2026-09-06T00:00:00Z"),
+    );
+    expect(lines).not.toBeNull();
+    expect(lines!).toContain("RRULE:FREQ=YEARLY");
+    expect(lines!).toContain("DTSTART;VALUE=DATE:20260415");
+  });
+
+  it("keeps a one-time date that does know its year", () => {
+    const lines = icsEvent(
+      {
+        uid: "u3",
+        summary: "Wedding",
+        description: null,
+        date: { year: 2024, month: 6, day: 1 },
+        precision: "DAY",
+        recurrence: "NONE",
+      },
+      2026,
+      new Date("2026-09-06T00:00:00Z"),
+    );
+    expect(lines!).toContain("DTSTART;VALUE=DATE:20240601");
   });
 });
 

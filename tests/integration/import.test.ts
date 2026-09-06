@@ -112,6 +112,29 @@ describe.skipIf(!hasTestDatabase)("contact import", () => {
     expect(preview.data!.duplicates).toBe(1);
   });
 
+  it("flags an address held under any term the app treats as email", async () => {
+    // `methodLink` treats `work-email` and `personal-email` as email addresses
+    // too. Asking a narrower question here means the same address imports
+    // again with no warning, and the row arrives ticked.
+    const contact = await prisma.contact.create({
+      data: { ownerId: state.ownerId, firstName: "Dave", lastName: "Kim" },
+    });
+    const term = await prisma.taxonomyTerm.create({
+      data: {
+        ownerId: state.ownerId,
+        kind: "CONTACT_METHOD_TYPE",
+        slug: "work-email",
+        label: "Work email",
+      },
+    });
+    await prisma.contactMethod.create({
+      data: { contactId: contact.id, typeId: term.id, value: "dave@example.com" },
+    });
+
+    const preview = await previewImport("vcard", CARD);
+    expect(preview.data!.rows[0].duplicate).toMatchObject({ reason: "email" });
+  });
+
   it("writes only what the file holds, whatever the client asks for", async () => {
     // The client chooses which rows, never what is in them: the file is parsed
     // again on commit rather than trusting anything sent back.

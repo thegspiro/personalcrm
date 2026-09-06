@@ -311,3 +311,29 @@ describe("Google's numbered, paired columns", () => {
     });
   });
 });
+
+describe("the row cap during parsing", () => {
+  it("stops scanning instead of materialising the whole file", () => {
+    // A file under the character limit can still hold millions of short rows.
+    // Building them all and then refusing the request spends exactly the
+    // memory the cap exists to protect.
+    const many = `first name\n${"a\n".repeat(5_000)}`;
+    // One past the cap, so the caller can still tell "too many" from
+    // "exactly the maximum" without having read the rest of the file.
+    expect(parseCsvRows(many, 11)).toHaveLength(12);
+  });
+
+  it("keeps one row past the cap, so too many is distinguishable from exactly enough", () => {
+    const { rows } = parseCsvContacts(`first name\n${"a\n".repeat(50)}`, 10);
+    expect(rows).toHaveLength(11);
+  });
+
+  it("returns everything when the file is inside the cap", () => {
+    const { rows } = parseCsvContacts("first name\nAda\nBea", 10);
+    expect(rows).toHaveLength(2);
+  });
+
+  it("is unbounded when no cap is given", () => {
+    expect(parseCsvRows(`a\n${"b\n".repeat(30)}`)).toHaveLength(31);
+  });
+});

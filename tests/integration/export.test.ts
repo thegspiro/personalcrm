@@ -267,6 +267,39 @@ describe.skipIf(!hasTestDatabase)("account export", () => {
     });
   });
 
+  it("puts one annual event in the calendar for a birthday, not two", async () => {
+    // A contact with a canonical birthday keeps a legacy birthday-typed row in
+    // storage, which lends it reminder settings and styling. Every other feed
+    // suppresses that row; not doing it here fills the calendar with a second
+    // event per person, possibly on a stale date.
+    state.unlocked = true;
+    const contact = await addContact({
+      firstName: "Birthday",
+      birthDate: new Date(Date.UTC(1990, 3, 15)),
+      birthDatePrecision: "DAY",
+    });
+    const term = await prisma.taxonomyTerm.findUniqueOrThrow({
+      where: {
+        ownerId_kind_slug: { ownerId: state.ownerId, kind: "DATE_TYPE", slug: "birthday" },
+      },
+    });
+    await prisma.importantDate.create({
+      data: {
+        ownerId: state.ownerId,
+        contactId: contact.id,
+        typeId: term.id,
+        label: "Birthday",
+        date: new Date(Date.UTC(1990, 3, 15)),
+        precision: "DAY",
+        recurrence: "ANNUAL",
+      },
+    });
+
+    const ics = await exportAccount("ics");
+    const events = ics.data!.content.match(/BEGIN:VEVENT/g) ?? [];
+    expect(events).toHaveLength(1);
+  });
+
   it("refuses a format it does not produce", async () => {
     const result = await exportAccount("pdf");
     expect(result.ok).toBe(false);

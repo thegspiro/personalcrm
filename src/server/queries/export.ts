@@ -1,3 +1,4 @@
+import { isBirthdayImportantDate } from "@/server/queries/birthdays";
 import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
@@ -38,7 +39,7 @@ const CONTACT_INCLUDE = {
   methods: { include: { type: { select: { slug: true, label: true } } } },
   addresses: true,
   facts: { include: { category: { select: { label: true } } } },
-  importantDates: { include: { type: { select: { label: true } } } },
+  importantDates: { include: { type: { select: { slug: true, label: true } } } },
   lifeEvents: {
     include: {
       type: { select: { label: true } },
@@ -212,6 +213,12 @@ export function toCalendarEvents(account: AccountExport): IcsEvent[] {
     }
 
     for (const date of contact.importantDates) {
+      // A contact with a canonical birthday keeps a legacy birthday-typed row
+      // in storage, which lends it reminder settings and styling. Every other
+      // feed suppresses that row where the canonical birthday is shown; not
+      // doing it here puts two annual events in the calendar for one person,
+      // the second of them possibly on a stale date.
+      if (contact.birthDate && isBirthdayImportantDate(date)) continue;
       events.push({
         uid: `personalcrm-date-${date.id}`,
         summary: `${date.label} — ${name}`,

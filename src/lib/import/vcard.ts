@@ -469,7 +469,7 @@ function cardToContact(lines: readonly string[]): ImportedContact | null {
 }
 
 /** Read a whole file. */
-export function parseVCard(text: string): ParseResult {
+export function parseVCard(text: string, limit?: number): ParseResult {
   const lines = unfold(text);
   const rows: ParsedRow[] = [];
 
@@ -493,6 +493,9 @@ export function parseVCard(text: string): ParseResult {
         });
       }
       current = null;
+      // One past the cap is enough for the caller to say "too many"; going on
+      // would build a contact object per card for a file already refused.
+      if (limit !== undefined && rows.length > limit) break;
       continue;
     }
     current?.push(line);

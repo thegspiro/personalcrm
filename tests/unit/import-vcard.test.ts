@@ -455,3 +455,22 @@ describe("Apple's omitted-year birthday", () => {
     expect(rows[0].contact!.birthDatePrecision).toBe("DAY");
   });
 });
+
+describe("the card cap during parsing", () => {
+  const card = (i: number) => `BEGIN:VCARD\r\nFN:Person ${i}\r\nEND:VCARD`;
+
+  it("stops after one card past the cap", () => {
+    const many = Array.from({ length: 200 }, (_, i) => card(i)).join("\r\n");
+    expect(parseVCard(many, 10).rows).toHaveLength(11);
+  });
+
+  it("returns everything when the file is inside the cap", () => {
+    const few = Array.from({ length: 3 }, (_, i) => card(i)).join("\r\n");
+    expect(parseVCard(few, 10).rows).toHaveLength(3);
+  });
+
+  it("is unbounded when no cap is given", () => {
+    const many = Array.from({ length: 40 }, (_, i) => card(i)).join("\r\n");
+    expect(parseVCard(many).rows).toHaveLength(40);
+  });
+});

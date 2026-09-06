@@ -10,6 +10,7 @@ import { parseVCard } from "@/lib/import/vcard";
 import { parseCsvContacts } from "@/lib/import/csv";
 import { findDuplicate, findInternalDuplicates, type Duplicate } from "@/lib/import/dedupe";
 import type { ImportedContact } from "@/lib/import/types";
+import { isMailSlug } from "@/lib/contact-methods";
 import { fail, ok, type ActionResult } from "./helpers";
 
 export type ImportFormat = "vcard" | "csv";
@@ -80,7 +81,11 @@ async function blockedByLock(): Promise<string | null> {
 }
 
 function parse(format: ImportFormat, text: string) {
-  return format === "vcard" ? parseVCard(text) : parseCsvContacts(text);
+  // The cap goes into the parser rather than being applied to its result. A
+  // file under the character limit can still hold millions of short rows, and
+  // building every one of them before refusing the request spends exactly the
+  // memory the cap is there to protect.
+  return format === "vcard" ? parseVCard(text, MAX_ROWS) : parseCsvContacts(text, MAX_ROWS);
 }
 
 function describe(contact: ImportedContact): string | null {
@@ -107,7 +112,11 @@ async function existingContacts(ownerId: string) {
     id: row.id,
     firstName: row.firstName,
     lastName: row.lastName,
-    emails: row.methods.filter((m) => m.type?.slug === "email").map((m) => m.value),
+    // Every slug the app treats as an email address, not just the shipped
+    // `email` term. An account that renamed or added `work-email` would
+    // otherwise get no duplicate warning for an address it already holds,
+    // and the row would arrive ticked.
+    emails: row.methods.filter((m) => isMailSlug(m.type?.slug)).map((m) => m.value),
   }));
 }
 

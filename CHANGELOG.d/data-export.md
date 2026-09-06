@@ -18,7 +18,10 @@
   Dates keep the accuracy they were recorded at. A birthday with no known year
   leaves as a birthday with no known year rather than acquiring one, in both
   vCard and the spreadsheet, and a date too vague to place on a calendar is
-  left out of the ICS file instead of being assigned a day nobody chose.
+  left out of the ICS file instead of being assigned a day nobody chose. A
+  one-off date whose year you never gave is left out too: a birthday without a
+  year can recur from anywhere, but something that happened once cannot be put
+  in a year you did not name. Each birthday reaches the calendar once.
 
   **A closed privacy lock declines the export rather than quietly shrinking
   it.** Every other read here hides private rows, which is right for a page;

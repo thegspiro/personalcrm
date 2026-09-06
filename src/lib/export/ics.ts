@@ -91,6 +91,13 @@ function rrule(recurrence: IcsRecurrence): string | null {
  * output rather than the clock.
  */
 export function icsEvent(event: IcsEvent, anchorYear: number, stamp: Date): string[] | null {
+  // Anchoring a year-less date is only honest because the event then recurs
+  // from there — that is what a yearly reminder means. A one-time event has no
+  // RRULE to say so, so the same anchor would assert that something happened
+  // in a year nobody supplied. The calendar query leaves this combination out
+  // for the same reason.
+  if (event.recurrence === "NONE" && !hasKnownYear(event.precision)) return null;
+
   const start = anchorDate(event.date, event.precision, anchorYear);
   if (!start) return null;
 

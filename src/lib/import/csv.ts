@@ -16,7 +16,7 @@ import { parseVCardDate } from "./vcard";
  * is why this cannot be `split("\n")` followed by `split(",")` — a note
  * containing a newline would silently become two malformed rows.
  */
-export function parseCsvRows(text: string): string[][] {
+export function parseCsvRows(text: string, limit?: number): string[][] {
   // Excel and our own export both write a byte-order mark; left in place it
   // becomes part of the first header name and no column matches.
   const input = text.replace(/^﻿/, "");
@@ -24,6 +24,17 @@ export function parseCsvRows(text: string): string[][] {
   let row: string[] = [];
   let field = "";
   let quoted = false;
+
+  // Stop scanning once past the cap rather than materialising the file and
+  // measuring it afterwards. Five megabytes of `a\n` is two and a half million
+  // rows, and building them all to then refuse the request spends the memory
+  // the cap exists to protect. One row past the limit is kept so the caller
+  // can still tell "too many" from "exactly the maximum".
+  const ceiling = limit === undefined ? Infinity : limit + 1;
+  const keep = (entry: string[]) => {
+    if (entry.some((value) => value.trim() !== "")) rows.push(entry);
+    return rows.length < ceiling;
+  };
 
   for (let i = 0; i < input.length; i += 1) {
     const char = input[i];
@@ -51,9 +62,10 @@ export function parseCsvRows(text: string): string[][] {
       // Treat CRLF as one break rather than as an empty row between them.
       if (char === "\r" && input[i + 1] === "\n") i += 1;
       row.push(field);
-      rows.push(row);
+      const room = keep(row);
       row = [];
       field = "";
+      if (!room) return rows;
     } else {
       field += char;
     }
@@ -63,10 +75,10 @@ export function parseCsvRows(text: string): string[][] {
   // the file simply ended with a line break.
   if (field !== "" || row.length > 0) {
     row.push(field);
-    rows.push(row);
+    keep(row);
   }
 
-  return rows.filter((entry) => entry.some((value) => value.trim() !== ""));
+  return rows;
 }
 
 /**
@@ -203,8 +215,10 @@ export function mapHeader(header: readonly string[]): Map<string, number> {
   return mapping;
 }
 
-export function parseCsvContacts(text: string): ParseResult {
-  const rows = parseCsvRows(text);
+export function parseCsvContacts(text: string, limit?: number): ParseResult {
+  // The header occupies a row of its own, so the cap on contacts is one row
+  // short of the cap on rows.
+  const rows = parseCsvRows(text, limit === undefined ? undefined : limit + 1);
   if (rows.length === 0) return { rows: [], fileProblem: "That file is empty." };
 
   const mapping = mapHeader(rows[0]!);

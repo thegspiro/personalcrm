@@ -154,11 +154,20 @@ export function vcardFor(contact: VCardContact): string[] {
       unmapped.push(`${method.label ?? method.kind ?? "contact"}: ${method.value}`);
       continue;
     }
-    lines.push(
-      mapped.property === "URL"
-        ? uriLine(mapped.property, method.value)
-        : line(mapped.property, method.value, mapped.type ? `TYPE=${mapped.type}` : undefined),
-    );
+    if (mapped.property === "URL") {
+      lines.push(uriLine(mapped.property, method.value));
+      continue;
+    }
+    const parameters = [
+      mapped.type ? `TYPE=${mapped.type}` : null,
+      // A vCard 4.0 TEL is a URI by default, and a number as somebody typed it
+      // — spaces, brackets and all — is not one. Declaring it text keeps the
+      // number exactly as they wrote it and still parses strictly; rewriting
+      // it into a `tel:` URI would mean normalising a value the person chose
+      // the shape of.
+      mapped.property === "TEL" ? "VALUE=text" : null,
+    ].filter(Boolean).join(";");
+    lines.push(line(mapped.property, method.value, parameters || undefined));
   }
 
   for (const address of contact.addresses) {
