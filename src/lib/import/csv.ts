@@ -5,6 +5,7 @@
  * which is fiddly and entirely mechanical, and deciding what those fields
  * mean, which depends on whose exporter wrote the header.
  */
+import type { DatePrecision } from "@/lib/date-precision";
 import { emptyContact, type ImportedContact, type ParseResult, type ParsedRow } from "./types";
 import { parseVCardDate } from "./vcard";
 
@@ -79,8 +80,26 @@ const COLUMNS: Record<string, ReadonlyArray<string>> = {
   firstName: ["first name", "firstname", "first_name", "given name", "given_name"],
   lastName: ["last name", "lastname", "last_name", "family name", "surname"],
   nickname: ["nickname", "nick name"],
-  email: ["email", "e mail", "email address", "e mail address", "email 1 value", "primary email"],
-  phone: ["phone", "phone number", "mobile", "mobile phone", "phone 1 value", "primary phone"],
+  // Google writes `E-mail 1 - Value`, which normalises to `e mail 1 value` —
+  // the hyphen in "E-mail" becomes a space like any other punctuation. Listing
+  // only the unhyphenated spelling meant a Google export imported every
+  // contact with no email address at all, and silently: the rows arrived, so
+  // nothing looked wrong, and duplicate detection lost its strongest signal.
+  email: [
+    "email",
+    "e mail",
+    "email address",
+    "e mail address",
+    "email 1 value",
+    "e mail 1 value",
+    "primary email",
+  ],
+  // Kept apart from the generic column so the number keeps the classification
+  // the header gave it. Routing a header that says "mobile" through the
+  // general phone field filed it as a landline and exported it as `TYPE=home`.
+  mobile: ["mobile", "mobile phone", "cell", "cell phone"],
+  phone: ["phone", "phone number", "phone 1 value", "primary phone", "home phone"],
+  workPhone: ["work phone", "business phone", "office phone"],
   employer: ["employer", "organization", "organisation", "company"],
   occupation: ["occupation", "title", "job title", "role"],
   city: ["city", "home city"],
@@ -90,6 +109,24 @@ const COLUMNS: Record<string, ReadonlyArray<string>> = {
   birthDatePrecision: ["birth date precision", "birth_date_precision"],
   summary: ["summary", "notes", "note"],
 };
+
+/** The date components each precision claims to know. */
+const COMPONENTS: Record<DatePrecision, ReadonlyArray<"year" | "month" | "day">> = {
+  DAY: ["year", "month", "day"],
+  MONTH_DAY: ["month", "day"],
+  MONTH: ["year", "month"],
+  YEAR: ["year"],
+};
+
+function isPrecision(value: string | null): value is DatePrecision {
+  return value === "DAY" || value === "MONTH_DAY" || value === "MONTH" || value === "YEAR";
+}
+
+/** Whether text read at `parsed` accuracy really carries what `stated` claims. */
+function supports(parsed: DatePrecision, stated: DatePrecision): boolean {
+  const supplied = new Set(COMPONENTS[parsed]);
+  return COMPONENTS[stated].every((part) => supplied.has(part));
+}
 
 function normaliseHeader(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -162,19 +199,28 @@ export function parseCsvContacts(text: string): ParseResult {
       if (date) {
         contact.birthDate = date.date;
         // An explicit precision column, when the file has one, is what the
-        // account said rather than what the shape of the text implies.
+        // account said rather than what the shape of the text implies — but
+        // only where the text actually carries what the precision claims to
+        // know. `1990` beside a precision of MONTH_DAY would otherwise declare
+        // the placeholder first of January a known day, which is the invented
+        // certainty DatePrecision exists to prevent. A precision that claims
+        // less than the text supplies is a legitimate downgrade and is kept.
         const stated = at("birthDatePrecision");
         contact.birthDatePrecision =
-          stated === "MONTH_DAY" || stated === "MONTH" || stated === "YEAR" || stated === "DAY"
-            ? stated
-            : date.precision;
+          isPrecision(stated) && supports(date.precision, stated) ? stated : date.precision;
       }
     }
 
     const email = at("email");
     if (email) contact.methods.push({ slug: "email", value: email, label: null });
-    const phone = at("phone");
-    if (phone) contact.methods.push({ slug: "home-phone", value: phone, label: null });
+    for (const [field, slug] of [
+      ["mobile", "mobile"],
+      ["phone", "home-phone"],
+      ["workPhone", "work-phone"],
+    ] as const) {
+      const value = at(field);
+      if (value) contact.methods.push({ slug, value, label: null });
+    }
 
     const city = at("city");
     const region = at("region");

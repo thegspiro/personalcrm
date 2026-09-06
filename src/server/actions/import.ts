@@ -24,6 +24,26 @@ const FORMATS = new Set<ImportFormat>(["vcard", "csv"]);
 const MAX_CHARACTERS = 5_000_000;
 const MAX_ROWS = 5_000;
 
+/**
+ * Fit a value inside a `TEXT` column, counting bytes rather than characters.
+ *
+ * Every other imported field is sliced to its column's width; `summary` was
+ * not, and MariaDB rejects an over-long value rather than trimming it. Because
+ * the whole import is one transaction, a single contact carrying a note larger
+ * than `TEXT` rolled back all of the others — the file's most damaging row
+ * deciding the fate of every good one.
+ *
+ * `TEXT` is measured in bytes, so a note of accented characters overflows at
+ * roughly half the character count, and cutting at a byte boundary would split
+ * a character in two. This walks back to the last whole one.
+ */
+function truncateBytes(value: string | null, limit: number): string | null {
+  if (value === null) return null;
+  const encoded = new TextEncoder().encode(value);
+  if (encoded.length <= limit) return value;
+  return new TextDecoder("utf-8", { fatal: false }).decode(encoded.slice(0, limit)).replace(/\uFFFD+$/, "");
+}
+
 export interface ImportPreviewRow {
   index: number;
   name: string;
@@ -221,7 +241,7 @@ export async function commitImport(
           nickname: contact.nickname?.slice(0, 120) ?? null,
           occupation: contact.occupation?.slice(0, 191) ?? null,
           employer: contact.employer?.slice(0, 191) ?? null,
-          summary: contact.summary ?? null,
+          summary: truncateBytes(contact.summary, 65_535),
           city: contact.addresses[0]?.city?.slice(0, 120) ?? null,
           region: contact.addresses[0]?.region?.slice(0, 120) ?? null,
           country: contact.addresses[0]?.country?.slice(0, 120) ?? null,

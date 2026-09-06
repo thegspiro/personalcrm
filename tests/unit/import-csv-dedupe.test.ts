@@ -155,3 +155,84 @@ describe("findInternalDuplicates", () => {
     expect(duplicates.size).toBe(0);
   });
 });
+
+describe("Google and Outlook headers", () => {
+  it("recognises Google's hyphenated email header", () => {
+    // `E-mail 1 - Value` normalises to `e mail 1 value`; matching only the
+    // unhyphenated spelling imported every Google contact with no email at
+    // all, and silently, since the rows themselves arrived fine.
+    const { rows } = parseCsvContacts(
+      "Given Name,Family Name,E-mail 1 - Value\nDave,Kim,dave@example.com",
+    );
+    expect(rows[0].contact!.methods).toContainEqual({
+      slug: "email",
+      value: "dave@example.com",
+      label: null,
+    });
+  });
+
+  it("keeps a mobile column classified as a mobile", () => {
+    const { rows } = parseCsvContacts("first name,mobile\nDave,+15550104477");
+    expect(rows[0].contact!.methods).toContainEqual({
+      slug: "mobile",
+      value: "+15550104477",
+      label: null,
+    });
+  });
+
+  it("files a work phone under the work term", () => {
+    const { rows } = parseCsvContacts("first name,work phone\nDave,+15550100000");
+    expect(rows[0].contact!.methods[0]!.slug).toBe("work-phone");
+  });
+
+  it("still files a bare phone column as a home phone", () => {
+    const { rows } = parseCsvContacts("first name,phone\nDave,+15550100000");
+    expect(rows[0].contact!.methods[0]!.slug).toBe("home-phone");
+  });
+
+  it("keeps a mobile and a landline apart in one row", () => {
+    const { rows } = parseCsvContacts(
+      "first name,mobile,home phone\nDave,+15550104477,+15550100000",
+    );
+    expect(rows[0].contact!.methods.map((m) => m.slug)).toEqual(["mobile", "home-phone"]);
+  });
+});
+
+describe("a stated birth-date precision", () => {
+  it("is refused when the text does not carry what it claims", () => {
+    // `1990` supplies a year and nothing else. Honouring MONTH_DAY here would
+    // store the placeholder first of January as a day somebody stated.
+    const { rows } = parseCsvContacts(
+      "first name,birth date,birth date precision\nDave,1990,MONTH_DAY",
+    );
+    expect(rows[0].contact!.birthDatePrecision).toBe("YEAR");
+  });
+
+  it("is refused when it claims a year the text has not got", () => {
+    const { rows } = parseCsvContacts(
+      "first name,birth date,birth date precision\nDave,--04-15,DAY",
+    );
+    expect(rows[0].contact!.birthDatePrecision).toBe("MONTH_DAY");
+  });
+
+  it("is honoured as a downgrade, which is a real thing to say", () => {
+    const { rows } = parseCsvContacts(
+      "first name,birth date,birth date precision\nDave,1990-04-15,YEAR",
+    );
+    expect(rows[0].contact!.birthDatePrecision).toBe("YEAR");
+  });
+
+  it("round-trips what this export writes", () => {
+    const { rows } = parseCsvContacts(
+      "first name,birth date,birth date precision\nDave,--04-15,MONTH_DAY",
+    );
+    expect(rows[0].contact!.birthDatePrecision).toBe("MONTH_DAY");
+  });
+
+  it("ignores a precision column holding something else entirely", () => {
+    const { rows } = parseCsvContacts(
+      "first name,birth date,birth date precision\nDave,1990-04-15,whenever",
+    );
+    expect(rows[0].contact!.birthDatePrecision).toBe("DAY");
+  });
+});

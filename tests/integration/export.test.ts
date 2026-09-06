@@ -206,6 +206,23 @@ describe.skipIf(!hasTestDatabase)("account export", () => {
     expect(csv.data!.content).not.toContain("+15550100000");
   });
 
+  it("carries the account profile, without any of its credentials", async () => {
+    // A file whose stated purpose is putting the account back needs the
+    // display name and email. It must not carry what would hand the account
+    // over: the password hash, the privacy PIN, or the lockout counters.
+    state.unlocked = true;
+
+    const result = await exportAccount("json");
+    const parsed = JSON.parse(result.data!.content);
+
+    expect(parsed.account.profile).toMatchObject({ name: "Test User" });
+    expect(parsed.account.profile.email).toContain("@example.com");
+    expect(result.data!.content).not.toContain("passwordHash");
+    expect(result.data!.content).not.toContain("privacyPinHash");
+    expect(result.data!.content).not.toContain("privacyPinFailed");
+    expect(result.data!.content).not.toContain("not-a-real-hash");
+  });
+
   it("refuses a format it does not produce", async () => {
     const result = await exportAccount("pdf");
     expect(result.ok).toBe(false);

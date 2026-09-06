@@ -20,8 +20,15 @@
   **A closed privacy lock declines the export rather than quietly shrinking
   it.** Every other read here hides private rows, which is right for a page;
   for a file that gets carried somewhere else it would mean handing you
-  something that looks complete and is not. With nothing private in the
-  account, a closed lock is no obstacle — what comes out is already everything.
+  something that looks complete and is not. Unlock first, whatever is in the
+  account — the lock covers the dating side as well as anything you marked
+  private, and deciding by counting private rows would both miss that and
+  answer the question of whether you have any.
+
+  The JSON file carries your display name and email so a restore can put the
+  account back. It does not carry your password, your privacy PIN, or your
+  signed-in sessions; a backup that could hand over the account is not a
+  backup you can leave anywhere.
 
   Nothing is sent anywhere. The file is built on the machine and handed to your
   browser to save.

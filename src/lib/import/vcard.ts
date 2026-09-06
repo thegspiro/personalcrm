@@ -33,12 +33,36 @@ interface Property {
  * strict reader would reject is still a file somebody needs to import.
  */
 export function unfold(text: string): string[] {
-  return text
+  const lines = text
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .replace(/\n[ \t]/g, "")
     .split("\n")
     .filter((line) => line.trim() !== "");
+
+  // Quoted-printable wraps with a trailing `=` and *no* leading whitespace on
+  // the next line, so the fold above never joins it. Left alone, `Jos=C3=` and
+  // `=A9` stay two lines: the second parses as nothing and is dropped, and the
+  // first decodes to half a character. Joining has to happen before any value
+  // is read, and only for a line that declares the encoding — a plain value
+  // ending in `=` is a value ending in `=`.
+  const joined: string[] = [];
+  for (const line of lines) {
+    const previous = joined[joined.length - 1];
+    if (previous !== undefined && previous.endsWith("=") && declaresQuotedPrintable(previous)) {
+      joined[joined.length - 1] = previous.slice(0, -1) + line;
+      continue;
+    }
+    joined.push(line);
+  }
+  return joined;
+}
+
+/** Whether a content line's parameters ask for quoted-printable. */
+function declaresQuotedPrintable(line: string): boolean {
+  const colon = line.indexOf(":");
+  const head = colon === -1 ? line : line.slice(0, colon);
+  return /;\s*encoding\s*=\s*"?quoted-printable"?/i.test(head);
 }
 
 /** Undo the escaping the format applies inside a value. */
@@ -123,7 +147,12 @@ export function parseProperty(line: string): Property | null {
       continue;
     }
     const key = param.slice(0, equals).trim().toUpperCase();
-    const value = param.slice(equals + 1).replace(/^"|"$/g, "").trim().toLowerCase();
+    const raw = param.slice(equals + 1).replace(/^"|"$/g, "").trim();
+    // TYPE and ENCODING are controlled vocabularies, so they are compared in
+    // lower case. Everything else may be free text a person wrote — LABEL
+    // above all — and lower-casing it would hand back "parents" for the
+    // address they labelled "Parents".
+    const value = key === "TYPE" || key === "ENCODING" ? raw.toLowerCase() : raw;
     // A TYPE written the modern way may still carry several comma-separated
     // values, and it may appear beside bare tokens.
     if (key === "TYPE") {
@@ -316,7 +345,10 @@ function cardToContact(lines: readonly string[]): ImportedContact | null {
         // street, so it joins the second line rather than being thrown away.
         const extended = [parts[0], parts[1]].filter(Boolean).join(", ");
         const address = {
-          label: property.params.get("TYPE") ?? null,
+          // What this export writes for a free-text label, so a card that left
+          // this app comes back with the label it left with. TYPE only ever
+          // carries the two standard values, and is the fallback.
+          label: property.params.get("LABEL") ?? property.params.get("TYPE") ?? null,
           line1: parts[2] || null,
           line2: extended || null,
           city: parts[3] || null,

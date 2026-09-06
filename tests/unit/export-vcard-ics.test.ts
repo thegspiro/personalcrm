@@ -55,9 +55,12 @@ describe("vcardFor", () => {
     expect(lines).toContain(String.raw`FN:Dave Kim\; Jr`);
   });
 
-  it("gives every card a stable identifier", () => {
-    // So a second export updates the card rather than duplicating the person.
-    expect(vcardFor(contact())).toContain("UID:personalcrm-c1");
+  it("gives every card a stable identifier, declared as text", () => {
+    // So a second export updates the card rather than duplicating the person —
+    // which only holds if the property survives. A vCard 4.0 UID is a URI by
+    // default and this identifier is not one, so a strict address book is free
+    // to drop it unless the value type says text.
+    expect(vcardFor(contact())).toContain("UID;VALUE=text:personalcrm-c1");
   });
 
   it("gives a generic email no classification nobody recorded", () => {

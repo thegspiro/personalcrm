@@ -199,6 +199,40 @@ describe.skipIf(!hasTestDatabase)("contact import", () => {
     expect(await prisma.contact.count()).toBe(200);
   });
 
+  it("does not let one oversized note roll back every other contact", async () => {
+    // `summary` lands in a TEXT column, which MariaDB rejects rather than
+    // trims. Because the whole import is one transaction, that one row used to
+    // decide the fate of all the good ones.
+    const long = "x".repeat(70_000);
+    const file = [
+      "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Fine Person\r\nN:Person;Fine;;;\r\nEND:VCARD",
+      `BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Wordy Person\r\nN:Person;Wordy;;;\r\nNOTE:${long}\r\nEND:VCARD`,
+    ].join("\r\n");
+
+    const result = await commitImport("vcard", file, []);
+
+    expect(result.ok).toBe(true);
+    expect(result.data!.created).toBe(2);
+    const wordy = await prisma.contact.findFirstOrThrow({ where: { firstName: "Wordy" } });
+    expect(wordy.summary!.length).toBeLessThanOrEqual(65_535);
+    expect(wordy.summary!.startsWith("xxx")).toBe(true);
+  });
+
+  it("keeps a multi-byte note inside the column's byte budget", async () => {
+    // TEXT is measured in bytes, so an accented note overflows at roughly half
+    // the character count, and a cut on a byte boundary would split a
+    // character in two.
+    const long = "é".repeat(40_000);
+    const file = `BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Accented Person\r\nN:Person;Accented;;;\r\nNOTE:${long}\r\nEND:VCARD`;
+
+    const result = await commitImport("vcard", file, []);
+
+    expect(result.ok).toBe(true);
+    const person = await prisma.contact.findFirstOrThrow({ where: { firstName: "Accented" } });
+    expect(new TextEncoder().encode(person.summary!).length).toBeLessThanOrEqual(65_535);
+    expect(person.summary).not.toContain("\uFFFD");
+  });
+
   it("declines an empty selection instead of reporting a silent success", async () => {
     const result = await commitImport("vcard", CARD, [1]);
     expect(result.ok).toBe(false);

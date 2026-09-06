@@ -73,6 +73,7 @@ export async function gatherAccount(ownerId: string) {
 
 async function gatherWithin(prisma: Prisma.TransactionClient, ownerId: string) {
   const [
+    profile,
     contacts,
     interactions,
     relationships,
@@ -88,6 +89,16 @@ async function gatherWithin(prisma: Prisma.TransactionClient, ownerId: string) {
     preference,
     dashboardLayout,
   ] = await Promise.all([
+    // Named fields, never the whole row. The account's own display name and
+    // email are part of what a restore has to put back; `passwordHash`,
+    // `privacyPinHash` and the failure counters beside it are credentials, and
+    // a file that carries them is a file that hands the account over when it
+    // is copied onto a laptop. Selecting explicitly means a column added to
+    // `User` later has to be opted in rather than leaking by default.
+    prisma.user.findUnique({
+      where: { id: ownerId },
+      select: { name: true, email: true, role: true, createdAt: true },
+    }),
     prisma.contact.findMany({ where: { ownerId }, include: CONTACT_INCLUDE, orderBy: { createdAt: "asc" } }),
     prisma.interaction.findMany({
       where: { ownerId },
@@ -114,6 +125,7 @@ async function gatherWithin(prisma: Prisma.TransactionClient, ownerId: string) {
   ]);
 
   return {
+    profile,
     contacts,
     interactions,
     relationships,

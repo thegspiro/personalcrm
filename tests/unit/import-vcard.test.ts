@@ -327,3 +327,55 @@ describe("vCard 2.1 and other exporter quirks", () => {
     expect(rows[0].contact).toMatchObject({ firstName: "Prince", lastName: "Nelson" });
   });
 });
+
+describe("quoted-printable soft line breaks", () => {
+  it("joins a wrapped value before decoding it", () => {
+    // The wrap has no leading whitespace, so the ordinary fold never joins it:
+    // left alone the second line parses as nothing and the first decodes to
+    // half a character.
+    const { rows } = parseVCard(
+      "BEGIN:VCARD\r\nFN;ENCODING=QUOTED-PRINTABLE:Jos=C3=\r\n=A9\r\nEND:VCARD",
+    );
+    expect(rows[0].contact!.firstName).toBe("José");
+  });
+
+  it("joins several wraps in a row", () => {
+    const { rows } = parseVCard(
+      "BEGIN:VCARD\r\nFN;ENCODING=QUOTED-PRINTABLE:Jos=C3=\r\n=A9 Garc=\r\n=C3=ADa\r\nEND:VCARD",
+    );
+    expect(rows[0].contact).toMatchObject({ firstName: "José", lastName: "García" });
+  });
+
+  it("leaves a plain value that happens to end in = alone", () => {
+    const lines = unfold("NOTE:a=\r\nFN:Dave");
+    expect(lines).toEqual(["NOTE:a=", "FN:Dave"]);
+  });
+
+  it("joins only when the line declares the encoding", () => {
+    expect(unfold("FN;ENCODING=QUOTED-PRINTABLE:a=\r\nb")).toEqual([
+      "FN;ENCODING=QUOTED-PRINTABLE:ab",
+    ]);
+  });
+});
+
+describe("address labels", () => {
+  it("reads the LABEL this export writes, with its case intact", () => {
+    const { rows } = parseVCard(
+      'BEGIN:VCARD\r\nFN:Dave\r\nADR;LABEL="Parents":;;123 Main St;Springfield;IL;62704;USA\r\nEND:VCARD',
+    );
+    expect(rows[0].contact!.addresses[0]!.label).toBe("Parents");
+  });
+
+  it("falls back to TYPE when there is no LABEL", () => {
+    const { rows } = parseVCard(
+      "BEGIN:VCARD\r\nFN:Dave\r\nADR;TYPE=home:;;123 Main St;Springfield;IL;62704;USA\r\nEND:VCARD",
+    );
+    expect(rows[0].contact!.addresses[0]!.label).toBe("home");
+  });
+
+  it("keeps a free-text parameter unchanged while lower-casing TYPE", () => {
+    const property = parseProperty('ADR;TYPE=HOME;LABEL="Summer House":;;;;;;')!;
+    expect(property.params.get("TYPE")).toBe("home");
+    expect(property.params.get("LABEL")).toBe("Summer House");
+  });
+});

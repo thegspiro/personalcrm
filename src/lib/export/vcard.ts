@@ -124,8 +124,11 @@ export function vcardFor(contact: VCardContact): string[] {
     "BEGIN:VCARD",
     "VERSION:4.0",
     // Stable across exports, so re-importing updates a card rather than
-    // duplicating the person.
-    line("UID", `personalcrm-${contact.id}`),
+    // duplicating the person. A vCard 4.0 UID is a URI by default and this
+    // identifier is not one, so it is declared as text — the alternative being
+    // to invent a URI scheme, or to leave strict address books free to reject
+    // the property and lose the stability it exists to provide.
+    line("UID", `personalcrm-${contact.id}`, "VALUE=text"),
     line("FN", full),
     // Structured name: family;given;additional;prefix;suffix — the semicolons
     // are the structure, so the parts are escaped individually.

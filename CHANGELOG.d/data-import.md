@@ -29,6 +29,13 @@
   thirty-first of April is left off entirely, because moving it to the
   thirtieth would put a date in your account that the file never gave.
 
+  Files from Google and Outlook are read by the headers they actually write,
+  including `E-mail 1 - Value`, and a column that says mobile stays a mobile
+  rather than being filed as a landline. Where a file states a birthday's
+  accuracy alongside the date, that statement is honoured only as far as the
+  date itself goes: `1990` marked as a known day is read as a known year,
+  because the day it would otherwise claim is a placeholder.
+
   Imported contacts are never marked private, whatever the file says. Nothing
   arriving from outside has any standing to decide what is hidden inside your
   account.
