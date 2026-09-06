@@ -25,13 +25,18 @@
   writes a mobile as `TEL;CELL;VOICE`; a name arrives as José rather than
   `Jos=C3=A9`, and that number is filed as a mobile rather than a landline. A
   number written `tel:+1555…` loses the prefix, and a post-office box survives
-  on the second address line instead of being dropped. A birthday of the
+  on the second address line instead of being dropped. Files that declare an
+  older alphabet are read in it, so André arrives as André. A birthday of the
   thirty-first of April is left off entirely, because moving it to the
   thirtieth would put a date in your account that the file never gave.
 
-  Files from Google and Outlook are read by the headers they actually write,
-  including `E-mail 1 - Value`, and a column that says mobile stays a mobile
-  rather than being filed as a landline. Where a file states a birthday's
+  Files from Google and Outlook are read by the headers they actually write.
+  A Google export does not have one email column — it has `E-mail 1 - Value`,
+  `E-mail 2 - Value` and a `- Type` beside each — so second addresses arrive
+  rather than being dropped, and a number Google labels Mobile or iPhone is
+  filed as a mobile rather than a landline. Apple's way of writing a birthday
+  whose year nobody knows is read as exactly that, instead of as a real
+  birthday in 1604. Where a file states a birthday's
   accuracy alongside the date, that statement is honoured only as far as the
   date itself goes: `1990` marked as a known day is read as a known year,
   because the day it would otherwise claim is a placeholder.

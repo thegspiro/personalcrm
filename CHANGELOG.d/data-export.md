@@ -4,9 +4,12 @@
 
 #### Added
 - **Export, under Settings → Data.** Four formats, because they answer
-  different questions. JSON is the whole account — people, history, dates,
+  different questions. JSON is the account's data — people, history, dates,
   plans, and the field and type definitions you made yourself — and is the one
-  to keep if you keep only one. CSV is the contacts flattened to a row each,
+  to keep if you keep only one. It holds no images: avatars are files under
+  `uploads/`, and as [backup](../docs/backup.md) has always said, that
+  directory and the database have to be kept and restored together. CSV is the
+  contacts flattened to a row each,
   convenient to look at and unable to hold your history, so it is not a backup.
   vCard is for a phone or address book. ICS puts birthdays and important dates
   into any calendar as recurring all-day events, which is the first time

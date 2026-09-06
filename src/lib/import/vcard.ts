@@ -15,7 +15,7 @@
  * it as 1904 or as this year would be the confident lie the whole app is
  * arranged to avoid.
  */
-import type { DatePrecision } from "@/lib/date-precision";
+import { type DatePrecision, UNKNOWN_YEAR } from "@/lib/date-precision";
 import type { PlainDate } from "@/lib/dates";
 import { emptyContact, type ImportedContact, type ParseResult, type ParsedRow } from "./types";
 
@@ -115,6 +115,28 @@ export function splitStructured(value: string, separator = ";"): string[] {
  * The value is everything after the first colon that is not inside a quoted
  * parameter — a URL's `https://` would otherwise end the value at `https`.
  */
+/** Split a parameter list on its semicolons, ignoring any inside quotes. */
+function splitParameters(head: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (const char of head) {
+    if (char === '"') {
+      quoted = !quoted;
+      current += char;
+      continue;
+    }
+    if (char === ";" && !quoted) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  parts.push(current);
+  return parts;
+}
+
 export function parseProperty(line: string): Property | null {
   let quoted = false;
   let colon = -1;
@@ -130,7 +152,11 @@ export function parseProperty(line: string): Property | null {
 
   const head = line.slice(0, colon);
   const value = line.slice(colon + 1);
-  const [rawName, ...rawParams] = splitStructured(head);
+  // Quote-aware, for the same reason the colon search above is: a parameter
+  // may legitimately hold a delimiter inside quotes, and this export writes
+  // one — `ADR;LABEL="Parents; holiday"`. Splitting blind cuts the label in
+  // half and turns its tail into a parameter of its own.
+  const [rawName, ...rawParams] = splitParameters(head);
   if (!rawName) return null;
 
   const params = new Map<string, string>();
@@ -184,7 +210,7 @@ export function parseVCardDate(raw: string): { date: PlainDate; precision: DateP
     const day = Number(noYear[2]);
     if (!valid(month, day)) return null;
     // The sentinel the rest of the app uses for a year nobody supplied.
-    return { date: { year: 1904, month, day }, precision: "MONTH_DAY" };
+    return { date: { year: UNKNOWN_YEAR, month, day }, precision: "MONTH_DAY" };
   }
 
   const full = /^(\d{4})-?(\d{2})-?(\d{2})$/.exec(value);
@@ -253,7 +279,7 @@ function methodSlug(property: string, type: string | undefined): string | null {
  * `=XX` pairs and decoding them one at a time produces mojibake rather than the
  * name.
  */
-export function decodeQuotedPrintable(value: string): string {
+export function decodeQuotedPrintable(value: string, charset = "utf-8"): string {
   // A trailing `=` is a soft line break; the folding has already been undone,
   // so it carries no meaning here.
   const text = value.replace(/=$/, "");
@@ -267,17 +293,54 @@ export function decodeQuotedPrintable(value: string): string {
     // Anything not part of an escape is already a literal, and ASCII here.
     for (const byte of new TextEncoder().encode(text[i]!)) bytes.push(byte);
   }
-  return new TextDecoder("utf-8").decode(new Uint8Array(bytes));
+  return decodeBytes(new Uint8Array(bytes), charset);
+}
+
+/**
+ * Read bytes as the charset the file declared, falling back to UTF-8.
+ *
+ * vCard 2.1 predates the assumption that everything is UTF-8 and says so in a
+ * parameter: `CHARSET=ISO-8859-1` beside a quoted-printable value is ordinary
+ * in files from that era. Decoding those bytes as UTF-8 turns André into
+ * Andr\uFFFD. An unknown label is not fatal — TextDecoder throws on one, and a
+ * name read with the wrong alphabet still beats no contact at all.
+ */
+function decodeBytes(bytes: Uint8Array, charset: string): string {
+  try {
+    return new TextDecoder(charset).decode(bytes);
+  } catch {
+    return new TextDecoder("utf-8").decode(bytes);
+  }
 }
 
 function decodeIfNeeded(property: Property, raw: string): string {
   return property.params.get("ENCODING")?.includes("quoted-printable")
-    ? decodeQuotedPrintable(raw)
+    ? decodeQuotedPrintable(raw, property.params.get("CHARSET") ?? "utf-8")
     : raw;
 }
 
 function firstValue(text: string): string {
   return unescapeValue(text).trim();
+}
+
+/** One decoded, unescaped value. */
+function singleValue(property: Property): string {
+  return firstValue(decodeIfNeeded(property, property.value));
+}
+
+/**
+ * A structured value's components, split before any decoding.
+ *
+ * The same ordering the escapes need, and for the same reason. vCard 2.1
+ * writes a literal semicolon inside a component as `=3B`, so decoding the
+ * whole value first makes it indistinguishable from the separators — and
+ * `N;ENCODING=QUOTED-PRINTABLE:Doe=3B Jr.;John;;;` becomes a person whose
+ * first name is "Jr." and whose given name has been thrown away.
+ */
+function structuredValues(property: Property, separator = ";"): string[] {
+  return splitStructured(property.value, separator).map((part) =>
+    firstValue(decodeIfNeeded(property, part)),
+  );
 }
 
 /** Strip the URI scheme a vCard 4.0 telephone or email may be written with. */
@@ -289,6 +352,11 @@ export function stripScheme(value: string): string {
 function cardToContact(lines: readonly string[]): ImportedContact | null {
   const contact = emptyContact();
   let formattedName = "";
+  // Resolved after the loop: Apple writes the marker as a parameter on BDAY on
+  // some versions and as a property of its own on others, and the property may
+  // arrive before or after the birthday it qualifies.
+  let birthday: { raw: string; omitYear: string | null } | null = null;
+  let omitYearProperty: string | null = null;
 
   for (const line of lines) {
     const property = parseProperty(line);
@@ -296,50 +364,49 @@ function cardToContact(lines: readonly string[]): ImportedContact | null {
 
     switch (property.name) {
       case "FN":
-        formattedName = firstValue(decodeIfNeeded(property, property.value));
+        formattedName = singleValue(property);
         break;
       case "N": {
         // family;given;additional;prefix;suffix
-        const parts = splitStructured(decodeIfNeeded(property, property.value)).map(firstValue);
+        const parts = structuredValues(property);
         contact.lastName = parts[0] || null;
         contact.firstName = parts[1] || "";
         break;
       }
       case "NICKNAME":
-        contact.nickname =
-          splitStructured(decodeIfNeeded(property, property.value), ",").map(firstValue)[0] || null;
+        contact.nickname = structuredValues(property, ",")[0] || null;
         break;
-      case "BDAY": {
-        const parsed = parseVCardDate(property.value);
-        if (parsed) {
-          contact.birthDate = parsed.date;
-          contact.birthDatePrecision = parsed.precision;
-        }
+      case "BDAY":
+        birthday = {
+          raw: property.value,
+          omitYear: property.params.get("X-APPLE-OMIT-YEAR") ?? null,
+        };
         break;
-      }
+      case "X-APPLE-OMIT-YEAR":
+        omitYearProperty = property.value.trim();
+        break;
       case "ORG":
         // Organisation is structured; the first part is the company itself.
-        contact.employer =
-          splitStructured(decodeIfNeeded(property, property.value)).map(firstValue)[0] || null;
+        contact.employer = structuredValues(property)[0] || null;
         break;
       case "TITLE":
-        contact.occupation = firstValue(decodeIfNeeded(property, property.value)) || null;
+        contact.occupation = singleValue(property) || null;
         break;
       case "NOTE":
-        contact.summary = firstValue(decodeIfNeeded(property, property.value)) || null;
+        contact.summary = singleValue(property) || null;
         break;
       case "EMAIL":
       case "TEL":
       case "URL": {
         const slug = methodSlug(property.name, property.params.get("TYPE"));
-        const value = stripScheme(firstValue(decodeIfNeeded(property, property.value)));
+        const value = stripScheme(singleValue(property));
         if (slug && value) {
           contact.methods.push({ slug, value, label: property.params.get("TYPE") ?? null });
         }
         break;
       }
       case "ADR": {
-        const parts = splitStructured(decodeIfNeeded(property, property.value)).map(firstValue);
+        const parts = structuredValues(property);
         // parts[0] is the post-office box. Skipping it discards a box-only
         // address entirely and silently drops the box from one that also has a
         // street, so it joins the second line rather than being thrown away.
@@ -363,6 +430,22 @@ function cardToContact(lines: readonly string[]): ImportedContact | null {
         }
         break;
       }
+    }
+  }
+
+  if (birthday) {
+    const parsed = parseVCardDate(birthday.raw);
+    if (parsed) {
+      // Apple stores a year-less birthday as a real date on a placeholder year
+      // — 1604 — and says so in a marker naming that year. Taking the date at
+      // face value files everyone born on an unknown year as a Jacobean, and
+      // does it confidently, at DAY precision.
+      const omit = birthday.omitYear ?? omitYearProperty;
+      const omitted = omit !== null && Number(omit) === parsed.date.year;
+      contact.birthDate = omitted
+        ? { year: UNKNOWN_YEAR, month: parsed.date.month, day: parsed.date.day }
+        : parsed.date;
+      contact.birthDatePrecision = omitted ? "MONTH_DAY" : parsed.precision;
     }
   }
 

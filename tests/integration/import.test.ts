@@ -233,6 +233,19 @@ describe.skipIf(!hasTestDatabase)("contact import", () => {
     expect(person.summary).not.toContain("\uFFFD");
   });
 
+  it("marks the first method primary, so the profile header has something to show", async () => {
+    // The header reads only the primary method. Leaving them all secondary
+    // imports a person whose phone number is in the account and nowhere on
+    // their page.
+    const result = await commitImport("vcard", CARD, []);
+    expect(result.ok).toBe(true);
+
+    const methods = await prisma.contactMethod.findMany({ orderBy: { sortOrder: "asc" } });
+    expect(methods.length).toBeGreaterThan(1);
+    expect(methods.filter((m) => m.isPrimary)).toHaveLength(1);
+    expect(methods[0]!.isPrimary).toBe(true);
+  });
+
   it("declines an empty selection instead of reporting a silent success", async () => {
     const result = await commitImport("vcard", CARD, [1]);
     expect(result.ok).toBe(false);

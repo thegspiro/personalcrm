@@ -66,9 +66,18 @@ const CONTACT_INCLUDE = {
  * a document that never existed: an interaction whose contact is not in the
  * contacts array, for instance. For a file whose stated purpose is being able
  * to put the account back, internally impossible is worse than slightly stale.
+ *
+ * The timeout is explicit for the same reason the import's is. An interactive
+ * transaction defaults to five seconds, and these are full-table reads with
+ * nested includes over every table in the account — so the default would fail
+ * exactly the large accounts with the most to lose, and only those, which is
+ * the worst possible place for a limit nobody chose to put there.
  */
 export async function gatherAccount(ownerId: string) {
-  return prisma.$transaction(async (tx) => gatherWithin(tx, ownerId));
+  return prisma.$transaction(async (tx) => gatherWithin(tx, ownerId), {
+    timeout: 120_000,
+    maxWait: 10_000,
+  });
 }
 
 async function gatherWithin(prisma: Prisma.TransactionClient, ownerId: string) {
@@ -78,6 +87,7 @@ async function gatherWithin(prisma: Prisma.TransactionClient, ownerId: string) {
     interactions,
     relationships,
     households,
+    familySuggestionDismissals,
     ideas,
     tasks,
     plans,
@@ -112,6 +122,10 @@ async function gatherWithin(prisma: Prisma.TransactionClient, ownerId: string) {
     }),
     prisma.relationship.findMany({ where: { ownerId }, include: { type: { select: { label: true } } } }),
     prisma.household.findMany({ where: { ownerId }, include: { members: true } }),
+    // A dismissal is a decision the person made — "these two are not related" —
+    // and it lives nowhere else. Leaving it out means a restore brings back
+    // every suggestion they have already said no to.
+    prisma.familySuggestionDismissal.findMany({ where: { ownerId } }),
     prisma.idea.findMany({ where: { ownerId } }),
     prisma.task.findMany({ where: { ownerId } }),
     prisma.plan.findMany({ where: { ownerId }, include: { category: { select: { label: true } } } }),
@@ -130,6 +144,7 @@ async function gatherWithin(prisma: Prisma.TransactionClient, ownerId: string) {
     interactions,
     relationships,
     households,
+    familySuggestionDismissals,
     ideas,
     tasks,
     plans,

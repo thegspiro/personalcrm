@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapHeader, parseCsvContacts, parseCsvRows } from "@/lib/import/csv";
+import { mapGroupedColumns, mapHeader, parseCsvContacts, parseCsvRows } from "@/lib/import/csv";
 import { findDuplicate, findInternalDuplicates } from "@/lib/import/dedupe";
 import { emptyContact } from "@/lib/import/types";
 
@@ -234,5 +234,80 @@ describe("a stated birth-date precision", () => {
       "first name,birth date,birth date precision\nDave,1990-04-15,whenever",
     );
     expect(rows[0].contact!.birthDatePrecision).toBe("DAY");
+  });
+});
+
+describe("Google's numbered, paired columns", () => {
+  const HEADER = [
+    "Given Name",
+    "Family Name",
+    "E-mail 1 - Type",
+    "E-mail 1 - Value",
+    "E-mail 2 - Value",
+    "Phone 1 - Type",
+    "Phone 1 - Value",
+  ];
+
+  it("finds each group and the type column beside it", () => {
+    expect(mapGroupedColumns(HEADER)).toEqual([
+      { kind: "email", index: 1, value: 3, type: 2 },
+      { kind: "phone", index: 1, value: 6, type: 5 },
+      { kind: "email", index: 2, value: 4, type: null },
+    ]);
+  });
+
+  it("ignores a type column with no value column beside it", () => {
+    expect(mapGroupedColumns(["Given Name", "Phone 2 - Type"])).toEqual([]);
+  });
+
+  it("keeps a second email instead of discarding it", () => {
+    const { rows } = parseCsvContacts(
+      `${HEADER.join(",")}\nDave,Kim,Home,dave@example.com,dave@work.example.com,Mobile,+15550104477`,
+    );
+    const values = rows[0].contact!.methods.map((m) => m.value);
+    expect(values).toContain("dave@example.com");
+    expect(values).toContain("dave@work.example.com");
+  });
+
+  it("reads the phone's classification from its own type column", () => {
+    const { rows } = parseCsvContacts(
+      `${HEADER.join(",")}\nDave,Kim,Home,dave@example.com,,Mobile,+15550104477`,
+    );
+    expect(rows[0].contact!.methods.find((m) => m.value === "+15550104477")!.slug).toBe("mobile");
+  });
+
+  it("reads an iPhone as a mobile, which is what Google calls it", () => {
+    const { rows } = parseCsvContacts(
+      "Given Name,Phone 1 - Type,Phone 1 - Value\nDave,iPhone,+15550104477",
+    );
+    expect(rows[0].contact!.methods[0]!.slug).toBe("mobile");
+  });
+
+  it("keeps a number whose type it does not recognise", () => {
+    const { rows } = parseCsvContacts(
+      "Given Name,Phone 1 - Type,Phone 1 - Value\nDave,Pager,+15550104477",
+    );
+    expect(rows[0].contact!.methods[0]).toMatchObject({
+      slug: "home-phone",
+      value: "+15550104477",
+    });
+  });
+
+  it("does not import the same address twice when both readings match it", () => {
+    // `E-mail 1 - Value` is matched by the single-column alias and as group 1.
+    const { rows } = parseCsvContacts(
+      "Given Name,E-mail 1 - Value\nDave,dave@example.com",
+    );
+    expect(rows[0].contact!.methods).toHaveLength(1);
+  });
+
+  it("reads Outlook's numbered address columns too", () => {
+    const { rows } = parseCsvContacts(
+      "First Name,E-mail 2 Address\nDave,dave@work.example.com",
+    );
+    expect(rows[0].contact!.methods[0]).toMatchObject({
+      slug: "email",
+      value: "dave@work.example.com",
+    });
   });
 });

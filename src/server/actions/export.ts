@@ -50,9 +50,21 @@ function csvBirthDate(date: PlainDate, precision: DatePrecision): string | null 
 
 function contactRows(account: AccountExport) {
   return account.contacts.map((contact) => {
+    // Within a slug, the primary method first and then explicit order — the
+    // relation comes back in whatever order the database chose, so a `find`
+    // could flatten an old secondary number into the spreadsheet and change
+    // its mind between exports for no visible reason.
     const method = (...slugs: string[]) =>
       slugs
-        .map((slug) => contact.methods.find((m) => m.type?.slug === slug)?.value)
+        .map(
+          (slug) =>
+            contact.methods
+              .filter((m) => m.type?.slug === slug)
+              .sort(
+                (a, b) =>
+                  Number(b.isPrimary) - Number(a.isPrimary) || a.sortOrder - b.sortOrder,
+              )[0]?.value,
+        )
         .find((value) => value) ?? null;
     return [
       contact.firstName,

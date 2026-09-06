@@ -260,6 +260,11 @@ export async function commitImport(
             create: contact.methods.slice(0, 20).map((method, order) => ({
               value: method.value.slice(0, 255),
               label: method.label?.slice(0, 96) ?? null,
+              // The first one, as `addContactMethod` does for a method added by
+              // hand. The profile header reads only the primary method, so
+              // leaving them all secondary imports a person whose phone number
+              // is in the account and nowhere on their page.
+              isPrimary: order === 0,
               sortOrder: order,
               typeId: termBySlug.get(method.slug) ?? null,
             })),

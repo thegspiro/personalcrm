@@ -80,25 +80,17 @@ const COLUMNS: Record<string, ReadonlyArray<string>> = {
   firstName: ["first name", "firstname", "first_name", "given name", "given_name"],
   lastName: ["last name", "lastname", "last_name", "family name", "surname"],
   nickname: ["nickname", "nick name"],
-  // Google writes `E-mail 1 - Value`, which normalises to `e mail 1 value` —
-  // the hyphen in "E-mail" becomes a space like any other punctuation. Listing
-  // only the unhyphenated spelling meant a Google export imported every
-  // contact with no email address at all, and silently: the rows arrived, so
-  // nothing looked wrong, and duplicate detection lost its strongest signal.
-  email: [
-    "email",
-    "e mail",
-    "email address",
-    "e mail address",
-    "email 1 value",
-    "e mail 1 value",
-    "primary email",
-  ],
+  // The numbered spellings — `E-mail 1 - Value` and friends — are deliberately
+  // absent: `mapGroupedColumns` owns those, because it can also read the
+  // `- Type` column beside them and the later groups this mapping cannot hold.
+  // Listing them here as well made the single-column reading win the race and
+  // file every Google phone number as a landline.
+  email: ["email", "e mail", "email address", "e mail address", "primary email"],
   // Kept apart from the generic column so the number keeps the classification
   // the header gave it. Routing a header that says "mobile" through the
   // general phone field filed it as a landline and exported it as `TYPE=home`.
   mobile: ["mobile", "mobile phone", "cell", "cell phone"],
-  phone: ["phone", "phone number", "phone 1 value", "primary phone", "home phone"],
+  phone: ["phone", "phone number", "primary phone", "home phone"],
   workPhone: ["work phone", "business phone", "office phone"],
   employer: ["employer", "organization", "organisation", "company"],
   occupation: ["occupation", "title", "job title", "role"],
@@ -141,6 +133,64 @@ function unneutralise(value: string): string {
   return /^'[=+\-@\t\r]/.test(value) ? value.slice(1) : value;
 }
 
+/**
+ * The numbered, paired columns Google and Outlook write.
+ *
+ * A Google export does not have one email column; it has `E-mail 1 - Value`,
+ * `E-mail 2 - Value` and a `- Type` beside each, and the same shape for phones.
+ * Matching one index per field kept the first address, threw the rest away,
+ * and ignored the column that says whether the number is a mobile — so a
+ * two-address contact silently lost one and every number became a landline.
+ */
+export interface GroupedColumn {
+  kind: "email" | "phone";
+  index: number;
+  value: number;
+  type: number | null;
+}
+
+const GROUPED = /^(e mail|email|phone) (\d+) (value|address|type)$/;
+
+export function mapGroupedColumns(header: readonly string[]): GroupedColumn[] {
+  const found = new Map<string, { kind: "email" | "phone"; index: number; value?: number; type?: number }>();
+
+  header.forEach((raw, column) => {
+    const match = GROUPED.exec(normaliseHeader(raw));
+    if (!match) return;
+    const kind = match[1] === "phone" ? "phone" : "email";
+    const index = Number(match[2]);
+    const key = `${kind}:${index}`;
+    const entry = found.get(key) ?? { kind, index };
+    if (match[3] === "type") entry.type ??= column;
+    else entry.value ??= column;
+    found.set(key, entry);
+  });
+
+  const columns: GroupedColumn[] = [];
+  for (const entry of found.values()) {
+    // A `- Type` with no `- Value` beside it names nothing.
+    if (entry.value === undefined) continue;
+    columns.push({ kind: entry.kind, index: entry.index, value: entry.value, type: entry.type ?? null });
+  }
+  return columns.sort((a, b) => a.index - b.index);
+}
+
+/**
+ * The taxonomy slug a phone's own type column names.
+ *
+ * Google writes "Mobile", "Home", "Work", "Main" and — from an iPhone —
+ * "iPhone". Anything unrecognised falls back to the home term rather than
+ * being dropped: an unclassified number is still a number.
+ */
+function phoneSlug(type: string | null): string {
+  const value = type?.toLowerCase() ?? "";
+  if (value.includes("mobile") || value.includes("cell") || value.includes("iphone")) return "mobile";
+  if (value.includes("work") || value.includes("business") || value.includes("office")) {
+    return "work-phone";
+  }
+  return "home-phone";
+}
+
 /** Map header names onto the fields they carry. Unknown columns are dropped. */
 export function mapHeader(header: readonly string[]): Map<string, number> {
   const mapping = new Map<string, number>();
@@ -158,6 +208,7 @@ export function parseCsvContacts(text: string): ParseResult {
   if (rows.length === 0) return { rows: [], fileProblem: "That file is empty." };
 
   const mapping = mapHeader(rows[0]!);
+  const grouped = mapGroupedColumns(rows[0]!);
   if (!mapping.has("firstName") && !mapping.has("lastName")) {
     return {
       rows: [],
@@ -211,15 +262,26 @@ export function parseCsvContacts(text: string): ParseResult {
       }
     }
 
-    const email = at("email");
-    if (email) contact.methods.push({ slug: "email", value: email, label: null });
-    for (const [field, slug] of [
-      ["mobile", "mobile"],
-      ["phone", "home-phone"],
-      ["workPhone", "work-phone"],
-    ] as const) {
-      const value = at(field);
-      if (value) contact.methods.push({ slug, value, label: null });
+    // Deduplicated by value, because a header may be matched both by the
+    // single-column aliases and as group 1 of a numbered set — `E-mail 1 -
+    // Value` is exactly that — and importing the same address twice is worse
+    // than either reading of it.
+    const seen = new Set<string>();
+    const addMethod = (slug: string, value: string | null, label: string | null) => {
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      contact.methods.push({ slug, value, label });
+    };
+
+    addMethod("email", at("email"), null);
+    addMethod("mobile", at("mobile"), null);
+    addMethod("home-phone", at("phone"), null);
+    addMethod("work-phone", at("workPhone"), null);
+
+    for (const column of grouped) {
+      const value = unneutralise(fields[column.value] ?? "").trim() || null;
+      const type = column.type === null ? null : unneutralise(fields[column.type] ?? "").trim() || null;
+      addMethod(column.kind === "email" ? "email" : phoneSlug(type), value, type);
     }
 
     const city = at("city");

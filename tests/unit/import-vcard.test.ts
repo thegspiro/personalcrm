@@ -379,3 +379,79 @@ describe("address labels", () => {
     expect(property.params.get("LABEL")).toBe("Summer House");
   });
 });
+
+describe("quoted parameters and encoded separators", () => {
+  it("keeps a delimiter inside a quoted parameter", () => {
+    // The label this export writes for free text can itself hold a semicolon.
+    const property = parseProperty('ADR;LABEL="Parents; holiday":;;;;;;')!;
+    expect(property.params.get("LABEL")).toBe("Parents; holiday");
+  });
+
+  it("round-trips a label with a semicolon through an address", () => {
+    const { rows } = parseVCard(
+      'BEGIN:VCARD\r\nFN:Dave\r\nADR;LABEL="Parents; holiday":;;123 Main St;Springfield;IL;62704;USA\r\nEND:VCARD',
+    );
+    expect(rows[0].contact!.addresses[0]!.label).toBe("Parents; holiday");
+  });
+
+  it("splits a structured value before decoding its escapes", () => {
+    // `=3B` is a literal semicolon inside a component. Decoding first makes it
+    // indistinguishable from the separators, which loses the given name.
+    const { rows } = parseVCard(
+      "BEGIN:VCARD\r\nN;ENCODING=QUOTED-PRINTABLE:Doe=3B Jr.;John;;;\r\nEND:VCARD",
+    );
+    expect(rows[0].contact).toMatchObject({ firstName: "John", lastName: "Doe; Jr." });
+  });
+
+  it("reads a value in the charset the file declared", () => {
+    // vCard 2.1 predates the assumption that everything is UTF-8 and says so.
+    const { rows } = parseVCard(
+      "BEGIN:VCARD\r\nFN;CHARSET=ISO-8859-1;ENCODING=QUOTED-PRINTABLE:Andr=E9\r\nEND:VCARD",
+    );
+    expect(rows[0].contact!.firstName).toBe("André");
+  });
+
+  it("falls back to UTF-8 rather than throwing on a charset it cannot name", () => {
+    expect(decodeQuotedPrintable("Jos=C3=A9", "not-a-charset")).toBe("José");
+  });
+});
+
+describe("Apple's omitted-year birthday", () => {
+  it("reads the placeholder year as no year at all", () => {
+    // Apple stores a year-less birthday as a real date on 1604 and says so in
+    // a marker. Taking it at face value files the person as a Jacobean, and
+    // does it at DAY precision.
+    const { rows } = parseVCard(
+      "BEGIN:VCARD\r\nFN:Dave\r\nBDAY;X-APPLE-OMIT-YEAR=1604:1604-04-15\r\nEND:VCARD",
+    );
+    expect(rows[0].contact!.birthDatePrecision).toBe("MONTH_DAY");
+    expect(rows[0].contact!.birthDate).toMatchObject({ month: 4, day: 15 });
+    expect(rows[0].contact!.birthDate!.year).not.toBe(1604);
+  });
+
+  it("reads the marker written as its own property, in either order", () => {
+    const after = parseVCard(
+      "BEGIN:VCARD\r\nFN:Dave\r\nBDAY:1604-04-15\r\nX-APPLE-OMIT-YEAR:1604\r\nEND:VCARD",
+    );
+    expect(after.rows[0].contact!.birthDatePrecision).toBe("MONTH_DAY");
+
+    const before = parseVCard(
+      "BEGIN:VCARD\r\nFN:Dave\r\nX-APPLE-OMIT-YEAR:1604\r\nBDAY:1604-04-15\r\nEND:VCARD",
+    );
+    expect(before.rows[0].contact!.birthDatePrecision).toBe("MONTH_DAY");
+  });
+
+  it("leaves a real birthday alone when the marker names another year", () => {
+    const { rows } = parseVCard(
+      "BEGIN:VCARD\r\nFN:Dave\r\nX-APPLE-OMIT-YEAR:1604\r\nBDAY:1990-04-15\r\nEND:VCARD",
+    );
+    expect(rows[0].contact!.birthDatePrecision).toBe("DAY");
+    expect(rows[0].contact!.birthDate!.year).toBe(1990);
+  });
+
+  it("still reads an ordinary birthday with no marker", () => {
+    const { rows } = parseVCard("BEGIN:VCARD\r\nFN:Dave\r\nBDAY:19900415\r\nEND:VCARD");
+    expect(rows[0].contact!.birthDate).toMatchObject({ year: 1990, month: 4, day: 15 });
+    expect(rows[0].contact!.birthDatePrecision).toBe("DAY");
+  });
+});

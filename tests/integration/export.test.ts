@@ -223,6 +223,50 @@ describe.skipIf(!hasTestDatabase)("account export", () => {
     expect(result.data!.content).not.toContain("not-a-real-hash");
   });
 
+  it("prefers the primary method over an older one with the same slug", async () => {
+    // The relation comes back in whatever order the database chose, so a
+    // `find` could flatten a superseded number into the spreadsheet — and
+    // change its mind between two exports of unchanged data.
+    state.unlocked = true;
+    const contact = await addContact({ firstName: "Twonumbers" });
+    const term = await methodTerm("mobile");
+    await prisma.contactMethod.create({
+      data: { contactId: contact.id, typeId: term.id, value: "+15550100000", sortOrder: 0 },
+    });
+    await prisma.contactMethod.create({
+      data: {
+        contactId: contact.id,
+        typeId: term.id,
+        value: "+15550104477",
+        sortOrder: 1,
+        isPrimary: true,
+      },
+    });
+
+    const csv = await exportAccount("csv");
+    expect(csv.data!.content).toContain("+15550104477");
+    expect(csv.data!.content).not.toContain("+15550100000");
+  });
+
+  it("carries a dismissed family suggestion, which lives nowhere else", async () => {
+    // "These two are not related" is a decision the person made. Leaving it out
+    // means a restore brings back every suggestion they already said no to.
+    state.unlocked = true;
+    const a = await addContact({ firstName: "Ada" });
+    const b = await addContact({ firstName: "Bea" });
+    await prisma.familySuggestionDismissal.create({
+      data: { ownerId: state.ownerId, aContactId: a.id, bContactId: b.id },
+    });
+
+    const result = await exportAccount("json");
+    const parsed = JSON.parse(result.data!.content);
+    expect(parsed.account.familySuggestionDismissals).toHaveLength(1);
+    expect(parsed.account.familySuggestionDismissals[0]).toMatchObject({
+      aContactId: a.id,
+      bContactId: b.id,
+    });
+  });
+
   it("refuses a format it does not produce", async () => {
     const result = await exportAccount("pdf");
     expect(result.ok).toBe(false);
