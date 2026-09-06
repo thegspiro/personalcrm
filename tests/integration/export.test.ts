@@ -28,6 +28,20 @@ vi.mock("@/server/privacy/lock", () => ({
 
 const { exportAccount } = await import("@/server/actions/export");
 
+/**
+ * The shipped contact-method term, not one the test invents.
+ *
+ * `createTestUser` provisions the default taxonomies, so creating these here
+ * collides on `TaxonomyTerm_ownerId_kind_slug_key` — and looking them up is the
+ * stronger assertion anyway: an export that only matches slugs a test made up
+ * proves nothing about the slugs the app actually writes.
+ */
+async function methodTerm(slug: string) {
+  return prisma.taxonomyTerm.findUniqueOrThrow({
+    where: { ownerId_kind_slug: { ownerId: state.ownerId, kind: "CONTACT_METHOD_TYPE", slug } },
+  });
+}
+
 async function addContact(overrides: Record<string, unknown> = {}) {
   return prisma.contact.create({
     data: { ownerId: state.ownerId, firstName: "Dave", lastName: "Kim", ...overrides },
@@ -167,14 +181,7 @@ describe.skipIf(!hasTestDatabase)("account export", () => {
     // silently, since the file still had a phone column.
     state.unlocked = true;
     const contact = await addContact({ firstName: "Landline" });
-    const term = await prisma.taxonomyTerm.create({
-      data: {
-        ownerId: state.ownerId,
-        kind: "CONTACT_METHOD_TYPE",
-        slug: "home-phone",
-        label: "Home phone",
-      },
-    });
+    const term = await methodTerm("home-phone");
     await prisma.contactMethod.create({
       data: { contactId: contact.id, typeId: term.id, value: "+15550104477" },
     });
@@ -186,13 +193,11 @@ describe.skipIf(!hasTestDatabase)("account export", () => {
   it("prefers the mobile when a contact has several numbers", async () => {
     state.unlocked = true;
     const contact = await addContact({ firstName: "Both" });
-    for (const [slug, label, value] of [
-      ["home-phone", "Home phone", "+15550100000"],
-      ["mobile", "Mobile", "+15550104477"],
+    for (const [slug, value] of [
+      ["home-phone", "+15550100000"],
+      ["mobile", "+15550104477"],
     ] as const) {
-      const term = await prisma.taxonomyTerm.create({
-        data: { ownerId: state.ownerId, kind: "CONTACT_METHOD_TYPE", slug, label },
-      });
+      const term = await methodTerm(slug);
       await prisma.contactMethod.create({ data: { contactId: contact.id, typeId: term.id, value } });
     }
 
