@@ -5,17 +5,20 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ContactCard } from "@/components/contacts/contact-card";
 import { ContactFilters } from "@/components/contacts/contact-filters";
+import { PeopleTabs } from "@/components/contacts/people-tabs";
 import { ListCapNotice } from "@/components/ui/list-cap-notice";
 import { getUserContext } from "@/server/user/context";
 import { offlineCacheable } from "@/server/privacy/offline";
 import { CacheThisPage } from "@/components/offline/offline";
-import { listContacts, type ContactSort } from "@/server/queries/contacts";
+import { listContacts, type ContactDueStatus, type ContactSort } from "@/server/queries/contacts";
 import { listTerms } from "@/server/taxonomy/queries";
+import { listTags } from "@/server/queries/tags";
 
 export const metadata: Metadata = { title: "People" };
 export const dynamic = "force-dynamic";
 
 const SORTS = new Set<ContactSort>(["name", "recent", "overdue", "added"]);
+const DUE_STATUSES = new Set<ContactDueStatus>(["actionable", "soon"]);
 
 export default async function PeoplePage({
   searchParams,
@@ -33,20 +36,28 @@ export default async function PeoplePage({
 
   const sortParam = first("sort");
   const sort = sortParam && SORTS.has(sortParam as ContactSort) ? (sortParam as ContactSort) : "name";
+  const dueParam = first("due");
+  const dueStatus =
+    dueParam && DUE_STATUSES.has(dueParam as ContactDueStatus)
+      ? (dueParam as ContactDueStatus)
+      : undefined;
 
-  const [categories, { items, total }] = await Promise.all([
+  const [categories, tags, { items, total }] = await Promise.all([
     listTerms(user.id, "CONTACT_CATEGORY"),
+    listTags(user.id),
     listContacts(user.id, {
       search: first("q"),
       categoryId: first("category"),
+      tagId: first("tag"),
       scope: first("scope") === "archived" ? "archived" : "active",
       favoritesOnly: first("favorites") === "1",
+      dueStatus,
       sort,
-    }),
+    }, timezone),
   ]);
 
   const isFiltered = Boolean(
-    first("q") || first("category") || first("scope") || first("favorites"),
+    first("q") || first("category") || first("tag") || first("scope") || first("favorites") || dueStatus,
   );
 
   return (
@@ -67,7 +78,12 @@ export default async function PeoplePage({
         </Button>
       </div>
 
-      <ContactFilters categories={categories.map((c) => ({ id: c.id, label: c.label }))} />
+      <PeopleTabs active="people" />
+
+      <ContactFilters
+        categories={categories.map((c) => ({ id: c.id, label: c.label }))}
+        tags={tags}
+      />
 
       {items.length === 0 ? (
         <EmptyState

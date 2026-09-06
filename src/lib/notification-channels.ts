@@ -216,55 +216,6 @@ export function validateChannelConfig(
 }
 
 /**
- * Whether a URL names a private, loopback or link-local address outright.
- *
- * Pointing a channel at a box on your own network is a first-class use — it is
- * how ntfy and Gotify are meant to be run, and the privacy documentation
- * promises it — so this is not a block. It is the line where that stops being
- * every member's decision: the server makes the request and reports what came
- * back, which on a multi-account install is a way to probe the host's own
- * network from someone else's machine.
- *
- * Literal addresses only. A hostname that resolves inwards is not caught, and
- * cannot be without resolving it here — a DNS lookup inside a validator, whose
- * answer can change between the check and the request anyway. The literal form
- * is what a probe uses.
- */
-export function isPrivateHostname(rawHost: string): boolean {
-  const host = rawHost.trim().replace(/^\[|\]$/g, "").toLowerCase();
-  if (!host) return false;
-
-  if (host === "localhost" || host.endsWith(".localhost")) return true;
-  // IPv6 loopback and unique-local / link-local prefixes.
-  if (host === "::1" || host === "::") return true;
-  if (/^f[cd][0-9a-f]{2}:/.test(host) || /^fe80:/.test(host)) return true;
-
-  const parts = host.split(".");
-  if (parts.length !== 4 || !parts.every((part) => /^\d{1,3}$/.test(part))) return false;
-  const [a, b] = parts.map(Number);
-  if (parts.map(Number).some((n) => n > 255)) return false;
-
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 100 && b >= 64 && b <= 127)
-  );
-}
-
-/** The same question asked of a URL. */
-export function targetsPrivateHost(rawUrl: string): boolean {
-  try {
-    return isPrivateHostname(new URL(rawUrl).hostname);
-  } catch {
-    return false;
-  }
-}
-
-/**
  * The fixed body of a test notification.
  *
  * No interpolation, ever. Channels are configured on a page that stays

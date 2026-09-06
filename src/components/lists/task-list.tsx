@@ -68,8 +68,8 @@ export function TaskList({ tasks, timezone }: { tasks: TaskListItem[]; timezone:
     return (
       <EmptyState
         icon={<Icon name="CircleCheck" />}
-        title="Nothing to follow up on"
-        description="Add follow-ups from a person's page."
+        title="No tasks yet"
+        description="Add tasks from a person's page."
       />
     );
   }
@@ -173,7 +173,7 @@ function TaskRow({
         <button
           type="button"
           onClick={() => setEditing(true)}
-          aria-label="Edit follow-up"
+          aria-label="Edit task"
           className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <Icon name="Pencil" className="size-3.5" />
@@ -181,7 +181,7 @@ function TaskRow({
         <button
           type="button"
           onClick={onDelete}
-          aria-label="Delete follow-up"
+          aria-label="Delete task"
           className="rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
         >
           <span aria-hidden>×</span>

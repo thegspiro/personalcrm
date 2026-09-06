@@ -37,7 +37,7 @@ import {
 import { updateContactBirthday } from "@/server/actions/contacts";
 import type { TermOption } from "@/components/form/term-select";
 import { SubmitButton } from "@/components/form/submit-button";
-import { useAddAction } from "@/components/form/use-action";
+import { useEditAction } from "@/components/form/use-action";
 
 /**
  * The unified feed.
@@ -72,7 +72,7 @@ export function TimelineList({
   const router = useRouter();
   const [editing, setEditing] = React.useState<string | null>(null);
   const [editingDetail, setEditingDetail] = React.useState<string | null>(null);
-  const submit = useAddAction();
+  const submit = useEditAction();
 
   if (entries.length === 0) {
     return <EmptyState icon={<Icon name="History" />} title={emptyTitle} description={emptyDescription} />;

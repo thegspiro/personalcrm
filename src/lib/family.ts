@@ -156,3 +156,196 @@ export function generationLabel(generation: number, anchorName?: string | null):
 function possessive(name: string): string {
   return name.endsWith("s") ? `${name}'` : `${name}'s`;
 }
+
+/**
+ * One recorded family edge, reduced to what the graph walk needs.
+ *
+ * Kept structural rather than Prisma-shaped so the banding logic can be
+ * exercised without a database — it is the part of `/family` most likely to
+ * produce a wrong answer that still looks plausible on screen.
+ */
+export interface GenerationEdge {
+  fromId: string;
+  toId: string;
+  /** Generation of `toId` relative to `fromId`; positive is older. */
+  delta: number;
+}
+
+/**
+ * Whose point of view the generations are measured from.
+ *
+ * With no explicit pick it is whoever has the most recorded family links,
+ * which in a personal CRM is almost always the middle of the family you care
+ * about. Ties break on id so the page does not reshuffle between renders.
+ *
+ * A `preferred` id that has no outgoing links is ignored rather than honoured:
+ * anchoring on someone the walk cannot leave puts everyone else in their own
+ * band and says nothing.
+ */
+export function pickAnchor(edges: GenerationEdge[], preferred?: string | null): string | null {
+  const degree = new Map<string, number>();
+  for (const edge of edges) degree.set(edge.fromId, (degree.get(edge.fromId) ?? 0) + 1);
+  if (preferred && degree.has(preferred)) return preferred;
+
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [id, count] of degree) {
+    if (count > bestCount || (count === bestCount && best !== null && id.localeCompare(best) < 0)) {
+      best = id;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+/** Where the walk placed someone, and how it got to them. */
+export interface GenerationHop {
+  /** Generation relative to the anchor; positive is older. */
+  generation: number;
+  /**
+   * The person one step back along the shortest path — null for the anchor
+   * itself. For someone the anchor is directly linked to this is the anchor;
+   * for everyone further out it names the relative they hang off, which is the
+   * only honest thing the tree can say about them without inventing a
+   * relationship nobody recorded.
+   */
+  via: string | null;
+}
+
+/**
+ * Breadth-first generation assignment from an anchor.
+ *
+ * Each edge carries its own generation delta, so "Gran is Mum's parent" lands
+ * two bands above you without needing to know anything about family structure.
+ * BFS means the shortest path wins, which keeps a cousin marriage or a
+ * remarriage from dragging someone into a nonsensical band.
+ *
+ * Anyone with no path to the anchor is simply absent from the result; the
+ * caller bands them at their own generation 0 rather than dropping them.
+ */
+export function walkGenerations(
+  edges: GenerationEdge[],
+  anchor: string,
+): Map<string, GenerationHop> {
+  const out = new Map<string, GenerationHop>([[anchor, { generation: 0, via: null }]]);
+  const adjacency = new Map<string, GenerationEdge[]>();
+  for (const edge of edges) {
+    const list = adjacency.get(edge.fromId);
+    if (list) list.push(edge);
+    else adjacency.set(edge.fromId, [edge]);
+  }
+
+  const queue = [anchor];
+  // Index rather than `shift()`: shifting re-indexes the whole array on every
+  // step, which is quadratic on a large family for no benefit.
+  for (let head = 0; head < queue.length; head += 1) {
+    const current = queue[head];
+    const base = out.get(current)!.generation;
+    for (const edge of adjacency.get(current) ?? []) {
+      if (out.has(edge.toId)) continue;
+      out.set(edge.toId, { generation: base + edge.delta, via: current });
+      queue.push(edge.toId);
+    }
+  }
+  return out;
+}
+
+/**
+ * The closest of several tiers, or null when there are none.
+ *
+ * Someone can be recorded more than one way at once — a sister-in-law who is
+ * also a cousin, a stepfather you also record as a parent. The tree shows one
+ * heading per person, and the closest reading is the one that belongs at the
+ * top of the band.
+ */
+export function closestTier(tiers: readonly FamilyTier[]): FamilyTier | null {
+  let best: FamilyTier | null = null;
+  for (const tier of tiers) {
+    if (best === null || FAMILY_TIER_ORDER.indexOf(tier) < FAMILY_TIER_ORDER.indexOf(best)) {
+      best = tier;
+    }
+  }
+  return best;
+}
+
+/** What {@link groupFamilyBand} needs to know about a person. */
+export interface GroupablePerson {
+  /** Closest tier among their direct links to the anchor; null when they have none. */
+  tier: FamilyTier | null;
+  /** Who the shortest path reached them through, when they are not directly linked. */
+  via: { id: string; name: string } | null;
+}
+
+/** One labelled run of people inside a generation band. */
+export interface FamilyGroup<T> {
+  /** Stable across renders and independent of the label text. */
+  key: string;
+  label: string;
+  people: T[];
+}
+
+/**
+ * Split one generation band into the groups it should read as.
+ *
+ * A band is a generation, and a generation is not a relationship: banding
+ * alone puts a cousin, a sibling-in-law and a stepsister beside your own
+ * sister, which is the one thing you opened the page to tell apart. Tier is
+ * already on every recorded link, so the split costs nothing and invents
+ * nothing.
+ *
+ * People with no direct link to the anchor cannot be tiered — the app knows
+ * only that they hang off someone else — so they are grouped by the relative
+ * they were reached through and say so, rather than being guessed into a tier
+ * beside relationships that were actually recorded. Keyed on that relative's
+ * id, because two of them can share a display name.
+ */
+export function groupFamilyBand<T extends GroupablePerson>(
+  people: readonly T[],
+  anchorName: string | null,
+): Array<FamilyGroup<T>> {
+  const byTier = new Map<FamilyTier, T[]>();
+  const byVia = new Map<string, { name: string; people: T[] }>();
+  const unconnected: T[] = [];
+
+  for (const person of people) {
+    if (person.tier) {
+      const list = byTier.get(person.tier);
+      if (list) list.push(person);
+      else byTier.set(person.tier, [person]);
+    } else if (person.via) {
+      const group = byVia.get(person.via.id);
+      if (group) group.people.push(person);
+      else byVia.set(person.via.id, { name: person.via.name, people: [person] });
+    } else {
+      unconnected.push(person);
+    }
+  }
+
+  const groups: Array<FamilyGroup<T>> = [];
+  for (const tier of FAMILY_TIER_ORDER) {
+    const members = byTier.get(tier);
+    if (members && members.length > 0) {
+      groups.push({ key: `tier:${tier}`, label: FAMILY_TIER_LABELS[tier], people: members });
+    }
+  }
+
+  const vias = [...byVia.entries()].sort(
+    ([idA, a], [idB, b]) => a.name.localeCompare(b.name) || idA.localeCompare(idB),
+  );
+  for (const [id, group] of vias) {
+    groups.push({ key: `via:${id}`, label: `Through ${group.name}`, people: group.people });
+  }
+
+  if (unconnected.length > 0) {
+    groups.push({
+      key: "unconnected",
+      // Not "extended family": these people have relatives of their own and no
+      // recorded path to this anchor at all. Saying so is the difference
+      // between a gap you can fill and a relationship the app made up.
+      label: anchorName ? `Not linked to ${anchorName}` : "Not linked to the tree",
+      people: unconnected,
+    });
+  }
+
+  return groups;
+}

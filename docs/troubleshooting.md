@@ -54,9 +54,12 @@ An account already exists. `/setup` only opens on an instance with no accounts â
 that's what stops a public instance being claimed by whoever finds it first.
 
 If you've lost the password to the only account, there is currently no reset
-flow. Recover by restoring a backup, or by deleting the `User` row directly in
-the database, which frees `/setup` again â€” note that deleting the account
-deletes everything it owns.
+flow. Do not use security questions, print a reset token in logs, or delete the
+`User` row: deletion cascades through the account's data. Restore a known-good
+backup. A future self-hosted recovery flow must first have either a trusted,
+operator-configured delivery channel or an explicit administrator-assisted
+mechanism that authenticates the administrator and never discloses reset
+secrets in logs.
 
 ## The setup wizard keeps reappearing
 

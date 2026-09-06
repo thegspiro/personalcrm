@@ -86,6 +86,7 @@ ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     PUID=99 \
     PGID=100 \
+    UPLOADS_DIR=/config/uploads \
     TZ=Etc/UTC \
     S6_BEHAVIOUR_IF_STAGE2_FAILS=2 \
     S6_KEEP_ENV=1 \
@@ -98,7 +99,11 @@ RUN set -eux; \
         mariadb-client \
         tzdata \
         procps \
-        gzip; \
+        gzip \
+        # A DATABASE_URL carrying a mutual-TLS client identity gives it as a
+        # PKCS#12 bundle, which the MariaDB client will not read; the backup
+        # unpacks it into the PEM pair the client wants.
+        openssl; \
     # The image ships no database of its own — /config/db is created on first run.
     rm -rf /var/lib/mysql /etc/mysql/mariadb.conf.d/50-server.cnf; \
     # PAM auth is never used here and its setuid helper cannot be chowned in an
@@ -122,6 +127,13 @@ RUN set -eux; \
     tar -C / -Jxpf s6-noarch.tar.xz; \
     tar -C / -Jxpf s6-arch.tar.xz; \
     rm -f s6-noarch.tar.xz s6-arch.tar.xz
+
+# s6 puts its own tools on PATH for the services it supervises, and a
+# `docker exec` gets this PATH instead. Without /command on it, running the
+# on-demand backup from outside fails: first because s6-setuidgid is not
+# found, and then — named by its absolute path — because the execline script
+# it is cannot find `ifelse`. Both are here.
+ENV PATH="/command:${PATH}"
 
 WORKDIR /app
 

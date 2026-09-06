@@ -51,11 +51,32 @@ enforces rather than documents:
 | `signupAction` | Refused when `DISABLE_SIGNUP=true` |
 | `logoutAction` | Deletes the session row and clears the cookie |
 
+### Account — `actions/account.ts`
+
+All mutations derive the account from the authenticated session; no caller may
+choose an owner. `updateDisplayName` changes the navigation/profile label.
+`updateEmail` uses registration's trim-and-lowercase normalization, requires the
+current password, and relies on the database uniqueness constraint; like
+`changePassword` its write is conditional on the row still carrying the hash it
+confirmed, so a request in flight on a session a password change has just
+revoked cannot still move the sign-in address. Password
+changes reuse the signup strength and bcrypt helpers, preserve the current
+session, revoke every other session, and clear `privacyUnlockedAt` on the
+preserved session — which is also re-keyed, so copies of its cookie stop
+resolving. The write is conditional on the row still carrying the hash that was
+just confirmed, so of two changes racing only one applies: written blindly, the
+loser's session sweep ended the winner's newly issued session and left the
+account with none. `secureSessionsAfterPasswordChange` returns the callback that writes
+the new cookie, and `changePassword` invokes it after the transaction commits;
+writing it inside would leave the browser holding a token a rollback removed. Individual and bulk revocation predicates include `userId`
+and explicitly exclude the current token hash.
+
 ### Export — `actions/export.ts`
 
 | Action | Notes |
 | --- | --- |
 | `exportAccount` | Returns the file rather than serving one. There is no route handler for it by design — `GET /api/health` stays the only route in the app, and building the download in the browser keeps the export out of the service worker's fetch handling. Refuses outright while the privacy lock is closed over an account that holds anything private: every read here filters those rows, so an export built the same way would be a file that claims to be everything and silently is not |
+
 
 ### Contacts — `actions/contacts.ts`
 
@@ -64,6 +85,14 @@ enforces rather than documents:
 
 `deleteContact` sweeps the contact's `CustomFieldValue` rows explicitly —
 `entityId` is not a foreign key, so nothing cascades.
+
+`createContact` and `updateContact` accept an `avatar` file and `updateContact`
+a `removeAvatar` flag. The bytes are checked for being a whole JPEG, PNG or WebP
+and written under a server-generated name *before* the transaction, so a failed
+save removes the new file rather than leaving a row pointing at nothing; the
+previous file is removed only after the row points elsewhere. `deleteContact`
+unlinks the file after the row is gone. An avatar-bearing contact that is
+private is refused while the lock is closed, before any byte is written.
 
 ### Interactions — `actions/interactions.ts`
 
@@ -96,19 +125,59 @@ list, because a person missing from the form would be silently dropped on save.
 | Facts | `createFact`, `updateFact`, `deleteFact` |
 | Important dates | `createImportantDate`, `updateImportantDate`, `deleteImportantDate` |
 | Significant moments (`LifeEvent`) | `createLifeEvent`, `updateLifeEvent`, `deleteLifeEvent` |
+| Going on in their life (`Happening`) | `createHappening`, `updateHappening`, `acknowledgeHappening`, `deleteHappening` |
 | Ideas | `createIdea`, `updateIdea`, `setIdeaStatus`, `deleteIdea` |
-| Plans | `createPlan`, `updatePlan`, `setPlanStatus`, `deletePlan` |
+| People in their life (`Associate`) | `createAssociate`, `updateAssociate`, `promoteAssociate`, `deleteAssociate` |
+| Plans | `createPlan`, `updatePlan`, `schedulePlan`, `completePlan`, `setPlanStatus`, `deletePlan` |
 | Tasks | `createTask`, `updateTask`, `setTaskDone`, `deleteTask` |
 | Gifts | `createGift`, `updateGift`, `setGiftStatus`, `deleteGift` |
 | Debts | `createDebt`, `updateDebt`, `settleDebt`, `deleteDebt` |
 | Dietary needs | `createDietaryNeed`, `updateDietaryNeed`, `deleteDietaryNeed`, `updateAllergyStatus` |
 | Relationships | `createRelationship`, `updateRelationship`, `deleteRelationship` |
 
+`promoteAssociate` is the one action here that creates a `Contact`. It runs
+in a transaction that creates the person, claims the entry, and writes both
+halves of the reciprocal `Relationship` — sharing `writeRelationshipPair` with
+`createRelationship` so the second half cannot go missing on one path and not
+the other.
+
+The claim is a compare-and-set on `promotedContactId: null` rather than a
+read-then-write. A second submission — two tabs, or a retried request, neither
+of which a disabled button catches — blocks on the first writer's row lock and
+then loses, and the action answers with the contact that already exists rather
+than an error, because a stale tab should land on the person, not on a red
+toast.
+
+**Losing that race looks different on different servers, and both have to be
+handled.** MariaDB 10 reports nought rows matched, so the claim throws and
+rolls its own half-built person away. MariaDB 11 refuses the write outright
+with 1020 (`ER_CHECKREAD`, "Record has changed since last read") and never
+returns a count at all. `isConcurrentRowChange` (`src/lib/db-errors.ts`)
+recognises the second; both then re-read the row and let its committed state
+decide the answer, rather than either branch guessing who won. Once the pointer is
+set the entry refuses `updateAssociate`: it is a record of what was written
+before the profile existed, and the profile is where that person is edited now.
+Deleting is still allowed, and takes nothing about the created person with it.
+
+The new person inherits privacy from both the entry and the contact it hangs
+off, so promoting a note from behind the lock does not publish the name.
+
 `ContactMethod` and `Address` carry no `ownerId` of their own, so these are the
 actions where the ownership check is indirect: each looks its row up through
 `contact: { ownerId, ...contactPrivacyWhere(scope) }`. Passing an id alone
 would be a way back into a private contact's phone number using an id
 remembered from an unlocked session.
+
+The happening actions each write inside a `$transaction` with
+`syncFollowUpTask`, because the "ask how it went" reminder is an ordinary
+`Task`: creating, re-dating or standing one down has to land with the dates it
+was derived from, or an edit leaves a task asking about a trip that no longer
+exists. They revalidate `/tasks` as well as the profile whenever one was
+touched. `acknowledgeHappening` only stamps `acknowledgedAt` — it is what
+dismisses a finished happening from the dashboard, and it destroys nothing.
+
+An *incomplete* follow-up is deleted when the box is cleared or the happening
+removed. A *completed* one always survives: it records that you did ask.
 
 `setPrimaryContactMethod` is separate from `updateContactMethod` on purpose. As
 a checkbox it would be written on every save, so ticking it on a second row
@@ -129,7 +198,148 @@ items, each with a bounded id and non-empty, 191-character text. Checklist
 completion is changed only by a submitted user edit. It is stored on the owned
 `Plan`, so the existing owner lookup and contact-inherited privacy query also
 scope the checklist. `plannedFor` remains a calendar date parsed by
-`plainDate`; no server-timezone conversion is involved.
+`plainDate`; no server-timezone conversion is involved. The optional
+`plannedStartTime` and `plannedDurationMinutes` are read by `parsePlanMinute`
+and `parsePlanDuration`, which refuse anything they cannot read rather than
+coercing it — filing a plan at midnight because the form sent "half seven"
+would put it at a time nobody chose. A day that is present but unreadable is
+refused for the same reason: `plainDate` answers `undefined` to both that and an
+empty field, and folding the two together saved a malformed date as a plan with
+no date at all and reported success.
+
+A time arriving without a day is dropped rather than refused, so clearing the
+day does not become an error to understand. A **duration** without a day is
+kept: how long a thing takes belongs to the thing, not to the day picked for it,
+so "the observatory takes most of an evening" survives on a plan nobody has
+scheduled. Only the start minute needs a day to hang on, and it is stored as a
+local wall-clock reading against that day, never converted to an instant here.
+
+`schedulePlan` pencils a plan in and is the one place a plan changes hands —
+only ever from nobody to somebody. `updatePlan` still never moves a plan between
+people, and a plan saved against nobody is a shared library that `listPlans`
+offers on everyone's page, so scheduling one *with* a person copies it by
+default and leaves the original open for next time; the copy takes a fresh,
+unticked checklist, because inherited ticks would claim a booking nobody made.
+`keepInList` chooses, and only has a say when the plan is unattached.
+
+The write is a compare-and-set on both the status *and* the contact, not just an
+update after the read: several awaits separate the two, and on status alone a
+second stale form would overwrite the person the first one attached and still
+report success. The reminder policy is pinned in that predicate too, but only
+when the submission means to write one — it is the single field a second tab can
+change without touching the day, the time or the person, so nothing else in the
+claim catches it. It is deliberately not folded into `planAsRead`:
+`completePlan` never writes the policy, and pinning it there would refuse a
+completion over a change that cannot affect what completion records. The copy re-checks both of the plan's foreign keys against the
+owner before taking them — `ownedPlanRefs`.
+
+Both the plan form and the schedule sheet carry the reminder control, and
+`planReminderPatch` puts two gates in front of it.
+
+**Presence.** A submission without a `reminderMode` field leaves the stored
+policy exactly as it was. Read by value instead, every save from a form that
+does not ask about reminders would land as "no reminders" and switch them off.
+
+**Change.** A submission *with* the control still writes nothing unless the
+value differs from the one the form was rendered with, which the form reports in
+a hidden `reminderPolicyWas`. Presence cannot do this on its own: the schedule
+sheet always submits its select, so a sheet drawn before another tab switched a
+reminder on would post its own stale "no reminders" over the newer choice.
+Comparing against `Plan` as read in the action does not catch it either — by
+then the row already holds the newer value, so it would be comparing that value
+with itself. The comparison is semantic, so null and the empty list count as the
+same answer (`samePlanReminderPolicy`) and re-submitting one over the other is
+not a change.
+
+It skips rather than refuses, deliberately. The sheet's job is the day, the time
+and the person; rejecting the whole arrangement over a preference the user never
+touched would be the worse answer.
+
+The scheduling copy path inherits the original's policy when this submission
+names none, the same rule it already applies to the duration. All three writers
+report an unreadable offset with the same message rather than folding it into
+`planFields`' generic one, which names none of the fields it can fail on.
+Offsets go through `parseReminderDays` unchanged; what differs is the reading of
+null, which for a plan means no reminders rather than the account default —
+`effectivePlanReminderDays` and `planReminderPolicyLabel` are the plan-side
+pair, and `effectiveReminderDays` / `reminderPolicyLabel` stay correct for
+important dates.
+
+`completePlan` refuses outright on a plan that is already `DONE` or `ARCHIVED`.
+Both of its claims carry the status, but the shared-idea path has no claim — it
+never writes to the original — so that precondition is what stops a stale form
+or a direct POST filing a second evening from a closed idea. All three write
+paths name the contact they read as well as the status, including the
+nobody-attached one: a request attaching the row in between would otherwise have
+*their* plan marked done with no interaction and no cadence recomputed. The two
+that write to the plan itself also name the day and start time they read, since
+`occurredAt` is derived from those — a reschedule for the same person changes
+neither status nor contact, so on those alone the evening would be filed on the
+old day and the newly arranged one marked done before it happened. The shared
+path claims the source with an `UPDATE` rather than re-reading it, before either
+record is created: it leaves the row in circulation so there is no status to
+consume, and a read under REPEATABLE READ takes no lock, but an `UPDATE` locks
+every row it matches even when the value it writes is the one already there, and
+its row count is the refusal. A `PLANNED` idea is released back to the list by
+that same statement. An unreadable `occurredAt` is refused rather than falling
+through to the scheduled time, the way `planFields` already refuses a malformed
+day, and scheduling writes `plannedDurationMinutes` only when the form carried
+one — the sheet has no duration control, so writing back what was read would
+undo an edit to the one field the claim does not watch. What each predicate expects lives in one `planAsRead` fragment rather
+than being restated at each site, because restating it is how four of these
+paths each ended up missing a different field.
+
+`completePlan` records what a plan became. `setPlanStatus(id, "DONE")` closes a
+plan and *clears* `usedInInteractionId` — right for undoing a mistake, wrong for
+actually doing the thing — and until now only `createDateEntry` ever pointed a
+plan at an interaction, so a hike with a friend ended as a status and nothing
+else. It writes a plain `Interaction` through
+`closePlanAsInteraction` (`src/server/services/plans.ts`, shared with
+`createDateEntry` so the scoping cannot drift), takes `occurredAt` from the day
+and time already on the row when the form does not override it, and runs
+`recomputeContactActivity` rather than assigning the date it just wrote.
+
+Finishing a shared idea *with somebody* copies it, the same way scheduling one
+does: `listPlans` offers a contact-less plan on everyone's page, so closing the
+shared row because one evening happened would take it off every other person's
+list. The copy is the evening; the original stays open. `createDateEntry` still
+consumes in that case — pre-existing behaviour, deliberately left alone. The
+A shared idea scheduled through "Nobody yet" stays unattached and `PLANNED`, so
+once that evening has happened with somebody the original is handed back to the
+list: `OPEN`, with the day and start time cleared and the duration kept, claimed
+on the day that was read so a re-scheduling in between keeps its newer one. The
+day is not lost — the copy carries it, along with what it became. Leaving it
+would present a spent arrangement as an outstanding one on every person's list.
+
+The copy path has no row to claim, so the copy instead carries a `completionKey` —
+`<sourcePlanId>:<contactId>:<local day>`, unique per owner — and a replayed POST
+or a second tab collides on it rather than filing the evening twice. The key is
+derived on the server, not minted by the browser: a client token would stop only
+a literal replay, because two tabs would mint two of them. Its day is the one
+the completion is being recorded on, or the one the form named — never
+`occurredAt`, which folds in the plan's own schedule that this same request then
+clears, so a replay would work out a different day and miss the index
+altogether. Nothing the completion changes may be read into its key. The violation is
+caught *outside* `transact`, on a transaction the database has already rolled
+back — catching it inside and carrying on is the trap invariant 9 describes.
+
+Both of the plan's pointers — `locationId` and `categoryId` — are re-checked
+against the owner by `ownedPlanRefs` before either is copied into the
+interaction or the copy. `Interaction.place`, `Plan.place` and `Plan.category`
+are all keyed on the target id alone rather than on `(ownerId, id)`, because
+`SET NULL` needs every column of the key nullable and `ownerId` is not, so a
+restored or imported row can point at another account's `Location` or
+`TaxonomyTerm`. `listPlans` loads both with no owner predicate, so the other
+account's label, colour and coordinates would surface here, and their delete
+would reach through. The free-text venue name is kept either way; only the
+foreign keys are dropped.
+
+It never writes a `DateEntry`, even for someone romantic: plans are deliberately
+not behind the privacy lock and a `DateEntry` is, so writing one from here would
+be a way round the lock. Logging a date properly stays the date log's "From a
+saved idea", which is guarded. A plan with nobody attached and nobody named just
+closes — an interaction with no participants would sit in the timeline belonging
+to no one.
 
 Important-date and life-event updates and deletes also filter through their
 contact's privacy marker. The timeline exposes these controls, so an id retained
@@ -161,13 +371,21 @@ already established the lock is open.
 `endRelationshipLink`.
 
 Suggestions are never written without a press. `endRelationshipLink` re-types
-both halves to their `former` counterparts; it never deletes.
+both halves to their `former` counterparts; it never deletes. `updateHousehold`
+is reached from the rename control on each household card on `/family`; it
+rejects a name already taken by another household of the same owner, which is
+what the `@@unique([ownerId, name])` constraint would otherwise surface as a
+raw database error.
+
+Linking two relatives from `/family` goes through `createRelationship` in
+`actions/details.ts` — the same action the contact page uses — rather than a
+second write path, so both halves of a pair are still written together.
 
 ### Dating — `actions/dating.ts`
 
-`upsertRomanticProfile`, `setDatingStage`, `endRelationship`, `convertToFriend`,
-`createDateEntry`, `updateDateEntry`, `deleteDateEntry`, `createFlag`,
-`updateFlag`, `deleteFlag`.
+`upsertRomanticProfile`, `setDatingStage`, `endRelationship`, `markAsRomantic`,
+`convertToFriend`, `createDateEntry`, `updateDateEntry`, `deleteDateEntry`,
+`createFlag`, `updateFlag`, `deleteFlag`.
 
 Every one re-checks the lock. `createDateEntry` writes an `Interaction` **and**
 a `DateEntry`, recomputes activity from full history, and renumbers `sequence`
@@ -176,8 +394,13 @@ through the `Interaction` so the pair cannot be left half-removed.
 Create and update validate and persist the nullable `wouldDoAgain` and
 `nextTimeNotes` retrospective fields. Saved-plan preparation notes are shown as
 context and are never silently copied into that private retrospective.
-`convertToFriend` clears `isRomantic` and keeps the profile, dates, flags and
-notes. `updateFlag` can re-type a flag between green, red and dealbreaker: a
+`markAsRomantic` and `convertToFriend` are mirrors, and each sets nothing but
+the one flag the pipeline reads: `convertToFriend` clears `isRomantic` and keeps
+the profile, dates, flags and notes, and `markAsRomantic` sets it again without
+creating a profile, so someone put back gets the history they already had.
+`markAsRomantic` lives here rather than reusing `patchContact`, which checks
+ownership only — right for a favourite, wrong for the flag that decides whether
+a page renders someone's private notes. `updateFlag` can re-type a flag between green, red and dealbreaker: a
 second look often moves one, and re-typing keeps the wording and the day you
 first noticed it rather than starting over.
 
@@ -218,8 +441,87 @@ same sentence.
 A rename onto a name already in use is **refused**, never merged: two real venues
 can be spelled alike, and folding one into the other would take a history with it.
 
+While the lock is closed, both a rename and a change to a place's alternate
+names are refused outright — every one, not only the ones that collide. Asking
+whether a name is taken is asking whether a hidden place answers to it, and the
+refusal itself was the answer. `updateLocation` compares the submitted aliases
+with the stored ones so only a *change* is held back: every other field stays
+editable, and a save that resubmits the aliases it was rendered with goes
+through.
+
 Every place a lookup can be reached from is behind an explicit button. See
 [privacy.md](privacy.md) for what is sent.
+
+The gate itself — the toggle check, the dynamic `import()` of the optional
+directory, and turning every failure into a sentence rather than an error page —
+lives once in `src/server/geo/lookup.ts` (`searchPlaces`). All three callers use
+it, so they cannot drift into three different failure stories.
+
+`lookupContactAddress` (in `actions/details.ts`) is the same lookup for a
+person's home. It is **refused outright for a private contact** — the promise the
+assisted-reading layer already makes, applied here because a home address
+identifies somebody more precisely than a name does. Their coordinates are typed
+by hand instead, which is why the form offers the fields directly. For everyone
+else only the address is sent: the lines, the city, the region, the country.
+Never the label, never the notes, never the person's name.
+
+`placeUnplaced` (in `actions/bulk-place.ts`) is the same lookup applied to
+everything at once: a bounded batch of **ten rows**, returning a cursor the
+browser passes back until there is nothing left. No queue, no job table, no
+background worker — the loop lives in the settings panel, so closing the tab
+stops it and pressing the button again resumes.
+
+Three rules make it safe to run unattended. It is **refused outright against the
+public OpenStreetMap service** (`isRateLimited`), whose usage policy asks
+applications not to geocode in bulk against hardware the foundation runs on
+donations. It writes **only an unambiguous match** — anything other than exactly
+one candidate is left for a person, because nobody is present to choose and a
+pin in the wrong city looks answered when it is not. And it selects **only rows
+with no coordinates**, re-checking that in the `updateMany` where-clause, so a
+row placed by hand in another tab is never overwritten by a machine's guess.
+Private contacts are excluded by the query that feeds it, not filtered
+afterwards, and places go through `locationVisibleWhere` for the same reason —
+one known only through a private interaction is neither counted nor sent while
+the lock is closed.
+
+"Exactly one candidate" is necessary but not sufficient: a geocoder handed a
+half-written address returns a single fallback, often the wrong locality
+entirely. Where the row already names a city, the candidate has to agree — a
+comparison of facts already held rather than a similarity score on the street or
+venue name, which differ legitimately in wording. An `osmId` is validated for
+digits and the signed `BIGINT` range before conversion, so a malformed one from a
+custom endpoint skips that row rather than throwing and killing the batch. Each
+call also stops asking after twenty seconds and returns its cursor, so an
+endpoint that accepts connections and never answers cannot hold one action for
+the provider timeout times ten.
+
+`lookupHomeBase` and `updateHomeBase` (in `actions/settings.ts`) do the same for
+your own address. `updateHomeBase` follows `updateDefaults`' presence-not-value
+rule for `distanceUnit`, so a panel that omits the field never resets it, and it
+refuses half a coordinate pair out loud rather than storing a prime-meridian
+guess.
+
+### Tags — `actions/tags.ts`
+
+| Action | Notes |
+| --- | --- |
+| `createTag` | Name plus a `normalizeTagSlug` key, unique per owner. The key keeps letters and numbers in any script, so a name with no ASCII spelling is not refused as empty. Refused while locked — see below |
+| `renameTag` | Recomputes the key; a rename onto an existing one is refused rather than merged. Refused while locked, and the tag itself must be one `tagVisibleWhere` admits |
+| `mergeTag` | Moves the source's assignments onto the destination and deletes the source. Refused while locked if either tag is on someone private — the move would carry the hidden assignment |
+| `deleteTag` | Removes the tag; assignments go by cascade, contacts are untouched. Refused while locked on the same condition, since the cascade destroys the hidden assignment |
+| `setContactTag` | Assigns or unassigns one tag on one contact |
+
+Creating and renaming are refused while the lock is closed, because both answer
+"is this name taken" and a taken name you cannot see belongs to a tag used only
+by private people — the same reasoning that holds back a place rename.
+Assigning an existing tag changes no name and is unaffected.
+
+Every one of these scopes by `ownerId`, and each that names a tag by id asks
+`tagVisibleWhere` rather than ownership alone — as do `createContact` and
+`updateContact` when they replace a contact's tags. A form rendered while
+unlocked keeps the ids it listed, and closing the lock in another tab does not
+empty it, so the write is the only place that check can be made. See
+[privacy.md](privacy.md) for what the predicate admits.
 
 ### Customization
 
@@ -228,13 +530,18 @@ Every place a lookup can be reached from is behind an explicit button. See
 | `actions/taxonomy.ts` | `createTerm`, `updateTerm`, `setTermActive`, `deleteTerm`, `moveTerm`, `restoreMissingDefaults` |
 | `actions/custom-fields.ts` | `createFieldDefinition`, `updateFieldDefinition`, `setFieldActive`, `deleteFieldDefinition`, `moveFieldDefinition` |
 | `actions/dashboard.ts` | `setWidgetEnabled`, `moveWidget`, `setWidgetSetting`, `resetDashboardLayout` |
-| `actions/settings.ts` | `updateAppearance`, `updateDefaults` |
+| `actions/settings.ts` | `updateAppearance`, `updateDefaults`, `updateDigest` |
 
 `deleteTerm` refuses while the term is still referenced — the foreign keys
 would null the reference or cascade the row away. `setTermActive(false)` is the
 supported alternative. A relationship type keeps its reciprocal paired in both
 directions, and `metadata` is not editable from the UI because family tiers and
 pipeline ordering are read from it by code.
+
+`updateDigest` is the switch and local hour for the daily digest, the one
+message the scheduler sends on its own initiative. It lives under Settings →
+Reminders beside the channels it reaches. The hour is validated as a whole
+number from 0 to 23 and refused per field otherwise.
 
 ### Onboarding — `actions/onboarding.ts`
 
@@ -301,12 +608,25 @@ owner to scope by — which is why they need a role check and this does not.
 `sendTestNotification` is separate from saving on purpose. Verifying before
 storing is right for the AI key — one global value, where a bad key means
 silent nothingness — and wrong for a row: a Gotify box down for ten minutes
-must not stop you recording its address. It sends fixed copy with nothing
-interpolated, because Settings stays reachable while the privacy lock is
-closed and this is the one button there that could otherwise put a private
-person's name on the wire. It writes no `ReminderLog`: the ledger's unique key
-is the occurrence, and a test has none. It is rate-limited per channel, being
-a public POST that makes an outbound request to a caller-supplied URL.
+must not stop you recording its address.
+
+What it sends is the fixed sample digest in `src/lib/sample-digest.ts`:
+invented people and invented dates, rendered by the same `digestMessage()` the
+scheduler uses. Nothing is interpolated and no record is read, because Settings
+stays reachable while the privacy lock is closed and this is the one button
+there that could otherwise put a private person's name on the wire. Going
+through the real formatter is what makes the sample worth sending — it shows
+how a genuine digest will wrap, truncate and group on that channel — and the
+sample carries one entry of every kind and every timing word so no section
+goes unexercised. Its subject says "sample" rather than only its body: a push
+notification is often read as a single collapsed line.
+
+It writes no `ReminderLog`: the ledger's unique key is the occurrence, and a
+test has none. It is rate-limited per account rather than per channel, being a
+public POST that makes an outbound request to a caller-supplied URL — keyed by
+channel, the guard would reset by creating another one. A send that succeeds
+means the transport accepted the payload, not that a mail provider,
+notification service or recipient device will display it.
 
 ## Custom fields on a form
 
@@ -321,7 +641,7 @@ exists to prevent:
 - **A failing field aborts the whole save** rather than leaving a record
   half-written.
 
-## The one HTTP endpoint
+## The two HTTP endpoints
 
 `GET /api/health` → `200` with `{ status, database, setup, latencyMs, version,
 uptimeSeconds }`, or `503` with `{ status: "error", database: "down", message }`.
@@ -329,3 +649,12 @@ uptimeSeconds }`, or `503` with `{ status: "error", database: "down", message }`
 
 `setup` is `"complete"` or `"pending"`, so an operator can tell a
 booted-but-unconfigured instance from a working one without opening a browser.
+
+`GET /api/avatars/[filename]` → the image bytes with `cache-control: private,
+no-store` and `x-content-type-options: nosniff`, or `404`. It is `404` for every
+refusal alike — no session, a name the server did not generate, another owner's
+contact, a private contact while the lock is closed, a missing file — because
+whether a file exists is itself a disclosure. Authorisation is one query beyond
+the session (`queries/avatars.ts`), which folds the privacy lock into the
+contact lookup so a page of two hundred avatars is two hundred queries, not a
+thousand.

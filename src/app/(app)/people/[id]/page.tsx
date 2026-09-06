@@ -30,20 +30,29 @@ import { DietarySection } from "@/components/contacts/sections/dietary";
 import { FactsSection } from "@/components/contacts/sections/facts";
 import { GiftsSection } from "@/components/contacts/sections/gifts";
 import { IdeasSection } from "@/components/contacts/sections/ideas";
+import { AssociatesSection } from "@/components/contacts/sections/associates";
 import { LifeEventsSection } from "@/components/contacts/sections/life-events";
+import { HappeningsSection } from "@/components/contacts/sections/happenings";
 import { RelationshipsSection } from "@/components/contacts/sections/relationships";
 import { TasksSection } from "@/components/contacts/sections/tasks";
 import { MilestonesSummary } from "@/components/contacts/milestones-summary";
 import { TimelineList } from "@/components/timeline/timeline-list";
 import { SectionCard } from "@/components/contacts/section-card";
 import { calendarDateInTz, plainDateFromDb, plainDateKey } from "@/lib/dates";
+import { readReminderPolicy } from "@/lib/reminders";
 import { cadenceMessage } from "@/lib/format";
 import { cadenceStatus, daysSinceLastInteraction, daysUntilTouch } from "@/lib/cadence";
 import { displayName } from "@/lib/utils";
 import { getUpcomingDates } from "@/server/queries/dashboard";
 import { UpcomingDatesWidget } from "@/components/dashboard/widgets";
 import { isBirthdayImportantDate, projectContactBirthday } from "@/server/queries/birthdays";
-import { listContactLocations } from "@/server/queries/locations";
+import { listContactLocations, listLocationsNear } from "@/server/queries/locations";
+import { originsFor } from "@/server/queries/origins";
+import { getGeoStatus } from "@/server/geo/config";
+import { distanceBetween, formatDistance, pointOf, withDistance } from "@/lib/geo";
+import { mapLinkFor } from "@/lib/locations";
+import { NearbyPlaces } from "@/components/locations/nearby-places";
+import { listContactHappenings } from "@/server/queries/happenings";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -68,7 +77,12 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
   // Gate before fetching: withholding the section in the component would still
   // have put the dates and notes into the payload sent to the browser.
-  const showDating = contact.isRomantic && (await canSeeDating(prefs.hideDating));
+  // `datingAvailable` is the module itself — on, and unlocked — which is what
+  // decides whether the header may offer to put this person in the pipeline.
+  // It is asked for every contact, not only romantic ones, so the answer never
+  // depends on the person and cannot leak who is already in there.
+  const datingAvailable = await canSeeDating(prefs.hideDating);
+  const showDating = contact.isRomantic && datingAvailable;
   // This one person is the whole page, so their own marker decides it — plus
   // the dating sections, which are the most sensitive thing here.
   const cacheable =
@@ -89,6 +103,9 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     reciprocity,
     upcomingDates,
     locations,
+    happenings,
+    geoStatus,
+    origins,
   ] = await Promise.all([
     listTermsByKind(user.id, [
       "INTERACTION_TYPE",
@@ -101,6 +118,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
       "DATING_STAGE",
       "DATE_ACTIVITY_TYPE",
       "PLAN_CATEGORY",
+      "HAPPENING_TYPE",
       "MEETING_SOURCE",
     ]),
     buildTimeline(user.id, timezone, { contactId: id, take: 40 }),
@@ -116,7 +134,27 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     getReciprocity(user.id, id, timezone),
     getUpcomingDates(user.id, timezone, 366, 100, id),
     listContactLocations(user.id, id),
+    listContactHappenings(user.id, id, timezone),
+    getGeoStatus(),
+    originsFor(user.id, id),
   ]);
+
+  // Measured from the person, not from home: standing on their page, "how far
+  // is that from her" is the question a plan raises. Annotated here rather than
+  // inside `listPlans` only because the origin is fetched in the same batch.
+  const placedPlans = withDistance(
+    plans,
+    origins.contact,
+    origins.unit,
+    (plan) => pointOf(plan.place),
+  );
+
+  // Only asked once this person actually has a placed address, so an account
+  // that has never used any of this pays for nothing and sees nothing.
+  const nearby = await listLocationsNear(user.id, origins.contact, {
+    unit: origins.unit,
+    take: 5,
+  });
 
   // Definitions come back once; the saved values for every logged date come
   // back in a single query, so the edit forms are not N round trips.
@@ -203,6 +241,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
               : null,
           }}
           interactionFields={interactionFields}
+          datingAvailable={datingAvailable}
           cadence={{
             status: cadenceStatus(contact.nextTouchAt, timezone),
             message: cadenceMessage(daysUntilTouch(contact.nextTouchAt, timezone)),
@@ -258,6 +297,12 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
               contactName={contact.firstName}
               customFields={romanticFields}
               blurPrivate={prefs.blurPrivateNotes}
+              unit={origins.unit}
+              // Home to their placed address. Null unless both ends are placed,
+              // so it is either right or absent.
+              measuredDistance={formatDistance(
+                distanceBetween(origins.home, origins.contact, origins.unit),
+              )}
               stages={terms.DATING_STAGE}
               sources={terms.MEETING_SOURCE}
               profile={
@@ -327,6 +372,23 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                 isPrivate: entry.interaction.isPrivate,
                 activityTypeId: entry.activityTypeId,
                 activityLabel: entry.activityType?.label ?? null,
+                // The place comes from the mirrored interaction, and its map
+                // link and distance are built here rather than in the client
+                // component: `Decimal` and `BigInt` do not survive the crossing.
+                place: entry.interaction.place
+                  ? {
+                      id: entry.interaction.place.id,
+                      name: entry.interaction.place.name,
+                      mapHref: mapLinkFor(entry.interaction.place),
+                      distanceLabel: formatDistance(
+                        distanceBetween(
+                          origins.home,
+                          pointOf(entry.interaction.place),
+                          origins.unit,
+                        ),
+                      ),
+                    }
+                  : null,
               }))}
             />
 
@@ -366,6 +428,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
         <AddressesSection
           contactId={contact.id}
+          lookupEnabled={geoStatus.enabled && geoStatus.usable}
+          isPrivate={contact.isPrivate}
           addresses={contact.addresses.map((address) => ({
             id: address.id,
             label: address.label,
@@ -376,6 +440,24 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             postalCode: address.postalCode,
             country: address.country,
             notes: address.notes,
+            // Serialised here, at the boundary: `osmId` is a `BIGINT` and the
+            // coordinates are `Decimal`, and neither survives the crossing into
+            // a client component — it throws at render rather than arriving
+            // wrong, so this is the last place it can be caught.
+            latitude: address.latitude === null ? null : String(address.latitude),
+            longitude: address.longitude === null ? null : String(address.longitude),
+            osmType: address.osmType,
+            osmId: address.osmId === null ? null : String(address.osmId),
+          }))}
+        />
+
+        <NearbyPlaces
+          places={nearby.map((place) => ({
+            id: place.id,
+            name: place.name,
+            city: place.city,
+            mapHref: place.mapHref,
+            distance: place.distance,
           }))}
         />
 
@@ -423,13 +505,35 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           }))}
         />
 
+        <AssociatesSection
+          contactId={contact.id}
+          contactName={displayName(contact)}
+          associates={contact.associates.map((entry) => ({
+            id: entry.id,
+            name: entry.name,
+            howTheyKnow: entry.howTheyKnow,
+            notes: entry.notes,
+            isPrivate: entry.isPrivate,
+            // Read from the column, not from the join: the person may be
+            // withheld while the entry is still tracked, and a row that
+            // forgets that becomes editable again and invites a second
+            // promotion.
+            isPromoted: entry.promotedContactId !== null,
+            promoted: entry.promoted
+              ? { id: entry.promoted.id, name: displayName(entry.promoted) }
+              : null,
+          }))}
+          types={terms.RELATIONSHIP_TYPE}
+        />
+
         <PlansSection
           contactId={contact.id}
           categories={terms.PLAN_CATEGORY}
-          plans={plans.map((plan) => ({
+          plans={placedPlans.map((plan) => ({
             id: plan.id,
             title: plan.title,
             status: plan.status,
+            distance: plan.distance,
             location: plan.location,
             address: plan.address,
             url: plan.url,
@@ -438,6 +542,9 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             notes: plan.notes,
             checklist: plan.checklist,
             plannedFor: plan.plannedFor ? plainDateFromDb(plan.plannedFor) : null,
+            plannedStartMinute: plan.plannedStartMinute,
+            plannedDurationMinutes: plan.plannedDurationMinutes,
+            reminderDaysBefore: readReminderPolicy(plan.reminderDaysBefore),
             categoryId: plan.categoryId,
             category: plan.category
               ? {
@@ -490,6 +597,33 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           events={lifeEvents}
           types={terms.LIFE_EVENT_TYPE}
           contacts={contactOptions}
+        />
+
+        <HappeningsSection
+          contactId={contact.id}
+          happenings={happenings.map((happening) => ({
+            id: happening.id,
+            title: happening.title,
+            date: happening.date,
+            precision: happening.precision,
+            endDate: happening.endDate,
+            endPrecision: happening.endPrecision,
+            typeId: happening.type?.id ?? null,
+            notes: happening.notes,
+            source: happening.source,
+            availability: happening.availability,
+            isTentative: happening.isTentative,
+            hasFollowUp: happening.hasFollowUp,
+            phase: happening.phase,
+            type: happening.type
+              ? {
+                  label: happening.type.label,
+                  icon: happening.type.icon,
+                  color: happening.type.color,
+                }
+              : null,
+          }))}
+          types={terms.HAPPENING_TYPE}
         />
 
         <TasksSection

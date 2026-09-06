@@ -6,7 +6,7 @@ import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { DateField } from "@/components/form/date-field";
 import { SectionCard, SectionEmpty, SectionRow } from "../section-card";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { formatPartialDate } from "@/lib/date-precision";
 import { plainDateKey, type PlainDate } from "@/lib/dates";
 import { createTask, deleteTask, setTaskDone, updateTask } from "@/server/actions/details";
@@ -20,7 +20,7 @@ export interface TaskItem {
   priority: "LOW" | "NORMAL" | "HIGH";
 }
 
-/** Adding a follow-up and correcting one. Shared with the /tasks page. */
+/** Adding a manual task and correcting one. Shared with the /tasks page. */
 export function TaskFields({ formId, task }: { formId: string; task?: TaskItem }) {
   return (
     <>
@@ -63,14 +63,16 @@ export function TaskFields({ formId, task }: { formId: string; task?: TaskItem }
 export function TasksSection({ contactId, tasks }: { contactId: string; tasks: TaskItem[] }) {
   const run = useAction();
   const add = useAddAction();
+  const edit = useEditAction();
   const open = tasks.filter((task) => !task.completedAt);
 
   return (
     <SectionCard
-      title="Follow-ups"
+      id="tasks"
+      title="Tasks"
       icon="CircleCheck"
       count={open.length}
-      addLabel="Add a follow-up"
+      addLabel="Add a task"
       form={(close) => (
         <form action={add(createTask, close, "Added")} className="grid gap-2.5">
           <input type="hidden" name="contactId" value={contactId} />
@@ -86,10 +88,10 @@ export function TasksSection({ contactId, tasks }: { contactId: string; tasks: T
           <SectionRow
             key={task.id}
             onDelete={() => void run(() => deleteTask(task.id), "Removed")}
-            deleteLabel="Delete follow-up"
-            editLabel="Edit follow-up"
+            deleteLabel="Delete task"
+            editLabel="Edit task"
             editForm={(close) => (
-              <form action={add(updateTask, close, "Saved")} className="grid gap-2.5">
+              <form action={edit(updateTask, close, "Saved")} className="grid gap-2.5">
                 <input type="hidden" name="id" value={task.id} />
                 <TaskFields formId={`task-${task.id}`} task={task} />
                 <SubmitButton size="sm">Save</SubmitButton>

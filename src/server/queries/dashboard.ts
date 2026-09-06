@@ -11,9 +11,12 @@ import {
   addPlainDays,
   calendarDateInTz,
   diffPlainDays,
+  endOfDayInTz,
   projectDateOccurrences,
   plainDateFromDb,
+  zonedStartOfDay,
 } from "@/lib/dates";
+import { DUE_SOON_DAYS, daysUntilTouch } from "@/lib/cadence";
 import { hasKnownYear, yearsSince, type DatePrecision } from "@/lib/date-precision";
 import { fetchContactBirthdays, isBirthdayImportantDate } from "./birthdays";
 
@@ -25,7 +28,8 @@ export interface OverdueContact {
   cadenceDays: number | null;
   lastInteractionAt: Date | null;
   nextTouchAt: Date | null;
-  daysOverdue: number;
+  /** Signed calendar-day distance in the account timezone. */
+  daysUntilDue: number;
 }
 
 /**
@@ -41,6 +45,7 @@ export async function getOverdueContacts(
 ): Promise<OverdueContact[]> {
   const now = new Date();
   const today = calendarDateInTz(now, timezone);
+  const horizon = zonedStartOfDay(addPlainDays(today, DUE_SOON_DAYS + 1), timezone);
 
   const privacy = await privacyScope();
   const rows = await prisma.contact.findMany({
@@ -48,7 +53,10 @@ export async function getOverdueContacts(
       ownerId,
       isArchived: false,
       cadenceDays: { not: null },
-      nextTouchAt: { not: null, lte: now },
+      // Include the whole final calendar day in the account timezone. Using a
+      // millisecond offset from `now` would omit later times on that day and
+      // would also be wrong across daylight-saving transitions.
+      nextTouchAt: { not: null, lt: horizon },
       ...contactPrivacyWhere(privacy),
     },
     select: {
@@ -66,9 +74,7 @@ export async function getOverdueContacts(
 
   return rows.map((row) => ({
     ...row,
-    daysOverdue: row.nextTouchAt
-      ? Math.max(0, -diffPlainDays(today, calendarDateInTz(row.nextTouchAt, timezone)))
-      : 0,
+    daysUntilDue: daysUntilTouch(row.nextTouchAt, timezone, now) ?? 0,
   }));
 }
 
@@ -230,6 +236,7 @@ export interface DashboardStats {
 export async function getStats(ownerId: string, timezone: string): Promise<DashboardStats> {
   const now = new Date();
   const today = calendarDateInTz(now, timezone);
+  const dueThrough = endOfDayInTz(now, timezone);
   const monthStart = new Date(Date.UTC(today.year, today.month - 1, 1));
 
   const privacy = await privacyScope();
@@ -250,7 +257,7 @@ export async function getStats(ownerId: string, timezone: string): Promise<Dashb
           ownerId,
           isArchived: false,
           cadenceDays: { not: null },
-          nextTouchAt: { lte: now },
+          nextTouchAt: { lte: dueThrough },
           ...contactPrivacy,
         },
       }),

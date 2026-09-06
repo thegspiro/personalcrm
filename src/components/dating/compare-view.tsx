@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { ArrowDown, ArrowUp, Columns2 } from "lucide-react";
 import { cn, displayName } from "@/lib/utils";
+import { formatStoredKm, type Unit } from "@/lib/geo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -70,7 +71,16 @@ const KIDS_LABELS: Record<string, string> = {
 /** Up to this many people can be held side by side before it stops being readable. */
 const MAX_SELECTED = 3;
 
-export function CompareView({ rows, now }: { rows: CompareItem[]; now: Date }) {
+export function CompareView({
+  rows,
+  now,
+  unit,
+}: {
+  rows: CompareItem[];
+  now: Date;
+  /** `distanceKm` is stored in km whatever the account reads distances in. */
+  unit: Unit;
+}) {
   const [sortKey, setSortKey] = React.useState<SortKey>("overallRating");
   const [ascending, setAscending] = React.useState(false);
   const [selected, setSelected] = React.useState<string[]>([]);
@@ -205,7 +215,7 @@ export function CompareView({ rows, now }: { rows: CompareItem[]; now: Date }) {
       </div>
 
       {chosen.length >= 2 ? (
-        <SideBySide rows={chosen} onClear={() => setSelected([])} />
+        <SideBySide rows={chosen} onClear={() => setSelected([])} unit={unit} />
       ) : (
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
           <Columns2 className="size-3.5" />
@@ -216,7 +226,15 @@ export function CompareView({ rows, now }: { rows: CompareItem[]; now: Date }) {
   );
 }
 
-function SideBySide({ rows, onClear }: { rows: CompareItem[]; onClear: () => void }) {
+function SideBySide({
+  rows,
+  onClear,
+  unit,
+}: {
+  rows: CompareItem[];
+  onClear: () => void;
+  unit: Unit;
+}) {
   const fields: Array<{ label: string; render: (row: CompareItem) => React.ReactNode }> = [
     { label: "Stage", render: (r) => r.stageLabel ?? "—" },
     { label: "Dates", render: (r) => r.dateCount },
@@ -228,7 +246,7 @@ function SideBySide({ rows, onClear }: { rows: CompareItem[]; onClear: () => voi
     { label: "Wants kids", render: (r) => KIDS_LABELS[r.wantsKids] ?? "—" },
     { label: "Style", render: (r) => r.relationshipStyle ?? "—" },
     { label: "Living", render: (r) => r.livingSituation ?? "—" },
-    { label: "Distance", render: (r) => (r.distanceKm ? `${r.distanceKm} km` : "—") },
+    { label: "Distance", render: (r) => formatStoredKm(r.distanceKm, unit) ?? "—" },
     { label: "Born", render: (r) => r.birthYear ?? "—" },
     { label: "Religion", render: (r) => r.religion ?? "—" },
     { label: "Politics", render: (r) => r.politics ?? "—" },

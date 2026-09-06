@@ -16,7 +16,8 @@ vi.mock("@/server/privacy/lock", () => ({
   requireUnlocked: async () => actionState.locked ? { ok: false, error: "Unlock to continue." } : { ok: true },
 }));
 
-const { createDateEntry, updateDateEntry } = await import("@/server/actions/dating");
+const { createDateEntry, markAsRomantic, updateDateEntry } = await import("@/server/actions/dating");
+const { listDateEntries } = await import("@/server/queries/dating");
 
 function actionForm(values: Record<string, string>) {
   const form = new FormData();
@@ -58,7 +59,7 @@ describe.skipIf(!hasTestDatabase)("dating", () => {
         isRomantic: true,
         cadenceDays,
         createdAt: daysAgo(400),
-        romanticProfile: { create: { ownerId } },
+        romanticProfile: { create: {} },
       },
     });
   }
@@ -291,6 +292,83 @@ describe.skipIf(!hasTestDatabase)("dating", () => {
     expect(after.dateEntries).toHaveLength(1);
   });
 
+  it("marking someone as dating gives back the history a conversion kept", async () => {
+    const contact = await makeRomantic();
+    await logDate(contact.id, daysAgo(12), 5);
+    await prisma.flag.create({
+      data: { ownerId, contactId: contact.id, kind: "GREEN", text: "Kind to waiters" },
+    });
+    await prisma.contact.update({ where: { id: contact.id }, data: { isRomantic: false } });
+
+    expect(await markAsRomantic(contact.id)).toMatchObject({ ok: true });
+
+    const after = await prisma.contact.findUniqueOrThrow({
+      where: { id: contact.id },
+      include: { romanticProfile: true, flags: true, dateEntries: true },
+    });
+    expect(after.isRomantic).toBe(true);
+    // The flag is all that moves. Re-flagging creates no profile of its own,
+    // so the one they already had is still the one on the page.
+    expect(after.romanticProfile).not.toBeNull();
+    expect(after.flags).toHaveLength(1);
+    expect(after.dateEntries).toHaveLength(1);
+  });
+
+  it("marking someone as dating leaves the rest of the contact alone", async () => {
+    const contact = await prisma.contact.create({
+      data: { ownerId, firstName: "Sam", cadenceDays: 30, isFavorite: true },
+    });
+
+    expect(await markAsRomantic(contact.id)).toMatchObject({ ok: true });
+
+    const after = await prisma.contact.findUniqueOrThrow({ where: { id: contact.id } });
+    expect(after.isRomantic).toBe(true);
+    expect(after.cadenceDays).toBe(30);
+    expect(after.isFavorite).toBe(true);
+    // Nobody has a profile until they fill one in; the pipeline reads the flag.
+    expect(await prisma.romanticProfile.findUnique({ where: { contactId: contact.id } })).toBeNull();
+  });
+
+  it("rejects marking someone as dating while the privacy lock is closed", async () => {
+    const contact = await prisma.contact.create({ data: { ownerId, firstName: "Sam" } });
+    actionState.locked = true;
+
+    const result = await markAsRomantic(contact.id);
+
+    expect(result).toMatchObject({ ok: false, error: "Unlock to continue." });
+    const after = await prisma.contact.findUniqueOrThrow({ where: { id: contact.id } });
+    expect(after.isRomantic).toBe(false);
+  });
+
+  it("rejects marking another owner's contact as dating", async () => {
+    const stranger = await createTestUser();
+    const contact = await prisma.contact.create({
+      data: { ownerId: stranger.id, firstName: "Not mine" },
+    });
+
+    const result = await markAsRomantic(contact.id);
+
+    expect(result).toMatchObject({ ok: false, error: "Contact not found." });
+    const after = await prisma.contact.findUniqueOrThrow({ where: { id: contact.id } });
+    expect(after.isRomantic).toBe(false);
+  });
+
+  it("refuses to add an archived contact, rather than reporting a success nobody can see", async () => {
+    // The pipeline leaves archived people out, so the flag alone would be a
+    // lie. The menu hides the action, but a second tab archiving them — or a
+    // form left open — still reaches the endpoint.
+    const contact = await prisma.contact.create({
+      data: { ownerId, firstName: "Sam", isArchived: true },
+    });
+
+    const result = await markAsRomantic(contact.id);
+
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { error?: string }).error).toMatch(/restore them first/i);
+    const after = await prisma.contact.findUniqueOrThrow({ where: { id: contact.id } });
+    expect(after.isRomantic).toBe(false);
+  });
+
   it("the pipeline keys on isRomantic, so an ex does not reappear", async () => {
     const current = await makeRomantic();
     const ex = await makeRomantic();
@@ -304,6 +382,120 @@ describe.skipIf(!hasTestDatabase)("dating", () => {
 
     // ...but their profile is still there if they are flagged again.
     expect(await prisma.romanticProfile.findUnique({ where: { contactId: ex.id } })).not.toBeNull();
+  });
+
+  it("gives the place a date is logged at its city, not just its name", async () => {
+    // Before this the venue reached `resolveLocation` alone, so a place first
+    // seen by logging a date was born with a name and nothing else — no
+    // locality, so nothing could ever measure or map it.
+    const contact = await makeRomantic();
+    const result = await createDateEntry(
+      actionForm({
+        contactId: contact.id,
+        venue: "Corner Cafe",
+        city: "Leeds",
+        occurredAt: new Date().toISOString(),
+      }),
+    );
+    expect(result.ok).toBe(true);
+
+    const place = await prisma.location.findFirstOrThrow({
+      where: { ownerId, normalizedName: "corner cafe" },
+    });
+    expect(place.city).toBe("Leeds");
+
+    // And the entry still keeps the words that were typed, the way
+    // `Interaction.location` does — the place is the identity, not the wording.
+    const entry = await prisma.dateEntry.findFirstOrThrow({
+      where: { contactId: contact.id },
+      include: { interaction: true },
+    });
+    expect(entry.venue).toBe("Corner Cafe");
+    expect(entry.city).toBe("Leeds");
+    expect(entry.interaction.locationId).toBe(place.id);
+  });
+
+  it("reads a logged date's place back through the interaction it mirrors", async () => {
+    // `DateEntry` has no `locationId` of its own on purpose: the fact is stored
+    // once, on the interaction, so the two cannot disagree.
+    const contact = await makeRomantic();
+    await createDateEntry(
+      actionForm({
+        contactId: contact.id,
+        venue: "Corner Cafe",
+        city: "Leeds",
+        occurredAt: new Date().toISOString(),
+      }),
+    );
+    await prisma.location.updateMany({
+      where: { ownerId, normalizedName: "corner cafe" },
+      data: { latitude: 53.8008, longitude: -1.5491 },
+    });
+
+    const [entry] = await listDateEntries(ownerId, contact.id);
+    expect(entry.interaction.place?.name).toBe("Corner Cafe");
+    expect(Number(entry.interaction.place?.latitude)).toBeCloseTo(53.8008, 4);
+  });
+
+  it("does not rewrite a place's city from an old date's wording", async () => {
+    // The city on a date is the wording used at the time; the one on the place
+    // is shared by everything that names it. Editing a date's rating resubmits
+    // the old city, and overwriting on that undid a correction made on the
+    // place page — for every other date at that venue too.
+    const contact = await makeRomantic();
+    const created = await createDateEntry(
+      actionForm({
+        contactId: contact.id,
+        venue: "Corner Cafe",
+        city: "Leeds",
+        occurredAt: new Date().toISOString(),
+      }),
+    );
+    const entryId = (created as { data: { id: string } }).data.id;
+
+    // Corrected on the place's own page, the way anyone would fix it.
+    await prisma.location.updateMany({
+      where: { ownerId, normalizedName: "corner cafe" },
+      data: { city: "Wetherby" },
+    });
+
+    // Now edit something unrelated. The form still carries the old city.
+    await updateDateEntry(
+      actionForm({ id: entryId, venue: "Corner Cafe", city: "Leeds", rating: "5" }),
+    );
+
+    const place = await prisma.location.findFirstOrThrow({
+      where: { ownerId, normalizedName: "corner cafe" },
+    });
+    expect(place.city).toBe("Wetherby");
+    // And the date keeps what was typed at the time, which is its own record.
+    const entry = await prisma.dateEntry.findUniqueOrThrow({ where: { id: entryId } });
+    expect(entry.city).toBe("Leeds");
+  });
+
+  it("does not move a place that was already put on the map", async () => {
+    // Logging a second date at the same venue must not re-place it: the name
+    // says which place is meant, not where it is.
+    const contact = await makeRomantic();
+    await createDateEntry(
+      actionForm({ contactId: contact.id, venue: "Corner Cafe", city: "Leeds", occurredAt: new Date().toISOString() }),
+    );
+    await prisma.location.updateMany({
+      where: { ownerId, normalizedName: "corner cafe" },
+      data: { latitude: 53.8008, longitude: -1.5491 },
+    });
+
+    await createDateEntry(
+      actionForm({ contactId: contact.id, venue: "corner cafe", city: "York", occurredAt: new Date().toISOString() }),
+    );
+
+    const place = await prisma.location.findFirstOrThrow({
+      where: { ownerId, normalizedName: "corner cafe" },
+    });
+    expect(Number(place.latitude)).toBeCloseTo(53.8008, 4);
+    // The locality is filled in, never rewritten — the same rule the
+    // coordinates follow, and for the same reason.
+    expect(place.city).toBe("Leeds");
   });
 
   it("ending records the reason and the retrospective separately", async () => {

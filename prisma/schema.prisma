@@ -56,6 +56,7 @@ model User {
   relationships        Relationship[]
   interactions         Interaction[]
   facts                Fact[]
+  associates           Associate[]
   importantDates       ImportantDate[]
   ideas                Idea[]
   tasks                Task[]
@@ -64,6 +65,7 @@ model User {
   dateEntries          DateEntry[]
   plans                Plan[]
   locations            Location[]
+  locationAliases      LocationAlias[]
   flags                Flag[]
   customFieldDefs      CustomFieldDefinition[]
   customFieldValues    CustomFieldValue[]
@@ -74,6 +76,7 @@ model User {
   dietaryNeeds         DietaryNeed[]
   households           Household[]
   familyDismissals     FamilySuggestionDismissal[]
+  happenings           Happening[]
 }
 
 model Session {
@@ -102,12 +105,27 @@ model UserPreference {
   accent             String  @default("violet") @db.VarChar(24)
   density            String  @default("comfortable") @db.VarChar(16)
   timezone           String  @default("America/New_York") @db.VarChar(64)
-  /// Reserved. Nothing reads this — there is no calendar grid in the app, so
-  /// the control that set it was offering a choice that changed nothing.
+  /// Which day a week starts on: 0 = Sunday, 1 = Monday. Read by the calendar
+  /// grid to decide the column order and how many days of the previous month
+  /// lead the first row. Anything else in the column is treated as Sunday.
   weekStartsOn       Int     @default(0)
   defaultCadenceDays Int?
   digestHour         Int     @default(8)
   digestEnabled      Boolean @default(true)
+
+  /// Where you measure from. The same practical columns as `Location`, minus
+  /// the identity ones — your home is somewhere distances are counted from,
+  /// not a venue you log visits to, so it must never appear in the places list.
+  /// Coordinates are a pair or nothing, like everywhere else that holds them.
+  homeAddress   String?  @db.VarChar(500)
+  homeCity      String?  @db.VarChar(120)
+  homeRegion    String?  @db.VarChar(120)
+  homeCountry   String?  @db.VarChar(120)
+  homeLatitude  Decimal? @db.Decimal(10, 7)
+  homeLongitude Decimal? @db.Decimal(10, 7)
+  /// How distances read: `mi` or `km`. Defaults to `mi` to match the other
+  /// shipped defaults (`America/New_York`, `USD`) rather than to a guess.
+  distanceUnit  String   @default("mi") @db.VarChar(8)
 
   /// Require the PIN before showing the dating module or anything private.
   privacyLockEnabled Boolean @default(false)
@@ -154,6 +172,7 @@ enum TaxonomyKind {
   GIFT_OCCASION
   LIFE_EVENT_TYPE
   PLAN_CATEGORY
+  HAPPENING_TYPE
 }
 
 model TaxonomyTerm {
@@ -190,6 +209,7 @@ model TaxonomyTerm {
   dateEntries             DateEntry[]       @relation("DateActivityType")
   plans                   Plan[]            @relation("PlanCategory")
   gifts                   Gift[]            @relation("GiftOccasion")
+  happenings              Happening[]       @relation("HappeningType")
 
   @@unique([ownerId, kind, slug])
   @@index([ownerId, kind, sortOrder])
@@ -256,6 +276,7 @@ model Contact {
   importantDates          ImportantDate[]
   lifeEvents              LifeEvent[]
   lifeEventParticipations LifeEventParticipant[]
+  happenings              Happening[]
   ideas                   Idea[]
   tasks                   Task[]
   gifts                   Gift[]
@@ -271,7 +292,11 @@ model Contact {
   dismissalsB             FamilySuggestionDismissal[] @relation("DismissalB")
   relationsFrom           Relationship[]              @relation("RelationshipFrom")
   relationsTo             Relationship[]              @relation("RelationshipTo")
+  associates              Associate[]                 @relation("AssociateOf")
+  namedAsAssociate        Associate[]                 @relation("AssociatePromoted")
 
+  /// Referenced by `ContactTag`'s composite key; see the note there.
+  @@unique([ownerId, id])
   @@index([ownerId, isArchived, lastName])
   @@index([ownerId, isArchived, firstName])
   @@index([ownerId, nextTouchAt])
@@ -308,6 +333,18 @@ model Address {
   country    String? @db.VarChar(120)
   notes      String? @db.Text
 
+  /// Where this actually is. Written by the optional address lookup, or typed
+  /// by hand — which is the only route for a private contact, whose address is
+  /// never sent anywhere. Stored as a pair or not at all: half a pair places
+  /// somewhere confidently wrong, exactly as on `Location`.
+  latitude  Decimal? @db.Decimal(10, 7)
+  longitude Decimal? @db.Decimal(10, 7)
+  /// The OpenStreetMap object a lookup matched, when one did. Same reasoning as
+  /// `Location.osmType`/`osmId`: an OSM node/way/relation reference survives a
+  /// reimport where Nominatim's own `place_id` does not.
+  osmType   String?  @db.VarChar(1)
+  osmId     BigInt?
+
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   @@index([contactId])
@@ -324,19 +361,30 @@ model Tag {
   owner    User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   contacts ContactTag[]
 
+  /// Referenced by `ContactTag`'s composite key; see the note there.
+  @@unique([ownerId, id])
   @@unique([ownerId, slug])
   @@index([ownerId, name])
 }
 
+/// The owner is carried on the row itself so both foreign keys can include it.
+/// Two independent keys — one to a contact, one to a tag — say nothing about
+/// each other, so nothing at the database level stopped a row joining one
+/// account's person to another account's tag. An import or a restore could
+/// make one, and every read then needed a predicate remembering to check.
+/// Referencing `(ownerId, id)` on both sides makes the two owners the same
+/// column, so a mismatch cannot be stored at all.
 model ContactTag {
+  ownerId   String
   contactId String
   tagId     String
 
-  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [ownerId, tagId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([contactId, tagId])
   @@index([tagId])
+  @@index([ownerId, tagId])
 }
 
 model Relationship {
@@ -350,14 +398,15 @@ model Relationship {
   pairId        String  @db.VarChar(32)
 
   owner       User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  fromContact Contact      @relation("RelationshipFrom", fields: [fromContactId], references: [id], onDelete: Cascade)
-  toContact   Contact      @relation("RelationshipTo", fields: [toContactId], references: [id], onDelete: Cascade)
+  fromContact Contact      @relation("RelationshipFrom", fields: [ownerId, fromContactId], references: [ownerId, id], onDelete: Cascade)
+  toContact   Contact      @relation("RelationshipTo", fields: [ownerId, toContactId], references: [ownerId, id], onDelete: Cascade)
   type        TaxonomyTerm @relation("RelationshipType", fields: [typeId], references: [id], onDelete: Cascade)
 
   @@unique([fromContactId, toContactId, typeId])
-  @@index([ownerId])
   @@index([toContactId])
   @@index([typeId])
+  @@index([ownerId, fromContactId])
+  @@index([ownerId, toContactId])
   @@index([pairId])
 }
 
@@ -388,6 +437,10 @@ model Interaction {
 
   owner User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   type  TaxonomyTerm? @relation("InteractionType", fields: [typeId], references: [id], onDelete: SetNull)
+  /// Not a same-owner composite key, unlike every other reference in this
+  /// schema: `SET NULL` requires every column of the key to be nullable and
+  /// `ownerId` is not, so MariaDB refuses it. The owner check lives in
+  /// `src/server/services/locations.ts`. See docs/data-model.md.
   place Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   participants    InteractionParticipant[]
@@ -397,6 +450,7 @@ model Interaction {
   ideasUsed       Idea[]                   @relation("IdeaUsedIn")
   plansCarriedOut Plan[]                   @relation("PlanCarriedOut")
 
+  @@unique([ownerId, id])
   @@index([ownerId, occurredAt])
   @@index([typeId])
   @@index([locationId])
@@ -426,41 +480,73 @@ model Location {
   /// instead of a search guess.
   osmType        String?  @db.VarChar(1)
   osmId          BigInt?
+  /// Legacy import source. New code uses LocationAlias; retained so ambiguous
+  /// historical claims remain available for manual resolution.
   aliases        Json     @default("[]")
   isArchived     Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  interactions Interaction[]
-  plans        Plan[]
+  owner           User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  interactions    Interaction[]
+  plans           Plan[]
+  locationAliases LocationAlias[]
 
+  /// Referenced by `LocationAlias`'s composite key; see the note on `ContactTag`.
+  @@unique([ownerId, id])
   @@unique([ownerId, normalizedName])
   @@index([ownerId, isArchived, name])
+}
+
+/// An indexed name by which one owner's place can be resolved. Canonical names
+/// are represented here too, keeping names and aliases in one unique namespace.
+model LocationAlias {
+  id              String   @id @default(cuid())
+  ownerId         String
+  locationId      String
+  value           String   @db.VarChar(191)
+  normalizedValue String   @db.VarChar(191)
+  isCanonical     Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  owner    User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  /// Composite, so an alias cannot point at another account's place; see the
+  /// note on `ContactTag`.
+  location Location @relation(fields: [ownerId, locationId], references: [ownerId, id], onDelete: Cascade)
+
+  @@unique([ownerId, normalizedValue])
+  @@index([locationId])
+  @@index([ownerId, locationId])
 }
 
 /// A person discussed during an interaction but not present. Keeping this
 /// separate prevents a mention from falsely advancing their contact cadence.
 model InteractionMention {
   interactionId String
+  ownerId       String
   contactId     String
 
-  interaction Interaction @relation(fields: [interactionId], references: [id], onDelete: Cascade)
-  contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  interaction Interaction @relation(fields: [ownerId, interactionId], references: [ownerId, id], onDelete: Cascade)
+  contact     Contact     @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([interactionId, contactId])
   @@index([contactId])
+  @@index([ownerId, interactionId])
+  @@index([ownerId, contactId])
 }
 
 model InteractionParticipant {
   interactionId String
+  ownerId       String
   contactId     String
 
-  interaction Interaction @relation(fields: [interactionId], references: [id], onDelete: Cascade)
-  contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  interaction Interaction @relation(fields: [ownerId, interactionId], references: [ownerId, id], onDelete: Cascade)
+  contact     Contact     @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([interactionId, contactId])
   @@index([contactId])
+  @@index([ownerId, interactionId])
+  @@index([ownerId, contactId])
 }
 
 /// "Things to know" about a person.
@@ -479,14 +565,65 @@ model Fact {
   updatedAt           DateTime @updatedAt
 
   owner             User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact           Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact           Contact       @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   category          TaxonomyTerm? @relation("FactCategory", fields: [categoryId], references: [id], onDelete: SetNull)
   sourceInteraction Interaction?  @relation("FactSource", fields: [sourceInteractionId], references: [id], onDelete: SetNull)
 
   @@index([contactId, importance])
-  @@index([ownerId])
   @@index([categoryId])
+  @@index([ownerId, contactId])
   @@index([sourceInteractionId])
+}
+
+/// Someone in a contact's life who is not tracked as a Contact themselves — a
+/// colleague, a sibling's partner, the flatmate they keep mentioning.
+///
+/// Deliberately not a Contact: these people have no cadence, no overdue state
+/// and no profile to fill in. They exist so a conversation can pick up where it
+/// left off. One occasionally turns out to be someone worth keeping track of,
+/// which is what `promotedContactId` records — the entry is kept rather than
+/// deleted, because nothing here is destroyed by a status change.
+///
+/// Named `Associate` rather than the more natural `Acquaintance` because that
+/// word is already a `CONTACT_CATEGORY` label: being filed as an acquaintance
+/// is a different fact from being someone your contact knows and you do not
+/// track, and one schema should not use one word for both.
+model Associate {
+  id                String   @id @default(cuid())
+  ownerId           String
+  contactId         String
+  name              String   @db.VarChar(191)
+  /// How the contact knows them, in the words used at the time —
+  /// "colleague from the hospital". Free text rather than a taxonomy: the
+  /// useful phrasings are one-offs, and a term list would ask for vocabulary
+  /// to be curated for people who are not even being tracked.
+  howTheyKnow       String?  @db.VarChar(191)
+  notes             String?  @db.Text
+  /// Hidden everywhere until the privacy lock is opened.
+  isPrivate         Boolean  @default(false)
+  /// The Contact this entry became, once promoted.
+  ///
+  /// A single-column key, unlike every other relation to a person here. A
+  /// promoted person may be deleted without taking the note with them, and
+  /// MariaDB refuses a `SET NULL` foreign key unless every column in it is
+  /// nullable — which `ownerId` is not. Same constraint, and the same
+  /// compensation, as `Interaction.place` and `Plan.place`: the owner is
+  /// checked in the query instead.
+  ///
+  /// This pointer is the whole of the "now tracked" state. There is no
+  /// `promotedAt` beside it, because SET NULL can revoke the pointer and a
+  /// timestamp left behind would claim a promotion that no longer exists.
+  promotedContactId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  owner    User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact  Contact  @relation("AssociateOf", fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
+  promoted Contact? @relation("AssociatePromoted", fields: [promotedContactId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, contactId])
+  @@index([contactId, name])
+  @@index([promotedContactId])
 }
 
 enum DateRecurrence {
@@ -523,11 +660,12 @@ model ImportantDate {
   updatedAt          DateTime       @updatedAt
 
   owner   User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact Contact       @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   type    TaxonomyTerm? @relation("ImportantDateType", fields: [typeId], references: [id], onDelete: SetNull)
 
   @@index([contactId])
   @@index([ownerId, date])
+  @@index([ownerId, contactId])
   @@index([typeId])
 }
 
@@ -554,12 +692,14 @@ model LifeEvent {
   updatedAt    DateTime       @updatedAt
 
   owner        User                   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact      Contact                @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact      Contact                @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   type         TaxonomyTerm?          @relation("LifeEventType", fields: [typeId], references: [id], onDelete: SetNull)
   participants LifeEventParticipant[]
 
+  @@unique([ownerId, id])
   @@index([contactId, date])
   @@index([ownerId, date])
+  @@index([ownerId, contactId])
   @@index([typeId])
 }
 
@@ -567,13 +707,16 @@ model LifeEvent {
 /// remains the anchor for compatibility and ownership-by-parent semantics.
 model LifeEventParticipant {
   lifeEventId String
+  ownerId     String
   contactId   String
 
-  lifeEvent LifeEvent @relation(fields: [lifeEventId], references: [id], onDelete: Cascade)
-  contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  lifeEvent LifeEvent @relation(fields: [ownerId, lifeEventId], references: [ownerId, id], onDelete: Cascade)
+  contact   Contact   @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([lifeEventId, contactId])
   @@index([contactId])
+  @@index([ownerId, lifeEventId])
+  @@index([ownerId, contactId])
 }
 
 /// A named group of people who belong together — "The Whitfields", "Mum and
@@ -591,22 +734,26 @@ model Household {
   owner   User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   members HouseholdMember[]
 
+  @@unique([ownerId, id])
   @@unique([ownerId, name])
   @@index([ownerId])
 }
 
 model HouseholdMember {
   householdId String
+  ownerId     String
   contactId   String
   /// Optional label within the household: "Mum", "eldest", "the dog".
   role        String? @db.VarChar(96)
   sortOrder   Int     @default(0)
 
-  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  contact   Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  household Household @relation(fields: [ownerId, householdId], references: [ownerId, id], onDelete: Cascade)
+  contact   Contact   @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([householdId, contactId])
   @@index([contactId])
+  @@index([ownerId, householdId])
+  @@index([ownerId, contactId])
 }
 
 /// A pair you have told the app to stop suggesting a relationship for.
@@ -622,11 +769,12 @@ model FamilySuggestionDismissal {
   dismissedAt DateTime @default(now())
 
   owner    User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  aContact Contact @relation("DismissalA", fields: [aContactId], references: [id], onDelete: Cascade)
-  bContact Contact @relation("DismissalB", fields: [bContactId], references: [id], onDelete: Cascade)
+  aContact Contact @relation("DismissalA", fields: [ownerId, aContactId], references: [ownerId, id], onDelete: Cascade)
+  bContact Contact @relation("DismissalB", fields: [ownerId, bContactId], references: [ownerId, id], onDelete: Cascade)
 
   @@id([ownerId, aContactId, bContactId])
   @@index([aContactId])
+  @@index([ownerId, bContactId])
   @@index([bContactId])
 }
 
@@ -650,11 +798,12 @@ model Idea {
   updatedAt           DateTime   @updatedAt
 
   owner             User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact           Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact           Contact?     @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   usedInInteraction Interaction? @relation("IdeaUsedIn", fields: [usedInInteractionId], references: [id], onDelete: SetNull)
 
   @@index([ownerId, status])
   @@index([contactId, status])
+  @@index([ownerId, contactId])
   @@index([usedInInteractionId])
 }
 
@@ -676,11 +825,92 @@ model Task {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  owner   User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  owner     User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact   Contact?   @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
+  /// Set when this task is the "ask how it went" follow-up for a happening.
+  happening Happening? @relation("HappeningFollowUp")
 
   @@index([ownerId, completedAt, dueDate])
+  @@index([ownerId, contactId])
   @@index([contactId])
+}
+
+/// How much of their day something takes up, for deciding whether to ask them
+/// along to anything else.
+///
+/// An enum rather than a taxonomy because the code branches on it: it picks the
+/// badge, groups and orders the dashboard widget, and answers "who is
+/// unavailable this week". What *kind* of thing it is stays a HAPPENING_TYPE
+/// term the user can rename and add to.
+enum AvailabilityImpact {
+  NONE
+  BUSY
+  AWAY
+}
+
+/// Something going on in someone else's life that you are not part of.
+///
+/// The fifth kind of dated thing here, and deliberately none of the other four.
+/// A Plan is something you do *with* them, so it carries a cost, a checklist
+/// and a link, and it ends by becoming an Interaction. A LifeEvent is their
+/// history and keeps forever. An ImportantDate recurs and wants a yearly
+/// notification. A Task is your errand. "She is in Portugal from the 12th" is
+/// none of those: one-off, near-future, and finished the moment it passes.
+///
+/// It earns the table by being useful twice. Before, it stops you inviting
+/// someone who is away. After, it is the thing you meant to ask about.
+///
+/// Field names deliberately match LifeEvent — `date`, `precision`, `endDate`,
+/// `endPrecision` — so the partial-date form reader, the range validator and
+/// the range formatter are the same code rather than a second copy that drifts.
+///
+/// Carries no `isPrivate` of its own, like LifeEvent, Plan and Task: the anchor
+/// contact is the marker, and the queries filter through it.
+model Happening {
+  id        String  @id @default(cuid())
+  ownerId   String
+  contactId String
+  typeId    String?
+
+  title  String  @db.VarChar(191)
+  notes  String? @db.Text
+  /// Where you heard it — "mentioned at dinner", "saw it on Instagram".
+  /// Informal information is mostly secondhand, and how you came by it is what
+  /// tells you whether to raise it and how confidently.
+  source String? @db.VarChar(191)
+
+  date         DateTime       @db.Date
+  precision    DatePrecision  @default(DAY)
+  /// Set when it spans days, e.g. a trip. Null means the one day.
+  endDate      DateTime?      @db.Date
+  endPrecision DatePrecision?
+
+  availability AvailabilityImpact @default(NONE)
+  /// Heard secondhand, or not firm yet. A marker you add rather than a third
+  /// enum value, so an unmarked row claims nothing either way.
+  isTentative  Boolean            @default(false)
+
+  /// The "ask how it went" task, when one was wanted. The pointer lives here
+  /// rather than on Task so nothing existing gained a column, and SetNull means
+  /// deleting the task by hand leaves this row intact.
+  followUpTaskId String?   @unique
+  /// Dismissed from the "just wrapped up" list. A timestamp rather than a
+  /// delete: acknowledging is a status change, and those destroy nothing.
+  acknowledgedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  contact      Contact       @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
+  type         TaxonomyTerm? @relation("HappeningType", fields: [typeId], references: [id], onDelete: SetNull)
+  followUpTask Task?         @relation("HappeningFollowUp", fields: [followUpTaskId], references: [id], onDelete: SetNull)
+
+  @@index([contactId, date])
+  @@index([ownerId, date])
+  @@index([ownerId, endDate])
+  @@index([ownerId, contactId])
+  @@index([typeId])
 }
 
 enum GiftStatus {
@@ -713,11 +943,12 @@ model Gift {
   updatedAt   DateTime      @updatedAt
 
   owner    User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact  Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact  Contact       @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   occasion TaxonomyTerm? @relation("GiftOccasion", fields: [occasionId], references: [id], onDelete: SetNull)
 
   @@index([contactId, status])
   @@index([ownerId, status])
+  @@index([ownerId, contactId])
   @@index([occasionId])
 }
 
@@ -748,9 +979,10 @@ model Debt {
   updatedAt   DateTime      @updatedAt
 
   owner   User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@index([contactId, settledOn])
+  @@index([ownerId, contactId])
   @@index([ownerId, settledOn])
 }
 
@@ -796,8 +1028,9 @@ model DietaryNeed {
   updatedAt               DateTime        @updatedAt
 
   owner   User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
+  @@index([ownerId, contactId])
   @@index([contactId, category, kind])
 }
 
@@ -891,10 +1124,11 @@ model RomanticProfile {
   updatedAt DateTime @updatedAt
 
   owner   User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact Contact       @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   stage   TaxonomyTerm? @relation("DatingStage", fields: [stageId], references: [id], onDelete: SetNull)
   source  TaxonomyTerm? @relation("DatingSource", fields: [sourceId], references: [id], onDelete: SetNull)
 
+  @@unique([ownerId, contactId])
   @@index([ownerId, stageId])
   @@index([sourceId])
 }
@@ -937,12 +1171,12 @@ model DateEntry {
   updatedAt DateTime @updatedAt
 
   owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact      Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact      Contact       @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   interaction  Interaction   @relation(fields: [interactionId], references: [id], onDelete: Cascade)
   activityType TaxonomyTerm? @relation("DateActivityType", fields: [activityTypeId], references: [id], onDelete: SetNull)
 
   @@index([contactId, sequence])
-  @@index([ownerId])
+  @@index([ownerId, contactId])
   @@index([activityTypeId])
 }
 
@@ -987,25 +1221,51 @@ model Plan {
   estimatedCostCents Int?
   currency           String @default("USD") @db.VarChar(8)
 
-  notes      String?    @db.Text
+  notes                  String?    @db.Text
   /// Local, user-edited preparation steps; each item has id, text and completed.
-  checklist  Json       @default("[]")
-  status     PlanStatus @default(OPEN)
+  checklist              Json       @default("[]")
+  status                 PlanStatus @default(OPEN)
   /// Pencilled in, before there is anything logged to point at.
-  plannedFor DateTime?  @db.Date
+  plannedFor             DateTime?  @db.Date
+  /// Local wall-clock minutes past midnight on `plannedFor`, 0-1439. A day and
+  /// a local minute rather than an instant, because the day is what recurs, is
+  /// compared and is displayed; `zonedTimeOfDay` resolves the pair against the
+  /// account's timezone at the point something actually needs a moment.
+  /// Meaningless without a day, so it is cleared when `plannedFor` is null.
+  plannedStartMinute     Int?
+  /// How long to set aside, in minutes. Null = open-ended.
+  plannedDurationMinutes Int?
 
   usedAt              DateTime?
   /// What it became. An interaction rather than a DateEntry: a plan carried
   /// out with a friend never produces one of those.
   usedInInteractionId String?
+  /// Which days before `plannedFor` to be reminded on, same shape and meaning
+  /// as `ImportantDate.reminderDaysBefore`. Null means **no reminders** here,
+  /// deliberately unlike an important date, where null means the account
+  /// default: an arrangement you made is not something the app should start
+  /// announcing on its own, and every already-scheduled plan would otherwise
+  /// have begun sending on the first hourly pass after the upgrade.
+  reminderDaysBefore  Json?
+  /// Set only on a completed copy of a shared ("Anyone") idea, which has no
+  /// original row to claim: `<sourcePlanId>:<contactId>:<local day>`. The
+  /// unique index is what makes that path replay-safe — a second tab or a
+  /// replayed POST collides instead of writing a second finished copy and a
+  /// second timeline entry. Null everywhere else, and MySQL and MariaDB both
+  /// allow unlimited NULLs under a unique index.
+  completionKey       String?   @db.VarChar(191)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// Not a same-owner composite key, unlike every other reference in this
+  /// schema: `SET NULL` requires every column of the key to be nullable and
+  /// `ownerId` is not, so MariaDB refuses it. The owner check lives in
+  /// `src/server/services/locations.ts`. See docs/data-model.md.
   place Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   owner             User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact           Contact?      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact           Contact?      @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
   category          TaxonomyTerm? @relation("PlanCategory", fields: [categoryId], references: [id], onDelete: SetNull)
   usedInInteraction Interaction?  @relation("PlanCarriedOut", fields: [usedInInteractionId], references: [id], onDelete: SetNull)
 
@@ -1013,6 +1273,8 @@ model Plan {
   @@index([contactId, status])
   @@index([categoryId])
   @@index([usedInInteractionId])
+  @@unique([ownerId, completionKey])
+  @@index([ownerId, contactId])
   @@index([locationId])
 }
 
@@ -1034,9 +1296,10 @@ model Flag {
   createdAt DateTime  @default(now())
 
   owner   User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
 
   @@index([contactId, kind])
+  @@index([ownerId, contactId])
   @@index([ownerId, kind])
 }
 
@@ -1146,29 +1409,35 @@ enum ReminderEntity {
   CADENCE
   TASK
   DIGEST
+  PLAN
 }
 
 /// Dedupe ledger so a restart never re-sends a reminder.
 model ReminderLog {
-  id            String         @id @default(cuid())
-  ownerId       String
-  entityType    ReminderEntity
-  entityId      String         @db.VarChar(64)
+  id               String         @id @default(cuid())
+  ownerId          String
+  entityType       ReminderEntity
+  entityId         String         @db.VarChar(64)
+  /// Explicit rule which produced this delivery; retries re-evaluate that rule.
+  schedulingPolicy String         @db.VarChar(32)
+  /// Immutable, channel-specific occurrence key used for restart-safe deduplication.
+  dedupKey         String         @db.VarChar(64)
   /// The occurrence, not the processing instant. Together with offset/channel it is the idempotency key.
-  scheduledFor  DateTime       @db.Date
-  offsetDays    Int            @default(0)
-  sentAt        DateTime?
-  channelId     String?
-  ok            Boolean        @default(false)
-  attemptCount  Int            @default(0)
-  nextAttemptAt DateTime?
-  error         String?        @db.Text
+  scheduledFor     DateTime       @db.Date
+  offsetDays       Int            @default(0)
+  sentAt           DateTime?
+  channelId        String?
+  ok               Boolean        @default(false)
+  attemptCount     Int            @default(0)
+  nextAttemptAt    DateTime?
+  error            String?        @db.Text
 
   owner   User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   channel NotificationChannel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
 
   // Keep the physical name below MariaDB's 64-character identifier limit.
   @@unique([ownerId, entityType, entityId, scheduledFor, offsetDays, channelId], map: "ReminderLog_delivery_key")
+  @@unique([ownerId, dedupKey], map: "ReminderLog_dedup_key")
   @@index([ownerId, sentAt])
   @@index([channelId])
 }

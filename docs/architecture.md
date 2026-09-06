@@ -15,7 +15,7 @@ How the app is put together, and why it is put together that way.
 
 There is no separate API service and no client-side data store. Pages are
 server components that query Prisma directly; mutations are server actions.
-The one HTTP endpoint is `/api/health`, which exists for the container
+The public HTTP endpoint is `/api/health`, which exists for the container
 healthcheck.
 
 ## Directory map
@@ -28,7 +28,8 @@ src/
                     unlock
     (auth)/         login, signup, first-run setup
     (onboarding)/   the welcome flow, once per account
-    api/health/     container healthcheck (the only route handler)
+    api/health/     container healthcheck
+    api/avatars/    authenticated, owner- and privacy-filtered avatar reads
     offline/        what the service worker serves for an uncached page
     manifest.ts     PWA manifest;  icon.tsx / apple-icon.tsx draw them at build
                     time;  not-found.tsx is the 404
@@ -174,18 +175,19 @@ well as a runtime one.
 s6-overlay orders a chain of oneshots before the app is allowed to serve:
 
 ```
-init-perms  →  init-preflight  →  init-mariadb  →  svc-mariadb  →  init-db-ready  →  init-migrate  →  svc-app
+init-perms → init-preflight → init-mariadb → svc-mariadb → init-db-ready → init-migrate → svc-app + svc-backup
 ```
 
 | Step | Does |
 | --- | --- |
 | `init-perms` | Creates the `abc` user from `PUID`/`PGID`, makes `/config` writable, creates `db/ uploads/ backups/ logs/ cache/`. Only chowns recursively when the top-level owner is actually wrong. First, because preflight's writability check needs the directory to exist and be owned correctly |
-| `init-preflight` | Validates what the operator supplied — `APP_URL`, a writable `/config` — before any service starts. Ordered ahead of the database deliberately: a wrong value is far easier to read here than as a failure three services later |
+| `init-preflight` | Validates what the operator supplied — `APP_URL`, a writable `/config` — before any service starts. Ordered ahead of the database deliberately: a wrong value is far easier to read here than as a failure three services later. It validates each setting as its consumer will see it: `configured` means the raw value is non-empty, which is what the shell's `:-` default and `-n` test, rather than what a trim would say |
 | `init-mariadb` | Generates `/config/secrets.json` (0600) on first boot with a random DB password and `authSecret`, initialises the data directory, publishes `DATABASE_URL` and `AUTH_SECRET` into the supervision tree. Skipped entirely when `DATABASE_URL` is set |
 | `svc-mariadb` | The bundled server (longrun) |
 | `init-db-ready` | Waits for the socket |
 | `init-migrate` | `prisma migrate deploy` |
 | `svc-app` | `node server.js` (Next standalone) |
+| `svc-backup` | Daily consistent `mariadb-dump`, starting only after migrations; atomic publication, overlap lock, disk guard, and retention |
 
 Because the secrets file is generated once and reused, sessions and the database
 survive an image replacement — upgrading is `docker pull` and restart.
@@ -228,7 +230,7 @@ can mutate data while disconnected.
 | `/people/[id]` | Cacheable read-only | Conditional: only a non-private contact with no dating section, plus the account-wide gate. Query strings are cached as distinct pages. |
 | `/timeline` | Cacheable read-only | Interactions and their participants are privacy-filtered; account-wide gate applies. |
 | `/locations` | Cacheable read-only | Canonical places aggregate only privacy-filtered interactions and plans; counts use the same scope. |
-| `/tasks` | Cacheable read-only | Tasks without a contact and tasks attached to a visible contact only; account-wide gate applies. |
+| `/tasks` | Cacheable read-only | Due cadences for visible contacts, plus tasks without a contact and tasks attached to a visible contact; account-wide gate applies. |
 | `/gifts` | Cacheable read-only | Gifts inherit contact privacy; account-wide gate applies. |
 | `/ideas` | Cacheable read-only | General ideas/plans and those attached to visible contacts only; contact pickers are filtered; account-wide gate applies. |
 | `/family` | Cacheable read-only | Relationships, contacts, suggestions, household members, and every household associated with a private contact are privacy-filtered; empty households remain visible. The account-wide gate applies, and each `anchor` query is a distinct saved page. |
@@ -241,6 +243,7 @@ can mutate data while disconnected.
 | `/unlock` | Deliberately unavailable | The privacy boundary must always be evaluated live. |
 | `/login`, `/signup`, `/setup`, `/welcome` | Deliberately unavailable | Authentication and onboarding state must always be evaluated live. |
 | `/api/health` | Deliberately unavailable | A cached health response would be false; the worker never handles `/api/*`. |
+| `/api/avatars/[filename]` | Deliberately unavailable | Authenticated and privacy-filtered; `private, no-store`, and the worker never handles `/api/*`. |
 | `/_not-found` | Deliberately unavailable | Framework error output is not an application data page and never opts in. |
 | `/manifest.webmanifest` | Deliberately unavailable | Installation metadata is fetched from the network and is not a saved application page. |
 | `/icon` | Cacheable read-only | Public generated artwork contains no account data and may be stored in the asset cache; it does not opt a page into the page cache. |

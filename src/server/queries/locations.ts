@@ -1,6 +1,8 @@
 import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
+import { pointOf, withDistance, type Point, type Unit } from "@/lib/geo";
+import { mapLinkFor } from "@/lib/locations";
 import {
   interactionPrivacyWhere,
   privacyScope,
@@ -29,12 +31,80 @@ export function locationVisibleWhere(
   return {
     ownerId,
     AND: [
-      { OR: [
-        { interactions: { some: { ownerId, ...interactionPrivacyWhere(scope) } } },
-        { plans: { some: { ownerId, ...viaOptionalContactPrivacyWhere(scope) } } },
-      ] },
+      {
+        OR: [
+          {
+            interactions: {
+              some: { ownerId, ...interactionPrivacyWhere(scope) },
+            },
+          },
+          {
+            plans: {
+              some: { ownerId, ...viaOptionalContactPrivacyWhere(scope) },
+            },
+          },
+        ],
+      },
     ],
   };
+}
+
+/**
+ * Placed places, nearest to a point first.
+ *
+ * The point of the whole address change: standing on somebody's page, the
+ * question is not "what are all my places" but "what is near enough to suggest".
+ *
+ * Sorted in process rather than by `ST_Distance_Sphere`. Reaching that function
+ * means raw SQL, which would lose both Prisma's typing and — the part that
+ * matters — the privacy where-fragments this app requires be applied in the
+ * query itself rather than after it. One account's places number in the tens,
+ * so the trade is not a close one.
+ */
+export async function listLocationsNear(
+  ownerId: string,
+  origin: Point | null,
+  options: { unit: Unit; take?: number },
+) {
+  if (!origin) return [];
+
+  const scope = await privacyScope();
+  const visible = locationVisibleWhere(ownerId, scope);
+  const rows = await prisma.location.findMany({
+    where: {
+      ...visible,
+      isArchived: false,
+      // Only placed rows: an unplaced one can never sort anywhere meaningful,
+      // and padding the list with "distance unknown" answers a question nobody
+      // asked.
+      latitude: { not: null },
+      longitude: { not: null },
+    },
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      city: true,
+      region: true,
+      country: true,
+      latitude: true,
+      longitude: true,
+      osmType: true,
+      osmId: true,
+    },
+  });
+
+  return withDistance(rows, origin, options.unit, pointOf, { sort: true })
+    .slice(0, options.take ?? 5)
+    .map((row) => ({
+      ...row,
+      // `Decimal` and `BigInt` do not survive the crossing into a client
+      // component, and the map link is built from them.
+      mapHref: mapLinkFor(row),
+      latitude: row.latitude === null ? null : String(row.latitude),
+      longitude: row.longitude === null ? null : String(row.longitude),
+      osmId: row.osmId === null ? null : String(row.osmId),
+    }));
 }
 
 export async function listLocations(ownerId: string, search?: string) {
@@ -48,14 +118,30 @@ export async function listLocations(ownerId: string, search?: string) {
       AND: [
         ...(visible.AND as Prisma.LocationWhereInput[]),
         ...(search?.trim()
-          ? [{ OR: [{ name: { contains: search.trim() } }, { address: { contains: search.trim() } }] }]
+          ? [
+              {
+                OR: [
+                  { name: { contains: search.trim() } },
+                  { address: { contains: search.trim() } },
+                  {
+                    locationAliases: {
+                      some: { ownerId, value: { contains: search.trim() } },
+                    },
+                  },
+                ],
+              },
+            ]
           : []),
       ],
     },
     include: {
       interactions: {
         where: interactionWhere,
-        select: { occurredAt: true, sentiment: true, participants: { select: { contactId: true } } },
+        select: {
+          occurredAt: true,
+          sentiment: true,
+          participants: { select: { contactId: true } },
+        },
         orderBy: { occurredAt: "desc" },
       },
       plans: {
@@ -68,10 +154,18 @@ export async function listLocations(ownerId: string, search?: string) {
   return rows.map((row) => ({
     ...row,
     visitCount: row.interactions.length,
-    peopleCount: new Set(row.interactions.flatMap((item) => item.participants.map((p) => p.contactId))).size,
+    peopleCount: new Set(
+      row.interactions.flatMap((item) =>
+        item.participants.map((p) => p.contactId),
+      ),
+    ).size,
     lastVisitedAt: row.interactions[0]?.occurredAt ?? null,
-    averageSentiment: average(row.interactions.flatMap((item) => item.sentiment ?? [])),
-    openPlanCount: row.plans.filter((plan) => plan.status === "OPEN" || plan.status === "PLANNED").length,
+    averageSentiment: average(
+      row.interactions.flatMap((item) => item.sentiment ?? []),
+    ),
+    openPlanCount: row.plans.filter(
+      (plan) => plan.status === "OPEN" || plan.status === "PLANNED",
+    ).length,
   }));
 }
 
@@ -90,7 +184,16 @@ export async function listLocationOptions(ownerId: string) {
   const scope = await privacyScope();
   return prisma.location.findMany({
     where: { ...locationVisibleWhere(ownerId, scope), isArchived: false },
-    select: { id: true, name: true },
+    select: {
+      id: true,
+      name: true,
+      // Owner-filtered like every other read of this relation: the alias's
+      // ownerId and its location's are two independent columns, so an import
+      // or a restore can leave one account's alias hanging off another
+      // account's place, and an unfiltered include hands its value straight to
+      // quick-add matching.
+      locationAliases: { where: { ownerId }, select: { value: true } },
+    },
     // By name, not by recency: a "most recently visited" order derived from
     // unfiltered visits is a signal that shifts when the lock opens.
     //
@@ -122,13 +225,22 @@ export async function getLocation(ownerId: string, id: string) {
         where: visibleInteraction,
         include: {
           type: true,
-          participants: { include: { contact: { select: { id: true, firstName: true, lastName: true } } } },
+          participants: {
+            include: {
+              contact: {
+                select: { id: true, firstName: true, lastName: true },
+              },
+            },
+          },
         },
         orderBy: { occurredAt: "desc" },
       },
+      locationAliases: { where: { ownerId }, orderBy: { value: "asc" } },
       plans: {
         where: visiblePlan,
-        include: { contact: { select: { id: true, firstName: true, lastName: true } } },
+        include: {
+          contact: { select: { id: true, firstName: true, lastName: true } },
+        },
         orderBy: { createdAt: "desc" },
       },
     },
@@ -143,7 +255,10 @@ export async function listContactLocations(ownerId: string, contactId: string) {
   // account had visited came back as this person's. AND keeps both.
   const theirs = {
     ownerId,
-    AND: [{ participants: { some: { contactId } } }, interactionPrivacyWhere(scope)],
+    AND: [
+      { participants: { some: { contactId } } },
+      interactionPrivacyWhere(scope),
+    ],
   };
   const rows = await prisma.location.findMany({
     where: { ownerId, interactions: { some: theirs } },
@@ -156,9 +271,16 @@ export async function listContactLocations(ownerId: string, contactId: string) {
     },
     orderBy: { name: "asc" },
   });
-  return rows.map((row) => ({ id: row.id, name: row.name, visits: row.interactions.length, lastVisitedAt: row.interactions[0]?.occurredAt ?? null }));
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    visits: row.interactions.length,
+    lastVisitedAt: row.interactions[0]?.occurredAt ?? null,
+  }));
 }
 
 function average(values: number[]): number | null {
-  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  return values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : null;
 }

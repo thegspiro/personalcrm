@@ -2,11 +2,23 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import { normalizeLocationName } from "@/lib/locations";
 import { locationVisibleWhere } from "@/server/queries/locations";
+// A "use server" module may only export async functions, so the candidate
+// shape and its mapper live beside the provider table rather than here.
+import type { GeoCandidateView } from "@/server/geo/providers";
 import { privacyScope } from "@/server/privacy/filter";
-import { type ActionResult, fail, fieldError, invalid, ok, owner, str } from "./helpers";
+import {
+  type ActionResult,
+  fail,
+  fieldError,
+  invalid,
+  ok,
+  owner,
+  str,
+} from "./helpers";
 
 /**
  * Editing a place.
@@ -20,6 +32,22 @@ import { type ActionResult, fail, fieldError, invalid, ok, owner, str } from "./
  * hides a place from the lists while its history stays reachable.
  */
 
+/**
+ * A name as the `(ownerId, normalizedValue)` index will compare it.
+ *
+ * The column is utf8mb4_unicode_ci, which folds accents as well as case;
+ * `normalizeLocationName`, which decides what is *stored*, deliberately does
+ * not. Two spellings that differ only by an accent are therefore one key in
+ * the database and two everywhere else, and inserting both is a constraint
+ * error rather than a message on the form. This is only ever used to compare
+ * — nothing built from it is written.
+ */
+function indexKey(value: string): string {
+  return normalizeLocationName(value)
+    .normalize("NFD")
+    .replace(/\p{M}+/gu, "");
+}
+
 const schema = z.object({
   name: z.string().trim().min(1, "Give the place a name.").max(191),
   address: z.string().trim().max(500).optional(),
@@ -29,6 +57,7 @@ const schema = z.object({
   phone: z.string().trim().max(64).optional(),
   url: z.string().trim().url("That isn't a valid link.").max(500).optional(),
   notes: z.string().trim().optional(),
+  aliases: z.string().max(4000).optional(),
 });
 
 /**
@@ -62,7 +91,14 @@ async function visibleLocation(ownerId: string, id: string) {
   const scope = await privacyScope();
   return prisma.location.findFirst({
     where: { id, ...locationVisibleWhere(ownerId, scope) },
-    select: { id: true, normalizedName: true },
+    select: {
+      id: true,
+      normalizedName: true,
+      // Owner-filtered for the same reason the queries are: a cross-owner row
+      // must not decide whether this account's aliases changed, nor be
+      // rendered back into the editor.
+      locationAliases: { where: { ownerId } },
+    },
   });
 }
 
@@ -92,11 +128,41 @@ export async function updateLocation(form: FormData): Promise<ActionResult> {
     phone: str(form, "phone"),
     url: str(form, "url"),
     notes: str(form, "notes"),
+    aliases: str(form, "aliases"),
   });
   if (!parsed.success) return invalid(parsed.error);
 
   const name = parsed.data.name.replace(/\s+/g, " ");
   const normalizedName = normalizeLocationName(name);
+  // One per line, which is what the field asks for and how it is rendered
+  // back. Splitting on commas as well took "Washington, D.C." to be two
+  // places, and left the generic half of it resolving quick-add text to the
+  // wrong venue.
+  // Deduplicated on the key the *index* compares by, not the one stored.
+  // `normalizeLocationName` is deliberately conservative — whitespace and case
+  // only — while `(ownerId, normalizedValue)` is utf8mb4_unicode_ci, which
+  // also folds accents. "Cafe" and "Café" were therefore two entries here and
+  // one key there, so both reached `createMany` and an ordinary place edit
+  // died on a constraint error. The stored `normalizedValue` is unchanged;
+  // only the comparison is widened to match what the database will do.
+  const aliasByKey = new Map<string, string>();
+  for (const value of (parsed.data.aliases ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/\s+/g, " "))
+    .filter(Boolean)) {
+    // First spelling wins, so the choice does not depend on the order the
+    // duplicates happen to appear in and re-saving the form is stable.
+    if (!aliasByKey.has(indexKey(value))) aliasByKey.set(indexKey(value), value);
+  }
+  const aliases = Array.from(aliasByKey.values())
+    .map((value) => ({ value, normalizedValue: normalizeLocationName(value) }))
+    .filter(({ value }) => indexKey(value) !== indexKey(name));
+
+  // Each one is a row of its own, in a column the combined 4,000-character
+  // bound on the whole field says nothing about; over it, createMany throws
+  // a length error nobody catches.
+  if (aliases.some(({ value, normalizedValue }) => value.length > 191 || normalizedValue.length > 191))
+    return fieldError("aliases", "Keep each alternate name under 191 characters.");
 
   if (normalizedName !== existing.normalizedName) {
     // Renaming is refused outright while the lock is closed — every rename,
@@ -116,47 +182,169 @@ export async function updateLocation(form: FormData): Promise<ActionResult> {
       return fieldError("name", "Unlock to rename a place.");
     }
 
-    const clash = await prisma.location.findUnique({
-      where: { ownerId_normalizedName: { ownerId, normalizedName } },
-      select: { id: true },
-    });
+    // Both indexes are asked, because the alias table is derived from the
+    // Location table rather than authoritative over it: a row whose canonical
+    // claim is missing — an import, a half-applied fix, a process straddling
+    // the upgrade — is invisible to the alias lookup, and the rename then
+    // reaches the Location unique key as a raw constraint error rather than
+    // as something the form can show. resolveLocation already falls back this
+    // way for the same reason.
+    const [named, claimed] = await Promise.all([
+      prisma.location.findUnique({
+        where: { ownerId_normalizedName: { ownerId, normalizedName } },
+        select: { id: true },
+      }),
+      prisma.locationAlias.findUnique({
+        where: {
+          ownerId_normalizedValue: { ownerId, normalizedValue: normalizedName },
+        },
+        select: { locationId: true },
+      }),
+    ]);
     // Never merge on a name collision. Two real venues can be spelled alike,
     // and folding one into the other would take a history with it.
-    if (clash && clash.id !== id) {
-      return fieldError("name", "You already have a different place with that name.");
+    if ((named && named.id !== id) || (claimed && claimed.locationId !== id)) {
+      return fieldError(
+        "name",
+        "You already have a different place with that name.",
+      );
     }
   }
 
+  // Changing the aliases is refused while locked, for the reason the rename
+  // above is: the collision check below asks the same question of the whole
+  // account, hidden places included. Keeping the canonical name unchanged
+  // walked straight past the rename guard, and then a guessed alias came back
+  // as "Another place already uses that name or alias" while a free one saved
+  // — the same oracle by a different field. Only a *change* is refused, so
+  // every other edit still saves with the aliases the form resubmits.
+  const submitted = new Set(aliases.map((alias) => alias.normalizedValue));
+  const stored = new Set(
+    existing.locationAliases
+      .filter((alias) => !alias.isCanonical)
+      .map((alias) => alias.normalizedValue),
+  );
+  const aliasesChanged =
+    submitted.size !== stored.size ||
+    [...submitted].some((value) => !stored.has(value));
+  if (aliasesChanged) {
+    const scope = await privacyScope();
+    if (scope.enabled && !scope.unlocked)
+      return fieldError("aliases", "Unlock to change a place's other names.");
+  }
+
+  const claims = [
+    normalizedName,
+    ...aliases.map((alias) => alias.normalizedValue),
+  ];
+  // Both namespaces are asked, for the reason the rename guard above gives:
+  // the alias table is derived from the Location table rather than
+  // authoritative over it. A place whose canonical claim is missing — an
+  // import, a half-applied fix, a process straddling the upgrade — is
+  // invisible to the alias lookup, so its name could be claimed here as
+  // somebody else's alias. `resolveLocation` consults aliases first, so every
+  // later mention of that place's own name would then be filed against the
+  // wrong one.
+  const [conflictingAlias, conflictingName] = await Promise.all([
+    prisma.locationAlias.findFirst({
+      where: {
+        ownerId,
+        normalizedValue: { in: claims },
+        locationId: { not: id },
+      },
+      select: { id: true },
+    }),
+    prisma.location.findFirst({
+      where: { ownerId, normalizedName: { in: claims }, id: { not: id } },
+      select: { id: true },
+    }),
+  ]);
+  if (conflictingAlias || conflictingName)
+    return fieldError(
+      "aliases",
+      "Another place already uses that name or alias.",
+    );
+
+  // Where the place is, when the save says anything about it.
+  //
   // A lookup the user accepted rides along with the save rather than writing on
   // its own. Accepting used to submit only the candidate and close the panel,
   // which silently threw away any name, phone or note typed beforehand.
+  //
+  // Coordinates can also be typed straight in, which is the only way to place
+  // anything at all on the shipped configuration — address lookup is off by
+  // default, and without this every distance in the app would be dead on
+  // arrival for anyone who never switches it on.
+  //
+  // Presence, not value, decides whether identity is the subject of this save:
+  // a form that does not carry the coordinate fields leaves what is stored
+  // alone, so a panel that only edits a phone number cannot silently unplace a
+  // venue. Present-but-empty clears it, which is how a bad match is undone.
   let identity: LocationIdentity = {};
-  if (str(form, "lookupApplied")) {
+  const carriesIdentity =
+    Boolean(str(form, "lookupApplied")) || form.has("latitude") || form.has("longitude");
+  if (carriesIdentity) {
     const lookup = lookupSchema.safeParse({
       latitude: str(form, "latitude"),
       longitude: str(form, "longitude"),
       osmType: str(form, "osmType"),
       osmId: str(form, "osmId"),
     });
-    if (!lookup.success) return fail("That result didn't look like a place.");
+    if (!lookup.success)
+      return fieldError("latitude", "Give both a latitude and a longitude, or neither.");
     identity = identityFrom(lookup.data);
   }
 
-  await prisma.location.update({
-    where: { id },
-    data: {
-      name,
-      normalizedName,
-      address: parsed.data.address ?? null,
-      city: parsed.data.city ?? null,
-      region: parsed.data.region ?? null,
-      country: parsed.data.country ?? null,
-      phone: parsed.data.phone ?? null,
-      url: parsed.data.url ?? null,
-      notes: parsed.data.notes ?? null,
-      ...identity,
-    },
-  });
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.location.update({
+        where: { id },
+        data: {
+          name,
+          normalizedName,
+          address: parsed.data.address ?? null,
+          city: parsed.data.city ?? null,
+          region: parsed.data.region ?? null,
+          country: parsed.data.country ?? null,
+          phone: parsed.data.phone ?? null,
+          url: parsed.data.url ?? null,
+          notes: parsed.data.notes ?? null,
+          ...identity,
+        },
+      });
+      await tx.locationAlias.deleteMany({ where: { ownerId, locationId: id } });
+      await tx.locationAlias.createMany({
+        data: [
+          {
+            ownerId,
+            locationId: id,
+            value: name,
+            normalizedValue: normalizedName,
+            isCanonical: true,
+          },
+          ...aliases.map((alias) => ({
+            ownerId,
+            locationId: id,
+            ...alias,
+            isCanonical: false,
+          })),
+        ],
+      });
+    });
+  } catch (error) {
+    // `indexKey` reads utf8mb4_unicode_ci rather than being it, so a rule it
+    // does not reproduce would surface as an unhandled constraint error that
+    // rolls back an otherwise ordinary edit with nothing shown on the form.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    )
+      return fieldError(
+        "aliases",
+        "Two of those names count as the same one. Keep whichever you prefer.",
+      );
+    throw error;
+  }
 
   touch(id);
   return ok();
@@ -184,7 +372,15 @@ function identityFrom(data: {
   osmId?: string;
 }): LocationIdentity {
   // Half a pair puts a place in the wrong hemisphere rather than nowhere.
-  const bothCoordinates = data.latitude !== undefined && data.longitude !== undefined;
+  const bothCoordinates =
+    data.latitude !== undefined && data.longitude !== undefined;
+  // Identity is replaced as one unit, so a reference the save is silent about
+  // is cleared rather than left describing the place this used to be — which is
+  // what keeps a hand-edited coordinate from keeping somebody else's venue.
+  // `mapLinkFor` prefers the OSM object over everything else, so a stale one is
+  // worse than none. The editor resubmits the stored reference only while the
+  // coordinates are still the ones it arrived with; an accepted lookup sends
+  // its own.
   return {
     latitude: bothCoordinates ? data.latitude : null,
     longitude: bothCoordinates ? data.longitude : null,
@@ -210,59 +406,32 @@ export async function lookupLocationAddress(
 
   const id = str(form, "id");
   if (!id) return fail("Which place?");
-  if (!(await visibleLocation(ownerId, id))) return fail("That place wasn't found.");
+  if (!(await visibleLocation(ownerId, id)))
+    return fail("That place wasn't found.");
 
   const query = str(form, "query");
   if (!query) return fail("Type an address or a place name to look up.");
 
-  // The whole directory is optional, so it is loaded behind a dynamic import
-  // and every failure falls back to "found nothing" rather than an error.
-  try {
-    const { lookupAvailable, currentGeoConfig } = await import("@/server/geo/config");
-    if (!(await lookupAvailable())) {
-      return fail("Address lookup is switched off. Turn it on in Settings.");
-    }
-    const config = await currentGeoConfig();
-    if (!config) return fail("Address lookup isn't configured.");
+  // The whole optional directory sits behind `searchPlaces`, which loads it
+  // dynamically and turns every failure into a message rather than an error.
+  const { searchPlaces, LOOKUP_MESSAGES } = await import("@/server/geo/lookup");
+  const outcome = await searchPlaces(query);
+  if (!outcome.ok) return fail(LOOKUP_MESSAGES[outcome.reason]);
 
-    const { searchAddress } = await import("@/server/geo/providers");
-    const candidates = await searchAddress(config, query);
-    return ok({
-      candidates: candidates.map((candidate) => ({
-        label: candidate.label,
-        address: candidate.address,
-        city: candidate.city,
-        region: candidate.region,
-        country: candidate.country,
-        latitude: candidate.latitude,
-        longitude: candidate.longitude,
-        osmType: candidate.osmType,
-        osmId: candidate.osmId,
-      })),
-    });
-  } catch {
-    return fail("That lookup didn't work. You can still fill the address in by hand.");
-  }
+  const { toCandidateView } = await import("@/server/geo/providers");
+  return ok({ candidates: outcome.candidates.map(toCandidateView) });
 }
 
-export interface GeoCandidateView {
-  label: string;
-  address: string | null;
-  city: string | null;
-  region: string | null;
-  country: string | null;
-  latitude: string | null;
-  longitude: string | null;
-  osmType: "N" | "W" | "R" | null;
-  osmId: string | null;
-}
 
-export async function setLocationArchived(form: FormData): Promise<ActionResult> {
+export async function setLocationArchived(
+  form: FormData,
+): Promise<ActionResult> {
   const { ownerId } = await owner();
 
   const id = str(form, "id");
   if (!id) return fail("Which place?");
-  if (!(await visibleLocation(ownerId, id))) return fail("That place wasn't found.");
+  if (!(await visibleLocation(ownerId, id)))
+    return fail("That place wasn't found.");
 
   // Archiving only sets a flag. Interactions keep their `locationId` and their
   // verbatim labels, so the history is intact and the change is reversible.

@@ -7,6 +7,8 @@
  * so the six `resolveLocation` call sites are unaffected.
  */
 
+import { readCoordinate } from "./geo";
+
 /** Conservative identity: whitespace and case are safe; fuzzy matching is not. */
 export function normalizeLocationName(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
@@ -64,13 +66,13 @@ export function mapLinkFor(place: {
 }
 
 /**
- * Prisma hands back `Decimal` for these columns, so accept anything with a
- * sane string form rather than assuming a number.
+ * The map link wants the coordinate as text, but the parsing rules — `Decimal`
+ * from Prisma, a string from a form, blank meaning "not given" rather than
+ * zero — are the ones `readCoordinate` already applies for distances. Shared
+ * rather than duplicated, so a coordinate cannot be good enough to measure from
+ * and not good enough to map, or the other way round.
  */
 function coordinate(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  const text = typeof value === "object" ? String(value) : `${value}`;
-  if (!text.trim()) return null;
-  const parsed = Number(text);
-  return Number.isFinite(parsed) ? text.trim() : null;
+  const parsed = readCoordinate(value);
+  return parsed === null ? null : String(parsed);
 }

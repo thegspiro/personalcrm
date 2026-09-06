@@ -2,8 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { MapPin } from "lucide-react";
 import { cn, displayName } from "@/lib/utils";
 import { Icon } from "@/components/nav/icon";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { DateField } from "@/components/form/date-field";
 import { TermChips, type TermOption } from "@/components/form/term-select";
 import {
@@ -19,6 +19,7 @@ import {
   SectionRow,
 } from "@/components/contacts/section-card";
 import { formatPartialDate } from "@/lib/date-precision";
+import { formatDistance, type Distance } from "@/lib/geo";
 import { formatMoney, termColorClasses } from "@/lib/format";
 import { plainDateKey, type PlainDate } from "@/lib/dates";
 import {
@@ -26,10 +27,21 @@ import {
   STARTER_PLAN_CHECKLIST,
   type PlanChecklistItem,
 } from "@/lib/plan-checklist";
-import type { ActionResult } from "@/server/actions/helpers";
 import {
+  formatPlanDuration,
+  formatPlanTime,
+  planMinuteToInput,
+} from "@/lib/plan-time";
+import {
+  effectivePlanReminderDays,
+  planReminderPolicyLabel,
+  type ReminderPolicy,
+} from "@/lib/reminders";
+import {
+  completePlan,
   createPlan,
   deletePlan,
+  schedulePlan,
   setPlanStatus,
   updatePlan,
 } from "@/server/actions/details";
@@ -56,32 +68,25 @@ export interface PlanItem {
   notes: string | null;
   checklist: unknown;
   plannedFor: PlainDate | null;
+  plannedStartMinute: number | null;
+  plannedDurationMinutes: number | null;
+  reminderDaysBefore: ReminderPolicy;
   categoryId: string | null;
   category: { label: string; icon: string | null; color: string | null } | null;
   contact: { id: string; firstName: string; lastName: string | null } | null;
+  /**
+   * How far the plan's place is from wherever the page is measuring. Null
+   * whenever either end has no coordinates, which is every plan until an
+   * address is placed — so the chip simply is not there rather than reading
+   * zero.
+   */
+  distance?: Distance | null;
 }
 
 export interface PlanPerson {
   id: string;
   firstName: string;
   lastName: string | null;
-}
-
-function useRun() {
-  const router = useRouter();
-  return React.useCallback(
-    async (run: () => Promise<ActionResult<unknown>>, message?: string) => {
-      const result = await run();
-      if (!result.ok) {
-        toast.error(result.error ?? "Something went wrong.");
-        return false;
-      }
-      if (message) toast.success(message);
-      router.refresh();
-      return true;
-    },
-    [router],
-  );
 }
 
 /**
@@ -93,6 +98,97 @@ function useRun() {
  * to a different person is not a correction, and the plan's own contact is
  * what scopes it on their page.
  */
+/** Rough lengths, so "set aside" is one tap rather than arithmetic. */
+const PLAN_DURATIONS = [
+  { minutes: 30, label: "30 minutes" },
+  { minutes: 60, label: "1 hour" },
+  { minutes: 90, label: "1½ hours" },
+  { minutes: 120, label: "2 hours" },
+  { minutes: 180, label: "3 hours" },
+  { minutes: 240, label: "Most of an evening" },
+  { minutes: 480, label: "Most of a day" },
+] as const;
+
+/**
+ * Which preset a stored policy is, so reopening a form shows the choice that
+ * was made rather than resetting it. Null and an empty list both read as "No
+ * reminders": null is what every plan saved before this shipped carries, and
+ * `parseReminderDays("disabled")` writes the empty list. Neither sends
+ * anything, so offering them as two different answers would be a distinction
+ * without a difference.
+ */
+function planReminderMode(policy: ReminderPolicy): string {
+  if (policy === null || policy.length === 0) return "disabled";
+  if (policy.length === 1 && policy[0] === 0) return "on-day";
+  if (policy.length === 1 && policy[0] === 1) return "day-before";
+  if (policy.length === 1 && policy[0] === 7) return "week";
+  return "custom";
+}
+
+/**
+ * The reminder control, in both places a plan gets a day.
+ *
+ * Off unless asked for. Null means no reminders on a plan — deliberately the
+ * opposite of an important date, where null is the account default: a birthday
+ * is a fact the app may volunteer, and an evening you arranged is not something
+ * it should start announcing on its own.
+ *
+ * One component rather than two copies because the two forms write the same
+ * column, and the server reads the control by presence: a form that renders one
+ * field and not the other would send a mode with nothing to read the offsets
+ * from.
+ */
+function PlanReminderFields({
+  idPrefix,
+  policy,
+}: {
+  idPrefix: string;
+  policy: ReminderPolicy;
+}) {
+  return (
+    <>
+      {/* What was on screen when this form was drawn, so the action can tell a
+          choice the user made from the value they simply left alone. The select
+          is always submitted, so without this a sheet opened before another tab
+          switched a reminder on would post its own stale answer over the newer
+          one. Comparing against the stored row cannot stand in: by the time the
+          action reads it, the row already holds the newer value. */}
+      <input
+        type="hidden"
+        name="reminderPolicyWas"
+        value={effectivePlanReminderDays(policy).join(", ")}
+      />
+      <Field label="Remind me" htmlFor={`${idPrefix}-reminderMode`}>
+        <select
+          id={`${idPrefix}-reminderMode`}
+          name="reminderMode"
+          defaultValue={planReminderMode(policy)}
+          className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+        >
+          <option value="disabled">No reminders</option>
+          <option value="on-day">On the day</option>
+          <option value="day-before">1 day before</option>
+          <option value="week">1 week before</option>
+          <option value="custom">Custom offsets</option>
+        </select>
+      </Field>
+      <Field
+        label="Custom days before"
+        htmlFor={`${idPrefix}-reminderDaysBefore`}
+        hint="Only read when “Custom offsets” is chosen. Comma-separated; 0 means on the day."
+      >
+        <Input
+          id={`${idPrefix}-reminderDaysBefore`}
+          name="reminderDaysBefore"
+          inputMode="numeric"
+          defaultValue={policy?.join(", ") ?? ""}
+          placeholder="1, 0"
+        />
+      </Field>
+    </>
+  );
+}
+
 function PlanFields({
   formId,
   categories,
@@ -117,6 +213,19 @@ function PlanFields({
       items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
     );
   }
+
+  // The server takes any whole number of minutes, so a stored value that is
+  // not one of the presets has to be offered too. Without it the select falls
+  // back to the blank option, and saving an unrelated edit would silently
+  // clear a duration the user had set.
+  const durationOptions = React.useMemo(() => {
+    const stored = plan?.plannedDurationMinutes;
+    if (!stored || PLAN_DURATIONS.some((option) => option.minutes === stored)) {
+      return [...PLAN_DURATIONS];
+    }
+    return [...PLAN_DURATIONS, { minutes: stored, label: formatPlanDuration(stored) ?? `${stored}m` }]
+      .sort((a, b) => a.minutes - b.minutes);
+  }, [plan?.plannedDurationMinutes]);
 
   function addChecklistItem() {
     if (checklist.length >= 25) return;
@@ -178,6 +287,41 @@ function PlanFields({
           defaultValue={plan?.plannedFor ? plainDateKey(plan.plannedFor) : undefined}
           hint="Optional — leave it empty and it just sits on the list."
         />
+        {/* Only meaningful alongside a day, and the action drops it when there
+            isn't one. Deliberately not disabled while the day is empty:
+            DateField reports a date being picked but not being cleared, so a
+            disabled state here would latch on and lock the field. */}
+        <div className="grid min-w-0 gap-2.5 sm:grid-cols-2">
+          <Field
+            label="Start time"
+            htmlFor={`${formId}-plannedStartTime`}
+            hint="Only used once a day is set."
+          >
+            <Input
+              id={`${formId}-plannedStartTime`}
+              name="plannedStartTime"
+              type="time"
+              defaultValue={planMinuteToInput(plan?.plannedStartMinute)}
+            />
+          </Field>
+          <PlanReminderFields idPrefix={formId} policy={plan?.reminderDaysBefore ?? null} />
+
+          <Field label="Set aside" htmlFor={`${formId}-plannedDurationMinutes`}>
+            <select
+              id={`${formId}-plannedDurationMinutes`}
+              name="plannedDurationMinutes"
+              defaultValue={String(plan?.plannedDurationMinutes ?? "")}
+              className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+            >
+              <option value="">However long it takes</option>
+              {durationOptions.map((option) => (
+                <option key={option.minutes} value={option.minutes}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
         <div className="grid min-w-0 gap-2.5 sm:grid-cols-2">
           <Field label="Venue" htmlFor={`${formId}-location`}>
             <Input id={`${formId}-location`} name="location" defaultValue={plan?.location ?? ""} placeholder="Alamo Drafthouse" />
@@ -228,6 +372,38 @@ function PlanFields({
   );
 }
 
+/**
+ * The schedule sheet's disclosure, which builds its contents only once opened.
+ *
+ * `/ideas` renders up to 200 plans and offers up to 500 contacts, and every
+ * shared row carries this form with a picker naming all of them — as many as
+ * 100,000 `<option>` elements in the payload and in the hydrated tree before
+ * anybody has scheduled anything. `<details>` hides its content but React still
+ * renders it, so the saving cannot come from CSS; and a plain `children` would
+ * have been built by the caller before it ever arrived here, hence the
+ * function — the same shape `SectionRow`'s `editForm` already uses.
+ *
+ * It stays mounted once opened, so closing the disclosure part-way through does
+ * not throw away what was typed.
+ */
+function ScheduleSheet({ children }: { children: () => React.ReactNode }) {
+  const [opened, setOpened] = React.useState(false);
+  return (
+    <details
+      className="mt-1"
+      onToggle={(event) => {
+        if (event.currentTarget.open) setOpened(true);
+      }}
+    >
+      <summary className="cursor-pointer text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+        Schedule it
+      </summary>
+      {opened ? children() : null}
+    </details>
+  );
+}
+
+
 export function PlansSection({
   contactId = null,
   plans,
@@ -245,19 +421,24 @@ export function PlansSection({
   title?: string;
   defaultOpen?: boolean;
 }) {
-  const run = useRun();
+  const run = useAction();
+  // Which rows have a completion in flight. `useAction` does not expose its
+  // pending state, and a second click is a wasted round trip even though the
+  // server refuses it — the in-place path by its atomic claim, the shared-idea
+  // path by the unique key on the copy it writes.
+  const [completing, setCompleting] = React.useState<ReadonlySet<string>>(new Set());
+  const add = useAddAction();
+  const edit = useEditAction();
 
-  function add(close: () => void) {
-    return async (form: FormData) => {
-      if (contactId) form.set("contactId", contactId);
-      if (await run(() => createPlan(form), "Saved")) close();
-    };
+  function create(form: FormData) {
+    if (contactId) form.set("contactId", contactId);
+    return createPlan(form);
   }
 
-  function edit(plan: PlanItem, close: () => void) {
-    return async (form: FormData) => {
+  function update(plan: PlanItem) {
+    return (form: FormData) => {
       form.set("id", plan.id);
-      if (await run(() => updatePlan(form), "Saved")) close();
+      return updatePlan(form);
     };
   }
 
@@ -269,7 +450,7 @@ export function PlansSection({
       defaultOpen={defaultOpen}
       addLabel="Add something to do"
       form={(close) => (
-        <form action={add(close)} className="grid gap-2.5">
+        <form action={add(create, close, "Saved")} className="grid gap-2.5">
           <PlanFields
             formId="plan-new"
             categories={categories}
@@ -292,7 +473,7 @@ export function PlansSection({
             deleteLabel="Delete plan"
             editLabel="Edit plan"
             editForm={(close) => (
-              <form action={edit(plan, close)} className="grid gap-2.5">
+              <form action={edit(update(plan), close, "Saved")} className="grid gap-2.5">
                 <PlanFields
                   formId={`plan-${plan.id}`}
                   categories={categories}
@@ -305,11 +486,32 @@ export function PlansSection({
             )}
           >
             <div className="flex items-start gap-2">
+              {/* Records what the plan became, not just that it is over:
+                  `completePlan` writes the interaction and points the plan at
+                  it, so the evening lands in the timeline. */}
               <Checkbox
                 checked={false}
-                onCheckedChange={() =>
-                  void run(() => setPlanStatus(plan.id, "DONE"), "Marked done")
-                }
+                disabled={completing.has(plan.id)}
+                onCheckedChange={() => {
+                  // Both completion paths are single-use on the server, so
+                  // this only saves the round trip and the second toast.
+                  if (completing.has(plan.id)) return;
+                  setCompleting((ids) => new Set(ids).add(plan.id));
+                  const form = new FormData();
+                  form.set("id", plan.id);
+                  // A shared row on someone's page is being finished *with*
+                  // them. Without this the action takes its no-contact branch,
+                  // closes the plan, and the evening never reaches their
+                  // timeline or their cadence.
+                  if (contactId && plan.contact === null) form.set("contactId", contactId);
+                  void run(() => completePlan(form), "Marked done").finally(() => {
+                    setCompleting((ids) => {
+                      const next = new Set(ids);
+                      next.delete(plan.id);
+                      return next;
+                    });
+                  });
+                }}
                 aria-label="Mark as done"
                 className="mt-0.5"
               />
@@ -336,6 +538,12 @@ export function PlansSection({
 
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                   {plan.location ? <span>{plan.location}</span> : null}
+                  {plan.distance ? (
+                    <span className="inline-flex shrink-0 items-center gap-0.5">
+                      <MapPin className="size-3" />
+                      {formatDistance(plan.distance)}
+                    </span>
+                  ) : null}
                   {plan.address ? (
                     // Free text up to 500 characters, so a long unbroken one has to be
                     // allowed to break: layout.spec.ts asserts no route scrolls sideways.
@@ -343,10 +551,30 @@ export function PlansSection({
                   ) : null}
                   {plan.plannedFor ? (
                     <span>
-                      {formatPartialDate(plan.plannedFor, "DAY", {
-                        short: true,
-                      })}
+                      {[
+                        formatPartialDate(plan.plannedFor, "DAY", { short: true }),
+                        formatPlanTime(plan.plannedStartMinute),
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </span>
+                  ) : null}
+                  {/* Only where it could fire. A policy on an OPEN plan is
+                      stored and honoured the moment it is scheduled, but the
+                      scheduler reads PLANNED rows only, so saying "Reminder on
+                      the day" beside something nobody has arranged yet would
+                      promise a message that is not coming. */}
+                  {plan.status === "PLANNED" &&
+                  plan.plannedFor &&
+                  effectivePlanReminderDays(plan.reminderDaysBefore).length > 0 ? (
+                    <span>{planReminderPolicyLabel(plan.reminderDaysBefore)}</span>
+                  ) : null}
+                  {/* Its own chip rather than part of the day's. A duration is
+                      kept when no day is set — how long a thing takes belongs
+                      to the thing — so folding it in here would store the
+                      value and then never show it. */}
+                  {plan.plannedDurationMinutes ? (
+                    <span>{formatPlanDuration(plan.plannedDurationMinutes)}</span>
                   ) : null}
                   {formatMoney(plan.estimatedCostCents, plan.currency) ? (
                     <span>
@@ -385,26 +613,96 @@ export function PlansSection({
                   </p>
                 ) : null}
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    void run(
-                      () =>
-                        setPlanStatus(
-                          plan.id,
-                          plan.status === "PLANNED" ? "OPEN" : "PLANNED",
-                        ),
-                      plan.status === "PLANNED"
-                        ? "Back on the list"
-                        : "Pencilled in",
-                    )
-                  }
-                  className="mt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                >
-                  {plan.status === "PLANNED"
-                    ? "Not planned after all"
-                    : "Pencil it in"}
-                </button>
+                {plan.status === "PLANNED" ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void run(() => setPlanStatus(plan.id, "OPEN"), "Back on the list")
+                    }
+                    className="mt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    Not planned after all
+                  </button>
+                ) : (
+                  <ScheduleSheet>
+                    {() => (
+                      <form
+                        action={async (form) => {
+                          form.set("id", plan.id);
+                          await run(() => schedulePlan(form), "Scheduled");
+                        }}
+                        className="mt-2 grid gap-2.5 rounded-md bg-muted/30 p-2"
+                      >
+                        <DateField
+                          name="plannedFor"
+                          idPrefix={`schedule-${plan.id}-plannedFor`}
+                          label="Which day?"
+                          allowPrecision={false}
+                          presets={["today"]}
+                          required
+                          defaultValue={plan.plannedFor ? plainDateKey(plan.plannedFor) : undefined}
+                        />
+                        <Field label="Start time" htmlFor={`schedule-${plan.id}-time`}>
+                          <Input
+                            id={`schedule-${plan.id}-time`}
+                            name="plannedStartTime"
+                            type="time"
+                            defaultValue={planMinuteToInput(plan.plannedStartMinute)}
+                          />
+                        </Field>
+                        <PlanReminderFields
+                          idPrefix={`schedule-${plan.id}`}
+                          policy={plan.reminderDaysBefore}
+                        />
+                        {/* A person's page scopes the section but passes no
+                            `people`, so there is no picker here — and scheduling
+                            a shared row would otherwise mark it planned for
+                            nobody. The page already knows who it is about. */}
+                        {plan.contact === null && contactId ? (
+                          <>
+                            <input type="hidden" name="contactId" value={contactId} />
+                            <input type="hidden" name="keepInList" value="true" />
+                          </>
+                        ) : null}
+                        {plan.contact === null && contactId === null && people.length > 0 ? (
+                          <>
+                            <Field label="Who with?" htmlFor={`schedule-${plan.id}-contact`}>
+                              <select
+                                id={`schedule-${plan.id}-contact`}
+                                name="contactId"
+                                defaultValue=""
+                                className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+                              >
+                                <option value="">Nobody yet</option>
+                                {people.map((person) => (
+                                  <option key={person.id} value={person.id}>
+                                    {displayName(person)}
+                                  </option>
+                                ))}
+                              </select>
+                            </Field>
+                            {/* Saved against nobody, so it is offered on
+                                everyone's page. Scheduling it with one person
+                                would take it out of circulation for the rest,
+                                so by default the evening becomes a copy and
+                                this stays on the list. */}
+                            <label className="flex items-start gap-2 text-xs text-muted-foreground">
+                              <input
+                                type="checkbox"
+                                name="keepInList"
+                                value="true"
+                                defaultChecked
+                                className="mt-0.5"
+                              />
+                              <span>Keep this in Things to do for next time</span>
+                            </label>
+                          </>
+                        ) : null}
+                        <SubmitButton size="sm">Schedule it</SubmitButton>
+                      </form>
+                    )}
+                  </ScheduleSheet>
+                )}
               </div>
             </div>
           </SectionRow>

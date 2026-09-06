@@ -14,10 +14,25 @@ import type { IcsEvent } from "@/lib/export/ics";
  * which is the same silent-truncation failure the list pages had. So the
  * decision is made once, in the action, and it is binary: either the lock
  * permits a complete export or the export is refused. Nothing partial.
+ *
+ * Two things are left out on purpose, and both are named in docs/privacy.md so
+ * the omission is stated rather than discovered. Notification channels hold
+ * credentials — an SMTP password, a webhook nobody else should be able to
+ * post to — and a file people are encouraged to keep copies of is the last
+ * place those belong. Sessions and the password hash are not account content
+ * at all; they are the means of reaching it.
+ *
+ * Everything else an account can hold is here. A table that gains rows a
+ * person entered has to be added, or the export quietly stops being what it
+ * says it is — the same failure the list caps had, written to a file.
  */
 
 const CONTACT_INCLUDE = {
   category: { select: { label: true } },
+  tags: { include: { tag: { select: { name: true, slug: true, color: true } } } },
+  flags: true,
+  associates: true,
+  happenings: { include: { type: { select: { label: true } } } },
   meetingSource: { select: { label: true } },
   methods: { include: { type: { select: { slug: true, label: true } } } },
   addresses: true,
@@ -47,9 +62,11 @@ export async function gatherAccount(ownerId: string) {
     plans,
     locations,
     taxonomyTerms,
+    tags,
     customFieldDefinitions,
     customFieldValues,
     preference,
+    dashboardLayout,
   ] = await Promise.all([
     prisma.contact.findMany({ where: { ownerId }, include: CONTACT_INCLUDE, orderBy: { createdAt: "asc" } }),
     prisma.interaction.findMany({
@@ -67,11 +84,13 @@ export async function gatherAccount(ownerId: string) {
     prisma.idea.findMany({ where: { ownerId } }),
     prisma.task.findMany({ where: { ownerId } }),
     prisma.plan.findMany({ where: { ownerId }, include: { category: { select: { label: true } } } }),
-    prisma.location.findMany({ where: { ownerId } }),
+    prisma.location.findMany({ where: { ownerId }, include: { locationAliases: true } }),
     prisma.taxonomyTerm.findMany({ where: { ownerId }, orderBy: [{ kind: "asc" }, { sortOrder: "asc" }] }),
+    prisma.tag.findMany({ where: { ownerId } }),
     prisma.customFieldDefinition.findMany({ where: { ownerId } }),
     prisma.customFieldValue.findMany({ where: { ownerId } }),
     prisma.userPreference.findUnique({ where: { userId: ownerId } }),
+    prisma.dashboardLayout.findUnique({ where: { userId: ownerId } }),
   ]);
 
   return {
@@ -84,9 +103,11 @@ export async function gatherAccount(ownerId: string) {
     plans,
     locations,
     taxonomyTerms,
+    tags,
     customFieldDefinitions,
     customFieldValues,
     preference,
+    dashboardLayout,
   };
 }
 

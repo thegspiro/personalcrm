@@ -30,11 +30,14 @@ export function SuggestionList({
   suggestions,
   types,
   showSubject = false,
+  footer = null,
 }: {
   suggestions: SuggestionItem[];
   types: TermOption[];
   /** On /family a card has to say who it is about; on a contact page it doesn't. */
   showSubject?: boolean;
+  /** Rendered under the cards — where /family says the list was cut short. */
+  footer?: React.ReactNode;
 }) {
   if (suggestions.length === 0) return null;
 
@@ -44,7 +47,7 @@ export function SuggestionList({
     <section className="min-w-0 rounded-xl border border-dashed border-border bg-card">
       <div className="flex items-center gap-2 px-4 py-3">
         <Icon name="Sparkles" className="size-4 shrink-0 text-muted-foreground" />
-        <h2 className="truncate text-sm font-semibold">Possible relatives</h2>
+        <h3 className="truncate text-sm font-semibold">Possible relatives</h3>
         <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
           {suggestions.length}
         </span>
@@ -61,6 +64,7 @@ export function SuggestionList({
             showSubject={showSubject}
           />
         ))}
+        {footer}
       </div>
     </section>
   );
@@ -123,6 +127,10 @@ function SuggestionCard({
           <input type="hidden" name="fromContactId" value={suggestion.subjectId} />
           <input type="hidden" name="toContactId" value={suggestion.personId} />
           <TermSelect
+            // Per pair, because more than one card can be open at once and two
+            // selects sharing the id `typeId` make each label point at the
+            // first one in the document rather than its own.
+            id={`suggested-type-${suggestion.subjectId}-${suggestion.personId}`}
             name="typeId"
             label={`${suggestion.personName} is ${showSubject ? `${suggestion.subjectName}'s` : "their"}…`}
             terms={types}

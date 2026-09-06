@@ -63,3 +63,17 @@ test("a visit's place lists everyone who was there", async ({ page }) => {
   await expect(page.getByRole("link", { name: new RegExp(second()) })).toBeVisible();
   await expect(page.getByText(title())).toBeVisible();
 });
+
+test("an alias can be edited and used to find its place", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto("/locations");
+  await page.getByRole("link", { name: new RegExp(place()) }).click();
+  await page.getByRole("button", { name: "Edit" }).click();
+  const alias = `The Local ${STAMP}`;
+  await page.getByLabel("Aliases").fill(alias);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("dialog")).toBeHidden();
+
+  await page.goto(`/locations?search=${encodeURIComponent(alias)}`);
+  await expect(page.getByRole("link", { name: new RegExp(place()) })).toBeVisible();
+});

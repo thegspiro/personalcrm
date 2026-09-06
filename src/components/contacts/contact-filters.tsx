@@ -15,14 +15,35 @@ const SORTS = [
 
 export function ContactFilters({
   categories,
+  tags,
 }: {
   categories: Array<{ id: string; label: string }>;
+  tags: Array<{ id: string; name: string }>;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
 
   const [search, setSearch] = React.useState(params.get("q") ?? "");
+
+  // Every control here edits the existing parameters, so each one has to see
+  // what the last one asked for. Two things get in the way. The debounced
+  // search fires up to 250ms after the render that scheduled it, and
+  // `router.replace` does not re-render synchronously, so an update issued
+  // before a navigation lands would otherwise compose with the pre-navigation
+  // snapshot and silently drop the filter just chosen — the debounce landing
+  // after a chip click, or two chips in quick succession.
+  //
+  // So hold the parameters last *requested*, not last rendered, and re-sync
+  // only when the URL genuinely changes: every keystroke re-renders, and
+  // syncing unconditionally would put the stale snapshot back.
+  const paramsKey = params.toString();
+  const paramsRef = React.useRef<URLSearchParams>(params);
+  const syncedKeyRef = React.useRef(paramsKey);
+  if (syncedKeyRef.current !== paramsKey) {
+    syncedKeyRef.current = paramsKey;
+    paramsRef.current = params;
+  }
 
   // Debounced so typing doesn't fire a navigation per keystroke.
   React.useEffect(() => {
@@ -33,9 +54,10 @@ export function ContactFilters({
   }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function update(key: string, value: string | null) {
-    const next = new URLSearchParams(params.toString());
+    const next = new URLSearchParams(paramsRef.current.toString());
     if (value === null || value === "") next.delete(key);
     else next.set(key, value);
+    paramsRef.current = next;
     router.replace(`${pathname}?${next.toString()}`, { scroll: false });
   }
 
@@ -43,6 +65,8 @@ export function ContactFilters({
   const activeSort = params.get("sort") ?? "name";
   const showArchived = params.get("scope") === "archived";
   const showFavorites = params.get("favorites") === "1";
+  const due = params.get("due");
+  const activeTag = params.get("tag") ?? "";
 
   return (
     <div className="grid gap-2.5">
@@ -68,18 +92,47 @@ export function ContactFilters({
       </div>
 
       <div className="scroll-x no-scrollbar -mx-4 flex gap-1.5 px-4 pb-0.5 lg:mx-0 lg:flex-wrap lg:px-0">
-        <FilterChip active={activeCategory === ""} onClick={() => update("category", null)}>
+        <FilterChip
+          active={activeCategory === ""}
+          onClick={() => update("category", null)}
+        >
           Everyone
         </FilterChip>
         {categories.map((category) => (
           <FilterChip
             key={category.id}
             active={activeCategory === category.id}
-            onClick={() => update("category", activeCategory === category.id ? null : category.id)}
+            onClick={() =>
+              update(
+                "category",
+                activeCategory === category.id ? null : category.id,
+              )
+            }
           >
             {category.label}
           </FilterChip>
         ))}
+        {tags.map((tag) => (
+          <FilterChip
+            key={tag.id}
+            active={activeTag === tag.id}
+            onClick={() => update("tag", activeTag === tag.id ? null : tag.id)}
+          >
+            #{tag.name}
+          </FilterChip>
+        ))}
+        <FilterChip
+          active={due === "actionable"}
+          onClick={() => update("due", due === "actionable" ? null : "actionable")}
+        >
+          Due now
+        </FilterChip>
+        <FilterChip
+          active={due === "soon"}
+          onClick={() => update("due", due === "soon" ? null : "soon")}
+        >
+          Due soon
+        </FilterChip>
         <FilterChip
           active={showFavorites}
           onClick={() => update("favorites", showFavorites ? null : "1")}
@@ -100,10 +153,14 @@ export function ContactFilters({
           <button
             key={sort.value}
             type="button"
-            onClick={() => update("sort", sort.value === "name" ? null : sort.value)}
+            onClick={() =>
+              update("sort", sort.value === "name" ? null : sort.value)
+            }
             className={cn(
               "rounded-full px-2 py-1 font-medium transition-colors",
-              activeSort === sort.value ? "bg-accent-3 text-accent-11" : "hover:bg-muted",
+              activeSort === sort.value
+                ? "bg-accent-3 text-accent-11"
+                : "hover:bg-muted",
             )}
           >
             {sort.label}

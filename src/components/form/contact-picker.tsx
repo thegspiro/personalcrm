@@ -28,6 +28,8 @@ export function ContactPicker({
   multiple = true,
   required,
   className,
+  excludeIds,
+  onSelectionChange,
 }: {
   name: string;
   label?: string;
@@ -36,6 +38,21 @@ export function ContactPicker({
   multiple?: boolean;
   required?: boolean;
   className?: string;
+  /**
+   * People this picker must not offer, and must drop if they are already
+   * chosen. Distinct from filtering `contacts` before passing them in: a
+   * selection made *before* the exclusion applies survives that filtering,
+   * because the chip disappears with the contact while the hidden input keeps
+   * submitting the id. The form then looks empty and fails on submit.
+   */
+  excludeIds?: string[];
+  /**
+   * Told about the current selection whenever it changes, including the reset
+   * back to the defaults. For a form where one picker narrows another — "who
+   * is this person's relative" cannot offer that same person — the selection
+   * has to be readable outside the picker.
+   */
+  onSelectionChange?: (ids: string[]) => void;
 }) {
   const defaultsKey = [...new Set(defaultSelected)].join("\0");
   const intendedDefaults = React.useMemo(
@@ -57,23 +74,59 @@ export function ContactPicker({
     return () => form.removeEventListener("reset", restoreDefaults);
   }, [intendedDefaults]);
 
+  const excludedKey = [...new Set(excludeIds ?? [])].sort().join("\0");
+  const excluded = React.useMemo(
+    () => new Set(excludedKey ? excludedKey.split("\0") : []),
+    [excludedKey],
+  );
+
+  // Derived rather than pruned in an effect: an exclusion that arrives after a
+  // selection must never reach the hidden inputs, and state corrected after
+  // the render that used it is a render too late. `toggle` drops it from the
+  // stored list on the next interaction, so nothing accumulates.
+  const live = React.useMemo(
+    () => selected.filter((id) => !excluded.has(id)),
+    [selected, excluded],
+  );
+
+  const offered = React.useMemo(
+    () => contacts.filter((contact) => !excluded.has(contact.id)),
+    [contacts, excluded],
+  );
+
+  // Held in a ref so a caller passing a fresh inline closure on every render
+  // does not re-fire the callback on every render along with it. The ref is
+  // updated in an effect rather than during render, which is both the rule and
+  // the reason for it: a render can be thrown away and restarted, and a write
+  // that happened during one of those is a write nothing asked for.
+  const notify = React.useRef(onSelectionChange);
+  React.useEffect(() => {
+    notify.current = onSelectionChange;
+  });
+  React.useEffect(() => {
+    notify.current?.(live);
+  }, [live]);
+
   const byId = React.useMemo(
-    () => new Map(contacts.map((contact) => [contact.id, contact])),
-    [contacts],
+    () => new Map(offered.map((contact) => [contact.id, contact])),
+    [offered],
   );
 
   const matches = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     const pool = q
-      ? contacts.filter((contact) => displayName(contact).toLowerCase().includes(q))
-      : contacts;
+      ? offered.filter((contact) => displayName(contact).toLowerCase().includes(q))
+      : offered;
     return pool.slice(0, q ? 30 : 12);
-  }, [contacts, query]);
+  }, [offered, query]);
 
   function toggle(id: string) {
     setSelected((current) => {
-      if (!multiple) return current.includes(id) ? [] : [id];
-      return current.includes(id) ? current.filter((x) => x !== id) : [...current, id];
+      // Read through the same exclusion the render used, so a stale id cannot
+      // make the next click read as a deselection of something not on screen.
+      const kept = current.filter((x) => !excluded.has(x));
+      if (!multiple) return kept.includes(id) ? [] : [id];
+      return kept.includes(id) ? kept.filter((x) => x !== id) : [...kept, id];
     });
   }
 
@@ -89,16 +142,16 @@ export function ContactPicker({
       className={cn("grid gap-1.5", className)}
     >
       {label ? <Label>{label}</Label> : null}
-      {selected.map((id) => (
+      {live.map((id) => (
         <input key={id} type="hidden" name={name} value={id} />
       ))}
-      {required && selected.length === 0 ? (
+      {required && live.length === 0 ? (
         <input tabIndex={-1} aria-hidden required className="sr-only h-0 w-0" onChange={() => {}} value="" />
       ) : null}
 
-      {selected.length > 0 ? (
+      {live.length > 0 ? (
         <div className="flex flex-wrap gap-1.5">
-          {selected.map((id) => {
+          {live.map((id) => {
             const contact = byId.get(id);
             if (!contact) return null;
             return (
@@ -133,7 +186,7 @@ export function ContactPicker({
         ) : (
           <ul>
             {matches.map((contact) => {
-              const active = selected.includes(contact.id);
+              const active = live.includes(contact.id);
               return (
                 <li key={contact.id}>
                   <button

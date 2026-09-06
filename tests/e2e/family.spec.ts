@@ -29,6 +29,14 @@ async function openPerson(page: Page, name: string) {
   await expect(page.getByRole("heading", { name, level: 2 })).toBeVisible();
 }
 
+/** A person's contact id, taken from the URL their page lives at. */
+async function idOf(page: Page, name: string): Promise<string> {
+  await openPerson(page, name);
+  const id = new URL(page.url()).pathname.split("/")[2];
+  if (!id) throw new Error(`no contact id in ${page.url()}`);
+  return id;
+}
+
 /** The Family card, identified by its add button rather than its title. */
 function familyCard(page: Page) {
   return page
@@ -130,6 +138,48 @@ test("the family page bands people by generation", async ({ page }) => {
   await expect(page.getByText("Measured from here")).toBeVisible();
 });
 
+test("a band separates immediate family from cousins and exes", async ({ page }) => {
+  await ensureSignedIn(page);
+  // Everyone here lands in Idris's own generation: a sibling, a cousin, and the
+  // ex-spouse an earlier test re-typed. Banding by generation alone set all
+  // three side by side, which is the distinction the page exists to draw.
+  const cousin = `Bo ${suffix()}`;
+  const sibling = `Nell ${suffix()}`;
+  await addPerson(page, cousin);
+  await addPerson(page, sibling);
+  await linkRelative(page, SIBLING(), cousin, "Cousin");
+  await linkRelative(page, SIBLING(), sibling, "Sibling");
+
+  await page.goto(`/family?anchor=${await idOf(page, SIBLING())}`);
+
+  // The anchor's own band is the one holding the badge, which beats matching a
+  // heading whose possessive depends on how the stamped name happens to end.
+  const band = page.locator("section").filter({ hasText: "Measured from here" });
+
+  await expect(band.getByRole("heading", { name: "Immediate family" })).toBeVisible();
+  await expect(band.getByRole("heading", { name: "Extended family" })).toBeVisible();
+  await expect(band.getByRole("heading", { name: "Former family" })).toBeVisible();
+
+  // Each name sits under its own heading rather than in one undifferentiated
+  // list: the group is the <ul> that follows its heading.
+  const immediate = band.locator("div").filter({
+    has: page.getByRole("heading", { name: "Immediate family" }),
+  }).last();
+  await expect(immediate.getByRole("link", { name: new RegExp(sibling) })).toBeVisible();
+  await expect(immediate.getByRole("link", { name: new RegExp(cousin) })).toHaveCount(0);
+});
+
+test("someone with no direct link is filed under whoever reaches them", async ({ page }) => {
+  await ensureSignedIn(page);
+  // Wren is Idris's parent and Juno is Idris's child, so anchoring on Wren
+  // leaves Juno reachable only through Idris.
+  await page.goto(`/family?anchor=${await idOf(page, PARENT())}`);
+
+  await expect(
+    page.getByRole("heading", { name: `Through ${SIBLING()}` }).first(),
+  ).toBeVisible();
+});
+
 test("households group people explicitly", async ({ page }) => {
   await ensureSignedIn(page);
   await page.goto("/family");
@@ -155,4 +205,93 @@ test("households group people explicitly", async ({ page }) => {
     .locator("section")
     .filter({ has: page.getByRole("button", { name: "Add to a household" }) });
   await expect(card.getByText(name)).toBeVisible();
+});
+
+test("a household can be renamed without losing anyone in it", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto("/family");
+
+  const households = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "New household" }) });
+  const name = `House ${suffix()}`;
+  const renamed = `${name} upstairs`;
+
+  await households.getByRole("button", { name: `Edit ${name}`, exact: true }).click();
+  await households.getByLabel("Name", { exact: true }).fill(renamed);
+  // Stamped, because both projects run against the same instance and the
+  // desktop pass would otherwise match the note the mobile pass left behind.
+  const note = `Sunday lunches, ${suffix()}.`;
+  await households.getByLabel("Notes (optional)").fill(note);
+  await households.getByRole("button", { name: "Save" }).click();
+
+  await expect(households.getByRole("heading", { name: renamed })).toBeVisible();
+  await expect(households.getByText(note)).toBeVisible();
+  // Renaming the group is not a change to who is in it.
+  await expect(households.getByRole("link", { name: new RegExp(SIBLING()) })).toBeVisible();
+  await expect(households.getByRole("link", { name: new RegExp(PARTNER()) })).toBeVisible();
+});
+
+test("two people can be linked from the family page itself", async ({ page }) => {
+  await ensureSignedIn(page);
+  const cousin = `Rui ${suffix()}`;
+  await addPerson(page, cousin);
+
+  await page.goto("/family");
+  const card = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Link two people" }) });
+  await card.getByRole("button", { name: "Link two people" }).click();
+
+  const whose = card.getByRole("group", { name: "Whose relative", exact: true });
+  await whose.getByLabel("Search people").fill(PARENT());
+  await whose.getByRole("button", { name: new RegExp(PARENT()) }).click();
+
+  await card.getByLabel("They are this person's…").selectOption({ label: "Cousin" });
+
+  const who = card.getByRole("group", { name: "Who", exact: true });
+  await who.getByLabel("Search people").fill(cousin);
+  await who.getByRole("button", { name: new RegExp(cousin) }).click();
+
+  await card.getByRole("button", { name: "Link", exact: true }).click();
+
+  // Written through the same action the contact page uses, so both halves land.
+  await openPerson(page, PARENT());
+  await expect(familyCard(page).getByRole("link", { name: new RegExp(cousin) })).toBeVisible();
+  await openPerson(page, cousin);
+  await expect(familyCard(page).getByRole("link", { name: new RegExp(PARENT()) })).toBeVisible();
+});
+
+test("naming someone as the subject clears them from the other picker", async ({ page }) => {
+  await ensureSignedIn(page);
+  const other = `Tam ${suffix()}`;
+  await addPerson(page, other);
+
+  await page.goto("/family");
+  const card = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Link two people" }) });
+  await card.getByRole("button", { name: "Link two people" }).click();
+
+  const whose = card.getByRole("group", { name: "Whose relative", exact: true });
+  const who = card.getByRole("group", { name: "Who", exact: true });
+
+  // The second picker first, then the same person as the subject — the order
+  // that used to leave a hidden id behind a chip that had already disappeared,
+  // so the form looked empty and refused on submit.
+  await who.getByLabel("Search people").fill(PARENT());
+  await who.getByRole("button", { name: new RegExp(PARENT()) }).click();
+  await whose.getByLabel("Search people").fill(PARENT());
+  await whose.getByRole("button", { name: new RegExp(PARENT()) }).click();
+
+  await expect(who.getByRole("button", { name: new RegExp(PARENT()) })).toHaveCount(0);
+
+  // And the form still saves, rather than failing on a value nothing shows.
+  await card.getByLabel("They are this person's…").selectOption({ label: "Cousin" });
+  await who.getByLabel("Search people").fill(other);
+  await who.getByRole("button", { name: new RegExp(other) }).click();
+  await card.getByRole("button", { name: "Link", exact: true }).click();
+
+  await openPerson(page, other);
+  await expect(familyCard(page).getByRole("link", { name: new RegExp(PARENT()) })).toBeVisible();
 });

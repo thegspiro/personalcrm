@@ -9,6 +9,8 @@ dist/
 *.tsbuildinfo
 next-env.d.ts
 config/
+# UPLOADS_DIR in .env.example: private photos, never to be committed
+data/
 coverage/
 .DS_Store
 test-results/

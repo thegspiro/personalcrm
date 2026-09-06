@@ -9,7 +9,7 @@ import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { SectionCard, SectionEmpty, SectionRow } from "@/components/contacts/section-card";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { fieldOptions } from "@/lib/custom-fields";
 import type { TermOption } from "@/components/form/term-select";
 import {
@@ -184,7 +184,7 @@ function FieldRow({
   categories: TermOption[];
 }) {
   const run = useAction();
-  const add = useAddAction();
+  const edit = useEditAction();
   const [editing, setEditing] = React.useState(false);
   const scoped = Array.isArray(definition.appliesToCategoryIds)
     ? (definition.appliesToCategoryIds as string[])
@@ -234,7 +234,7 @@ function FieldRow({
 
       {editing ? (
         <form
-          action={add(updateFieldDefinition, () => setEditing(false), "Saved")}
+          action={edit(updateFieldDefinition, () => setEditing(false), "Saved")}
           className="mt-2.5 grid gap-2.5 border-t border-border/70 pt-2.5"
         >
           <input type="hidden" name="id" value={definition.id} />

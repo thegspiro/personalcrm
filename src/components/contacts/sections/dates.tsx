@@ -4,7 +4,7 @@ import { Icon } from "@/components/nav/icon";
 import { SubmitButton } from "@/components/form/submit-button";
 import { type TermOption } from "@/components/form/term-select";
 import { SectionCard, SectionEmpty, SectionRow } from "../section-card";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { formatPartialDate, type DatePrecision } from "@/lib/date-precision";
 import { type PlainDate } from "@/lib/dates";
 import { reminderPolicyLabel, type ReminderPolicy } from "@/lib/reminders";
@@ -36,6 +36,7 @@ export function DatesSection({
 }) {
   const run = useAction();
   const add = useAddAction();
+  const edit = useEditAction();
 
   return (
     <SectionCard
@@ -71,7 +72,7 @@ export function DatesSection({
             editForm={(close) => (
               item.canonicalBirthday ? (
                 <form
-                  action={add(updateContactBirthday, close, "Birthday saved")}
+                  action={edit(updateContactBirthday, close, "Birthday saved")}
                   className="grid gap-2.5"
                 >
                   <input type="hidden" name="id" value={contactId} />
@@ -79,7 +80,7 @@ export function DatesSection({
                   <SubmitButton size="sm">Save</SubmitButton>
                 </form>
               ) : (
-                <form action={add(updateImportantDate, close, "Saved")} className="grid gap-2.5">
+                <form action={edit(updateImportantDate, close, "Saved")} className="grid gap-2.5">
                   <input type="hidden" name="id" value={item.id} />
                   <ImportantDateFields formId={`date-${item.id}`} types={types} item={item} />
                   <SubmitButton size="sm">Save</SubmitButton>

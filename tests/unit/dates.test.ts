@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_DB_DATE,
+  MIN_DB_DATE,
+  clampToDbDate,
   addPlainDays,
   calendarDateInTz,
   clampPlainDate,
   diffPlainDays,
+  endOfDayInTz,
   nextOccurrence,
   parsePlainDate,
   plainDateFromDb,
@@ -13,6 +17,7 @@ import {
   startOfDayInTz,
   yearsBetween,
   zonedStartOfDay,
+  zonedTimeOfDay,
 } from "@/lib/dates";
 
 const NY = "America/New_York";
@@ -53,9 +58,118 @@ describe("zonedStartOfDay", () => {
     expect(start.toISOString()).toBe("2026-11-01T04:00:00.000Z");
   });
 
+  it("starts the day at the transition where the clocks jump over midnight", () => {
+    // Santiago moves to DST at 24:00 on 2026-09-05, so 00:00 on the 6th never
+    // happens and the day begins at 01:00. Answering 23:00 on the 5th — which
+    // the arithmetic guess does — loses the last hour of the 5th from every
+    // query bounded by a day boundary.
+    const start = zonedStartOfDay({ year: 2026, month: 9, day: 6 }, "America/Santiago");
+    expect(start.toISOString()).toBe("2026-09-06T04:00:00.000Z");
+  });
+
+  it("starts the day at the transition when the jump is at midnight itself", () => {
+    // Beirut goes straight from 00:00 to 01:00 on 2026-03-29.
+    const start = zonedStartOfDay({ year: 2026, month: 3, day: 29 }, "Asia/Beirut");
+    expect(start.toISOString()).toBe("2026-03-28T22:00:00.000Z");
+  });
+
+  it("returns the first of a midnight the clocks roll back through", () => {
+    // Amman rolled back an hour at midnight on 2000-09-29, so 00:00 happened
+    // twice. Answering the second puts the repeated hour on the wrong day, and
+    // a contact due in it is read as due a day early.
+    const start = zonedStartOfDay({ year: 2000, month: 9, day: 29 }, "Asia/Amman");
+    expect(start.toISOString()).toBe("2000-09-28T21:00:00.000Z");
+  });
+
+  it("returns the first of a midnight repeated by a multi-hour rollback", () => {
+    // Casey went from +11 to +08 across midnight on 2019-03-17: three hours,
+    // so both naive guesses land on the later 00:00.
+    const start = zonedStartOfDay({ year: 2019, month: 3, day: 17 }, "Antarctica/Casey");
+    expect(start.toISOString()).toBe("2019-03-16T13:00:00.000Z");
+  });
+
+  it("handles a day the zone skipped entirely", () => {
+    // Apia crossed the date line at the end of 2011: 30 December never
+    // happened, so the 31st begins where the 29th ended.
+    const start = zonedStartOfDay({ year: 2011, month: 12, day: 31 }, "Pacific/Apia");
+    expect(start.toISOString()).toBe("2011-12-30T10:00:00.000Z");
+  });
+
   it("round-trips through startOfDayInTz", () => {
     const instant = new Date("2026-07-15T18:45:00Z");
     expect(startOfDayInTz(instant, NY).toISOString()).toBe("2026-07-15T04:00:00.000Z");
+  });
+});
+
+describe("zonedTimeOfDay", () => {
+  it("resolves a wall-clock minute on an ordinary day", () => {
+    // 19:30 on a standard-time day in New York is 00:30Z the next morning.
+    const at = zonedTimeOfDay({ year: 2026, month: 1, day: 15 }, 19 * 60 + 30, NY);
+    expect(at.toISOString()).toBe("2026-01-16T00:30:00.000Z");
+  });
+
+  it("agrees with zonedStartOfDay at minute zero", () => {
+    const date = { year: 2026, month: 7, day: 15 };
+    expect(zonedTimeOfDay(date, 0, NY).toISOString()).toBe(
+      zonedStartOfDay(date, NY).toISOString(),
+    );
+  });
+
+  it("lands a skipped local time after the spring-forward gap", () => {
+    // The clocks jump 02:00 -> 03:00 on 2026-03-08, so 02:30 never happens
+    // locally. Two and a half hours after the day began is 03:30 EDT, which is
+    // where a calendar app puts it rather than refusing the time.
+    const at = zonedTimeOfDay({ year: 2026, month: 3, day: 8 }, 2 * 60 + 30, NY);
+    expect(at.toISOString()).toBe("2026-03-08T07:30:00.000Z");
+    expect(calendarDateInTz(at, NY)).toEqual({ year: 2026, month: 3, day: 8 });
+  });
+
+  it("takes the first of a repeated local time on the fall-back day", () => {
+    // 01:30 happens twice on 2026-11-01. The earlier one is 05:30Z (EDT); the
+    // second would be 06:30Z. Earliest matches zonedStartOfDay's own rule.
+    const at = zonedTimeOfDay({ year: 2026, month: 11, day: 1 }, 60 + 30, NY);
+    expect(at.toISOString()).toBe("2026-11-01T05:30:00.000Z");
+  });
+
+  it("holds the wall clock after the fall-back transition, not the elapsed count", () => {
+    // The regression these exist for. 2026-11-01 is 25 hours long, so counting
+    // minutes from midnight runs an hour early for everything past 02:00 —
+    // an evening plan would have reminded at 18:30 for a 19:30 date. Each of
+    // these reads as the time asked for, in local terms.
+    const day = { year: 2026, month: 11, day: 1 };
+    const readsAs = (minute: number) =>
+      zonedTimeOfDay(day, minute, NY).toLocaleTimeString("en-US", {
+        timeZone: NY,
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      });
+
+    expect(readsAs(2 * 60 + 30)).toBe("02:30");
+    expect(readsAs(19 * 60 + 30)).toBe("19:30");
+    expect(readsAs(1439)).toBe("23:59");
+    // ...and still on the day asked for, not spilled into the next.
+    expect(calendarDateInTz(zonedTimeOfDay(day, 1439, NY), NY)).toEqual(day);
+  });
+
+  it("holds the wall clock across a spring-forward day too", () => {
+    const day = { year: 2026, month: 3, day: 8 };
+    const readsAs = (minute: number) =>
+      zonedTimeOfDay(day, minute, NY).toLocaleTimeString("en-US", {
+        timeZone: NY,
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      });
+
+    expect(readsAs(60 + 30)).toBe("01:30");
+    expect(readsAs(19 * 60 + 30)).toBe("19:30");
+    expect(readsAs(1439)).toBe("23:59");
+  });
+
+  it("stays on the intended day at one minute to midnight", () => {
+    const at = zonedTimeOfDay({ year: 2026, month: 7, day: 15 }, 1439, NY);
+    expect(calendarDateInTz(at, NY)).toEqual({ year: 2026, month: 7, day: 15 });
   });
 });
 
@@ -314,5 +428,34 @@ describe("yearsBetween", () => {
 
   it("counts the birthday on the day itself", () => {
     expect(yearsBetween({ year: 1990, month: 6, day: 15 }, { year: 2026, month: 6, day: 15 })).toBe(36);
+  });
+});
+
+describe("endOfDayInTz", () => {
+  it("keeps the final second of a day the clocks jump out of", () => {
+    const end = endOfDayInTz(new Date("2026-09-05T20:00:00Z"), "America/Santiago");
+    // 23:59:59.999 local on the 5th, one millisecond before the 6th begins.
+    expect(end.toISOString()).toBe("2026-09-06T03:59:59.999Z");
+  });
+
+  it("covers a whole ordinary day", () => {
+    const end = endOfDayInTz(new Date("2026-07-15T18:45:00Z"), NY);
+    expect(end.toISOString()).toBe("2026-07-16T03:59:59.999Z");
+  });
+});
+
+describe("the storable date range", () => {
+  it("pulls a bound back inside what MariaDB can hold", () => {
+    // A query that widens a window on its own account can walk off either end,
+    // and the server rejects the statement rather than returning everything.
+    expect(clampToDbDate({ year: 999, month: 12, day: 31 })).toEqual(MIN_DB_DATE);
+    expect(clampToDbDate({ year: 10000, month: 1, day: 1 })).toEqual(MAX_DB_DATE);
+  });
+
+  it("leaves a bound already inside it alone", () => {
+    const inside = { year: 2026, month: 3, day: 4 };
+    expect(clampToDbDate(inside)).toEqual(inside);
+    expect(clampToDbDate(MIN_DB_DATE)).toEqual(MIN_DB_DATE);
+    expect(clampToDbDate(MAX_DB_DATE)).toEqual(MAX_DB_DATE);
   });
 });

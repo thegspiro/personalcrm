@@ -49,6 +49,23 @@ export function tzOffsetMs(instant: Date, timeZone: string): number {
   return asIfUtc - Math.floor(instant.getTime() / 1000) * 1000;
 }
 
+/**
+ * The wall-clock minute past midnight an instant reads as, in `timeZone`.
+ *
+ * Read off the clock, not measured from midnight. Subtracting the day's start
+ * gives *elapsed* minutes, and on the two days a year that are not 24 hours
+ * long those are different numbers: after New York's fall-back, 7:30 PM is
+ * 20½ hours after local midnight and would read as 8:30 PM; after
+ * spring-forward it would read an hour early. Invariant 2 is about anchoring
+ * to the account's zone, and this is the half of it that a duration cannot do.
+ */
+export function zonedMinuteOfDay(instant: Date, timeZone: string): number {
+  const parts = formatterFor(timeZone).formatToParts(instant);
+  const v: Record<string, number> = {};
+  for (const p of parts) if (p.type !== "literal") v[p.type] = Number(p.value);
+  return v.hour * 60 + v.minute;
+}
+
 /** The calendar date an instant falls on, as seen in `timeZone`. */
 export function calendarDateInTz(instant: Date, timeZone: string): PlainDate {
   const parts = formatterFor(timeZone).formatToParts(instant);
@@ -59,18 +76,99 @@ export function calendarDateInTz(instant: Date, timeZone: string): PlainDate {
 
 /**
  * The instant at which the given calendar day begins in `timeZone`.
- * Solved iteratively because the offset itself depends on the answer (DST).
+ *
+ * The offset depends on the answer, so the answer has to be searched for.
+ * Guessing from the offset at the target instant and correcting once is not
+ * enough, because a transition near midnight breaks it in two opposite ways:
+ *
+ *  * The clocks jump over midnight, so 00:00 never happens and the day starts
+ *    at the transition — Santiago on 2026-09-06 begins at 01:00.
+ *  * The clocks roll back through midnight, so 00:00 happens twice and the day
+ *    starts at the first — Casey on 2019-03-17 begins three hours before the
+ *    guesses find it, and Amman on 2000-09-29 an hour before.
+ *
+ * So take the offsets in play a day either side as well, and keep the earliest
+ * candidate that actually lands on the day asked for. Earliest is safe: any
+ * instant whose local date is `date` is at or after the true start, because an
+ * earlier one would read as the previous day.
  */
 export function zonedStartOfDay(date: PlainDate, timeZone: string): Date {
   const naive = Date.UTC(date.year, date.month - 1, date.day, 0, 0, 0, 0);
-  let guess = naive - tzOffsetMs(new Date(naive), timeZone);
-  // One correction pass resolves days where the offset changes at midnight.
-  guess = naive - tzOffsetMs(new Date(guess), timeZone);
-  return new Date(guess);
+  const offsets = [
+    tzOffsetMs(new Date(naive - MS_PER_DAY), timeZone),
+    tzOffsetMs(new Date(naive), timeZone),
+    tzOffsetMs(new Date(naive + MS_PER_DAY), timeZone),
+  ];
+  // The correction pass the naive guess needs when the offset changes between
+  // the two, which the day-either-side probes can miss on a short transition.
+  offsets.push(tzOffsetMs(new Date(naive - offsets[1]), timeZone));
+
+  let start: number | null = null;
+  for (const offset of offsets) {
+    const candidate = naive - offset;
+    if (start !== null && candidate >= start) continue;
+    const landed = calendarDateInTz(new Date(candidate), timeZone);
+    if (landed.year === date.year && landed.month === date.month && landed.day === date.day) {
+      start = candidate;
+    }
+  }
+  // Unreachable for any real zone: one of the offsets in play produces it.
+  return new Date(start ?? naive - offsets[1]);
+}
+
+/**
+ * The instant at which a local wall-clock minute of `date` occurs in `timeZone`.
+ *
+ * The wall clock is searched for, not counted to. Adding the minute count to
+ * the day's start is only the same answer when the day is 24 hours long: on a
+ * fall-back day it is an hour early for everything after the transition, so
+ * asking for 19:30 on 2026-11-01 in New York returned 18:30 — a reminder an
+ * hour out, one day a year. The search is `zonedStartOfDay`'s, with the same
+ * earliest-candidate rule, applied to the whole wall clock rather than to
+ * midnight: keep only an instant whose *actual* offset is the one that produced
+ * it, because that is what makes its local reading the time asked for.
+ *
+ * The two transitions then fall out of the search rather than out of
+ * arithmetic:
+ *
+ *  * Clocks roll back, so a local time in the repeated hour happens twice —
+ *    two offsets satisfy it and 01:30 takes the first.
+ *  * Clocks jump forward, so a local time in the skipped hour never happens —
+ *    no offset satisfies it, and the elapsed-time answer stands in, putting
+ *    02:30 at 03:30 the way calendar apps do.
+ *
+ * A minute outside 0-1439 is not rejected: it names no wall clock, so it falls
+ * to the elapsed-time answer, and a caller meaning "the end of the day" can say
+ * 1440. Storage validates the range instead.
+ */
+export function zonedTimeOfDay(date: PlainDate, minute: number, timeZone: string): Date {
+  const elapsed = new Date(zonedStartOfDay(date, timeZone).getTime() + minute * 60_000);
+
+  const naive = Date.UTC(date.year, date.month - 1, date.day, 0, 0, 0, 0) + minute * 60_000;
+  const offsets = [
+    tzOffsetMs(new Date(naive - MS_PER_DAY), timeZone),
+    tzOffsetMs(new Date(naive), timeZone),
+    tzOffsetMs(new Date(naive + MS_PER_DAY), timeZone),
+    tzOffsetMs(elapsed, timeZone),
+  ];
+
+  let best: number | null = null;
+  for (const offset of offsets) {
+    const candidate = naive - offset;
+    if (best !== null && candidate >= best) continue;
+    if (tzOffsetMs(new Date(candidate), timeZone) === offset) best = candidate;
+  }
+  return best === null ? elapsed : new Date(best);
 }
 
 export function startOfDayInTz(instant: Date, timeZone: string): Date {
   return zonedStartOfDay(calendarDateInTz(instant, timeZone), timeZone);
+}
+
+/** The final instant of the calendar day containing `instant` in `timeZone`. */
+export function endOfDayInTz(instant: Date, timeZone: string): Date {
+  const tomorrow = addPlainDays(calendarDateInTz(instant, timeZone), 1);
+  return new Date(zonedStartOfDay(tomorrow, timeZone).getTime() - 1);
 }
 
 /** Read a MySQL DATE column (Prisma gives UTC midnight) as a plain calendar date. */
@@ -109,6 +207,26 @@ export function parsePlainDate(key: string): PlainDate | null {
 export function addPlainDays(date: PlainDate, days: number): PlainDate {
   const t = Date.UTC(date.year, date.month - 1, date.day) + days * MS_PER_DAY;
   return plainDateFromDb(new Date(t));
+}
+
+/**
+ * The range MariaDB's `DATE` can hold.
+ *
+ * A bound outside it is not a wide query — the server rejects the statement,
+ * so a page that reaches past either end fails rather than returning
+ * everything. Any query that widens a window on its own account has to clamp
+ * the result: the caller cannot be expected to know how far a prefilter
+ * reaches back, and asking it to is how the calendar's month parser came to be
+ * guarding a number it could not see.
+ */
+export const MIN_DB_DATE: PlainDate = { year: 1000, month: 1, day: 1 };
+export const MAX_DB_DATE: PlainDate = { year: 9999, month: 12, day: 31 };
+
+/** Pull a bound back inside what the database can store. */
+export function clampToDbDate(date: PlainDate): PlainDate {
+  if (diffPlainDays(MIN_DB_DATE, date) < 0) return MIN_DB_DATE;
+  if (diffPlainDays(date, MAX_DB_DATE) < 0) return MAX_DB_DATE;
+  return date;
 }
 
 /** Whole calendar days from `from` to `to`; negative when `to` is earlier. */

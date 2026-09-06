@@ -13,6 +13,7 @@ import { createContact, ensureSignedIn } from "./helpers";
 const ROUTES = [
   "/",
   "/people",
+  "/people/friends",
   "/timeline",
   "/dating",
   "/dating/compare",
@@ -20,6 +21,7 @@ const ROUTES = [
   "/tasks",
   "/ideas",
   "/gifts",
+  "/calendar",
   "/more",
   "/settings",
 ];

@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { SubmitButton } from "@/components/form/submit-button";
 import { type TermOption } from "@/components/form/term-select";
 import { SectionCard, SectionEmpty, SectionRow } from "../section-card";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { formatPartialRange, isValidPartialDateRange, type DatePrecision } from "@/lib/date-precision";
 import { parsePlainDate } from "@/lib/dates";
 import { LifeEventFields, type LifeEventValue } from "../detail-field-groups";
@@ -100,6 +100,7 @@ export function LifeEventsSection({
 }) {
   const run = useAction();
   const add = useAddAction();
+  const edit = useEditAction();
 
   return (
     <SectionCard
@@ -136,7 +137,7 @@ export function LifeEventsSection({
             editLabel="Edit life event"
             editForm={(close) => (
               <LifeEventForm
-                action={add(updateLifeEvent, close, "Saved")}
+                action={edit(updateLifeEvent, close, "Saved")}
                 formId={`event-${event.id}`}
                 types={types}
                 event={event}

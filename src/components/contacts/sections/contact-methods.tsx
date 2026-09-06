@@ -8,7 +8,7 @@ import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { TermChips, type TermOption } from "@/components/form/term-select";
 import { SectionCard, SectionEmpty, SectionRow } from "../section-card";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { termColorClasses } from "@/lib/format";
 import { methodLink } from "@/lib/contact-methods";
 import {
@@ -101,7 +101,7 @@ function MethodRow({
   reorderable: boolean;
 }) {
   const run = useAction();
-  const add = useAddAction();
+  const edit = useEditAction();
   const link = methodLink(method.type?.slug ?? null, method.value);
 
   return (
@@ -111,7 +111,7 @@ function MethodRow({
       editLabel={`Edit ${method.type?.label ?? "contact method"}`}
       editForm={(close) => (
         <form
-          action={add(updateContactMethod, close, "Saved")}
+          action={edit(updateContactMethod, close, "Saved")}
           className="grid gap-2.5"
         >
           <input type="hidden" name="id" value={method.id} />

@@ -284,6 +284,22 @@ export const TAXONOMY_SEEDS: Record<TaxonomyKind, TaxonomySeed[]> = {
     { slug: "graduation", label: "Graduation", icon: "GraduationCap", color: "amber" },
     { slug: "thank-you", label: "Thank you", icon: "HandHeart", color: "cyan" },
   ],
+
+  HAPPENING_TYPE: [
+    { slug: "trip", label: "Trip", icon: "Plane", color: "cyan", metadata: { group: "Away" } },
+    { slug: "work-travel", label: "Work travel", icon: "Briefcase", color: "blue", metadata: { group: "Away" } },
+    { slug: "holiday", label: "Holiday", icon: "Palmtree", color: "teal", metadata: { group: "Away" } },
+    { slug: "moving", label: "Moving", icon: "Truck", color: "amber", metadata: { group: "Away" } },
+    { slug: "visitors", label: "Visitors staying", icon: "Users", color: "violet", metadata: { group: "At home" } },
+    { slug: "family-thing", label: "Family commitment", icon: "Home", color: "rose", metadata: { group: "At home" } },
+    { slug: "medical", label: "Medical", icon: "HeartPulse", color: "red", metadata: { group: "Demanding" } },
+    { slug: "exams", label: "Exams or studying", icon: "BookOpen", color: "yellow", metadata: { group: "Demanding" } },
+    { slug: "deadline", label: "Big deadline", icon: "AlarmClock", color: "orange", metadata: { group: "Demanding" } },
+    { slug: "busy-stretch", label: "Busy stretch", icon: "CalendarClock", color: "slate", metadata: { group: "Demanding" } },
+    { slug: "performance", label: "Performance or game", icon: "Trophy", color: "fuchsia", metadata: { group: "Worth asking about" } },
+    { slug: "milestone", label: "Big day", icon: "Sparkles", color: "pink", metadata: { group: "Worth asking about" } },
+    { slug: "other", label: "Other", icon: "CircleDot", color: "slate", metadata: { group: "Worth asking about" } },
+  ],
 };
 
 export const TAXONOMY_KIND_LABELS: Record<TaxonomyKind, { title: string; description: string }> = {
@@ -302,6 +318,10 @@ export const TAXONOMY_KIND_LABELS: Record<TaxonomyKind, { title: string; descrip
   MEETING_SOURCE: { title: "Meeting sources", description: "Where you met someone — apps included." },
   GIFT_OCCASION: { title: "Gift occasions", description: "Why a gift was given." },
   LIFE_EVENT_TYPE: { title: "Significant moments", description: "Life changes, milestones, and memories worth keeping." },
+  HAPPENING_TYPE: {
+    title: "Going on in their life",
+    description: "Trips, deadlines, and the rest of what people have on.",
+  },
 };
 
 /** Ordered for the settings UI. */
@@ -315,6 +335,7 @@ export const TAXONOMY_KIND_ORDER: TaxonomyKind[] = [
   "MEETING_SOURCE",
   "GIFT_OCCASION",
   "LIFE_EVENT_TYPE",
+  "HAPPENING_TYPE",
   "DATING_STAGE",
   "DATE_ACTIVITY_TYPE",
   "PLAN_CATEGORY",

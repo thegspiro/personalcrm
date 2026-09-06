@@ -46,7 +46,7 @@
           Type="Port" Display="always" Required="true" Mask="false">3000</Config>
 
   <Config Name="Appdata" Target="/config" Default="/mnt/user/appdata/personalcrm" Mode="rw"
-          Description="Holds the MariaDB database, the generated secrets file, and the directories reserved for uploads and backups. Back this up."
+          Description="Holds the MariaDB database, the generated secrets file, and uploads and automatic plaintext database dumps. Back up and encrypt this path."
           Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/personalcrm</Config>
 
   <Config Name="PUID" Target="PUID" Default="99" Mode=""
@@ -68,6 +68,18 @@
   <Config Name="Disable signups" Target="DISABLE_SIGNUP" Default="false" Mode=""
           Description="Set to true once your accounts exist to stop anyone else registering."
           Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+
+  <Config Name="Backup time" Target="BACKUP_TIME" Default="02:00" Mode=""
+          Description="Daily database dump time in 24-hour HH:MM, interpreted in TZ."
+          Type="Variable" Display="advanced" Required="true" Mask="false">02:00</Config>
+
+  <Config Name="Backup retention days" Target="BACKUP_RETENTION_DAYS" Default="30" Mode=""
+          Description="Delete completed database dumps older than this many days after a successful backup."
+          Type="Variable" Display="advanced" Required="true" Mask="false">30</Config>
+
+  <Config Name="Backup minimum free MiB" Target="BACKUP_MIN_FREE_MB" Default="512" Mode=""
+          Description="Refuse a backup when the backups directory has less than this much free space."
+          Type="Variable" Display="advanced" Required="true" Mask="false">512</Config>
 
   <Config Name="External database URL" Target="DATABASE_URL" Default="" Mode=""
           Description="Optional. Leave empty to use the MariaDB built into this container. Set it to use your own server, e.g. mysql://user:password@192.168.1.10:3306/personalcrm"

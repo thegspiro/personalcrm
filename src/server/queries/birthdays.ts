@@ -8,6 +8,18 @@ import { contactPrivacyWhere, type PrivacyScope } from "@/server/privacy/where";
 /** Stable namespace: a birthday is not an ImportantDate database row. */
 export const birthdayProjectionId = (contactId: string) => `contact-birthday:${contactId}`;
 
+/**
+ * The contact behind a projection id, or null if this is an ordinary row id.
+ *
+ * Kept next to the builder so the prefix is written once. The reminder ledger
+ * stores these ids, so a retry read months later has to be able to tell the
+ * two apart from the stored string alone.
+ */
+export function contactIdFromBirthdayProjectionId(id: string): string | null {
+  const prefix = birthdayProjectionId("");
+  return id.startsWith(prefix) ? id.slice(prefix.length) || null : null;
+}
+
 export interface BirthdayProjection {
   id: string;
   contactId: string;

@@ -26,8 +26,16 @@ import { privacyScope } from "@/server/privacy/filter";
 import { countPrivateRows } from "@/server/privacy/counts";
 import { PROVIDERS } from "@/server/ai/providers";
 import { GeoSettings } from "@/components/settings/geo-settings";
+import { HomeBaseSettings } from "@/components/settings/home-base-settings";
+import { BulkPlaceSettings } from "@/components/settings/bulk-place-settings";
+import { countUnplaced } from "@/server/queries/unplaced";
+import { isRateLimited } from "@/server/geo/providers";
 import { getGeoStatus } from "@/server/geo/config";
 import { GEO_PROVIDERS } from "@/server/geo/providers";
+import { listTags } from "@/server/queries/tags";
+import { TagSettings } from "@/components/settings/tag-settings";
+import { AccountSettings } from "@/components/settings/account-settings";
+import { listSessions } from "@/server/auth/session";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
@@ -48,6 +56,8 @@ export default async function SettingsPage() {
     privacyState,
     channels,
     hiddenRows,
+    tags,
+    sessions,
   ] = await Promise.all([
     listTaxonomyAdmin(user.id),
     listAllFieldDefinitions(user.id),
@@ -62,6 +72,17 @@ export default async function SettingsPage() {
     // than inside the export itself so the tab can say so before anyone clicks,
     // instead of only refusing afterwards.
     countPrivateRows(prisma, user.id),
+    listTags(user.id),
+    listSessions(user.id),
+  ]);
+
+  // How much there is to place, so the panel can say so before anything is
+  // sent anywhere. Owner-scoped and privacy-filtered in the query: a private
+  // contact's addresses are never counted, so the total cannot shift on unlock
+  // and announce that a hidden person has one.
+  const [unplacedPlaces, unplacedAddresses] = await Promise.all([
+    countUnplaced(user.id, "places"),
+    countUnplaced(user.id, "addresses"),
   ]);
 
   // Value counts drive the delete warning: deleting a field takes everything
@@ -87,11 +108,20 @@ export default async function SettingsPage() {
       </div>
 
       <SettingsTabs
+        account={
+          <AccountSettings
+            name={user.name}
+            email={user.email}
+            sessions={sessions}
+            timezone={prefs.timezone}
+          />
+        }
         appearance={
           <AppearanceSettings
             accent={prefs.accent}
             density={prefs.density}
             defaultCadenceDays={prefs.defaultCadenceDays}
+            weekStartsOn={prefs.weekStartsOn}
             timezone={prefs.timezone}
           />
         }
@@ -127,12 +157,22 @@ export default async function SettingsPage() {
             }))}
           />
         }
+        tags={<TagSettings tags={tags} />}
         dashboard={
           <DashboardSettings
             layout={normalizeDashboardLayout(layoutRow?.widgets)}
           />
         }
-        notifications={<NotificationSettings channels={channels} />}
+        notifications={
+          <NotificationSettings
+            channels={channels}
+            digest={{
+              enabled: prefs.digestEnabled,
+              hour: prefs.digestHour,
+              timezone: prefs.timezone,
+            }}
+          />
+        }
         quickadd={
           <AiSettings
             enabled={ai.enabled}
@@ -148,14 +188,37 @@ export default async function SettingsPage() {
           />
         }
         places={
-          <GeoSettings
-            enabled={geo.enabled}
-            usable={geo.usable}
-            provider={geo.provider}
-            baseUrl={geo.baseUrl}
-            providers={GEO_PROVIDERS}
-            canEdit={user.role === "ADMIN"}
-          />
+          <div className="grid gap-4">
+            <HomeBaseSettings
+              homeAddress={prefs.homeAddress}
+              homeCity={prefs.homeCity}
+              homeRegion={prefs.homeRegion}
+              homeCountry={prefs.homeCountry}
+              // `Decimal` does not survive the crossing into a client component.
+              homeLatitude={
+                prefs.homeLatitude === null ? null : String(prefs.homeLatitude)
+              }
+              homeLongitude={
+                prefs.homeLongitude === null ? null : String(prefs.homeLongitude)
+              }
+              distanceUnit={prefs.distanceUnit}
+              lookupEnabled={geo.enabled && geo.usable}
+            />
+            <GeoSettings
+              enabled={geo.enabled}
+              usable={geo.usable}
+              provider={geo.provider}
+              baseUrl={geo.baseUrl}
+              providers={GEO_PROVIDERS}
+              canEdit={user.role === "ADMIN"}
+            />
+            <BulkPlaceSettings
+              usable={geo.enabled && geo.usable}
+              publicEndpoint={isRateLimited(geo.baseUrl)}
+              places={unplacedPlaces}
+              addresses={unplacedAddresses}
+            />
+          </div>
         }
         privacy={
           <PrivacySettings

@@ -1,7 +1,28 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { processImportantDateReminders } from "@/server/services/reminders";
+import { deliverToChannel } from "@/server/services/notify";
 import { encryptSecret } from "@/server/crypto/secrets";
-import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
+import { asARestoreWould, createTestUser, hasTestDatabase, prisma, reset } from "./db";
+import { plainDateToDb } from "@/lib/dates";
+import { formatPlanTime } from "@/lib/plan-time";
+
+/**
+ * The real client with one ledger method replaced, so a test can stand in for
+ * a process that dies mid-way, or count how often a path is taken.
+ */
+function withLedger(overrides: Partial<Record<keyof typeof prisma.reminderLog, unknown>>): typeof prisma {
+  return new Proxy(prisma, {
+    get(target, property, receiver) {
+      if (property !== "reminderLog") return Reflect.get(target, property, receiver);
+      return new Proxy(target.reminderLog, {
+        get(ledger, method, ledgerReceiver) {
+          const override = overrides[method as keyof typeof overrides];
+          return override ?? Reflect.get(ledger, method, ledgerReceiver);
+        },
+      });
+    },
+  });
+}
 
 describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
   beforeEach(reset);
@@ -9,7 +30,7 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
 
   it("creates one idempotent delivery and excludes archived and locked-private contacts", async () => {
     const user = await createTestUser();
-    await prisma.userPreference.create({ data: { userId: user.id, timezone: "America/Los_Angeles", privacyLockEnabled: true } });
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "America/Los_Angeles", privacyLockEnabled: true, digestEnabled: false } });
     await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
     const contacts = await Promise.all([
       prisma.contact.create({ data: { ownerId: user.id, firstName: "Visible" } }),
@@ -45,7 +66,7 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     // Both have to reach the network, so this drives deliverToChannel itself
     // rather than the injected fake.
     const user = await createTestUser();
-    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC" } });
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
     await prisma.notificationChannel.createMany({
       data: [
         {
@@ -75,18 +96,22 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
       reminderDaysBefore: [0],
     } });
 
+    // The socket is the only thing replaced. Everything the credential passes
+    // through on its way to the wire — decryption, the header the kind
+    // chooses, the body — is the real sender's.
     const calls: Array<{ url: string; auth: string | undefined }> = [];
-    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      const headers = new Headers(init?.headers);
-      calls.push({ url: String(url), auth: headers.get("authorization") ?? undefined });
-      return new Response("{}", { status: 200 });
+    await processImportantDateReminders(new Date("2026-08-29T12:00:00Z"), {
+      db: prisma,
+      send: (channel, subject, body) =>
+        deliverToChannel(channel, subject, body, {
+          resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+          isAdministrator: async () => true,
+          http: async ({ url, headers }) => {
+            calls.push({ url: url.toString(), auth: headers.authorization });
+            return { status: 200 };
+          },
+        }),
     });
-    vi.stubGlobal("fetch", fetchMock);
-    try {
-      await processImportantDateReminders(new Date("2026-08-29T12:00:00Z"), { db: prisma });
-    } finally {
-      vi.unstubAllGlobals();
-    }
 
     expect(calls).toHaveLength(2);
     // Both carry their credential; neither goes out bare.
@@ -97,7 +122,7 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
 
   it("records an unreadable secret as a failure rather than sending without it", async () => {
     const user = await createTestUser();
-    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC" } });
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
     await prisma.notificationChannel.create({ data: {
       ownerId: user.id,
       kind: "WEBHOOK",
@@ -133,7 +158,7 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
 
   it("retries failures without creating a duplicate ledger row", async () => {
     const user = await createTestUser();
-    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC" } });
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
     await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
     const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Sam" } });
     await prisma.importantDate.create({ data: { ownerId: user.id, contactId: contact.id, label: "Date", date: new Date("2026-08-29T00:00:00Z"), recurrence: "NONE", reminderDaysBefore: [0] } });
@@ -144,5 +169,1288 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(send).toHaveBeenCalledTimes(2);
     expect(await prisma.reminderLog.count()).toBe(1);
     expect(await prisma.reminderLog.findFirst()).toMatchObject({ ok: true, attemptCount: 2 });
+  });
+
+  it("delivers cadence, task, and one daily digest across channels without crossing owners", async () => {
+    const owner = await createTestUser();
+    const other = await createTestUser();
+    await prisma.userPreference.createMany({ data: [
+      { userId: owner.id, timezone: "America/New_York", digestEnabled: true, digestHour: 8 },
+      { userId: other.id, timezone: "America/New_York", digestEnabled: false, digestHour: 8 },
+    ] });
+    await prisma.notificationChannel.createMany({ data: [
+      { ownerId: owner.id, kind: "WEBHOOK", name: "Owner email", config: { url: "https://example.invalid/a" } },
+      { ownerId: owner.id, kind: "NTFY", name: "Owner phone", config: { url: "https://example.invalid/b" } },
+      { ownerId: other.id, kind: "WEBHOOK", name: "Other", config: { url: "https://example.invalid/c" } },
+    ] });
+    const due = new Date("2026-09-02T00:00:00Z");
+    const contact = await prisma.contact.create({ data: { ownerId: owner.id, firstName: "Alex", nextTouchAt: due } });
+    const otherContact = await prisma.contact.create({ data: { ownerId: other.id, firstName: "Other", nextTouchAt: due } });
+    await prisma.task.createMany({ data: [
+      { ownerId: owner.id, contactId: contact.id, title: "Call Alex", dueDate: due },
+      { ownerId: other.id, contactId: otherContact.id, title: "Other task", dueDate: due },
+    ] });
+    const send = vi.fn(async () => undefined);
+    const now = new Date("2026-09-02T13:00:00Z"); // 09:00 in New York
+    await processImportantDateReminders(now, { db: prisma, send });
+    await processImportantDateReminders(now, { db: prisma, send });
+
+    // Two channels receive cadence + task + digest exactly once; the other owner gets only its own two items.
+    expect(send).toHaveBeenCalledTimes(8);
+    expect(await prisma.reminderLog.count({ where: { ownerId: owner.id } })).toBe(6);
+    for (const entityType of ["CADENCE", "TASK", "DIGEST"] as const) {
+      expect(await prisma.reminderLog.count({ where: { ownerId: owner.id, entityType } })).toBe(2);
+    }
+    expect(await prisma.reminderLog.count({ where: { ownerId: other.id } })).toBe(2);
+  });
+
+  it("cancels retries when task state or contact privacy changes", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", privacyLockEnabled: true, digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Taylor", nextTouchAt: new Date("2026-09-02T00:00:00Z") } });
+    const task = await prisma.task.create({ data: { ownerId: user.id, contactId: contact.id, title: "Follow up", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async () => { throw new Error("offline"); });
+    const first = new Date("2026-09-02T12:00:00Z");
+    await processImportantDateReminders(first, { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+
+    await prisma.task.update({ where: { id: task.id }, data: { completedAt: first } });
+    await prisma.contact.update({ where: { id: contact.id }, data: { isPrivate: true } });
+    await processImportantDateReminders(new Date(first.getTime() + 61_000), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(await prisma.reminderLog.count({ where: { nextAttemptAt: null, error: { contains: "cancelled" } } })).toBe(2);
+  });
+
+  it("counts a cadence due later in the local day as due, like every other overdue reading", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "America/New_York", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    // 7pm and 1am (the next day) in New York.
+    await prisma.contact.create({ data: { ownerId: user.id, firstName: "Evening", nextTouchAt: new Date("2026-09-02T23:00:00Z") } });
+    await prisma.contact.create({ data: { ownerId: user.id, firstName: "Tomorrow", nextTouchAt: new Date("2026-09-03T05:00:00Z") } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string) => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T13:00:00Z"), { db: prisma, send }); // 9am
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][1]).toBe("Time to reach out to Evening");
+  });
+
+  it("keeps retrying a reminder after the day it was owed on has ended, worded for the day it goes out", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Sam" } });
+    await prisma.importantDate.create({ data: { ownerId: user.id, contactId: contact.id, label: "Birthday", date: new Date("2026-09-01T00:00:00Z"), recurrence: "NONE", reminderDaysBefore: [0] } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => { throw new Error("offline"); });
+
+    // The last pass of the day fails; the first pass of the next day is the retry.
+    await processImportantDateReminders(new Date("2026-09-01T23:30:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][2]).toBe("Birthday for Sam is today (2026-09-01).");
+
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T00:30:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][2]).toBe("Birthday for Sam was yesterday (2026-09-01).");
+    expect(await prisma.reminderLog.count()).toBe(1);
+    expect(await prisma.reminderLog.findFirst()).toMatchObject({ ok: true, attemptCount: 2, nextAttemptAt: null });
+  });
+
+  it("cancels a retry when the date it was for has since been corrected", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Sam" } });
+    const date = await prisma.importantDate.create({ data: { ownerId: user.id, contactId: contact.id, label: "Birthday", date: new Date("2026-09-01T00:00:00Z"), recurrence: "NONE", reminderDaysBefore: [0] } });
+    const send = vi.fn(async () => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-01T23:30:00Z"), { db: prisma, send });
+    await prisma.importantDate.update({ where: { id: date.id }, data: { date: new Date("2026-09-20T00:00:00Z") } });
+    await processImportantDateReminders(new Date("2026-09-02T00:30:00Z"), { db: prisma, send });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirst()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("cancelled") });
+  });
+
+  it("retries a digest within its day and drops it once the day has ended", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-02T22:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][1]).toBe("Your Personal CRM daily digest");
+
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T22:30:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(await prisma.reminderLog.findFirst({ where: { entityType: "DIGEST" } })).toMatchObject({ ok: true, attemptCount: 2 });
+
+    // The next day's failure is not retried on the day after: that digest is
+    // stale, and the day after's own digest is what goes out instead.
+    send.mockImplementation(async () => { throw new Error("offline"); });
+    await processImportantDateReminders(new Date("2026-09-03T23:30:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(3);
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-04T00:30:00Z"), { db: prisma, send }); // before the digest hour
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(await prisma.reminderLog.count({ where: { entityType: "DIGEST", ok: false, nextAttemptAt: null, error: { contains: "cancelled" } } })).toBe(1);
+  });
+
+  it("re-reads a retried digest's details rather than resending what it first said", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send.mock.calls[0][2]).toBe("Nothing needs your attention today.");
+
+    await prisma.task.create({ data: { ownerId: user.id, title: "Call the plumber", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T09:30:00Z"), { db: prisma, send });
+    // The task itself, then the digest retry that now describes it.
+    const bodies = send.mock.calls.slice(1).map((call) => call[2]);
+    expect(bodies).toContain("Call the plumber was due 2026-09-02.");
+    expect(bodies).toContain("Tasks\n- Call the plumber (due today: 2026-09-02)");
+  });
+
+  it("reminds about a birthday set on the contact form, with no ImportantDate row", async () => {
+    // Contact.birthDate is the canonical birthday and the contact form writes
+    // no shadow row, so reading ImportantDate alone found nothing at all: the
+    // birthday showed on every screen and was never sent anywhere.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Sam", lastName: "Jones",
+      birthDate: new Date("1990-09-02T00:00:00Z"), birthDatePrecision: "DAY",
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    expect(send.mock.calls.map((call) => call[1])).toContain("Reminder: Birthday");
+    const body = send.mock.calls.find((call) => call[1] === "Reminder: Birthday")?.[2];
+    expect(body).toBe("Birthday for Sam Jones is today (2026-09-02).");
+    // And it reaches the digest through the same source.
+    const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest")?.[2] as string;
+    expect(digest).toContain("Birthday — Sam Jones (due today: 2026-09-02)");
+    // Ledgered under the projection id, so it is not re-sent on the next pass.
+    expect(await prisma.reminderLog.count({ where: { entityType: "IMPORTANT_DATE" } })).toBe(1);
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
+    expect(send.mock.calls.filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(1);
+  });
+
+  it("sends one birthday reminder, not two, when a legacy ImportantDate row names the same day", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Dana",
+      birthDate: new Date("1990-09-02T00:00:00Z"), birthDatePrecision: "DAY",
+    } });
+    const birthdayType = await prisma.taxonomyTerm.findFirst({
+      where: { ownerId: user.id, kind: "DATE_TYPE", slug: "birthday" },
+    });
+    expect(birthdayType).not.toBeNull();
+    await prisma.importantDate.create({ data: {
+      ownerId: user.id, contactId: contact.id, label: "Birthday", typeId: birthdayType!.id,
+      date: new Date("1990-09-02T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [0],
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    // Both rows describe the same birthday. Only the canonical one is owed.
+    expect(send.mock.calls.filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(1);
+    expect(await prisma.reminderLog.count({ where: { entityType: "IMPORTANT_DATE" } })).toBe(1);
+  });
+
+  it("fires a birthday on the canonical date, never on a stale legacy row's", async () => {
+    // The contact form updates Contact.birthDate and leaves any legacy row
+    // untouched. If that row still drove reminders, the date on screen and the
+    // date sent would disagree — and the wrong one would arrive.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Dana",
+      birthDate: new Date("1990-09-02T00:00:00Z"), birthDatePrecision: "DAY",
+    } });
+    const birthdayType = await prisma.taxonomyTerm.findFirst({
+      where: { ownerId: user.id, kind: "DATE_TYPE", slug: "birthday" },
+    });
+    await prisma.importantDate.create({ data: {
+      ownerId: user.id, contactId: contact.id, label: "Birthday", typeId: birthdayType!.id,
+      date: new Date("1990-09-05T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [0],
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send.mock.calls.find((call) => call[1] === "Reminder: Birthday")?.[2])
+      .toBe("Birthday for Dana is today (2026-09-02).");
+
+    // The stale row's own day passes without a word.
+    send.mockClear();
+    await processImportantDateReminders(new Date("2026-09-05T09:00:00Z"), { db: prisma, send });
+    expect(send.mock.calls.filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(0);
+  });
+
+  it("silences a legacy row when the canonical birthday has no known day", async () => {
+    // The canonical birthday is "September 1990" — no day. The legacy row has
+    // an exact one. Suppressing only where the projection is remindable would
+    // leave that row to announce a day the contact page never shows.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Vague",
+      birthDate: new Date("1990-09-01T00:00:00Z"), birthDatePrecision: "MONTH",
+    } });
+    const birthdayType = await prisma.taxonomyTerm.findFirst({
+      where: { ownerId: user.id, kind: "DATE_TYPE", slug: "birthday" },
+    });
+    await prisma.importantDate.create({ data: {
+      ownerId: user.id, contactId: contact.id, label: "Birthday", typeId: birthdayType!.id,
+      date: new Date("1990-09-02T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [0],
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    expect(send.mock.calls.filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(0);
+    const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest")?.[2] as string;
+    expect(digest).not.toContain("Vague");
+  });
+
+  it("does not re-send a birthday an upgrade already delivered under the legacy row's id", async () => {
+    // What a pre-upgrade install looks like: the legacy row sent this year's
+    // birthday under its own id. The canonical source now owns the occurrence
+    // under a different key, which the ledger cannot match — so it reconciles
+    // against the old identity instead of sending the birthday twice.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    const channel = await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Dana",
+      birthDate: new Date("1990-09-02T00:00:00Z"), birthDatePrecision: "DAY",
+    } });
+    const birthdayType = await prisma.taxonomyTerm.findFirst({
+      where: { ownerId: user.id, kind: "DATE_TYPE", slug: "birthday" },
+    });
+    const legacy = await prisma.importantDate.create({ data: {
+      ownerId: user.id, contactId: contact.id, label: "Birthday", typeId: birthdayType!.id,
+      date: new Date("1990-09-02T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [0],
+    } });
+    // The ledger row the old code left behind, keyed by the ImportantDate id.
+    await prisma.reminderLog.create({ data: {
+      ownerId: user.id, entityType: "IMPORTANT_DATE", entityId: legacy.id,
+      schedulingPolicy: "IMPORTANT_DATE_OFFSET", dedupKey: "pre-upgrade-birthday-row",
+      scheduledFor: new Date("2026-09-02T00:00:00Z"), offsetDays: 0,
+      channelId: channel.id, ok: true, attemptCount: 1, sentAt: new Date("2026-09-02T08:00:00Z"),
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    expect(send.mock.calls.filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(0);
+  });
+
+  it("still sends a superseded birthday to a channel the legacy delivery never reached", async () => {
+    // Email got the legacy reminder; a webhook is added the same day. The
+    // ledger is keyed per channel, so reconciling per occurrence alone would
+    // make the email row silence the webhook that is genuinely still owed.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    const emailed = await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Already", config: { url: "https://already.invalid" } } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Added later", config: { url: "https://later.invalid" } } });
+    const contact = await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Dana",
+      birthDate: new Date("1990-09-02T00:00:00Z"), birthDatePrecision: "DAY",
+    } });
+    const birthdayType = await prisma.taxonomyTerm.findFirst({
+      where: { ownerId: user.id, kind: "DATE_TYPE", slug: "birthday" },
+    });
+    const legacy = await prisma.importantDate.create({ data: {
+      ownerId: user.id, contactId: contact.id, label: "Birthday", typeId: birthdayType!.id,
+      date: new Date("1990-09-02T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [0],
+    } });
+    // Pre-upgrade: only the first channel was ledgered under the legacy id.
+    await prisma.reminderLog.create({ data: {
+      ownerId: user.id, entityType: "IMPORTANT_DATE", entityId: legacy.id,
+      schedulingPolicy: "IMPORTANT_DATE_OFFSET", dedupKey: "pre-upgrade-one-channel",
+      scheduledFor: new Date("2026-09-02T00:00:00Z"), offsetDays: 0,
+      channelId: emailed.id, ok: true, attemptCount: 1, sentAt: new Date("2026-09-02T08:00:00Z"),
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    const birthdays = send.mock.calls.filter((call) => call[1] === "Reminder: Birthday");
+    expect(birthdays).toHaveLength(1);
+    expect((birthdays[0][0] as { name: string }).name).toBe("Added later");
+  });
+
+  it("checks every superseded birthday row, not just the first", async () => {
+    // Two birthday-typed rows on one contact. The ledger success sits on the
+    // one that does not sort first, so keeping a single superseded id would
+    // miss it and send the birthday again.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    const channel = await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Dana",
+      birthDate: new Date("1990-09-02T00:00:00Z"), birthDatePrecision: "DAY",
+    } });
+    const birthdayType = await prisma.taxonomyTerm.findFirst({
+      where: { ownerId: user.id, kind: "DATE_TYPE", slug: "birthday" },
+    });
+    const rows = [];
+    for (let i = 0; i < 2; i++) {
+      rows.push(await prisma.importantDate.create({ data: {
+        ownerId: user.id, contactId: contact.id, label: "Birthday", typeId: birthdayType!.id,
+        date: new Date("1990-09-02T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [0],
+      } }));
+    }
+    // Whichever sorts *last* is the one holding the pre-upgrade delivery.
+    const holder = [...rows].sort((a, b) => a.id.localeCompare(b.id))[1];
+    await prisma.reminderLog.create({ data: {
+      ownerId: user.id, entityType: "IMPORTANT_DATE", entityId: holder.id,
+      schedulingPolicy: "IMPORTANT_DATE_OFFSET", dedupKey: "pre-upgrade-second-row",
+      scheduledFor: new Date("2026-09-02T00:00:00Z"), offsetDays: 0,
+      channelId: channel.id, ok: true, attemptCount: 1, sentAt: new Date("2026-09-02T08:00:00Z"),
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    expect(send.mock.calls.filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(0);
+  });
+
+  it("keeps the birthday identity stable when a birthday-typed date is added later", async () => {
+    // The reverse of the upgrade: canonical birthday already delivered under
+    // the projection id, then a birthday-typed date is added. Adopting that
+    // row's id would move the identity out from under the ledger row and send
+    // the same occurrence again.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Dana",
+      birthDate: new Date("1990-09-02T00:00:00Z"), birthDatePrecision: "DAY",
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send.mock.calls.filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(1);
+    const logged = await prisma.reminderLog.findMany({ where: { entityType: "IMPORTANT_DATE" } });
+    expect(logged).toHaveLength(1);
+    expect(logged[0].entityId).toBe(`contact-birthday:${contact.id}`);
+
+    const birthdayType = await prisma.taxonomyTerm.findFirst({
+      where: { ownerId: user.id, kind: "DATE_TYPE", slug: "birthday" },
+    });
+    await prisma.importantDate.create({ data: {
+      ownerId: user.id, contactId: contact.id, label: "Birthday", typeId: birthdayType!.id,
+      date: new Date("1990-09-02T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [0],
+    } });
+
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
+    // Same identity, so the ledger still matches: nothing more goes out.
+    expect(send.mock.calls.filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(1);
+    expect(await prisma.reminderLog.count({ where: { entityType: "IMPORTANT_DATE" } })).toBe(1);
+  });
+
+  it("hands a legacy birthday's pending retry to the canonical date", async () => {
+    // A legacy row's delivery is already queued and failing when the contact
+    // form sets Contact.birthDate. The retry is not cancelled and re-created
+    // under a new id — that would lose the ledger row that stops a second
+    // send. It continues under its own identity, answering with the canonical
+    // birthday, and the canonical candidate dedupes against it.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Dana" } });
+    const birthdayType = await prisma.taxonomyTerm.findFirst({
+      where: { ownerId: user.id, kind: "DATE_TYPE", slug: "birthday" },
+    });
+    const legacy = await prisma.importantDate.create({ data: {
+      ownerId: user.id, contactId: contact.id, label: "Birthday", typeId: birthdayType!.id,
+      date: new Date("1990-09-02T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [0],
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => { throw new Error("offline"); });
+    const first = new Date("2026-09-02T09:00:00Z");
+
+    await processImportantDateReminders(first, { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.count({ where: { entityType: "IMPORTANT_DATE", ok: false } })).toBe(1);
+
+    await prisma.contact.update({
+      where: { id: contact.id },
+      data: { birthDate: new Date("1990-09-02T00:00:00Z"), birthDatePrecision: "DAY" },
+    });
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date(first.getTime() + 61_000), { db: prisma, send });
+
+    // One birthday in total across both passes. The queued row keeps its own
+    // identity and is delivered; the canonical candidate reconciles against it
+    // rather than opening a second delivery for the same occurrence.
+    expect(send.mock.calls.slice(1).filter((call) => call[1] === "Reminder: Birthday")).toHaveLength(1);
+    const logged = await prisma.reminderLog.findMany({ where: { entityType: "IMPORTANT_DATE" } });
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toMatchObject({ entityId: legacy.id, ok: true });
+  });
+
+  it("says nothing about a birthday whose day is not known", async () => {
+    // "March 1990" has no day to remind on. Announcing one off the stored
+    // placeholder is the confident-looking lie DatePrecision exists to stop.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Vague",
+      birthDate: new Date("1990-09-01T00:00:00Z"), birthDatePrecision: "MONTH",
+    } });
+    // A year-unknown birthday still has a day, and still reminds.
+    await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Yearless",
+      birthDate: new Date("1900-09-02T00:00:00Z"), birthDatePrecision: "MONTH_DAY",
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    const bodies = send.mock.calls.map((call) => call[2] as string);
+    expect(bodies.some((body) => body.includes("Yearless"))).toBe(true);
+    expect(bodies.some((body) => body.includes("Vague"))).toBe(false);
+  });
+
+  it("keeps a canonical birthday out of a locked private or archived contact's reminders", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", privacyLockEnabled: true, digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.contact.createMany({ data: [
+      { ownerId: user.id, firstName: "PrivateSecret", isPrivate: true, birthDate: new Date("1990-09-02T00:00:00Z") },
+      { ownerId: user.id, firstName: "ArchivedSecret", isArchived: true, birthDate: new Date("1990-09-02T00:00:00Z") },
+      { ownerId: user.id, firstName: "Visible", birthDate: new Date("1990-09-02T00:00:00Z") },
+    ] });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    const bodies = send.mock.calls.map((call) => call[2] as string).join("\n");
+    expect(bodies).toContain("Visible");
+    expect(bodies).not.toContain("Secret");
+  });
+
+  it("looks two days ahead without sending any of it as a reminder yet", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const soon = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Tomorrow", nextTouchAt: new Date("2026-09-03T00:00:00Z") } });
+    await prisma.contact.create({ data: { ownerId: user.id, firstName: "Later", nextTouchAt: new Date("2026-09-05T00:00:00Z") } });
+    await prisma.task.createMany({ data: [
+      { ownerId: user.id, title: "Due in two days", dueDate: new Date("2026-09-04T00:00:00Z") },
+      { ownerId: user.id, title: "Due in three days", dueDate: new Date("2026-09-05T00:00:00Z") },
+    ] });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest")?.[2] as string;
+    expect(digest).toContain("Tomorrow (upcoming: 2026-09-03)");
+    expect(digest).toContain("Due in two days (upcoming: 2026-09-04)");
+    // The window ends there. Day three is tomorrow's digest's business.
+    expect(digest).not.toContain("Later");
+    expect(digest).not.toContain("Due in three days");
+
+    // The whole point of the separate read: none of the look-ahead has been
+    // sent as a reminder in its own right, and none of it has been logged, so
+    // each still goes out on its own day.
+    expect(send.mock.calls.map((call) => call[1])).toEqual(["Your Personal CRM daily digest"]);
+    expect(await prisma.reminderLog.count({ where: { entityType: { not: "DIGEST" } } })).toBe(0);
+
+    // Proof that the standalone cadence reminder was only deferred, not eaten:
+    // it goes out on its own day, when `cadenceWhere` finally sees it.
+    await processImportantDateReminders(new Date("2026-09-03T09:00:00Z"), { db: prisma, send });
+    expect(send.mock.calls.map((call) => call[1])).toContain(`Time to reach out to ${soon.firstName}`);
+  });
+
+  it("previews an important date's reminder a day before it would arrive", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Sam" } });
+    // Its policy speaks 7 days out, so on 2026-09-02 the reminder for a
+    // 2026-09-10 birthday is still a day away.
+    await prisma.importantDate.create({ data: {
+      ownerId: user.id, contactId: contact.id, label: "Birthday",
+      date: new Date("2026-09-10T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [7],
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    // Named in the digest because tomorrow's reminder is inside the window …
+    const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest")?.[2] as string;
+    expect(digest).toContain("Birthday — Sam (upcoming: 2026-09-10)");
+    // … and listed exactly once, though two of the three look-ahead days can
+    // name the same occurrence when a policy has several offsets.
+    expect(digest.match(/Birthday — Sam/g)).toHaveLength(1);
+    // But the reminder itself has not been sent, and is not owed until its day.
+    expect(send.mock.calls.map((call) => call[1])).toEqual(["Your Personal CRM daily digest"]);
+
+    await processImportantDateReminders(new Date("2026-09-03T09:00:00Z"), { db: prisma, send });
+    expect(send.mock.calls.map((call) => call[1])).toContain("Reminder: Birthday");
+  });
+
+  it("ranks a date owed today above the look-ahead, whatever order its offsets are stored in", async () => {
+    // A policy is stored as written, so `[0, 1]` is possible. Reaching the
+    // occurrence from tomorrow first would file a reminder owed today as a
+    // preview — and previews are what the entry cap trims. Only visible once
+    // there are more items than the cap holds.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const sam = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Sam" } });
+    await prisma.importantDate.create({ data: {
+      ownerId: user.id, contactId: sam.id, label: "Birthday",
+      date: new Date("2026-09-03T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [0, 1],
+    } });
+    // More overdue cadences than DIGEST_ENTRY_LIMIT, so the cap has to choose.
+    await prisma.contact.createMany({ data: Array.from({ length: 21 }, (_, i) => ({
+      ownerId: user.id, firstName: `Overdue${String(i).padStart(2, "0")}`,
+      nextTouchAt: new Date("2026-08-20T00:00:00Z"),
+    })) });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest")?.[2] as string;
+    // Offset 1 makes it owed today for tomorrow's occurrence. It is not a
+    // preview, so it survives the cap rather than being trimmed first.
+    expect(digest).toContain("Birthday — Sam (upcoming: 2026-09-03)");
+    expect(digest).toContain("more items.");
+  });
+
+  it("keeps two namesakes sharing a date as two entries", async () => {
+    // The look-ahead deduplicates occurrences, because one policy can name the
+    // same date from more than one of the three days. Keyed on what is shown
+    // rather than on the row, two people called Alex Smith who share a birthday
+    // would collapse into one and the second would vanish silently.
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    for (let i = 0; i < 2; i++) {
+      const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Alex", lastName: "Smith" } });
+      await prisma.importantDate.create({ data: {
+        ownerId: user.id, contactId: contact.id, label: "Birthday",
+        date: new Date("2026-09-03T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [1, 0],
+      } });
+    }
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest")?.[2] as string;
+    // Both people, and neither of them twice: offsets 1 and 0 reach the same
+    // occurrence from two of the three look-ahead days.
+    expect(digest.match(/Birthday — Alex Smith/g)).toHaveLength(2);
+  });
+
+  it("never puts private, archived, or foreign-owner details in digest attempts or retries", async () => {
+    const owner = await createTestUser();
+    const other = await createTestUser();
+    await prisma.userPreference.createMany({ data: [
+      { userId: owner.id, timezone: "UTC", privacyLockEnabled: true, digestEnabled: true, digestHour: 8 },
+      { userId: other.id, timezone: "UTC", digestEnabled: false },
+    ] });
+    await prisma.notificationChannel.create({ data: { ownerId: owner.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const [visible, hidden, archived, stranger] = await Promise.all([
+      prisma.contact.create({ data: { ownerId: owner.id, firstName: "Visible Name", nextTouchAt: new Date("2026-09-01T00:00:00Z") } }),
+      prisma.contact.create({ data: { ownerId: owner.id, firstName: "Private Secret", isPrivate: true, nextTouchAt: new Date("2026-09-01T00:00:00Z") } }),
+      prisma.contact.create({ data: { ownerId: owner.id, firstName: "Archived Secret", isArchived: true, nextTouchAt: new Date("2026-09-01T00:00:00Z") } }),
+      prisma.contact.create({ data: { ownerId: other.id, firstName: "Foreign Secret" } }),
+    ]);
+    await prisma.task.createMany({ data: [
+      { ownerId: owner.id, contactId: visible.id, title: "Visible task", dueDate: new Date("2026-09-02T00:00:00Z") },
+      { ownerId: owner.id, contactId: hidden.id, title: "Private task secret", dueDate: new Date("2026-09-02T00:00:00Z") },
+      { ownerId: owner.id, contactId: archived.id, title: "Archived task secret", dueDate: new Date("2026-09-02T00:00:00Z") },
+    ] });
+    for (const [contactId, label] of [
+      [visible.id, "Visible anniversary"],
+      [hidden.id, "Private date secret"],
+      [archived.id, "Archived date secret"],
+    ]) {
+      await prisma.importantDate.create({ data: {
+        ownerId: owner.id, contactId, label,
+        date: new Date("2026-09-09T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [7],
+      } });
+    }
+    // The foreign-owner rows are refused by the schema now — every key into
+    // `Contact` names `(ownerId, id)` — so they go in the way a restore of a
+    // pre-key dump does, with foreign keys off. The scheduler's own owner
+    // predicate is what has to keep the stranger's name out of the digest.
+    await asARestoreWould(async (tx) => {
+      await tx.task.create({ data: {
+        ownerId: owner.id, contactId: stranger.id, title: "Foreign task secret",
+        dueDate: new Date("2026-09-02T00:00:00Z"),
+      } });
+      await tx.importantDate.create({ data: {
+        ownerId: owner.id, contactId: stranger.id, label: "Foreign date secret",
+        date: new Date("2026-09-09T00:00:00Z"), recurrence: "ANNUAL", reminderDaysBefore: [7],
+      } });
+    });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => { throw new Error("offline"); });
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    const firstDigest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest")?.[2] as string;
+    expect(firstDigest).toContain("Visible Name");
+    expect(firstDigest).toContain("Visible task");
+    expect(firstDigest).toContain("Visible anniversary");
+    expect(firstDigest).not.toMatch(/Private Secret|Archived Secret|Foreign Secret|task secret|date secret/);
+
+    // Both details that were eligible on the first attempt become ineligible;
+    // the retry must rebuild its body rather than retaining either value.
+    await prisma.contact.update({ where: { id: visible.id }, data: { isPrivate: true } });
+    const visibleTask = await prisma.task.findFirstOrThrow({ where: { ownerId: owner.id, title: "Visible task" } });
+    await asARestoreWould((tx) =>
+      tx.task.update({ where: { id: visibleTask.id }, data: { contactId: stranger.id } }),
+    );
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T09:30:00Z"), { db: prisma, send });
+    const retryDigests = send.mock.calls.filter((call) => call[1] === "Your Personal CRM daily digest");
+    expect(retryDigests).toHaveLength(2);
+    expect(retryDigests[1][2]).toBe("Nothing needs your attention today.");
+    expect(retryDigests[1][2]).not.toMatch(/Visible|Private|Archived|Foreign|secret/);
+  });
+
+  it("still sends a reminder whose process died between the ledger insert and the send", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Renew the passport", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string) => undefined);
+
+    // The row is written, the send happens, and the process is gone before the
+    // row can say so. Before the deadline was seeded on insert this row was
+    // never retried, and the unique key stopped it ever being created again.
+    const dying = withLedger({ update: () => Promise.reject(new Error("process died")) });
+    const first = new Date("2026-09-02T09:00:00Z");
+    await expect(processImportantDateReminders(first, { db: dying, send })).rejects.toThrow("process died");
+    expect(await prisma.reminderLog.findFirst()).toMatchObject({ ok: false, attemptCount: 0, nextAttemptAt: expect.any(Date) });
+
+    // Not before the lease is up: a slow sender is not a dead one.
+    await processImportantDateReminders(new Date(first.getTime() + 4 * 60_000), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    await processImportantDateReminders(new Date(first.getTime() + 6 * 60_000), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][2]).toBe("Renew the passport was due 2026-09-02.");
+    expect(await prisma.reminderLog.count()).toBe(1);
+    expect(await prisma.reminderLog.findFirst()).toMatchObject({ ok: true, attemptCount: 1, nextAttemptAt: null });
+  });
+
+  it("waits for a digest hour moved later rather than retrying early or giving up", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const send = vi.fn(async (): Promise<void> => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    const failed = await prisma.reminderLog.findFirstOrThrow();
+    await prisma.userPreference.update({ where: { userId: user.id }, data: { digestHour: 12 } });
+
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: failed.nextAttemptAt, error: "offline" });
+
+    await processImportantDateReminders(new Date("2026-09-02T12:30:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(await prisma.reminderLog.count()).toBe(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true, attemptCount: 2 });
+  });
+
+  it("does not attempt an insert for anything the ledger already holds", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.createMany({ data: [
+      { ownerId: user.id, kind: "WEBHOOK", name: "A", config: { url: "https://example.invalid/a" } },
+      { ownerId: user.id, kind: "NTFY", name: "B", config: { url: "https://example.invalid/b" } },
+    ] });
+    await prisma.contact.create({ data: { ownerId: user.id, firstName: "Overdue", nextTouchAt: new Date("2026-08-01T00:00:00Z") } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Still open", dueDate: new Date("2026-08-01T00:00:00Z") } });
+    const send = vi.fn(async () => undefined);
+    const create = vi.fn(prisma.reminderLog.create.bind(prisma.reminderLog));
+    const counted = withLedger({ create });
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: counted, send });
+    expect(create).toHaveBeenCalledTimes(4);
+
+    // An overdue cadence and an open task stay candidates every hour; the
+    // second pass must know they are sent without trying to write them again.
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: counted, send });
+    expect(create).toHaveBeenCalledTimes(4);
+    expect(send).toHaveBeenCalledTimes(4);
+  });
+
+  it("lets exactly one of two overlapping schedulers send a retry", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Book the dentist", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async (): Promise<void> => { throw new Error("offline"); });
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+
+    // Both passes select the same due row; only the one whose claim lands sends.
+    send.mockImplementation(async () => undefined);
+    const later = new Date("2026-09-02T09:02:00Z");
+    await Promise.all([
+      processImportantDateReminders(later, { db: prisma, send }),
+      processImportantDateReminders(later, { db: prisma, send }),
+    ]);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(await prisma.reminderLog.count()).toBe(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true, attemptCount: 2, nextAttemptAt: null });
+  });
+
+  it("delivers a cancelled reminder after all once its task is reopened", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const task = await prisma.task.create({ data: { ownerId: user.id, title: "Return the library books", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    await prisma.task.update({ where: { id: task.id }, data: { completedAt: new Date("2026-09-02T09:30:00Z") } });
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null });
+
+    // Reopened with the same due date: the same key, which used to mean "already handled".
+    await prisma.task.update({ where: { id: task.id }, data: { completedAt: null } });
+    await processImportantDateReminders(new Date("2026-09-02T11:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][2]).toBe("Return the library books was due 2026-09-02.");
+    expect(await prisma.reminderLog.count()).toBe(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true, attemptCount: 2, error: null });
+  });
+
+  it("sends nothing for an owner whose preference row is missing, whatever else they have", async () => {
+    // A partial import can leave a PIN and channels without the row that
+    // says whether the lock is on. Reading that as "off" would send a
+    // private person's name out; the scheduler leaves the owner alone.
+    const user = await createTestUser();
+    await prisma.user.update({ where: { id: user.id }, data: { privacyPinHash: "pin" } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.contact.create({ data: { ownerId: user.id, firstName: "Secret", isPrivate: true, nextTouchAt: new Date("2026-08-01T00:00:00Z") } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Open task", dueDate: new Date("2026-08-01T00:00:00Z") } });
+    const send = vi.fn(async () => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.count()).toBe(0);
+
+    // The row exists again: the next pass picks the owner up, lock honoured.
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", privacyLockEnabled: true, digestEnabled: false } });
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ entityType: "TASK" });
+  });
+
+  it("keeps retrying a cadence reminder after the owner changes timezone", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    // 18:00 UTC on the 2nd is already the 3rd fourteen hours east.
+    await prisma.contact.create({ data: { ownerId: user.id, firstName: "Alex", nextTouchAt: new Date("2026-09-02T18:00:00Z") } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-02T20:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    await prisma.userPreference.update({ where: { userId: user.id }, data: { timezone: "Pacific/Kiritimati" } });
+
+    // The cadence has not moved; only the calendar it is read against has.
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T21:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][2]).toBe("Alex's keep-in-touch cadence has been due since 2026-09-03.");
+    expect(await prisma.reminderLog.count()).toBe(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true, attemptCount: 2 });
+  });
+
+  it("honours a lock switched on during the pass, before a retry is sent", async () => {
+    const user = await createTestUser();
+    await prisma.user.update({ where: { id: user.id }, data: { privacyPinHash: "pin" } });
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", privacyLockEnabled: false, digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Secret", isPrivate: true } });
+    await prisma.task.create({ data: { ownerId: user.id, contactId: contact.id, title: "Private errand", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async (): Promise<void> => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+
+    // The lock goes on after the pass has read its owners and before it
+    // reaches the retries — which is where the retry query is the seam.
+    const findMany = prisma.reminderLog.findMany.bind(prisma.reminderLog);
+    const lockingMidPass = withLedger({
+      findMany: async (args: Parameters<typeof findMany>[0]) => {
+        if (args?.where && "ok" in args.where) {
+          await prisma.userPreference.update({ where: { userId: user.id }, data: { privacyLockEnabled: true } });
+        }
+        return findMany(args);
+      },
+    });
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: lockingMidPass, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("cancelled") });
+  });
+
+  it("honours a lock switched on during the pass, before a first send", async () => {
+    const user = await createTestUser();
+    await prisma.user.update({ where: { id: user.id }, data: { privacyPinHash: "pin" } });
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", privacyLockEnabled: false, digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Secret", isPrivate: true } });
+    await prisma.task.create({ data: { ownerId: user.id, contactId: contact.id, title: "Private errand", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async () => undefined);
+
+    // The candidate was read with the lock off; the lock goes on as its
+    // ledger row is written, which is the last moment before the send.
+    const create = prisma.reminderLog.create.bind(prisma.reminderLog);
+    const lockingBeforeSend = withLedger({
+      create: async (args: Parameters<typeof create>[0]) => {
+        await prisma.userPreference.update({ where: { userId: user.id }, data: { privacyLockEnabled: true } });
+        return create(args);
+      },
+    });
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: lockingBeforeSend, send });
+    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, attemptCount: 0, nextAttemptAt: null, error: expect.stringContaining("cancelled") });
+
+    // And once the lock is off again, the same row is re-armed and sent.
+    await prisma.userPreference.update({ where: { userId: user.id }, data: { privacyLockEnabled: false } });
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.count()).toBe(1);
+  });
+
+  it("stamps a lease from the moment the row is written, not from the start of the pass", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Slow pass", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async () => undefined);
+
+    // A pass that began at 09:00 reaches this row ten minutes in, and the
+    // process dies after the send. A lease stamped from the pass's start
+    // would already be spent, and a 09:06 pass could take the row mid-send.
+    const dying = withLedger({ update: () => Promise.reject(new Error("process died")) });
+    await expect(processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), {
+      db: dying, send, clock: () => new Date("2026-09-02T09:10:00Z"),
+    })).rejects.toThrow("process died");
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ nextAttemptAt: new Date("2026-09-02T09:15:00Z") });
+
+    await processImportantDateReminders(new Date("2026-09-02T09:06:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    await processImportantDateReminders(new Date("2026-09-02T09:16:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not send a first attempt before its day has arrived in a timezone chosen mid-pass", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Water the plants", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async () => undefined);
+
+    // Ten minutes into the 2nd in UTC the task is due; in Los Angeles it is
+    // still the evening of the 1st. The owner moves there as the row is written.
+    const create = prisma.reminderLog.create.bind(prisma.reminderLog);
+    const movingWest = withLedger({
+      create: async (args: Parameters<typeof create>[0]) => {
+        await prisma.userPreference.update({ where: { userId: user.id }, data: { timezone: "America/Los_Angeles" } });
+        return create(args);
+      },
+    });
+    await processImportantDateReminders(new Date("2026-09-02T00:10:00Z"), { db: movingWest, send });
+    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.count()).toBe(1);
+
+    // Still the 1st there at 22:00 local; due at the first pass on the 2nd.
+    await processImportantDateReminders(new Date("2026-09-02T05:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+    await processImportantDateReminders(new Date("2026-09-02T08:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.count()).toBe(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true });
+  });
+
+  it("never sends another owner's contact through a task that points at them", async () => {
+    const owner = await createTestUser();
+    const other = await createTestUser();
+    await prisma.userPreference.createMany({ data: [
+      { userId: owner.id, timezone: "UTC", digestEnabled: false },
+      { userId: other.id, timezone: "UTC", digestEnabled: false },
+    ] });
+    await prisma.notificationChannel.create({ data: { ownerId: owner.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    // The schema refuses this row — `Task` references `Contact(ownerId, id)` —
+    // so it goes in the way a restore of a pre-key dump does, with foreign keys
+    // off. The other owner's name must not leave through this owner's channel.
+    const strangers = await prisma.contact.create({ data: { ownerId: other.id, firstName: "Somebody", lastName: "Else" } });
+    await asARestoreWould((tx) =>
+      tx.task.create({ data: { ownerId: owner.id, contactId: strangers.id, title: "Call them", dueDate: new Date("2026-09-02T00:00:00Z") } }),
+    );
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string) => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.count()).toBe(0);
+  });
+
+  it("never retries through a channel that belongs to another owner", async () => {
+    const owner = await createTestUser();
+    const other = await createTestUser();
+    await prisma.userPreference.createMany({ data: [
+      { userId: owner.id, timezone: "UTC", digestEnabled: false },
+      { userId: other.id, timezone: "UTC", digestEnabled: false },
+    ] });
+    const theirs = await prisma.notificationChannel.create({ data: { ownerId: other.id, kind: "WEBHOOK", name: "Theirs", config: { url: "https://example.invalid/theirs" } } });
+    const task = await prisma.task.create({ data: { ownerId: owner.id, title: "Renew the lease", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    // The ledger's owner and channel are independent keys; a repaired or
+    // imported row can point one owner's reminder at another's endpoint.
+    await prisma.reminderLog.create({ data: {
+      ownerId: owner.id, entityType: "TASK", entityId: task.id, schedulingPolicy: "INCOMPLETE_TASK_DUE",
+      dedupKey: "imported-row", scheduledFor: new Date("2026-09-02T00:00:00Z"), offsetDays: 0,
+      channelId: theirs.id, attemptCount: 1, nextAttemptAt: new Date("2026-09-02T08:00:00Z"), error: "offline",
+    } });
+    const send = vi.fn(async () => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("channel") });
+  });
+
+  it("does not send to a channel switched off between the candidate query and the send", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    const channel = await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Feed the cat", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async () => undefined);
+
+    const create = prisma.reminderLog.create.bind(prisma.reminderLog);
+    const switchingOff = withLedger({
+      create: async (args: Parameters<typeof create>[0]) => {
+        await prisma.notificationChannel.update({ where: { id: channel.id }, data: { isEnabled: false } });
+        return create(args);
+      },
+    });
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: switchingOff, send });
+    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("channel") });
+  });
+
+  it("cancels a queued retry whose channel is switched off, and sends it again only if still due when the channel returns", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    const channel = await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Return the book", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    // A real row with the scheduler's own key: the first attempt fails.
+    send.mockRejectedValueOnce(new Error("offline"));
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, attemptCount: 1, nextAttemptAt: new Date("2026-09-02T09:01:00Z") });
+
+    // Switched off before the retry is due: the row is cancelled, not held.
+    await prisma.notificationChannel.update({ where: { id: channel.id }, data: { isEnabled: false } });
+    await processImportantDateReminders(new Date("2026-09-02T09:05:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("channel") });
+
+    // Switched on again while the task is still due: a candidate once more,
+    // so the same row is re-armed and sent — as it would be had the first
+    // attempt never happened — and no second row is written for it.
+    await prisma.notificationChannel.update({ where: { id: channel.id }, data: { isEnabled: true } });
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(await prisma.reminderLog.findMany()).toHaveLength(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true, nextAttemptAt: null, error: null });
+
+    // And once only.
+    await processImportantDateReminders(new Date("2026-09-02T11:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves a channel-cancelled row cancelled when the channel returns after its reminder stopped being due", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    const channel = await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    const task = await prisma.task.create({ data: { ownerId: user.id, title: "Return the book", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+    send.mockRejectedValueOnce(new Error("offline"));
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    await prisma.notificationChannel.update({ where: { id: channel.id }, data: { isEnabled: false } });
+    await processImportantDateReminders(new Date("2026-09-02T09:05:00Z"), { db: prisma, send });
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null, error: expect.stringContaining("channel") });
+
+    // The task is done before the channel comes back: nothing is owed.
+    await prisma.task.update({ where: { id: task.id }, data: { completedAt: new Date("2026-09-02T09:30:00Z") } });
+    await prisma.notificationChannel.update({ where: { id: channel.id }, data: { isEnabled: true } });
+    await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null });
+  });
+
+  it("schedules the retry after a failure from the clock at the failure", async () => {
+    const user = await createTestUser();
+    await prisma.userPreference.create({ data: { userId: user.id, timezone: "UTC", digestEnabled: false } });
+    await prisma.notificationChannel.create({ data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } } });
+    await prisma.task.create({ data: { ownerId: user.id, title: "Slow pass, failed send", dueDate: new Date("2026-09-02T00:00:00Z") } });
+    const send = vi.fn(async (): Promise<void> => { throw new Error("offline"); });
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), {
+      db: prisma, send, clock: () => new Date("2026-09-02T09:10:00Z"),
+    });
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ attemptCount: 1, nextAttemptAt: new Date("2026-09-02T09:11:00Z") });
+
+    // A second failure, reached twenty minutes into its pass, backs off from then.
+    await processImportantDateReminders(new Date("2026-09-02T09:12:00Z"), {
+      db: prisma, send, clock: () => new Date("2026-09-02T09:32:00Z"),
+    });
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ attemptCount: 2, nextAttemptAt: new Date("2026-09-02T09:34:00Z") });
+  });
+});
+
+describe.skipIf(!hasTestDatabase)("scheduled-plan delivery", () => {
+  beforeEach(reset);
+  afterAll(() => prisma.$disconnect());
+
+  /** An owner with one webhook channel, no digest, and a fixed clock. */
+  async function ownerWithChannel(timezone = "UTC") {
+    const user = await createTestUser();
+    await prisma.userPreference.create({
+      data: { userId: user.id, timezone, privacyLockEnabled: true, digestEnabled: false },
+    });
+    await prisma.notificationChannel.create({
+      data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } },
+    });
+    return user;
+  }
+
+  const SEPT_2 = plainDateToDb({ year: 2026, month: 9, day: 2 });
+
+  it("sends nothing for a plan nobody asked to be reminded about", async () => {
+    // The upgrade property, and the reason `effectivePlanReminderDays` is not
+    // `effectiveReminderDays`: every plan that was already PLANNED when this
+    // shipped carries a null policy, and null here means silence. Read as the
+    // account default it would mean two messages each, on the first hourly
+    // pass after the upgrade, for evenings the owner never asked about.
+    const user = await ownerWithChannel();
+    await prisma.plan.create({
+      data: { ownerId: user.id, title: "Alamo", status: "PLANNED", plannedFor: SEPT_2 },
+    });
+    const send = vi.fn(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T12:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.count()).toBe(0);
+  });
+
+  it("sends one reminder on the day, and only one however many passes run", async () => {
+    const user = await ownerWithChannel();
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Robin" } });
+    await prisma.plan.create({
+      data: {
+        ownerId: user.id, contactId: contact.id, title: "Late showing at the Alamo",
+        status: "PLANNED", plannedFor: SEPT_2, plannedStartMinute: 1170, reminderDaysBefore: [0],
+      },
+    });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string) => undefined);
+
+    const now = new Date("2026-09-02T12:00:00Z");
+    await processImportantDateReminders(now, { db: prisma, send });
+    await processImportantDateReminders(now, { db: prisma, send });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][1]).toBe("Coming up: Late showing at the Alamo");
+    // Built from the formatter rather than typed out: `toLocaleTimeString`
+    // decides whether the space before "PM" is an ordinary one, and which it
+    // picks depends on the ICU build rather than on anything this code does.
+    expect(send.mock.calls[0][2]).toBe(
+      `Late showing at the Alamo with Robin is today at ${formatPlanTime(1170)} (2026-09-02).`,
+    );
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({
+      entityType: "PLAN", schedulingPolicy: "SCHEDULED_PLAN", offsetDays: 0, ok: true,
+    });
+  });
+
+  it("counts the offset back from the day, and says nothing on the other days", async () => {
+    const user = await ownerWithChannel();
+    await prisma.plan.create({
+      data: {
+        ownerId: user.id, title: "Long walk", status: "PLANNED",
+        plannedFor: SEPT_2, reminderDaysBefore: [1],
+      },
+    });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string) => undefined);
+
+    await processImportantDateReminders(new Date("2026-08-31T12:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+
+    await processImportantDateReminders(new Date("2026-09-01T12:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][2]).toBe("Long walk is tomorrow (2026-09-02).");
+
+    // The day itself is not in the policy, so nothing more is owed.
+    await processImportantDateReminders(new Date("2026-09-02T12:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a day pencilled in against an idea nobody has arranged", async () => {
+    // An OPEN plan carrying a `plannedFor` is either pencilled in or left over
+    // from "Not planned after all". Neither is an arrangement to announce, and
+    // the second would be an evening the owner explicitly took off the books.
+    const user = await ownerWithChannel();
+    await prisma.plan.create({
+      data: { ownerId: user.id, title: "Alamo", status: "OPEN", plannedFor: SEPT_2, reminderDaysBefore: [0] },
+    });
+    await prisma.plan.create({
+      data: { ownerId: user.id, title: "Done already", status: "DONE", plannedFor: SEPT_2, reminderDaysBefore: [0] },
+    });
+    const send = vi.fn(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T12:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("keeps a locked private or archived person's evening off the wire, and still sends an unattached one", async () => {
+    const user = await ownerWithChannel();
+    const people = await Promise.all([
+      prisma.contact.create({ data: { ownerId: user.id, firstName: "Private", isPrivate: true } }),
+      prisma.contact.create({ data: { ownerId: user.id, firstName: "Archived", isArchived: true } }),
+    ]);
+    for (const contact of people) {
+      await prisma.plan.create({
+        data: {
+          ownerId: user.id, contactId: contact.id, title: `Evening with ${contact.firstName}`,
+          status: "PLANNED", plannedFor: SEPT_2, reminderDaysBefore: [0],
+        },
+      });
+    }
+    // "Nobody yet" is a real way to arrange an evening, so this one does send.
+    await prisma.plan.create({
+      data: { ownerId: user.id, title: "Nobody yet", status: "PLANNED", plannedFor: SEPT_2, reminderDaysBefore: [0] },
+    });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string) => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T12:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][1]).toBe("Coming up: Nobody yet");
+  });
+
+  it("never announces a plan whose contact resolves in another account", async () => {
+    // The composite `(ownerId, contactId)` key makes this unreachable through
+    // the app, which is exactly why the restore path is worth a test: written
+    // with foreign key checks off, the row exists, and that name must not
+    // travel through this owner's channels.
+    const user = await ownerWithChannel();
+    const stranger = await createTestUser();
+    const theirs = await prisma.contact.create({ data: { ownerId: stranger.id, firstName: "Stranger" } });
+    await asARestoreWould(async (db) => {
+      await db.plan.create({
+        data: {
+          ownerId: user.id, contactId: theirs.id, title: "Restored", status: "PLANNED",
+          plannedFor: SEPT_2, reminderDaysBefore: [0],
+        },
+      });
+    });
+    const send = vi.fn(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T12:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("cancels a queued retry once the evening moves, and owes the new day instead", async () => {
+    const user = await ownerWithChannel();
+    const plan = await prisma.plan.create({
+      data: { ownerId: user.id, title: "Alamo", status: "PLANNED", plannedFor: SEPT_2, reminderDaysBefore: [0] },
+    });
+    const send = vi.fn(async (): Promise<void> => { throw new Error("offline"); });
+    await processImportantDateReminders(new Date("2026-09-02T12:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+
+    await prisma.plan.update({
+      where: { id: plan.id },
+      data: { plannedFor: plainDateToDb({ year: 2026, month: 9, day: 20 }) },
+    });
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T12:02:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({
+      ok: false, nextAttemptAt: null, error: expect.stringContaining("cancelled"),
+    });
+
+    // The new day is a new occurrence, with its own ledger row.
+    await processImportantDateReminders(new Date("2026-09-20T12:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(await prisma.reminderLog.count()).toBe(2);
+  });
+
+  it("cancels a queued retry when the reminder is switched off", async () => {
+    const user = await ownerWithChannel();
+    const plan = await prisma.plan.create({
+      data: { ownerId: user.id, title: "Alamo", status: "PLANNED", plannedFor: SEPT_2, reminderDaysBefore: [0] },
+    });
+    const send = vi.fn(async (): Promise<void> => { throw new Error("offline"); });
+    await processImportantDateReminders(new Date("2026-09-02T12:00:00Z"), { db: prisma, send });
+
+    await prisma.plan.update({ where: { id: plan.id }, data: { reminderDaysBefore: [] } });
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T12:02:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null });
+  });
+
+  it("waits for the plan's day in the owner's timezone rather than the server's", async () => {
+    const user = await ownerWithChannel("America/Los_Angeles");
+    await prisma.plan.create({
+      data: { ownerId: user.id, title: "Alamo", status: "PLANNED", plannedFor: SEPT_2, reminderDaysBefore: [0] },
+    });
+    const send = vi.fn(async () => undefined);
+    // Already Sept 2 in UTC, still Sept 1 in Los Angeles.
+    await processImportantDateReminders(new Date("2026-09-02T02:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+
+    await processImportantDateReminders(new Date("2026-09-02T18:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists what has been arranged in the digest, whether or not it sends its own reminder", async () => {
+    // The digest is a summary of what is coming, not a second copy of what was
+    // sent, so a plan with no reminder policy still belongs in it.
+    const user = await createTestUser();
+    await prisma.userPreference.create({
+      data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 },
+    });
+    await prisma.notificationChannel.create({
+      data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } },
+    });
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Robin" } });
+    await prisma.plan.create({
+      data: {
+        ownerId: user.id, contactId: contact.id, title: "Alamo", status: "PLANNED",
+        plannedFor: plainDateToDb({ year: 2026, month: 9, day: 4 }),
+      },
+    });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string) => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest");
+    expect(digest?.[2]).toContain("Arranged");
+    expect(digest?.[2]).toContain("- Alamo — Robin (upcoming: 2026-09-04)");
   });
 });

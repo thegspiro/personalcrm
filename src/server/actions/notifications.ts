@@ -7,16 +7,15 @@ import { type ActionResult, fail, isAdmin, ok, owner, str } from "./helpers";
 import {
   CHANNEL_FIELDS,
   CHANNEL_LABELS,
-  isPrivateHostname,
-  targetsPrivateHost,
   isChannelKind,
-  TEST_NOTIFICATION_BODY,
-  TEST_NOTIFICATION_SUBJECT,
   validateChannelConfig,
   type ChannelKind,
 } from "@/lib/notification-channels";
-import { configOf, mergeChannelSecrets } from "@/server/notifications/config";
-import { deliverToChannel } from "@/server/services/notify";
+import { TEST_NOTIFICATION_BODY, TEST_NOTIFICATION_SUBJECT } from "@/lib/sample-digest";
+import { configOf, mergeChannelSecrets, resolveChannelSecrets } from "@/server/notifications/config";
+import net from "node:net";
+import { ReachedDestinationError, deliverToChannel } from "@/server/services/notify";
+import { isPublicAddress } from "@/server/services/notification-destination";
 
 /**
  * Where a reminder is allowed to go.
@@ -103,16 +102,52 @@ function credentialsComplete(config: Record<string, unknown>): boolean {
  * host's own network. A single-account install is unaffected — the only
  * account is the administrator.
  */
-async function privateTargetAllowed(input: Record<string, string | undefined>): Promise<boolean> {
-  // Both shapes a destination takes: a URL for the HTTP kinds, and a bare
-  // hostname for SMTP. Checking only the URL left the boundary with a hole
-  // exactly the size of an email channel — `host` plus any port, which
-  // nodemailer then opens from the server.
-  const url = input.url?.trim();
-  const host = input.host?.trim();
-  const inward = (url && targetsPrivateHost(url)) || (host && isPrivateHostname(host));
-  if (!inward) return true;
-  return isAdmin();
+/**
+ * Saving refuses an address a member typed, and asks DNS nothing.
+ *
+ * The distinction is the whole point. Refusing `http://127.0.0.1/` tells its
+ * author only what they just wrote, so it stays refused — immediately, on the
+ * field, which is the honest answer to an honest mistake. But *resolving* a
+ * hostname and refusing it for pointing somewhere non-public answered a
+ * question the member had not been able to ask: `nas.corp` and a spelling
+ * nobody ever registered produced observably different results, so the form
+ * became a way to enumerate internal DNS from an ordinary account — the exact
+ * probe the destination boundary exists to prevent, offered through the
+ * boundary's own error message.
+ *
+ * So a name is simply saved. Nothing is lost: the check runs in full
+ * immediately before every delivery, where the address is re-resolved and
+ * pinned, so a destination a member may not reach is never *sent to*. It
+ * merely takes until a delivery to say so — which is already where an
+ * unresolvable name reported.
+ */
+function literalAddressError(hostname: string): string | null {
+  // Bracketed IPv6 arrives from `new URL(...).hostname` as "[::1]".
+  const literal = hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
+  if (net.isIP(literal) === 0) return null;
+  return isPublicAddress(literal)
+    ? null
+    : "Only an administrator can use a destination that is not a public address.";
+}
+
+async function testFailureMessage(error: unknown): Promise<string> {
+  const detail = error instanceof Error ? error.message : "That didn't work.";
+  // Administrators may reach non-public addresses, so nothing is withheld from
+  // them and the real reason is far more useful than a shrug.
+  if (await isAdmin()) return detail;
+  // For everyone else the line is drawn at the destination boundary rather
+  // than around the whole button. Up to it, a boundary refusal and a name that
+  // does not exist must not be told apart, or the test becomes the internal
+  // DNS oracle the save form just stopped being. Past it, the address has
+  // already been shown to be public — a member is refused any other kind — so
+  // repeating why it failed says nothing about the network that the member did
+  // not supply. That is where the detail was worth having anyway: a wrong
+  // token, a refused connection, an endpoint answering 500.
+  return error instanceof ReachedDestinationError
+    ? detail
+    : "That channel could not be reached.";
 }
 
 function kindFrom(form: FormData): ChannelKind | null {
@@ -136,13 +171,6 @@ export async function createChannel(form: FormData): Promise<ActionResult<{ id: 
   const validated = validateChannelConfig(kind, input);
   if (!validated.ok) return fieldErrors(validated.errors);
 
-  if (!(await privateTargetAllowed(input))) {
-    return fieldErrors({
-      [kind === "EMAIL" ? "host" : "url"]:
-        "Only an administrator can point a channel at an address on this network.",
-    });
-  }
-
   const config = mergeChannelSecrets(kind, validated.config, input, {});
   if (kind === "EMAIL" && !credentialsComplete(config)) {
     return fieldErrors({ pass: "Give a username and a password, or neither." });
@@ -152,6 +180,15 @@ export async function createChannel(form: FormData): Promise<ActionResult<{ id: 
     return fieldErrors({
       [missing]: missing === "url" ? "A URL is required." : "This channel needs a token.",
     });
+  }
+  const resolvedConfig = resolveChannelSecrets({ kind, config });
+  if (!resolvedConfig.ok) return fieldErrors({ [resolvedConfig.field]: "That credential could not be read." });
+  const destination = kind === "EMAIL"
+    ? resolvedConfig.config.host
+    : typeof resolvedConfig.config.url === "string" ? new URL(resolvedConfig.config.url).hostname : undefined;
+  if (typeof destination === "string" && !(await isAdmin())) {
+    const error = literalAddressError(destination);
+    if (error) return fieldErrors({ [kind === "EMAIL" ? "host" : "url"]: error });
   }
 
   const created = await prisma.notificationChannel.create({
@@ -183,13 +220,6 @@ export async function updateChannel(form: FormData): Promise<ActionResult> {
   const validated = validateChannelConfig(kind, input);
   if (!validated.ok) return fieldErrors(validated.errors);
 
-  if (!(await privateTargetAllowed(input))) {
-    return fieldErrors({
-      [kind === "EMAIL" ? "host" : "url"]:
-        "Only an administrator can point a channel at an address on this network.",
-    });
-  }
-
   const config = mergeChannelSecrets(kind, validated.config, input, configOf(existing));
   if (kind === "EMAIL" && !credentialsComplete(config)) {
     return fieldErrors({ pass: "Give a username and a password, or neither." });
@@ -199,6 +229,15 @@ export async function updateChannel(form: FormData): Promise<ActionResult> {
     return fieldErrors({
       [missing]: missing === "url" ? "A URL is required." : "This channel needs a token.",
     });
+  }
+  const resolvedConfig = resolveChannelSecrets({ kind, config });
+  if (!resolvedConfig.ok) return fieldErrors({ [resolvedConfig.field]: "That credential could not be read." });
+  const destination = kind === "EMAIL"
+    ? resolvedConfig.config.host
+    : typeof resolvedConfig.config.url === "string" ? new URL(resolvedConfig.config.url).hostname : undefined;
+  if (typeof destination === "string" && !(await isAdmin())) {
+    const error = literalAddressError(destination);
+    if (error) return fieldErrors({ [kind === "EMAIL" ? "host" : "url"]: error });
   }
 
   await prisma.notificationChannel.update({ where: { id }, data: { name, config } });
@@ -255,7 +294,7 @@ const COOLDOWN_MS = 30_000;
 const lastTestAt = new Map<string, number>();
 
 /**
- * Send a fixed message, to prove the channel is reachable.
+ * Send a fixed fictional digest, to prove the transport accepts the payload.
  *
  * Separate from saving on purpose. Verifying before storing is right for the
  * AI key — one global value, where a bad key means silent nothingness — and
@@ -281,12 +320,13 @@ export async function sendTestNotification(id: string): Promise<ActionResult> {
   lastTestAt.set(ownerId, Date.now());
 
   try {
-    // Fixed copy, no interpolation. Settings stays reachable while the privacy
-    // lock is closed, so this is the one button there that could otherwise put
-    // a private person's name on the wire.
+    // Invented people, run through the real digest formatter. Nothing here is
+    // read from the database. Settings stays reachable while the privacy lock
+    // is closed, so this is the one button there that could otherwise put a
+    // private person's name on the wire.
     await deliverToChannel(channel, TEST_NOTIFICATION_SUBJECT, TEST_NOTIFICATION_BODY);
   } catch (error) {
-    return fail(error instanceof Error ? error.message : "That didn't work.");
+    return fail(await testFailureMessage(error));
   }
 
   return ok();

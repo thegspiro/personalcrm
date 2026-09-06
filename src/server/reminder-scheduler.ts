@@ -1,6 +1,6 @@
 import "server-only";
 import cron from "node-cron";
-import { processImportantDateReminders } from "@/server/services/reminders";
+import { processReminderDeliveries } from "@/server/services/reminders";
 import { pruneLoginAttempts } from "@/server/auth/login-throttle";
 
 let scheduled = false;
@@ -8,7 +8,7 @@ let scheduled = false;
 export function startReminderScheduler(): void {
   if (scheduled) return;
   scheduled = true;
-  const run = () => void processImportantDateReminders().then(
+  const run = () => void processReminderDeliveries().then(
     ({ sent, failed }) => {
       if (sent || failed) console.log(`[reminders] sent ${sent}; failed ${failed}`);
     },

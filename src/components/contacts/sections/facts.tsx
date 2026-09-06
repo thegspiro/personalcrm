@@ -7,7 +7,7 @@ import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { TermChips, type TermOption } from "@/components/form/term-select";
 import { SectionCard, SectionEmpty, SectionRow } from "../section-card";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { termColorClasses } from "@/lib/format";
 import { createFact, deleteFact, updateFact } from "@/server/actions/details";
 
@@ -80,6 +80,7 @@ export function FactsSection({
 }) {
   const run = useAction();
   const add = useAddAction();
+  const edit = useEditAction();
 
   return (
     <SectionCard
@@ -105,7 +106,7 @@ export function FactsSection({
             deleteLabel="Delete fact"
             editLabel="Edit fact"
             editForm={(close) => (
-              <form action={add(updateFact, close, "Saved")} className="grid gap-2.5">
+              <form action={edit(updateFact, close, "Saved")} className="grid gap-2.5">
                 <input type="hidden" name="id" value={fact.id} />
                 <FactFields formId={`fact-${fact.id}`} categories={categories} fact={fact} />
                 <SubmitButton size="sm">Save</SubmitButton>

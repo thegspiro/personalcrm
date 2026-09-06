@@ -25,6 +25,26 @@ Two design decisions carry the whole thing:
 never client state. A client cannot claim to be unlocked, and the unlock dies
 with the session rather than lingering after sign-out.
 
+Tag merges, deletions and assignments ask their privacy question *inside* the
+transaction, after `SELECT ... FOR UPDATE` on the tag rows. Asked before
+it, the answer described a moment that had already passed: an unlocked session
+elsewhere could add the private assignment in the gap, and the locked session
+would then move or destroy it. Assigning has the same shape from the other
+direction: a tag on nobody is visible while locked, and an unlocked session
+making it private-only in the gap turned the assignment into a disclosure.
+Contact saves hold their submitted tags the same way. A lock is what makes a
+privacy answer still true when it is acted on.
+
+A password change is also a privacy boundary: it revokes every other session,
+re-keys the current one, and clears `privacyUnlockedAt` on it. The current
+session is preserved so a successful credential change does not strand the
+person who made it — but preserved is not left alone: the row's `tokenHash` is
+replaced with a freshly generated token and the response sets the new cookie.
+Revoking the *other* rows would otherwise miss the case the change is usually
+made for, since a stolen cookie holds this session's token rather than a
+different one. Session settings expose device metadata and database IDs only; raw
+cookie tokens and their stored hashes never enter the page payload.
+
 An unlock lasts **15 minutes of inactivity** (`IDLE_TIMEOUT_MS`). “Activity” is
 successful use of protected content: opening dating views, reading
 private-capable records, or completing a guarded write. Ordinary public page
@@ -67,7 +87,26 @@ every account that never switched the lock on, which is unlocked by definition.
 > database.
 
 **Counts are filtered too.** A total that shifts when you unlock is itself a
-disclosure.
+disclosure. Tag queries apply the same contact scope: while locked, tags used only by private contacts are omitted and usage totals count visible contacts only.
+
+One predicate, `tagVisibleWhere`, expresses that, and the write paths ask it as
+well as the list. A tag on nobody stays listed while locked — it discloses
+nobody, and hiding it would leave a tag just created unusable until an unlock —
+but a tag that exists only on private people is neither listed nor assignable.
+The write check is not redundant with the list: a contact form rendered while
+unlocked keeps the ids it was given, and closing the lock in another tab does
+not empty that form. Adding a contact, editing one, and the per-contact toggle
+all refuse an id the current scope does not admit, and renaming asks the same
+predicate. Merging or deleting a tag is refused while locked whenever the tag
+is on someone private, since one moves the hidden assignment and the other
+destroys it — and that check is scoped by owner on both sides, so a tag
+belonging to another account answers "not found" whatever is assigned to it
+rather than distinguishing itself by the refusal it earns.
+
+Creating or renaming a tag is refused outright while locked, for the reason a
+place cannot be renamed: both answer "is this name already taken", and a name
+that is taken but matches nothing you can see belongs to a tag used only by
+private people. Assigning an existing tag changes no name and stays available.
 
 The Places directory derives its visits, people, rankings and last-visited
 dates only from interactions admitted by `interactionPrivacyWhere`. A place
@@ -81,14 +120,41 @@ a hidden place is neither offered back to you nor editable while locked, and
 error would itself confirm one exists. Typing its name still resolves to the
 existing row rather than creating a duplicate.
 
+Renaming a place is refused outright while locked — every rename, not only the
+ones that collide. Enforcing uniqueness necessarily answers "is this name
+already taken", and a name that is taken but matches nothing you can see is a
+place the lock is hiding, so the refusal itself was the signal. Changing a
+place's alternate names is refused for the same reason and in the same words:
+the alias claims are checked against the whole account, hidden places included,
+so guessing one asked exactly the question the rename guard exists to refuse.
+Only a *change* is held back; every other field stays editable while locked,
+and a save that resubmits the aliases it was rendered with goes through.
+
 The module is deliberately pure and free of request context so it can be tested
 directly against a database; [`filter.ts`](../src/server/privacy/filter.ts)
 supplies the live scope.
 
 ### What "private" applies to
 
-`isPrivate` exists on `Contact`, `Fact`, `Interaction` and `Debt`. Marking a
-contact private hides everything beneath them.
+`isPrivate` exists on `Contact`, `Fact`, `Interaction`, `Debt` and
+`Associate`. Marking a contact private hides everything beneath them.
+
+An `Associate` — someone in a contact's life who is not tracked themselves —
+is withheld for its own marker *and* for the person it hangs off, which is two
+fragments at every call site rather than one: `associatePrivacyWhere` beside
+`viaContactPrivacyWhere`. Either alone lets the other's rows through. The name
+is filtered out of people-search for the same reason a private fact's text is:
+finding someone by a name only a hidden note carries would answer "is something
+hidden here, and about whom" from a page the lock does not gate. A promotion
+link names a real person, so where the person it created is private the
+**whole entry** is withheld, not merely the link: the row still carries the
+name it was written under, and leaving it would say "there is someone called
+Bob, and he is tracked" — the same disclosure the relationship filter in
+`getContact` refuses by dropping the row rather than the join.
+
+Creating an entry already marked private is refused while the lock is closed,
+as changing the marker is: it would land somewhere the writer cannot reach to
+undo it.
 
 `DietaryNeed` deliberately has no `isPrivate` — an allergen or emergency
 instruction behind a PIN is decorative safety information. This includes food,
@@ -286,26 +352,65 @@ because smaller local models do all three.
 ## Reminder delivery
 
 The one part of the app that reaches the network on its own. An hourly job
-(`src/server/reminder-scheduler.ts`) looks for important dates coming due and
-delivers them through the channels added under **Settings → Reminders**. No
-channel, no outbound request — a fresh install has none, so nothing leaves the
-machine until you say where it should go.
+(`src/server/reminder-scheduler.ts`) looks for what is coming due — important
+dates, keep-in-touch cadences, follow-ups, and evenings you have arranged and
+asked to be reminded about — and delivers them through the channels added under
+**Settings → Reminders**. No channel, no outbound request — a fresh install has
+none, so nothing leaves the machine until you say where it should go.
 
 ### What a reminder sends
 
 More than most people assume, so it is written out here rather than left to be
 discovered:
 
-| Field | Example |
-| --- | --- |
-| The date's label | `Anniversary` |
-| The contact's first and last name | `Dana Whitfield` |
-| The occurrence date | `2026-09-14` |
-| How far out it is | `in 7 days` |
+| Reminder | Field | Example |
+| --- | --- | --- |
+| Important date | The date's label | `Anniversary` |
+| | The contact's first and last name | `Dana Whitfield` |
+| | The occurrence date | `2026-09-14` |
+| | How far out it is | `in 7 days` |
+| Cadence | The contact's first and last name | `Dana Whitfield` |
+| | The date the cadence fell due | `2026-09-01` |
+| Task | The task's title | `Book the dentist` |
+| | The contact's name, if the task is for someone | `Dana Whitfield` |
+| | The due date | `2026-09-02` |
+| Scheduled plan | The plan's title | `Late showing at the Alamo` |
+| | The contact's name, if it is with someone | `Dana Whitfield` |
+| | The day it is on, and how far out that is | `is tomorrow (2026-09-03)` |
+| | The start time, when the plan has one | `at 7:30 PM` |
+| Daily digest | Important-date labels and eligible contact names | `Anniversary — Dana Whitfield` |
+| | Keep-in-touch contact names | `Dana Whitfield` |
+| | Task titles and the contact name, when present | `Book the dentist — Dana Whitfield` |
+| | Plan titles and the contact name, when present | `Late showing at the Alamo — Dana Whitfield` |
+| | Each entry's date, and whether it is overdue, due today or upcoming | `(upcoming: 2026-09-04)` |
+
+A plan sends nothing unless you have asked it to: reminders are off on every
+plan until a policy is set on it, and off on every plan that existed before the
+setting did. Settings → Reminders says the same thing at the point where you
+decide whether to add a channel at all. The daily digest is the one exception, and worth knowing about
+before switching the digest on — it lists everything arranged in the next three
+days whether or not that plan sends a reminder of its own, because it is a
+summary of what is coming rather than a copy of what was sent. Either way an
+evening with someone marked private is withheld while the privacy lock is
+closed, exactly as the rest is, and an evening arranged with nobody carries no
+name at all.
+
+Digest entries are bounded and ordered deterministically. If more items are due
+than fit, the message reports only how many remain; it does not expose their
+names or titles. An empty digest says that nothing needs attention instead of
+including empty headings.
+
+The digest reaches two days further than any individual reminder does, so a
+name can appear there before that person's own reminder is owed. It is the same
+account, the same channels and the same lock — a contact hidden by the privacy
+lock is excluded from the look-ahead exactly as it is from the rest — but it is
+worth stating plainly: switching the digest on means names travel up to two
+days earlier than the reminder schedule alone would send them.
 
 That goes to whatever host the channel names, on the hour, with no preview and
-no confirmation step. A retry after a failure sends a shorter body carrying the
-scheduled date only.
+no confirmation step. A retry after a failure re-reads the record and sends
+the same fields again, worded for the day it goes out — it is not a shorter
+message, and it never carries anything the first attempt would not have.
 
 **Email is different in kind from the rest.** An ntfy, Gotify or webhook URL can
 point at a box on your own network, and then nothing leaves it. SMTP goes
@@ -319,9 +424,12 @@ Gotify are meant to be run, and it is the case where nothing leaves the
 building at all.
 
 With one boundary: on an installation with more than one account, only an
-administrator may aim a channel at a **private, loopback or link-local
-address**. The server makes the request and reports what came back, so without
-that line any member could use it to probe the host's own network. A
+administrator may aim a channel at a **non-public address**. This includes
+private, loopback, link-local, multicast, unspecified, carrier-grade NAT and
+reserved IPv4 and IPv6 ranges. Every hostname is resolved in full; one
+non-public answer makes the whole destination non-public. The server makes the
+request and reports what came back, so without that line any member could use
+it to probe the host's own network. A
 single-account install never meets it — the only account is the administrator.
 
 That applies to an SMTP host as much as to a URL — an email channel names a
@@ -333,18 +441,51 @@ to a refused one would otherwise walk straight through the boundary, since the
 destination never passes back through it. A notification endpoint has no reason
 to redirect; configure the address it points at.
 
-**Literal addresses only, and that is a deliberate limit rather than an
-oversight.** A hostname that resolves to a private address is not caught. Doing
-so properly means resolving the name and then pinning the connection to the
-address that was checked — otherwise the answer can change between the check
-and the connection — in both the HTTP client and the mail transport. That is
-not implemented; see [known gaps](README.md#known-gaps).
+The check runs both when configuration is saved and immediately before every
+delivery. HTTP and SMTP connections are pinned to an address from that exact
+validated answer set while the original hostname remains in use for HTTP Host,
+TLS SNI and certificate verification. DNS therefore cannot change the address
+between the safety check and the connection. Redirects remain refused.
 
-So the boundary raises the cost of probing rather than making it impossible. It
-is worth having on those terms, and it is not worth mistaking for more. If the
-people with accounts on your installation are not people you trust with an
-outbound request from the server, `DISABLE_SIGNUP` is the control that actually
-answers that, and it is the recommended posture anyway.
+The two checks differ in one way: **saving asks DNS nothing.** An address typed
+in directly is still refused on the field, because telling its author that
+`10.0.0.5` is not allowed reveals only what they just wrote. A *hostname* is
+simply saved. Resolving one at save time and refusing it for pointing
+somewhere non-public answered a question the member could not otherwise ask —
+`nas.corp` and a spelling nobody has ever registered gave observably different
+answers, so the form became a way to enumerate internal DNS from an ordinary
+account, through the boundary's own error message.
+
+Nothing is lost by saying nothing there. The check before the send is the one
+that matters: the name is resolved, every answer inspected and the connection
+pinned to it, so a destination a member may not reach is never sent to. It
+merely takes until a delivery to say so, on the row — which is already where an
+unresolvable name reported.
+
+The **Send sample digest** button draws the same line, but around the part that
+actually leaks rather than around the whole button. Everything up to the
+destination check is answered with one sentence whichever way it failed, so a
+refusal and a name nobody has registered still cannot be told apart. Once the
+address has been shown to be public the reason is given in full — a member is
+refused any other kind of address, so repeating "connection refused" or
+"HTTP 401" says nothing about the network the member did not supply, and that
+is where the detail was worth having. An administrator, who is allowed a
+non-public destination anyway, is told what happened either way.
+
+What it sends is a fixed sample: invented people, invented dates, rendered by
+the same `digestMessage()` the scheduler uses, from `src/lib/sample-digest.ts`.
+It reads no contact, task, important date or digest count, so it is unchanged
+by the privacy lock — there is nothing in it that the lock would hide. Sending
+the real digest instead would have been the more faithful preview and is
+exactly what must not happen here: this button is reachable while the lock is
+closed, which is the one state where a digest would otherwise carry a private
+person's name to a channel. Its subject says "sample" because a push
+notification is often read as one collapsed line, and a body-only disclaimer is
+the half nobody sees.
+
+Success means the configured transport accepted the payload. It cannot
+guarantee that a mail provider, notification service, operating system or
+recipient device will ultimately display it.
 
 ### Private contacts and the send
 
@@ -358,13 +499,36 @@ an access gate, and those contacts are included like anyone else. That follows
 from what the lock is (see above), but it is worth saying plainly: turning the
 lock off turns off this filter too.
 
+### Avatar files
+
+Avatar bytes never live under `public/`. The generated `/api/avatars/<name>`
+URL requires a session, an owner-scoped contact reference, and visibility under
+the live privacy lock before the handler reads from `UPLOADS_DIR`. Responses
+are `private, no-store`, and the service worker never caches API responses.
+
+JPEG, PNG, and WebP uploads are limited to 2 MB and checked for being a whole
+file of the format their bytes claim — header, plausible dimensions, and the
+terminator at the very end — so a truncated upload is refused rather than
+published in place of the avatar it was meant to replace. A PNG's pixel data
+is also inflated, off the event loop, and must come to exactly the size its
+header implies; a PNG larger than 2048 pixels square is refused before any of
+it is unpacked. JPEG and WebP are not decoded.
+Client filenames, extensions, and MIME headers never become filesystem paths,
+and `UPLOADS_DIR` may not point inside `public/`, where the route's checks
+would not apply — judged after following symlinks on both sides, so a link
+cannot smuggle the directory in under another name.
+Replacement publishes validated new bytes and commits their generated path
+before obsolete bytes are removed; removal and contact deletion clear/delete
+the database row before unlinking. An I/O failure may therefore leave harmless
+unreferenced bytes, but not a contact path broken by the operation.
+
 ## Optional address lookup
 
 The third and last thing in the app that sends anything anywhere.
 `src/server/geo/` is off by default: switched off, nothing in it runs and a
 place's address is simply something you type.
 
-Four rules, the same shape as the assisted reading's:
+Five rules, the same shape as the assisted reading's:
 
 1. **Nothing is sent until you switch it on.** Off is the shipped state.
 2. **Nothing is sent except when you press the button.** Never while you type,
@@ -374,15 +538,71 @@ Four rules, the same shape as the assisted reading's:
    but it is the rule we would want regardless.
 3. **Only the place's name and the address you typed.** Never the notes, never
    who was seen there, never anything about an interaction. A place is the only
-   subject; the people are not part of the query.
-4. **Nothing is written from the answer.** Candidates are shown, you pick one,
-   and the write goes through `applyLocationLookup` like any other action. Every
-   failure — not configured, timed out, an unreadable reply — returns no
-   candidates rather than an error, and the field stays typeable.
+   subject; the people are not part of the query. Looking up a *person's* address
+   sends the address lines, city, region and country and nothing else — never the
+   label, never the notes, never their name.
+4. **A private contact's address is never sent, whatever the toggle says.** The
+   same promise the assisted reading makes about a line naming a private contact,
+   and for a stronger reason: a home address identifies somebody more precisely
+   than a name does. The refusal is in `lookupContactAddress` itself, before any
+   provider is reached, so it holds however the action is called. Their
+   coordinates are typed in by hand instead, and the form offers the fields
+   directly for exactly that.
+5. **Nothing is written from the answer.** Candidates are shown, you pick one,
+   and the write goes through `applyLocationLookup` — or an ordinary address or
+   home-base save — like any other action. Every failure — not configured, timed
+   out, an unreadable reply — returns no candidates rather than an error, and the
+   field stays typeable.
 
 What it stores is an OpenStreetMap object reference (`osmType` + `osmId`) plus
 the address parts and coordinates. Nominatim's own `place_id` is deliberately
 discarded: it is internal to one instance and does not survive a reimport.
+
+### Placing everything at once
+
+The one thing in the app that sends many addresses rather than one. It is gated
+three times over: lookup is off in the shipped state, the button appears **only
+when the endpoint is not the public OpenStreetMap service** — whose usage policy
+asks applications not to geocode in bulk against donated hardware — and it still
+has to be pressed. Rule 4 above holds unchanged: private contacts are excluded by
+the query that feeds the pass, so their addresses are never among the rows sent,
+locked or not.
+
+Places are weaker than that, deliberately, and the difference is worth stating
+plainly. They are filtered through `locationVisibleWhere` — the same predicate as
+the places list — so a venue known only through a private interaction is withheld
+from the count *and* never sent **while the lock is closed**. Unlocked, it is
+counted and can be sent, exactly as it becomes visible everywhere else, because
+that is what unlocking is for; the count therefore does change on unlock. What
+the lock guarantees is that a locked session neither reveals the venue in a total
+nor puts its address on the wire. A contact's address is held to the stricter
+rule instead — never sent whatever the lock says — because it names where a
+person lives rather than where a bar is.
+
+It sends the same thing a single lookup does and nothing more: the address parts
+for an address, the place's name and address for a place. Never a label, never
+notes, never whose address it is. Only an exact single match is written — an
+ambiguous answer is left for a person rather than guessed at.
+
+### Distances
+
+Nothing is sent to compute one. Every distance in the app is straight-line
+arithmetic over coordinates already stored, done on this machine in
+`src/lib/geo.ts`, so it is always on and works offline. There is no routing
+service and no travel time; if one is ever added it will sit behind its own
+off-by-default toggle exactly as this does.
+
+A private contact's coordinates are as much a disclosure as their name — a point
+on a map that appears only while the lock is open is itself an answer — so
+`originsFor` fetches the contact through `contactPrivacyWhere`. Locked, a private
+person yields no origin and the "places near them" section is simply not there,
+exactly as if they had no address at all.
+
+Address coordinates carry no `isPrivate` marker of their own, so they do not
+change `countPrivateRows` or the offline gate. They are ordinary contact detail:
+on an account that is [cacheable](#offline-caching) at all, a home address and
+its coordinates are written to disk by the service worker alongside the rest of
+that person's card, and locking or signing out wipes it with everything else.
 
 ### Endpoints
 
@@ -411,6 +631,15 @@ the lock closed and anything private in the account, it declines and says why.
 With nothing private to leave out, it proceeds, because what comes out is
 already everything.
 
+**What the export leaves out, and why.** Notification channels are excluded.
+Their configuration holds credentials — an SMTP password, a webhook nobody
+else should be able to post to — and a file people are encouraged to keep
+copies of is the last place those belong. Sessions and the password hash are
+excluded too; they are not account content but the means of reaching it.
+Everything else a person has entered is included, and a table that gains rows
+somebody typed has to be added to the export, or it quietly stops being what
+it says it is.
+
 Nothing is transmitted. The server action returns the file's contents and the
 browser saves them; there is no endpoint, and no request leaves the machine.
 
@@ -432,6 +661,15 @@ have no account behind them — necessary, because a throttle that only fired fo
 real accounts would answer the question the login error carefully refuses to:
 whether that address is one of ours. Both the refusal and the rejection read
 the same for an address that has never existed.
+
+**Confirming your current password is throttled by the same counter.**
+Changing the sign-in address or the password asks for the current one first,
+and that check is what stands between a stolen session and a theft made
+permanent — so it is gated exactly as the front door is, keyed the same way and
+reserved before the comparison rather than after it. A correct password clears
+the count. Ungated it took unlimited guesses, each costing a full password
+comparison, which also made it a way for one member of a shared instance to
+spend the machine.
 
 **It lives in the process, not in a table.** This started as a database table
 and five rounds of review took it apart, every time over the same tension.

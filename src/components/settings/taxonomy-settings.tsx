@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { SectionCard, SectionEmpty, SectionRow } from "@/components/contacts/section-card";
-import { useAction, useAddAction } from "@/components/form/use-action";
+import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { termColorClasses } from "@/lib/format";
 import {
   createTerm,
@@ -143,7 +143,7 @@ function TaxonomyGroupCard({ group }: { group: TaxonomyGroupView }) {
 
 function TermRow({ term, group }: { term: AdminTermView; group: TaxonomyGroupView }) {
   const run = useAction();
-  const add = useAddAction();
+  const edit = useEditAction();
   const [editing, setEditing] = React.useState(false);
 
   return (
@@ -200,7 +200,7 @@ function TermRow({ term, group }: { term: AdminTermView; group: TaxonomyGroupVie
 
       {editing ? (
         <form
-          action={add(updateTerm, () => setEditing(false), "Saved")}
+          action={edit(updateTerm, () => setEditing(false), "Saved")}
           className="mt-2.5 grid gap-2.5 border-t border-border/70 pt-2.5"
         >
           <input type="hidden" name="id" value={term.id} />

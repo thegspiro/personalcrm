@@ -15,7 +15,11 @@ import {
   type RenderableField,
 } from "@/components/custom-fields/field-renderer";
 import { DateField } from "@/components/form/date-field";
-import { TermChips, TermSelect, type TermOption } from "@/components/form/term-select";
+import {
+  TermChips,
+  TermSelect,
+  type TermOption,
+} from "@/components/form/term-select";
 import { CADENCE_PRESETS } from "@/lib/cadence";
 import { createContact, updateContact } from "@/server/actions/contacts";
 import type { ActionResult } from "@/server/actions/helpers";
@@ -43,6 +47,8 @@ export interface ContactFormValues {
   cadenceDays: number | null;
   isFavorite: boolean;
   isRomantic: boolean;
+  avatarPath: string | null;
+  tagIds: string[];
 }
 
 export function ContactForm({
@@ -51,6 +57,7 @@ export function ContactForm({
   contact,
   defaultCadenceDays,
   customFields = [],
+  tags = [],
 }: {
   categories: TermOption[];
   meetingSources: TermOption[];
@@ -58,19 +65,26 @@ export function ContactForm({
   defaultCadenceDays?: number | null;
   /** Fields you defined yourself, already scoped to this contact's category. */
   customFields?: RenderableField[];
+  tags?: Array<{ id: string; name: string }>;
 }) {
   const router = useRouter();
-  const [state, setState] = React.useState<ActionResult<{ id: string }>>({ ok: true });
+  const [state, setState] = React.useState<ActionResult<{ id: string }>>({
+    ok: true,
+  });
   const editing = Boolean(contact);
 
   async function onSubmit(form: FormData) {
-    const result = editing ? await updateContact(form) : await createContact(form);
+    const result = editing
+      ? await updateContact(form)
+      : await createContact(form);
     setState(result as ActionResult<{ id: string }>);
 
     if (!result.ok) return;
     toast.success(editing ? "Saved" : "Added");
 
-    const id = editing ? contact!.id : (result as ActionResult<{ id: string }>).data?.id;
+    const id = editing
+      ? contact!.id
+      : (result as ActionResult<{ id: string }>).data?.id;
     router.push(id ? `/people/${id}` : "/people");
     router.refresh();
   }
@@ -88,8 +102,48 @@ export function ContactForm({
 
       <Card>
         <CardContent className="grid gap-3.5 pt-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Photo
+          </p>
+          {contact?.avatarPath ? (
+            // This URL is an authenticated, privacy-filtered endpoint rather
+            // than a directly served file under public/.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={contact.avatarPath}
+              alt="Current avatar"
+              className="size-20 rounded-full object-cover"
+            />
+          ) : null}
+          <Field
+            label={contact?.avatarPath ? "Replace avatar" : "Avatar"}
+            htmlFor="avatar"
+            hint="JPEG, PNG, or WebP; up to 2 MB."
+          >
+            <Input
+              id="avatar"
+              name="avatar"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+            />
+          </Field>
+          {contact?.avatarPath ? (
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" name="removeAvatar" value="true" />
+              Remove the current avatar
+            </label>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="grid gap-3.5 pt-4">
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="First name" htmlFor="firstName" error={state.fieldErrors?.firstName}>
+            <Field
+              label="First name"
+              htmlFor="firstName"
+              error={state.fieldErrors?.firstName}
+            >
               <Input
                 id="firstName"
                 name="firstName"
@@ -111,7 +165,11 @@ export function ContactForm({
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Goes by" htmlFor="nickname">
-              <Input id="nickname" name="nickname" defaultValue={contact?.nickname ?? ""} />
+              <Input
+                id="nickname"
+                name="nickname"
+                defaultValue={contact?.nickname ?? ""}
+              />
             </Field>
             <Field label="Pronouns" htmlFor="pronouns">
               <Input
@@ -130,6 +188,27 @@ export function ContactForm({
             defaultValue={contact?.categoryId}
             emptyLabel="Unsorted"
           />
+          {tags.length ? (
+            <fieldset className="grid gap-2">
+              <legend className="text-xs font-medium">Tags</legend>
+              <div className="flex flex-wrap gap-2">
+                {tags.map((tag) => (
+                  <label
+                    key={tag.id}
+                    className="flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs"
+                  >
+                    <input
+                      type="checkbox"
+                      name="tagIds"
+                      value={tag.id}
+                      defaultChecked={contact?.tagIds.includes(tag.id)}
+                    />
+                    {tag.name}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -141,10 +220,18 @@ export function ContactForm({
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Job" htmlFor="occupation">
-              <Input id="occupation" name="occupation" defaultValue={contact?.occupation ?? ""} />
+              <Input
+                id="occupation"
+                name="occupation"
+                defaultValue={contact?.occupation ?? ""}
+              />
             </Field>
             <Field label="Company" htmlFor="employer">
-              <Input id="employer" name="employer" defaultValue={contact?.employer ?? ""} />
+              <Input
+                id="employer"
+                name="employer"
+                defaultValue={contact?.employer ?? ""}
+              />
             </Field>
           </div>
 
@@ -155,13 +242,28 @@ export function ContactForm({
           */}
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="City" htmlFor="city">
-              <Input id="city" name="city" defaultValue={contact?.city ?? ""} maxLength={120} />
+              <Input
+                id="city"
+                name="city"
+                defaultValue={contact?.city ?? ""}
+                maxLength={120}
+              />
             </Field>
             <Field label="Region" htmlFor="region">
-              <Input id="region" name="region" defaultValue={contact?.region ?? ""} maxLength={120} />
+              <Input
+                id="region"
+                name="region"
+                defaultValue={contact?.region ?? ""}
+                maxLength={120}
+              />
             </Field>
             <Field label="Country" htmlFor="country">
-              <Input id="country" name="country" defaultValue={contact?.country ?? ""} maxLength={120} />
+              <Input
+                id="country"
+                name="country"
+                defaultValue={contact?.country ?? ""}
+                maxLength={120}
+              />
             </Field>
           </div>
 
@@ -249,7 +351,9 @@ export function ContactForm({
             <select
               id="cadenceDays"
               name="cadenceDays"
-              defaultValue={String(contact?.cadenceDays ?? defaultCadenceDays ?? "")}
+              defaultValue={String(
+                contact?.cadenceDays ?? defaultCadenceDays ?? "",
+              )}
               className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm shadow-xs"
             >
               {CADENCE_PRESETS.map((preset) => (
@@ -281,13 +385,18 @@ export function ContactForm({
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Your own fields
             </p>
-            <CustomFieldInputs fields={customFields} errors={state.fieldErrors} />
+            <CustomFieldInputs
+              fields={customFields}
+              errors={state.fieldErrors}
+            />
           </CardContent>
         </Card>
       ) : null}
 
       <div className="flex gap-2 pb-2">
-        <SubmitButton className="flex-1">{editing ? "Save changes" : "Add person"}</SubmitButton>
+        <SubmitButton className="flex-1">
+          {editing ? "Save changes" : "Add person"}
+        </SubmitButton>
         <Button type="button" variant="outline" onClick={() => router.back()}>
           Cancel
         </Button>
@@ -312,7 +421,9 @@ function ToggleRow({
     <label className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
       <span className="min-w-0">
         <span className="block text-sm font-medium">{label}</span>
-        <span className="block text-xs text-muted-foreground">{description}</span>
+        <span className="block text-xs text-muted-foreground">
+          {description}
+        </span>
       </span>
       <input type="hidden" name={name} value={checked ? "true" : "false"} />
       <Switch checked={checked} onCheckedChange={setChecked} />

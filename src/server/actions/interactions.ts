@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/server/db/client";
+import { transact } from "@/server/db/transaction";
 import {
   participantsOf,
   recomputeContactActivity,
@@ -113,7 +114,7 @@ export async function createInteraction(
 
   let interaction: { id: string };
   try {
-    interaction = await prisma.$transaction(async (tx) => {
+    interaction = await transact(async (tx) => {
     const place = await resolveLocation(tx, ownerId, str(form, "location"));
     const created = await tx.interaction.create({
       data: {
@@ -201,7 +202,7 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
   const previousContactIds = existing.participants.map((p) => p.contactId);
 
   try {
-    await prisma.$transaction(async (tx) => {
+    await transact(async (tx) => {
       const place = await resolveLocation(tx, ownerId, str(form, "location"));
       await tx.interaction.update({
         where: { id },
@@ -220,12 +221,12 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
 
       await tx.interactionParticipant.deleteMany({ where: { interactionId: id } });
       await tx.interactionParticipant.createMany({
-        data: parsed.data.contactIds.map((contactId) => ({ interactionId: id, contactId })),
+        data: parsed.data.contactIds.map((contactId) => ({ ownerId, interactionId: id, contactId })),
       });
       await tx.interactionMention.deleteMany({ where: { interactionId: id } });
       if (mentionedContactIds.length) {
         await tx.interactionMention.createMany({
-          data: mentionedContactIds.map((contactId) => ({ interactionId: id, contactId })),
+          data: mentionedContactIds.map((contactId) => ({ ownerId, interactionId: id, contactId })),
         });
       }
 
@@ -376,8 +377,9 @@ export async function loadInteractionForEdit(
 
 export async function deleteInteraction(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
+  const scope = await privacyScope();
   const existing = await prisma.interaction.findFirst({
-    where: { id, ownerId },
+    where: { id, ownerId, ...interactionPrivacyWhere(scope) },
     select: { id: true },
   });
   if (!existing) return fail("Interaction not found.");
