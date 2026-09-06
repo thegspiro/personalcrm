@@ -15,7 +15,12 @@ import {
   type PlainDate,
   type Recurrence,
 } from "@/lib/dates";
-import { dueOccurrence, effectiveReminderDays, type ReminderPolicy } from "@/lib/reminders";
+import {
+  dueOccurrence,
+  effectivePlanReminderDays,
+  effectiveReminderDays,
+  readReminderPolicy,
+} from "@/lib/reminders";
 import {
   birthdayContactSelect,
   birthdayProjectionId,
@@ -29,12 +34,14 @@ import {
   digestIsDue,
   digestMessage,
   importantDateMessage,
+  scheduledPlanMessage,
   reminderDedupKey,
   taskMessage,
   type DigestItem,
   type ReminderMessage,
   type SchedulingPolicy,
 } from "@/lib/reminder-schedule";
+import { formatPlanTime } from "@/lib/plan-time";
 import { deliverToChannel } from "./notify";
 
 const MAX_ATTEMPTS = 5;
@@ -115,10 +122,6 @@ function personName(contact: { firstName: string; lastName: string | null }): st
   return [contact.firstName, contact.lastName].filter(Boolean).join(" ");
 }
 
-function reminderPolicy(stored: unknown): ReminderPolicy {
-  return Array.isArray(stored) ? (stored as number[]) : null;
-}
-
 const CONTACT_NAME = { select: { firstName: true, lastName: true } } as const;
 
 /**
@@ -152,6 +155,38 @@ function taskWhere(user: Pick<ScheduledUser, "id">, schedule: Schedule) {
     ...taskContactWhere(user, schedule),
   };
 }
+
+/**
+ * The plans a reminder can be owed for.
+ *
+ * `PLANNED` only. An `OPEN` plan carrying a `plannedFor` is either pencilled in
+ * or left over from "Not planned after all", and neither is an arrangement to
+ * announce — the same distinction `completePlan` draws when it declines to read
+ * a day off an open row. A plan with nobody attached still reminds: "Nobody
+ * yet" is a real way to arrange an evening.
+ */
+function planWhere(user: Pick<ScheduledUser, "id">, schedule: Schedule) {
+  return {
+    ownerId: user.id,
+    status: "PLANNED" as const,
+    plannedFor: { not: null },
+    // `Plan.contact` is keyed on `(ownerId, contactId)`, so the join already
+    // cannot reach another account — the owner is repeated here for the case
+    // that key cannot cover, a restore written with foreign key checks off.
+    // The relation is optional, so an unattached plan is a real answer and has
+    // to be spelled out; a contactId that resolves to nothing matches neither
+    // branch and is left alone, which is the right answer for a broken row.
+    OR: [
+      { contactId: null },
+      { contact: { ownerId: user.id, ...visibleContact(schedule.locked) } },
+    ],
+  };
+}
+
+const PLAN_SELECT = {
+  id: true, title: true, plannedFor: true, plannedStartMinute: true, reminderDaysBefore: true,
+  contact: { select: { firstName: true, lastName: true } },
+} as const;
 
 /**
  * A birthday is `Contact.birthDate`, not an `ImportantDate` row — see
@@ -406,7 +441,7 @@ async function digestItemsForUser(
   dates: DateSource[],
 ): Promise<DigestItem[]> {
   const through = addPlainDays(schedule.today, DIGEST_LOOKAHEAD_DAYS);
-  const [cadence, tasks] = await Promise.all([
+  const [cadence, tasks, plans] = await Promise.all([
     db.contact.findMany({
       where: digestCadenceWhere(user, schedule, through),
       select: { firstName: true, lastName: true, nextTouchAt: true },
@@ -414,6 +449,17 @@ async function digestItemsForUser(
     db.task.findMany({
       where: digestTaskWhere(user, schedule, through),
       select: { title: true, dueDate: true, contact: { select: { firstName: true, lastName: true } } },
+    }),
+    // Bounded by the same look-ahead as the rest, and by the day itself rather
+    // than by the plan's reminder policy: a plan with no reminders set is
+    // still an evening you have arranged this week, and the digest is a
+    // summary of what is coming rather than a second copy of what was sent.
+    db.plan.findMany({
+      where: {
+        ...planWhere(user, schedule),
+        plannedFor: { gte: plainDateToDb(schedule.today), lte: plainDateToDb(through) },
+      },
+      select: { title: true, plannedFor: true, contact: { select: { firstName: true, lastName: true } } },
     }),
   ]);
   const items: DigestItem[] = [];
@@ -429,7 +475,7 @@ async function digestItemsForUser(
   const seen = new Set<string>();
   for (let ahead = 0; ahead <= DIGEST_LOOKAHEAD_DAYS; ahead++) {
     for (const date of dates) {
-      for (const offset of effectiveReminderDays(reminderPolicy(date.reminderDaysBefore))) {
+      for (const offset of effectiveReminderDays(readReminderPolicy(date.reminderDaysBefore))) {
         const occurrence = dueOccurrence(
           date.anchor, date.recurrence, addPlainDays(schedule.today, ahead), offset,
         );
@@ -445,6 +491,16 @@ async function digestItemsForUser(
           date: occurrence, preview: ahead > 0,
         });
       }
+    }
+  }
+  for (const plan of plans) {
+    if (plan.plannedFor) {
+      const day = plainDateFromDb(plan.plannedFor);
+      items.push({
+        kind: "PLAN", title: plan.title,
+        contactName: plan.contact ? personName(plan.contact) : null,
+        date: day, preview: diffPlainDays(schedule.today, day) > 0,
+      });
     }
   }
   for (const contact of cadence) {
@@ -475,7 +531,7 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
 
   const dates = await dateSourcesForUser(db, user, schedule);
   for (const date of dates) {
-    for (const offset of effectiveReminderDays(reminderPolicy(date.reminderDaysBefore))) {
+    for (const offset of effectiveReminderDays(readReminderPolicy(date.reminderDaysBefore))) {
       const occurrence = dueOccurrence(date.anchor, date.recurrence, schedule.today, offset);
       if (!occurrence) continue;
       candidates.push({
@@ -525,6 +581,35 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
       offsetDays: 0,
       ...taskMessage(task.title, task.contact ? personName(task.contact) : null, dueDay),
     });
+  }
+
+  const plans = await db.plan.findMany({ where: planWhere(user, schedule), select: PLAN_SELECT });
+  for (const plan of plans) {
+    if (!plan.plannedFor) continue;
+    const day = plainDateFromDb(plan.plannedFor);
+    for (const offset of effectivePlanReminderDays(readReminderPolicy(plan.reminderDaysBefore))) {
+      // `dueOccurrence` verbatim, with a `"NONE"` recurrence: `nextOccurrence`
+      // returns a one-off anchor only when it is on or after `from`, so the
+      // existing helper already answers "is this single day exactly `offset`
+      // days out?" and needs no projection of its own.
+      const occurrence = dueOccurrence(day, "NONE", schedule.today, offset);
+      if (!occurrence) continue;
+      candidates.push({
+        entityType: "PLAN",
+        entityId: plan.id,
+        policy: "SCHEDULED_PLAN",
+        occurrence: plainDateKey(occurrence),
+        scheduledFor: plainDateToDb(occurrence),
+        offsetDays: offset,
+        ...scheduledPlanMessage(
+          plan.title,
+          plan.contact ? personName(plan.contact) : null,
+          occurrence,
+          schedule.today,
+          formatPlanTime(plan.plannedStartMinute),
+        ),
+      });
+    }
   }
 
   if (user.preference.digestEnabled && digestIsDue(now, schedule.timezone, user.preference.digestHour)) {
@@ -577,7 +662,7 @@ async function currentMessage(
   switch (log.schedulingPolicy as SchedulingPolicy) {
     case "IMPORTANT_DATE_OFFSET": {
       const date = await dateSourceById(db, user, schedule, log.entityId);
-      if (!date || !effectiveReminderDays(reminderPolicy(date.reminderDaysBefore)).includes(log.offsetDays)) {
+      if (!date || !effectiveReminderDays(readReminderPolicy(date.reminderDaysBefore)).includes(log.offsetDays)) {
         return null;
       }
       // The date may have been corrected since: it is still owed only if it
@@ -625,6 +710,32 @@ async function currentMessage(
       if (plainDateKey(dueDay) !== plainDateKey(scheduled)) return null;
       if (comparePlainDates(dueDay, schedule.today) > 0) return NOT_YET;
       return taskMessage(task.title, task.contact ? personName(task.contact) : null, dueDay);
+    }
+    case "SCHEDULED_PLAN": {
+      const plan = await db.plan.findFirst({
+        where: { id: log.entityId, ...planWhere(user, schedule) },
+        select: PLAN_SELECT,
+      });
+      // Re-read under the rules it was created under: still owned, still
+      // PLANNED, its contact still visible, still asking for this offset — and
+      // still on the day this row was keyed for. Moving the plan cancels this
+      // row and the next hourly pass writes one for the new day, exactly as
+      // correcting an important date does.
+      if (!plan?.plannedFor) return null;
+      if (!effectivePlanReminderDays(readReminderPolicy(plan.reminderDaysBefore)).includes(log.offsetDays)) {
+        return null;
+      }
+      const day = plainDateFromDb(plan.plannedFor);
+      const occurrence = dueOccurrence(day, "NONE", addPlainDays(scheduled, -log.offsetDays), log.offsetDays);
+      if (!occurrence || plainDateKey(occurrence) !== plainDateKey(scheduled)) return null;
+      if (diffPlainDays(schedule.today, occurrence) > log.offsetDays) return NOT_YET;
+      return scheduledPlanMessage(
+        plan.title,
+        plan.contact ? personName(plan.contact) : null,
+        occurrence,
+        schedule.today,
+        formatPlanTime(plan.plannedStartMinute),
+      );
     }
     case "DAILY_DIGEST": {
       // A digest is that day's summary. Once the day has ended it is either

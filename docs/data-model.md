@@ -675,6 +675,7 @@ you _do_ it.
 | `plannedDurationMinutes` | `int?` | How long to set aside, in minutes. Null = open-ended |
 | `usedAt` | `datetime?` | |
 | `usedInInteractionId` | `cuid?` | → `Interaction`, `SET NULL`. An interaction rather than a `DateEntry`: a plan carried out with a friend never produces one of those |
+| `reminderDaysBefore` | `json?` | Array of ints, e.g. `[1, 0]`, counted back from `plannedFor` — the same shape as `ImportantDate.reminderDaysBefore` and **not** the same meaning of null. Null here is *no reminders*; on an important date it is the account default. A birthday is a fact the app may volunteer; an evening you arranged is not something it should start announcing unasked, and reading null as a default would have had every already-`PLANNED` plan send on the first hourly pass after the column shipped |
 | `completionKey` | `varchar(191)?` | `<sourcePlanId>:<contactId>:<local day>`, unique per owner, set only on a completed copy of a shared idea. That path writes a copy and leaves the original open, so it has no row to claim — the index is what makes a replayed POST or a second tab collide instead of filing the evening twice |
 
 Deliberately not confined to the dating layer — a hike with a friend and a first
@@ -920,7 +921,7 @@ never been made — and a reminder no longer due is left cancelled. A row
 cancelled while its reminder was ineligible is put back on the retry path if
 its reminder becomes a candidate again — a task reopened, a person made
 visible — rather than being skipped for ever under its key. `entityType`
-is a `ReminderEntity` (`IMPORTANT_DATE` | `CADENCE` | `TASK` | `DIGEST`). Failed
+is a `ReminderEntity` (`IMPORTANT_DATE` | `CADENCE` | `TASK` | `DIGEST` | `PLAN`). Failed
 sends retry with exponential delay up to five attempts. Before retrying, the
 engine re-reads the row's own entity under the same owner, archive and privacy
 rules it was created under — not today's candidate list, which a send that
@@ -936,6 +937,18 @@ Cadence rows use `Contact.nextTouchAt` falling on or before the end of the
 owner's local day — the same reading as the overdue count and the People
 filter — task rows use an incomplete task's due date, and digest rows use the
 user's local calendar date.
+
+Plan rows (`SCHEDULED_PLAN`) come from `PLANNED` plans carrying a `plannedFor`,
+keyed on that day. `PLANNED` only: an `OPEN` plan with a day on it is either
+pencilled in or left over from "Not planned after all", and neither is an
+arrangement to announce. Offsets are the plan's own `reminderDaysBefore`, read
+through `effectivePlanReminderDays`, so a plan nobody switched reminders on for
+produces no candidate at all. An unattached plan still reminds — "Nobody yet" is
+a real way to arrange an evening — and one whose contact is archived, or private
+while the lock is on, does not. The message is worded from the day it goes out
+and names the start time when the plan has one, the only reminder kind that
+knows an hour. Moving the day cancels the queued row and the next hourly pass
+writes one for the new day, exactly as correcting an important date does.
 
 Important-date rows come from two sources, joined by `dateSourcesForUser` in
 `src/server/services/reminders.ts`: `ImportantDate` rows, and the canonical
@@ -977,9 +990,12 @@ as a month would leave that row live to announce an exact day the contact page
 does not show. An unknown day means silence, not a fallback to the stale row.
 
 A digest reaches two days past today: cadences whose `nextTouchAt` falls before
-the end of that third local day, incomplete tasks due on or before it, and
-important-date occurrences whose own `reminderDaysBefore` policy would speak on
-any of the three days. Each entry is labelled overdue, due today or upcoming
+the end of that third local day, incomplete tasks due on or before it,
+`PLANNED` plans falling on any of the three days, and important-date
+occurrences whose own `reminderDaysBefore` policy would speak on any of the
+three days. A plan is listed by its day and not by its reminder policy: the
+digest is a summary of what is coming rather than a second copy of what was
+sent, so an evening with no reminders set is still in it. Each entry is labelled overdue, due today or upcoming
 from its date, and carries whether its *reminder* is owed today or is being
 previewed. Those are not the same thing — a date warned about a week ahead is
 owed today for an occurrence still a week out — so the 20-entry cap ranks on
@@ -1023,7 +1039,7 @@ already sent and cannot start it re-sending.
 | `NotificationChannelKind` | `EMAIL`, `NTFY`, `GOTIFY`, `DISCORD`, `WEBHOOK` |
 | `AllergyStatus` | `UNKNOWN`, `NONE_KNOWN`, `HAS_ALLERGIES` |
 | `AllergyCategory` | `FOOD`, `MEDICATION`, `ENVIRONMENTAL`, `OTHER` |
-| `ReminderEntity` | `IMPORTANT_DATE`, `CADENCE`, `TASK`, `DIGEST` |
+| `ReminderEntity` | `IMPORTANT_DATE`, `CADENCE`, `TASK`, `DIGEST`, `PLAN` |
 
 `UNSPECIFIED` appears in both `ReachedOutBy` and `WhoPaid` for the same reason:
 unknown has to be its own value, or historical rows silently acquire an answer
@@ -1075,6 +1091,7 @@ the `init-migrate` s6 oneshot).
 | `20260904150000_add_plan_times` | Additive nullable `Plan.plannedStartMinute` and `plannedDurationMinutes`, so a pencilled-in plan can carry a time of day and a rough length. Purely additive — no existing column is re-expressed, and a plan with a day but no time reads exactly as it did before |
 | `20260905120000_add_address_coordinates_and_home_base` | Adds `latitude`, `longitude`, `osmType` and `osmId` to `Address`, and the home base plus `distanceUnit` to `UserPreference`. Entirely additive — every column nullable or defaulted, nothing removed or renamed, so there is nothing to backfill and nothing that can be lost |
 | `20260905180000_add_plan_completion_key` | Additive nullable `Plan.completionKey` and a unique index on `(ownerId, completionKey)`, making the shared-idea completion path replay-safe. Purely additive: the column is null on every existing row, and both MySQL and MariaDB allow unlimited `NULL`s under a unique index, so nothing stored changes meaning |
+| `20260906010000_add_plan_reminders` | Additive nullable `Plan.reminderDaysBefore` and `PLAN` appended to `ReminderEntity`. Appended, not reordered: MySQL stores an enum by position, so inserting a value in the middle would change the meaning of every stored `ReminderLog.entityType`. Nothing to backfill — the column is null on every existing row, and for a plan null means no reminders, so no already-scheduled plan starts sending on the first pass after the upgrade |
 | `20260905153056_add_associates` | Adds `Associate` — the people in a contact's life who are not tracked themselves. Purely additive: one new table, no existing column re-expressed and no enum modified, so there is nothing to backfill and nothing that can be lost. `promotedContactId` is the third single-column key into `Contact`, for the `SET NULL` reason above |
 
 Writing a migration that changes the meaning of existing data — not just its

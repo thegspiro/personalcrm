@@ -218,8 +218,45 @@ unticked checklist, because inherited ticks would claim a booking nobody made.
 The write is a compare-and-set on both the status *and* the contact, not just an
 update after the read: several awaits separate the two, and on status alone a
 second stale form would overwrite the person the first one attached and still
-report success. The copy re-checks both of the plan's foreign keys against the
+report success. The reminder policy is pinned in that predicate too, but only
+when the submission means to write one — it is the single field a second tab can
+change without touching the day, the time or the person, so nothing else in the
+claim catches it. It is deliberately not folded into `planAsRead`:
+`completePlan` never writes the policy, and pinning it there would refuse a
+completion over a change that cannot affect what completion records. The copy re-checks both of the plan's foreign keys against the
 owner before taking them — `ownedPlanRefs`.
+
+Both the plan form and the schedule sheet carry the reminder control, and
+`planReminderPatch` puts two gates in front of it.
+
+**Presence.** A submission without a `reminderMode` field leaves the stored
+policy exactly as it was. Read by value instead, every save from a form that
+does not ask about reminders would land as "no reminders" and switch them off.
+
+**Change.** A submission *with* the control still writes nothing unless the
+value differs from the one the form was rendered with, which the form reports in
+a hidden `reminderPolicyWas`. Presence cannot do this on its own: the schedule
+sheet always submits its select, so a sheet drawn before another tab switched a
+reminder on would post its own stale "no reminders" over the newer choice.
+Comparing against `Plan` as read in the action does not catch it either — by
+then the row already holds the newer value, so it would be comparing that value
+with itself. The comparison is semantic, so null and the empty list count as the
+same answer (`samePlanReminderPolicy`) and re-submitting one over the other is
+not a change.
+
+It skips rather than refuses, deliberately. The sheet's job is the day, the time
+and the person; rejecting the whole arrangement over a preference the user never
+touched would be the worse answer.
+
+The scheduling copy path inherits the original's policy when this submission
+names none, the same rule it already applies to the duration. All three writers
+report an unreadable offset with the same message rather than folding it into
+`planFields`' generic one, which names none of the fields it can fail on.
+Offsets go through `parseReminderDays` unchanged; what differs is the reading of
+null, which for a plan means no reminders rather than the account default —
+`effectivePlanReminderDays` and `planReminderPolicyLabel` are the plan-side
+pair, and `effectiveReminderDays` / `reminderPolicyLabel` stay correct for
+important dates.
 
 `completePlan` refuses outright on a plan that is already `DONE` or `ARCHIVED`.
 Both of its claims carry the status, but the shared-idea path has no claim — it

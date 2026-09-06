@@ -3,6 +3,8 @@ import { processImportantDateReminders } from "@/server/services/reminders";
 import { deliverToChannel } from "@/server/services/notify";
 import { encryptSecret } from "@/server/crypto/secrets";
 import { asARestoreWould, createTestUser, hasTestDatabase, prisma, reset } from "./db";
+import { plainDateToDb } from "@/lib/dates";
+import { formatPlanTime } from "@/lib/plan-time";
 
 /**
  * The real client with one ledger method replaced, so a test can stand in for
@@ -1223,5 +1225,232 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
       db: prisma, send, clock: () => new Date("2026-09-02T09:32:00Z"),
     });
     expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ attemptCount: 2, nextAttemptAt: new Date("2026-09-02T09:34:00Z") });
+  });
+});
+
+describe.skipIf(!hasTestDatabase)("scheduled-plan delivery", () => {
+  beforeEach(reset);
+  afterAll(() => prisma.$disconnect());
+
+  /** An owner with one webhook channel, no digest, and a fixed clock. */
+  async function ownerWithChannel(timezone = "UTC") {
+    const user = await createTestUser();
+    await prisma.userPreference.create({
+      data: { userId: user.id, timezone, privacyLockEnabled: true, digestEnabled: false },
+    });
+    await prisma.notificationChannel.create({
+      data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } },
+    });
+    return user;
+  }
+
+  const SEPT_2 = plainDateToDb({ year: 2026, month: 9, day: 2 });
+
+  it("sends nothing for a plan nobody asked to be reminded about", async () => {
+    // The upgrade property, and the reason `effectivePlanReminderDays` is not
+    // `effectiveReminderDays`: every plan that was already PLANNED when this
+    // shipped carries a null policy, and null here means silence. Read as the
+    // account default it would mean two messages each, on the first hourly
+    // pass after the upgrade, for evenings the owner never asked about.
+    const user = await ownerWithChannel();
+    await prisma.plan.create({
+      data: { ownerId: user.id, title: "Alamo", status: "PLANNED", plannedFor: SEPT_2 },
+    });
+    const send = vi.fn(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T12:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+    expect(await prisma.reminderLog.count()).toBe(0);
+  });
+
+  it("sends one reminder on the day, and only one however many passes run", async () => {
+    const user = await ownerWithChannel();
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Robin" } });
+    await prisma.plan.create({
+      data: {
+        ownerId: user.id, contactId: contact.id, title: "Late showing at the Alamo",
+        status: "PLANNED", plannedFor: SEPT_2, plannedStartMinute: 1170, reminderDaysBefore: [0],
+      },
+    });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string) => undefined);
+
+    const now = new Date("2026-09-02T12:00:00Z");
+    await processImportantDateReminders(now, { db: prisma, send });
+    await processImportantDateReminders(now, { db: prisma, send });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][1]).toBe("Coming up: Late showing at the Alamo");
+    // Built from the formatter rather than typed out: `toLocaleTimeString`
+    // decides whether the space before "PM" is an ordinary one, and which it
+    // picks depends on the ICU build rather than on anything this code does.
+    expect(send.mock.calls[0][2]).toBe(
+      `Late showing at the Alamo with Robin is today at ${formatPlanTime(1170)} (2026-09-02).`,
+    );
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({
+      entityType: "PLAN", schedulingPolicy: "SCHEDULED_PLAN", offsetDays: 0, ok: true,
+    });
+  });
+
+  it("counts the offset back from the day, and says nothing on the other days", async () => {
+    const user = await ownerWithChannel();
+    await prisma.plan.create({
+      data: {
+        ownerId: user.id, title: "Long walk", status: "PLANNED",
+        plannedFor: SEPT_2, reminderDaysBefore: [1],
+      },
+    });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string) => undefined);
+
+    await processImportantDateReminders(new Date("2026-08-31T12:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+
+    await processImportantDateReminders(new Date("2026-09-01T12:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][2]).toBe("Long walk is tomorrow (2026-09-02).");
+
+    // The day itself is not in the policy, so nothing more is owed.
+    await processImportantDateReminders(new Date("2026-09-02T12:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a day pencilled in against an idea nobody has arranged", async () => {
+    // An OPEN plan carrying a `plannedFor` is either pencilled in or left over
+    // from "Not planned after all". Neither is an arrangement to announce, and
+    // the second would be an evening the owner explicitly took off the books.
+    const user = await ownerWithChannel();
+    await prisma.plan.create({
+      data: { ownerId: user.id, title: "Alamo", status: "OPEN", plannedFor: SEPT_2, reminderDaysBefore: [0] },
+    });
+    await prisma.plan.create({
+      data: { ownerId: user.id, title: "Done already", status: "DONE", plannedFor: SEPT_2, reminderDaysBefore: [0] },
+    });
+    const send = vi.fn(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T12:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("keeps a locked private or archived person's evening off the wire, and still sends an unattached one", async () => {
+    const user = await ownerWithChannel();
+    const people = await Promise.all([
+      prisma.contact.create({ data: { ownerId: user.id, firstName: "Private", isPrivate: true } }),
+      prisma.contact.create({ data: { ownerId: user.id, firstName: "Archived", isArchived: true } }),
+    ]);
+    for (const contact of people) {
+      await prisma.plan.create({
+        data: {
+          ownerId: user.id, contactId: contact.id, title: `Evening with ${contact.firstName}`,
+          status: "PLANNED", plannedFor: SEPT_2, reminderDaysBefore: [0],
+        },
+      });
+    }
+    // "Nobody yet" is a real way to arrange an evening, so this one does send.
+    await prisma.plan.create({
+      data: { ownerId: user.id, title: "Nobody yet", status: "PLANNED", plannedFor: SEPT_2, reminderDaysBefore: [0] },
+    });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string) => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T12:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][1]).toBe("Coming up: Nobody yet");
+  });
+
+  it("never announces a plan whose contact resolves in another account", async () => {
+    // The composite `(ownerId, contactId)` key makes this unreachable through
+    // the app, which is exactly why the restore path is worth a test: written
+    // with foreign key checks off, the row exists, and that name must not
+    // travel through this owner's channels.
+    const user = await ownerWithChannel();
+    const stranger = await createTestUser();
+    const theirs = await prisma.contact.create({ data: { ownerId: stranger.id, firstName: "Stranger" } });
+    await asARestoreWould(async (db) => {
+      await db.plan.create({
+        data: {
+          ownerId: user.id, contactId: theirs.id, title: "Restored", status: "PLANNED",
+          plannedFor: SEPT_2, reminderDaysBefore: [0],
+        },
+      });
+    });
+    const send = vi.fn(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T12:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("cancels a queued retry once the evening moves, and owes the new day instead", async () => {
+    const user = await ownerWithChannel();
+    const plan = await prisma.plan.create({
+      data: { ownerId: user.id, title: "Alamo", status: "PLANNED", plannedFor: SEPT_2, reminderDaysBefore: [0] },
+    });
+    const send = vi.fn(async (): Promise<void> => { throw new Error("offline"); });
+    await processImportantDateReminders(new Date("2026-09-02T12:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+
+    await prisma.plan.update({
+      where: { id: plan.id },
+      data: { plannedFor: plainDateToDb({ year: 2026, month: 9, day: 20 }) },
+    });
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T12:02:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({
+      ok: false, nextAttemptAt: null, error: expect.stringContaining("cancelled"),
+    });
+
+    // The new day is a new occurrence, with its own ledger row.
+    await processImportantDateReminders(new Date("2026-09-20T12:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(await prisma.reminderLog.count()).toBe(2);
+  });
+
+  it("cancels a queued retry when the reminder is switched off", async () => {
+    const user = await ownerWithChannel();
+    const plan = await prisma.plan.create({
+      data: { ownerId: user.id, title: "Alamo", status: "PLANNED", plannedFor: SEPT_2, reminderDaysBefore: [0] },
+    });
+    const send = vi.fn(async (): Promise<void> => { throw new Error("offline"); });
+    await processImportantDateReminders(new Date("2026-09-02T12:00:00Z"), { db: prisma, send });
+
+    await prisma.plan.update({ where: { id: plan.id }, data: { reminderDaysBefore: [] } });
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date("2026-09-02T12:02:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: false, nextAttemptAt: null });
+  });
+
+  it("waits for the plan's day in the owner's timezone rather than the server's", async () => {
+    const user = await ownerWithChannel("America/Los_Angeles");
+    await prisma.plan.create({
+      data: { ownerId: user.id, title: "Alamo", status: "PLANNED", plannedFor: SEPT_2, reminderDaysBefore: [0] },
+    });
+    const send = vi.fn(async () => undefined);
+    // Already Sept 2 in UTC, still Sept 1 in Los Angeles.
+    await processImportantDateReminders(new Date("2026-09-02T02:00:00Z"), { db: prisma, send });
+    expect(send).not.toHaveBeenCalled();
+
+    await processImportantDateReminders(new Date("2026-09-02T18:00:00Z"), { db: prisma, send });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists what has been arranged in the digest, whether or not it sends its own reminder", async () => {
+    // The digest is a summary of what is coming, not a second copy of what was
+    // sent, so a plan with no reminder policy still belongs in it.
+    const user = await createTestUser();
+    await prisma.userPreference.create({
+      data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 },
+    });
+    await prisma.notificationChannel.create({
+      data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } },
+    });
+    const contact = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Robin" } });
+    await prisma.plan.create({
+      data: {
+        ownerId: user.id, contactId: contact.id, title: "Alamo", status: "PLANNED",
+        plannedFor: plainDateToDb({ year: 2026, month: 9, day: 4 }),
+      },
+    });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string) => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+    const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest");
+    expect(digest?.[2]).toContain("Arranged");
+    expect(digest?.[2]).toContain("- Alamo — Robin (upcoming: 2026-09-04)");
   });
 });

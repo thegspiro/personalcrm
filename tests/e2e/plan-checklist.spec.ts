@@ -180,11 +180,18 @@ test("a plan can be scheduled and then closed out", async ({ page }) => {
   await expect(day).toBeHidden();
 
   await row.getByLabel("Start time").fill("19:30");
+  // Off unless asked for, which is the point of asking here: leaving this alone
+  // saves the plan with no reminders at all.
+  await row.getByLabel("Remind me").selectOption("on-day");
   await row.getByRole("button", { name: "Schedule it", exact: true }).click();
 
   // Exact: "Not planned after all" contains "planned" too.
   await expect(row.getByText("planned", { exact: true })).toBeVisible();
   await expect(row.getByText("7:30 PM")).toBeVisible();
+  // The policy on the row, so a reminder that will arrive is visible without
+  // opening anything. Only shown once the plan is actually PLANNED — the
+  // scheduler reads no other status.
+  await expect(row.getByText("Reminder · on the day")).toBeVisible();
 
   // Closing it out records what it became, so it leaves the open list.
   await row.getByLabel("Mark as done").click();

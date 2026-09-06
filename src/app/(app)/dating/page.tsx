@@ -13,6 +13,7 @@ import { getPrivacyState } from "@/server/privacy/lock";
 import { PipelineList } from "@/components/dating/pipeline-list";
 import { PlansSection } from "@/components/plans/plans-section";
 import { calendarDateInTz, plainDateFromDb } from "@/lib/dates";
+import { readReminderPolicy } from "@/lib/reminders";
 
 export const metadata: Metadata = { title: "Dating" };
 export const dynamic = "force-dynamic";
@@ -108,6 +109,7 @@ export default async function DatingPage() {
           plannedFor: plan.plannedFor ? plainDateFromDb(plan.plannedFor) : null,
           plannedStartMinute: plan.plannedStartMinute,
           plannedDurationMinutes: plan.plannedDurationMinutes,
+          reminderDaysBefore: readReminderPolicy(plan.reminderDaysBefore),
           categoryId: plan.categoryId,
           category: plan.category
             ? {

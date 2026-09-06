@@ -352,10 +352,11 @@ because smaller local models do all three.
 ## Reminder delivery
 
 The one part of the app that reaches the network on its own. An hourly job
-(`src/server/reminder-scheduler.ts`) looks for important dates coming due and
-delivers them through the channels added under **Settings → Reminders**. No
-channel, no outbound request — a fresh install has none, so nothing leaves the
-machine until you say where it should go.
+(`src/server/reminder-scheduler.ts`) looks for what is coming due — important
+dates, keep-in-touch cadences, follow-ups, and evenings you have arranged and
+asked to be reminded about — and delivers them through the channels added under
+**Settings → Reminders**. No channel, no outbound request — a fresh install has
+none, so nothing leaves the machine until you say where it should go.
 
 ### What a reminder sends
 
@@ -373,10 +374,26 @@ discovered:
 | Task | The task's title | `Book the dentist` |
 | | The contact's name, if the task is for someone | `Dana Whitfield` |
 | | The due date | `2026-09-02` |
+| Scheduled plan | The plan's title | `Late showing at the Alamo` |
+| | The contact's name, if it is with someone | `Dana Whitfield` |
+| | The day it is on, and how far out that is | `is tomorrow (2026-09-03)` |
+| | The start time, when the plan has one | `at 7:30 PM` |
 | Daily digest | Important-date labels and eligible contact names | `Anniversary — Dana Whitfield` |
 | | Keep-in-touch contact names | `Dana Whitfield` |
 | | Task titles and the contact name, when present | `Book the dentist — Dana Whitfield` |
+| | Plan titles and the contact name, when present | `Late showing at the Alamo — Dana Whitfield` |
 | | Each entry's date, and whether it is overdue, due today or upcoming | `(upcoming: 2026-09-04)` |
+
+A plan sends nothing unless you have asked it to: reminders are off on every
+plan until a policy is set on it, and off on every plan that existed before the
+setting did. Settings → Reminders says the same thing at the point where you
+decide whether to add a channel at all. The daily digest is the one exception, and worth knowing about
+before switching the digest on — it lists everything arranged in the next three
+days whether or not that plan sends a reminder of its own, because it is a
+summary of what is coming rather than a copy of what was sent. Either way an
+evening with someone marked private is withheld while the privacy lock is
+closed, exactly as the rest is, and an evening arranged with nobody carries no
+name at all.
 
 Digest entries are bounded and ordered deterministically. If more items are due
 than fit, the message reports only how many remain; it does not expose their

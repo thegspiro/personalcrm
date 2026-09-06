@@ -29,7 +29,11 @@ import {
   validAllergyCombination,
 } from "@/lib/dietary";
 import { isConcurrentRowChange } from "@/lib/db-errors";
-import { parseReminderDays } from "@/lib/reminders";
+import {
+  parseReminderDays,
+  samePlanReminderPolicy,
+  type ReminderPolicy,
+} from "@/lib/reminders";
 import { AVAILABILITY_IMPACTS, type AvailabilityImpact } from "@/lib/happenings";
 import {
   deleteFollowUpTask,
@@ -990,6 +994,75 @@ function touchPlans(contactId?: string | null) {
   if (contactId) revalidatePath(`/people/${contactId}`);
 }
 
+type PlanReminderPatch = { reminderDaysBefore: Prisma.InputJsonValue | typeof Prisma.DbNull };
+
+/** Said by all three plan writers, so the free-text offsets never fail silently. */
+const REMINDER_OFFSETS_INVALID = "Reminder offsets must be whole days from 0 to 365.";
+
+/**
+ * The policy the form was rendered with, as the form reports it.
+ *
+ * `undefined` means the form did not say — either it has no reminder control at
+ * all, or it is an older or hand-made submission. Unreadable counts as not
+ * saying: a value nobody can parse is not evidence of what was on screen.
+ *
+ * Deliberately read off `FormData` rather than through `str`, which folds the
+ * empty string into `undefined` — and the empty string is the single most
+ * common answer here, being what every plan with no reminders renders.
+ */
+function renderedPlanPolicy(form: FormData): ReminderPolicy | undefined {
+  if (!form.has("reminderPolicyWas")) return undefined;
+  const raw = form.get("reminderPolicyWas");
+  if (typeof raw !== "string") return undefined;
+  if (raw.trim() === "") return [];
+  try {
+    return parseReminderDays("custom", raw);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The reminder policy a plan submission means to write, if it means to write
+ * one at all.
+ *
+ * Two gates, and they close different windows.
+ *
+ * **Presence.** A form without the control leaves the stored policy alone.
+ * Without this, a save from a form that never asks about reminders would read
+ * as "no reminders" and switch them off — and three different forms write this
+ * row.
+ *
+ * **Change.** A form *with* the control still writes nothing unless the value
+ * differs from the one it was rendered with. This is the part presence cannot
+ * do: the schedule sheet always submits its select, so a sheet opened before
+ * another tab switched a reminder on would otherwise post its own stale "no
+ * reminders" over the newer choice. Comparing against `Plan` as read now would
+ * not catch it either — by the time the action runs, the row already holds the
+ * newer value, so it would be comparing that value with itself.
+ *
+ * Skipping rather than refusing is the point. The sheet's job is the day, the
+ * time and the person; rejecting the whole arrangement over a reminder
+ * preference the user never touched would be a worse answer than leaving the
+ * preference as the other tab set it.
+ */
+function planReminderPatch(
+  form: FormData,
+): { ok: true; patch: PlanReminderPatch | null } | { ok: false } {
+  if (!form.has("reminderMode")) return { ok: true, patch: null };
+  let policy: ReminderPolicy;
+  try {
+    policy = parseReminderDays(str(form, "reminderMode"), str(form, "reminderDaysBefore"));
+  } catch {
+    return { ok: false };
+  }
+  const rendered = renderedPlanPolicy(form);
+  if (rendered !== undefined && samePlanReminderPolicy(rendered, policy)) {
+    return { ok: true, patch: null };
+  }
+  return { ok: true, patch: { reminderDaysBefore: policy === null ? Prisma.DbNull : policy } };
+}
+
 /**
  * The fields create and update share.
  *
@@ -1063,6 +1136,11 @@ export async function createPlan(form: FormData): Promise<ActionResult<{ id: str
   const contactId = str(form, "contactId") ?? null;
   if (contactId && !(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
 
+  // Its own message, because "Check the category, checklist and time" names
+  // none of the fields this can fail on and the offsets are free text.
+  const reminders = planReminderPatch(form);
+  if (!reminders.ok) return fail(REMINDER_OFFSETS_INVALID);
+
   const fields = await planFields(ownerId, form);
   if (!fields) return fail("Check the category, checklist and time.");
 
@@ -1079,7 +1157,10 @@ export async function createPlan(form: FormData): Promise<ActionResult<{ id: str
       city: str(form, "city"),
     });
     return tx.plan.create({
-      data: { ownerId, contactId, title, status: planStatusOf(str(form, "status")), ...fields, locationId: place?.id ?? null },
+      data: {
+        ownerId, contactId, title, status: planStatusOf(str(form, "status")),
+        ...fields, ...(reminders.patch ?? {}), locationId: place?.id ?? null,
+      },
     });
   });
 
@@ -1101,6 +1182,11 @@ export async function updatePlan(form: FormData): Promise<ActionResult> {
   const title = str(form, "title");
   if (!title) return fail("What do you want to do?");
 
+  // Its own message, because "Check the category, checklist and time" names
+  // none of the fields this can fail on and the offsets are free text.
+  const reminders = planReminderPatch(form);
+  if (!reminders.ok) return fail(REMINDER_OFFSETS_INVALID);
+
   const fields = await planFields(ownerId, form);
   if (!fields) return fail("Check the category, checklist and time.");
 
@@ -1109,7 +1195,10 @@ export async function updatePlan(form: FormData): Promise<ActionResult> {
       address: fields.address,
       url: fields.url,
     });
-    await tx.plan.update({ where: { id }, data: { title, ...fields, locationId: place?.id ?? null } });
+    await tx.plan.update({
+      where: { id },
+      data: { title, ...fields, ...(reminders.patch ?? {}), locationId: place?.id ?? null },
+    });
   });
 
   touchPlans(existing.contactId);
@@ -1262,16 +1351,38 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
     return fail("Contact not found.");
   }
 
+  // Asked here as well as on the plan form, because this is the moment the
+  // question means anything: the scheduler only ever looks at PLANNED rows, so
+  // a policy set on an idea nobody has arranged sends nothing until it is.
+  const reminders = planReminderPatch(form);
+  if (!reminders.ok) return fail(REMINDER_OFFSETS_INVALID);
+
   const scheduled = {
     plannedFor,
     plannedStartMinute: startMinute.value,
     status: "PLANNED" as const,
+    // Same presence rule as the duration below: absent means leave it alone.
+    ...(reminders.patch ?? {}),
     // Only when the form actually carried one. The schedule sheet has no
     // duration control, so writing `existing`'s value back would undo another
     // tab's edit to the one field this claim does not watch — and it is the
     // one field that legitimately changes without the evening changing.
     ...(durationRaw === undefined ? {} : { plannedDurationMinutes: duration.value }),
   };
+
+  // The policy this submission read, pinned for the claim below — and only when
+  // it actually means to write one, since a submission that leaves the policy
+  // alone cannot overwrite it. Deliberately *not* folded into `planAsRead`:
+  // `completePlan` never writes the policy, so pinning it there would refuse a
+  // completion over a change that cannot affect what completion records.
+  const policyAsRead: Prisma.PlanWhereInput = reminders.patch
+    ? {
+        reminderDaysBefore:
+          existing.reminderDaysBefore === null
+            ? { equals: Prisma.DbNull }
+            : { equals: existing.reminderDaysBefore as Prisma.InputJsonValue },
+      }
+    : {};
 
   // Copy only when there is a person to attach and an original worth keeping.
   const copying = existing.contactId === null && withContactId !== null && bool(form, "keepInList");
@@ -1288,8 +1399,14 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
     // overwrites the person the first attached while still reporting success —
     // against the rule, three lines below, that an attached plan never moves
     // between people.
+    //
+    // And the reminder policy, for the same reason once more: the sheet carries
+    // that control, so a sheet opened before another tab switched a reminder on
+    // would write its own stale "no reminders" over the newer choice and report
+    // success. It is the one field a second tab can change without touching the
+    // day, the time or the person, so nothing else in this predicate catches it.
     const moved = await prisma.plan.updateMany({
-      where: { id, ownerId, ...planAsRead(existing), status: PLAN_STILL_OPEN },
+      where: { id, ownerId, ...planAsRead(existing), ...policyAsRead, status: PLAN_STILL_OPEN },
       data: {
         ...scheduled,
         // The one place a plan changes hands, and only ever from nobody to
@@ -1335,6 +1452,16 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
       // A new row, so there is nothing to undo: it inherits the length unless
       // this submission named one.
       plannedDurationMinutes: duration.value ?? existing.plannedDurationMinutes,
+      // Same rule for the reminder policy, and the reason it is spelled out
+      // rather than left to `scheduled`: a `Json?` column reads back as `null`
+      // and Prisma will not take `null` as a write, so the inherited value has
+      // to be turned back into `DbNull` by hand.
+      ...(reminders.patch ?? {
+        reminderDaysBefore:
+          existing.reminderDaysBefore === null
+            ? Prisma.DbNull
+            : (existing.reminderDaysBefore as Prisma.InputJsonValue),
+      }),
     },
   });
 

@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { dueOccurrence, effectiveReminderDays, parseReminderDays } from "@/lib/reminders";
-import { dailyOccurrence, digestIsDue, digestMessage, importantDateMessage, localClock, reminderDedupKey } from "@/lib/reminder-schedule";
+import {
+  dueOccurrence,
+  effectivePlanReminderDays,
+  effectiveReminderDays,
+  parseReminderDays,
+  planReminderPolicyLabel,
+  readReminderPolicy,
+  samePlanReminderPolicy,
+} from "@/lib/reminders";
+import { dailyOccurrence, digestIsDue, digestMessage, importantDateMessage, localClock, reminderDedupKey, scheduledPlanMessage } from "@/lib/reminder-schedule";
 
 describe("reminder policies", () => {
   it("keeps account default, custom, and disabled distinct", () => {
@@ -12,6 +20,46 @@ describe("reminder policies", () => {
     expect(parseReminderDays("month", undefined)).toEqual([30]);
     expect(effectiveReminderDays(null)).toEqual([7, 0]);
     expect(effectiveReminderDays([])).toEqual([]);
+  });
+
+  it("reads null as no reminders for a plan and as the account default for a date", () => {
+    // The whole reason `effectivePlanReminderDays` exists. Sharing the other
+    // function would have had every plan already sitting at PLANNED send two
+    // reminders on the first hourly pass after the upgrade that added the
+    // column — a burst nobody opted into, off a column nobody had filled in.
+    expect(effectivePlanReminderDays(null)).toEqual([]);
+    expect(effectiveReminderDays(null)).toEqual([7, 0]);
+    expect(effectivePlanReminderDays([])).toEqual([]);
+    expect(effectivePlanReminderDays([1, 0])).toEqual([1, 0]);
+    expect(parseReminderDays("day-before", undefined)).toEqual([1]);
+  });
+
+  it("narrows whatever the JSON column holds", () => {
+    expect(readReminderPolicy(null)).toBeNull();
+    expect(readReminderPolicy(undefined)).toBeNull();
+    expect(readReminderPolicy("7")).toBeNull();
+    expect(readReminderPolicy([])).toEqual([]);
+    expect(readReminderPolicy([7, 0])).toEqual([7, 0]);
+    // A hand-edited row must not reach `dueOccurrence` carrying a string.
+    expect(readReminderPolicy([7, "0", 1.5])).toEqual([7]);
+  });
+
+  it("describes a plan's policy without offering it a default it does not have", () => {
+    expect(planReminderPolicyLabel(null)).toBe("No reminders");
+    expect(planReminderPolicyLabel([])).toBe("No reminders");
+    expect(planReminderPolicyLabel([0])).toBe("Reminder · on the day");
+    expect(planReminderPolicyLabel([1])).toBe("Reminder · 1 day before");
+    expect(planReminderPolicyLabel([7, 0])).toBe("Reminders · 7 days before, on the day");
+  });
+
+  it("reads null and the empty list as the same answer for a plan", () => {
+    // What lets a form tell a choice from a value left alone: a plan written
+    // before the column existed carries null, "No reminders" writes [], and a
+    // submission swapping one for the other has changed nothing.
+    expect(samePlanReminderPolicy(null, [])).toBe(true);
+    expect(samePlanReminderPolicy([7, 0], [0, 7])).toBe(true);
+    expect(samePlanReminderPolicy(null, [0])).toBe(false);
+    expect(samePlanReminderPolicy([1], [1, 0])).toBe(false);
   });
 
   it("rejects an empty or malformed custom policy instead of treating it as default", () => {
@@ -81,6 +129,51 @@ describe("reminder wording", () => {
     expect(say(1)).toBe("Birthday for Sam Jones was yesterday (2026-09-01).");
     expect(importantDateMessage("Birthday", "Sam Jones", { year: 2026, month: 8, day: 30 }, today).body)
       .toBe("Birthday for Sam Jones was 3 days ago (2026-08-30).");
+  });
+
+  it("says a plan from the day it goes out, with the hour when there is one", () => {
+    const say = (day: number, person: string | null, at: string | null) =>
+      scheduledPlanMessage("Late showing at the Alamo", person, { year: 2026, month: 9, day }, today, at).body;
+    expect(say(3, "Robin", "7:30pm")).toBe(
+      "Late showing at the Alamo with Robin is tomorrow at 7:30pm (2026-09-03).",
+    );
+    expect(say(2, "Robin", null)).toBe("Late showing at the Alamo with Robin is today (2026-09-02).");
+    // "Nobody yet" is a real way to arrange an evening, and the wording has to
+    // survive it rather than trailing an empty "with".
+    expect(say(9, null, "7:30pm")).toBe("Late showing at the Alamo is in 7 days at 7:30pm (2026-09-09).");
+    // A retry that finally lands after the evening must not still promise it.
+    expect(say(1, null, null)).toBe("Late showing at the Alamo was yesterday (2026-09-01).");
+    expect(scheduledPlanMessage("Alamo", null, { year: 2026, month: 8, day: 30 }, today, null).body)
+      .toBe("Alamo was 3 days ago (2026-08-30).");
+    expect(scheduledPlanMessage("Alamo", "Robin", today, today, null).subject).toBe("Coming up: Alamo");
+  });
+
+  it("drops the forward-looking subject once the evening is behind", () => {
+    // Every channel shows the subject — it is the email subject line, the ntfy
+    // and Gotify title, the Discord heading — and several show nothing else
+    // until the message is opened. A retry landing the morning after would
+    // otherwise announce a finished evening as "Coming up".
+    const subject = (day: number) =>
+      scheduledPlanMessage("Alamo", null, { year: 2026, month: 9, day }, today, null).subject;
+    expect(subject(3)).toBe("Coming up: Alamo");
+    expect(subject(2)).toBe("Coming up: Alamo");
+    expect(subject(1)).toBe("Reminder: Alamo");
+    expect(subject(1)).toBe(importantDateMessage("Alamo", "Robin", { year: 2026, month: 9, day: 1 }, today).subject);
+  });
+
+  it("leads the digest with what has actually been arranged", () => {
+    expect(digestMessage([
+      { kind: "TASK", title: "Write card", contactName: "Zoe", date: { year: 2026, month: 9, day: 3 } },
+      { kind: "PLAN", title: "Alamo", contactName: "Robin", date: { year: 2026, month: 9, day: 4 } },
+      { kind: "PLAN", title: "Long walk", contactName: null, date: today },
+    ], today).body).toBe([
+      "Arranged",
+      "- Long walk (due today: 2026-09-02)",
+      "- Alamo — Robin (upcoming: 2026-09-04)",
+      "",
+      "Tasks",
+      "- Write card — Zoe (upcoming: 2026-09-03)",
+    ].join("\n"));
   });
 
   it("formats digest sections in deterministic date and text order", () => {

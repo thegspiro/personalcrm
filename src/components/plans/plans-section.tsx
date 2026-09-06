@@ -33,6 +33,11 @@ import {
   planMinuteToInput,
 } from "@/lib/plan-time";
 import {
+  effectivePlanReminderDays,
+  planReminderPolicyLabel,
+  type ReminderPolicy,
+} from "@/lib/reminders";
+import {
   completePlan,
   createPlan,
   deletePlan,
@@ -65,6 +70,7 @@ export interface PlanItem {
   plannedFor: PlainDate | null;
   plannedStartMinute: number | null;
   plannedDurationMinutes: number | null;
+  reminderDaysBefore: ReminderPolicy;
   categoryId: string | null;
   category: { label: string; icon: string | null; color: string | null } | null;
   contact: { id: string; firstName: string; lastName: string | null } | null;
@@ -102,6 +108,86 @@ const PLAN_DURATIONS = [
   { minutes: 240, label: "Most of an evening" },
   { minutes: 480, label: "Most of a day" },
 ] as const;
+
+/**
+ * Which preset a stored policy is, so reopening a form shows the choice that
+ * was made rather than resetting it. Null and an empty list both read as "No
+ * reminders": null is what every plan saved before this shipped carries, and
+ * `parseReminderDays("disabled")` writes the empty list. Neither sends
+ * anything, so offering them as two different answers would be a distinction
+ * without a difference.
+ */
+function planReminderMode(policy: ReminderPolicy): string {
+  if (policy === null || policy.length === 0) return "disabled";
+  if (policy.length === 1 && policy[0] === 0) return "on-day";
+  if (policy.length === 1 && policy[0] === 1) return "day-before";
+  if (policy.length === 1 && policy[0] === 7) return "week";
+  return "custom";
+}
+
+/**
+ * The reminder control, in both places a plan gets a day.
+ *
+ * Off unless asked for. Null means no reminders on a plan — deliberately the
+ * opposite of an important date, where null is the account default: a birthday
+ * is a fact the app may volunteer, and an evening you arranged is not something
+ * it should start announcing on its own.
+ *
+ * One component rather than two copies because the two forms write the same
+ * column, and the server reads the control by presence: a form that renders one
+ * field and not the other would send a mode with nothing to read the offsets
+ * from.
+ */
+function PlanReminderFields({
+  idPrefix,
+  policy,
+}: {
+  idPrefix: string;
+  policy: ReminderPolicy;
+}) {
+  return (
+    <>
+      {/* What was on screen when this form was drawn, so the action can tell a
+          choice the user made from the value they simply left alone. The select
+          is always submitted, so without this a sheet opened before another tab
+          switched a reminder on would post its own stale answer over the newer
+          one. Comparing against the stored row cannot stand in: by the time the
+          action reads it, the row already holds the newer value. */}
+      <input
+        type="hidden"
+        name="reminderPolicyWas"
+        value={effectivePlanReminderDays(policy).join(", ")}
+      />
+      <Field label="Remind me" htmlFor={`${idPrefix}-reminderMode`}>
+        <select
+          id={`${idPrefix}-reminderMode`}
+          name="reminderMode"
+          defaultValue={planReminderMode(policy)}
+          className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+        >
+          <option value="disabled">No reminders</option>
+          <option value="on-day">On the day</option>
+          <option value="day-before">1 day before</option>
+          <option value="week">1 week before</option>
+          <option value="custom">Custom offsets</option>
+        </select>
+      </Field>
+      <Field
+        label="Custom days before"
+        htmlFor={`${idPrefix}-reminderDaysBefore`}
+        hint="Only read when “Custom offsets” is chosen. Comma-separated; 0 means on the day."
+      >
+        <Input
+          id={`${idPrefix}-reminderDaysBefore`}
+          name="reminderDaysBefore"
+          inputMode="numeric"
+          defaultValue={policy?.join(", ") ?? ""}
+          placeholder="1, 0"
+        />
+      </Field>
+    </>
+  );
+}
 
 function PlanFields({
   formId,
@@ -218,6 +304,8 @@ function PlanFields({
               defaultValue={planMinuteToInput(plan?.plannedStartMinute)}
             />
           </Field>
+          <PlanReminderFields idPrefix={formId} policy={plan?.reminderDaysBefore ?? null} />
+
           <Field label="Set aside" htmlFor={`${formId}-plannedDurationMinutes`}>
             <select
               id={`${formId}-plannedDurationMinutes`}
@@ -471,6 +559,16 @@ export function PlansSection({
                         .join(" · ")}
                     </span>
                   ) : null}
+                  {/* Only where it could fire. A policy on an OPEN plan is
+                      stored and honoured the moment it is scheduled, but the
+                      scheduler reads PLANNED rows only, so saying "Reminder on
+                      the day" beside something nobody has arranged yet would
+                      promise a message that is not coming. */}
+                  {plan.status === "PLANNED" &&
+                  plan.plannedFor &&
+                  effectivePlanReminderDays(plan.reminderDaysBefore).length > 0 ? (
+                    <span>{planReminderPolicyLabel(plan.reminderDaysBefore)}</span>
+                  ) : null}
                   {/* Its own chip rather than part of the day's. A duration is
                       kept when no day is set — how long a thing takes belongs
                       to the thing — so folding it in here would store the
@@ -552,6 +650,10 @@ export function PlansSection({
                             defaultValue={planMinuteToInput(plan.plannedStartMinute)}
                           />
                         </Field>
+                        <PlanReminderFields
+                          idPrefix={`schedule-${plan.id}`}
+                          policy={plan.reminderDaysBefore}
+                        />
                         {/* A person's page scopes the section but passes no
                             `people`, so there is no picker here — and scheduling
                             a shared row would otherwise mark it planned for
