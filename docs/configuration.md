@@ -8,7 +8,7 @@ Everything the app reads from its environment, and everything it keeps on disk.
 
 | Variable | Default | Required | Notes |
 | --- | --- | --- | --- |
-| `APP_URL` | — | Behind HTTPS | Your external URL, e.g. `https://crm.example.com`. Session cookies are marked `secure` only when this starts with `https://`, so sign-in fails silently behind a TLS proxy if it is unset |
+| `APP_URL` | — | Behind HTTPS | Your external URL, e.g. `https://crm.example.com`. Session cookies are marked `secure` only when this starts with `https://`, so sign-in fails silently behind a TLS proxy if it is unset. It is also the address the calendar subscription URL is built on — without it the URL is built from the request's own host, which is the wrong answer if you administer the app on `localhost` and subscribe from elsewhere |
 | `DATABASE_URL` | generated | No | Set it and the bundled MariaDB never starts. Format: `mysql://user:password@host:3306/personalcrm` |
 | `AUTH_SECRET` | generated | No (container) / Yes (bare) | 32+ random bytes. Signs sessions **and** derives the keys that encrypt a stored AI key and every notification channel credential. Generated into `/config/secrets.json` on first boot. Rotating it signs everyone out, makes a stored AI key undecryptable — treated as no key — and **stops reminder delivery** on any channel with a saved password or token until it is re-entered |
 | `DISABLE_SIGNUP` | `false` | No | Set `true` once your accounts exist. The first-run wizard still works on an empty instance |

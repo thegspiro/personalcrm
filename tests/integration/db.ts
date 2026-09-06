@@ -59,6 +59,7 @@ const TABLES = [
   "ReminderLog",
   "NotificationChannel",
   "DashboardLayout",
+  "CalendarFeed",
   "TaxonomyTerm",
   "UserPreference",
   "Session",

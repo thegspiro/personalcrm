@@ -15,8 +15,10 @@ How the app is put together, and why it is put together that way.
 
 There is no separate API service and no client-side data store. Pages are
 server components that query Prisma directly; mutations are server actions.
-The public HTTP endpoint is `/api/health`, which exists for the container
-healthcheck.
+Route handlers are kept to the three that genuinely cannot be server actions:
+`/api/health` for the container healthcheck, the authenticated avatar read, and
+`/api/calendar/[token]` — the calendar subscription, which exists because the
+fetch is made by a calendar client rather than by this app.
 
 ## Directory map
 
@@ -30,6 +32,8 @@ src/
     (onboarding)/   the welcome flow, once per account
     api/health/     container healthcheck
     api/avatars/    authenticated, owner- and privacy-filtered avatar reads
+    api/calendar/   token-addressed .ics subscription; no session, so it reads
+                    under a permanently closed privacy lock
     offline/        what the service worker serves for an uncached page
     manifest.ts     PWA manifest;  icon.tsx / apple-icon.tsx draw them at build
                     time;  not-found.tsx is the 404 and global-error.tsx the

@@ -147,6 +147,29 @@ token; only its SHA-256 hash is stored.
 
 Indexes: `userId`, `expiresAt` (the expiry sweep at boot).
 
+### `CalendarFeed`
+
+The read-only iCalendar subscription URL, one per account. Served by
+`GET /api/calendar/[token].ics` with no session at all, so the feed reads under
+a permanently closed privacy lock — see
+[privacy.md](privacy.md#the-calendar-subscription).
+
+| Column | Type | Notes |
+| ---------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `id` | `cuid` | PK |
+| `ownerId` | `cuid` | → `User`, cascade. **Unique** — one account, one address, because replacing it is how you revoke it |
+| `tokenHash` | `varchar(191)` | Unique. SHA-256 of the token, exactly like `Session.tokenHash`; the indexed lookup every poll resolves against |
+| `token` | `text` | The same token encrypted under an `AUTH_SECRET`-derived key, so Settings can show the address again. A dump alone yields no working URLs |
+| `createdAt` | `datetime` | Reset when a new address is issued |
+| `lastAccessedAt` | `datetime?` | When a client last fetched it. Written at most hourly, so polling stays a read |
+
+No expiry: a subscription that silently stopped updating is worse than none,
+and this credential reads a strict subset of what a locked browser session can
+already see. Rotating `AUTH_SECRET` costs the ability to redisplay the address,
+never the feed itself — the hash is what the route resolves against.
+
+Migration: `20260906120000_add_calendar_feed`.
+
 ### `UserPreference`
 
 One row per user, PK is `userId`.

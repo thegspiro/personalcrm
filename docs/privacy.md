@@ -676,6 +676,73 @@ Nothing is transmitted either way. The export action returns the file's
 contents and the browser saves them; the import action is handed text the
 browser already read. There is no endpoint, and no request leaves the machine.
 
+## The calendar subscription
+
+`GET /api/calendar/[token].ics` is the one place in this app where data leaves
+the machine without a person present. A calendar client — Google, Apple, a
+phone — fetches it on a schedule of its own, with no session and no cookie, and
+the URL it holds is stored on that service's servers for as long as the
+subscription lasts.
+
+**The lock is treated as permanently closed.** There is no session that could
+have unlocked one, so `buildCalendarFeed` passes `{ enabled: true, unlocked:
+false }` straight to `getCalendarEntries` and every where-fragment filters as it
+would behind a shut lock. A private contact's birthday, a plan or follow-up
+naming one, and anything a private row carries are excluded by construction —
+not by a second set of reads written for the feed, but by the same query the
+calendar page draws, which is exactly why the two cannot drift apart.
+
+Two things about the dating layer, stated precisely because "dating is
+excluded" is easy to over-read:
+
+- **A date log entry (`DateEntry`) or romantic profile never reaches the feed**,
+  but not because of the lock — those are not calendar sources at all, on the
+  page or here.
+- **A plan or follow-up attached to a *romantic* contact does reach it**, named
+  and with that person's name on it, exactly as it appears on the calendar page.
+  Plans are deliberately not behind the lock, and a romantic contact is not a
+  private one unless you have also marked them private. Marking somebody private
+  is what keeps them out of the feed entirely.
+
+The consequence, stated plainly because it is a real limitation: **for an
+account that uses the privacy marker, the feed is deliberately incomplete.** It
+carries what a locked browser shows and nothing more. That is a different answer
+from the one `exportAccount` gives, which refuses outright rather than hand back
+a partial file, and the difference is deliberate — an export claims to be
+everything you have, whereas a subscription is a view, and a view that omits
+what you have hidden is the only safe thing to publish to a third party.
+
+**The address is a bearer credential.** Anyone holding the URL can read the
+non-private calendar, so it is treated like a password:
+
+- Stored as a sha256 hash for lookup, exactly like a session token, plus a copy
+  encrypted under an `AUTH_SECRET`-derived key so Settings can show it again. A
+  database dump on its own therefore does not yield working URLs.
+- One per account. Creating a new address replaces the old one, which is how a
+  URL shared by mistake is revoked; turning the subscription off deletes it.
+- Creating or replacing one is gated on the privacy lock. The feed's contents
+  are what a closed lock already shows, so the gate is about the actor rather
+  than the data: minting a durable unattended read channel is the move somebody
+  would make with a borrowed unlocked phone.
+- A password change does **not** revoke it. It is a separate, narrower
+  credential that never grants access to the app, and silently breaking
+  somebody's subscribed calendars would read as the feature being broken rather
+  than as a security action.
+- Every refusal answers `404` alike, so the endpoint cannot be used to learn
+  which addresses were ever valid.
+- **The token is in the URL**, which is the only thing a calendar client can
+  carry, and URLs are logged. Your own reverse proxy will record it in its
+  access log, and so will anything else between the client and this app. That
+  is inherent to how calendar subscriptions work rather than a choice made here,
+  and it is the reason the address is worth treating as a password and
+  regenerating if you suspect it has spread. This app's own logs do not record
+  request paths.
+
+Interactions are left out: a subscription is for what is coming, and they are
+the one kind that would grow without bound. The window is a rolling thirteen
+months forward and one month back, re-fetched on the client's own schedule,
+rather than an endless recurrence rule.
+
 ## Sign-in throttling
 
 The privacy lock has always backed off after repeated wrong PINs. The front
@@ -778,10 +845,16 @@ for keeping the instance off the open internet.
 
 - No telemetry, no analytics, no crash reporting. `NEXT_TELEMETRY_DISABLED=1`
   is set in the image.
-- **Three ways out, all of them yours to open.** Assisted reading and address
+- **Four ways out, all of them yours to open.** Assisted reading and address
   lookup are both off until switched on and configured, and neither sends
   anything except when you ask it to. Reminder delivery is the one that acts on
   its own, hourly — and only to channels you added yourself, so a fresh install
   has nowhere to send and sends nothing. What a reminder carries is written out
-  under [What a reminder sends](#what-a-reminder-sends).
+  under [What a reminder sends](#what-a-reminder-sends). The calendar
+  subscription is the fourth and the odd one: it is the only route where
+  something outside *pulls* rather than this app pushing, so it keeps working on
+  a schedule you do not control until you turn it off. It does not exist until
+  you create an address, and what it can retrieve is bounded by a permanently
+  closed privacy lock — [the calendar
+  subscription](#the-calendar-subscription).
 - No third-party fonts, scripts or asset CDNs at runtime.

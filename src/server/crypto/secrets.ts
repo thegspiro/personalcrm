@@ -38,7 +38,10 @@ const TAG_BYTES = 16;
  * treat that as "no secret configured" or as a delivery failure — neither of
  * which points at the rename that caused it.
  */
-export type SecretPurpose = "personalcrm-api-key" | "personalcrm-channel-secret";
+export type SecretPurpose =
+  | "personalcrm-api-key"
+  | "personalcrm-channel-secret"
+  | "personalcrm-calendar-feed";
 
 function secret(): string {
   const value = process.env.AUTH_SECRET;

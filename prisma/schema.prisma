@@ -48,6 +48,7 @@ model User {
   updatedAt             DateTime  @updatedAt
 
   sessions             Session[]
+  calendarFeed         CalendarFeed?
   preference           UserPreference?
   dashboardLayout      DashboardLayout?
   taxonomyTerms        TaxonomyTerm[]
@@ -97,6 +98,46 @@ model Session {
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+/// A read-only iCalendar subscription URL for one account.
+///
+/// One per account. Regenerating replaces the token and breaks every existing
+/// subscription at once, which is the entire revocation story — deliberately,
+/// because a per-device list nobody prunes is a list of credentials nobody
+/// revokes.
+///
+/// The token is stored as a sha256 hash exactly like `Session.tokenHash`. The
+/// URL is handed to Google or Apple and kept on their servers indefinitely, so
+/// a database dump must not also hand over working feed URLs. Unlike a session
+/// it does not expire: a subscription that silently stopped updating is worse
+/// than no subscription, and this credential reads a strict subset of what a
+/// locked browser session can already see.
+model CalendarFeed {
+  id        String   @id @default(cuid())
+  ownerId   String   @unique
+  tokenHash String   @unique @db.VarChar(191)
+
+  /// The same token, encrypted at rest under an `AUTH_SECRET`-derived key.
+  ///
+  /// The hash answers "is this URL valid" in one indexed lookup; this answers
+  /// "show me my URL again", which a subscription URL genuinely needs — it has
+  /// to be copied to a phone, a laptop and a web calendar, and a show-once
+  /// secret would have people regenerating it and breaking the subscriptions
+  /// they already made. Encrypted rather than stored plainly so a database
+  /// dump on its own still does not hand over working feed URLs; rotating
+  /// `AUTH_SECRET` costs the ability to redisplay it, never the feed itself,
+  /// because the hash is what the route resolves against.
+  token     String   @db.Text
+  createdAt DateTime @default(now())
+
+  /// When a calendar client last fetched it, so Settings can say whether the
+  /// subscription is actually live rather than only that a URL exists. Null
+  /// until the first fetch, and written at most hourly so a client polling
+  /// every few minutes cannot turn a read into a write per request.
+  lastAccessedAt DateTime?
+
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 }
 
 model UserPreference {
@@ -1269,11 +1310,11 @@ model Plan {
   category          TaxonomyTerm? @relation("PlanCategory", fields: [categoryId], references: [id], onDelete: SetNull)
   usedInInteraction Interaction?  @relation("PlanCarriedOut", fields: [usedInInteractionId], references: [id], onDelete: SetNull)
 
+  @@unique([ownerId, completionKey])
   @@index([ownerId, status])
   @@index([contactId, status])
   @@index([categoryId])
   @@index([usedInInteractionId])
-  @@unique([ownerId, completionKey])
   @@index([ownerId, contactId])
   @@index([locationId])
 }

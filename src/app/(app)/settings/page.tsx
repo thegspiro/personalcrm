@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { getUserContext } from "@/server/user/context";
 import { prisma } from "@/server/db/client";
 import { normalizeDashboardLayout } from "@/lib/dashboard";
+import { resolveAppUrl } from "@/lib/app-url";
 import { listTerms } from "@/server/taxonomy/queries";
 import { listTaxonomyAdmin } from "@/server/queries/taxonomy-admin";
 import {
@@ -18,6 +20,7 @@ import { CustomFieldsSettings } from "@/components/settings/custom-fields-settin
 import { DashboardSettings } from "@/components/settings/dashboard-settings";
 import { TaxonomySettings } from "@/components/settings/taxonomy-settings";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
+import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { AiSettings } from "@/components/settings/ai-settings";
 import { NotificationSettings } from "@/components/settings/notification-settings";
 import { listChannelsForSettings } from "@/server/queries/notifications";
@@ -33,6 +36,7 @@ import { isRateLimited } from "@/server/geo/providers";
 import { getGeoStatus } from "@/server/geo/config";
 import { GEO_PROVIDERS } from "@/server/geo/providers";
 import { listTags } from "@/server/queries/tags";
+import { getFeedStatus } from "@/server/services/calendar-feed";
 import { TagSettings } from "@/components/settings/tag-settings";
 import { AccountSettings } from "@/components/settings/account-settings";
 import { listSessions } from "@/server/auth/session";
@@ -45,6 +49,15 @@ export default async function SettingsPage() {
 
   // Positional, so the order here has to track the array below exactly — both
   // branches added a member to it.
+  // Resolved here rather than in the client component: reading `window` during
+  // render would make the first paint differ from the server's.
+  const requestHeaders = await headers();
+  const baseUrl = resolveAppUrl(process.env.APP_URL, {
+    host: requestHeaders.get("host"),
+    forwardedHost: requestHeaders.get("x-forwarded-host"),
+    forwardedProto: requestHeaders.get("x-forwarded-proto"),
+  });
+
   const [
     taxonomies,
     definitions,
@@ -56,6 +69,7 @@ export default async function SettingsPage() {
     privacyState,
     channels,
     tags,
+    calendarFeed,
     sessions,
   ] = await Promise.all([
     listTaxonomyAdmin(user.id),
@@ -68,6 +82,7 @@ export default async function SettingsPage() {
     getPrivacyState(),
     listChannelsForSettings(user.id),
     listTags(user.id),
+    getFeedStatus(user.id),
     listSessions(user.id),
   ]);
 
@@ -233,6 +248,19 @@ export default async function SettingsPage() {
         }
         data={
           <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
+            <CalendarFeedSettings
+              feed={
+                calendarFeed
+                  ? {
+                      createdAt: calendarFeed.createdAt.toISOString(),
+                      lastAccessedAt: calendarFeed.lastAccessedAt?.toISOString() ?? null,
+                      token: calendarFeed.token,
+                    }
+                  : null
+              }
+              baseUrl={baseUrl}
+              locked={dataLocked}
+            />
             <ExportSettings locked={dataLocked} />
             <ImportSettings locked={dataLocked} />
           </div>
