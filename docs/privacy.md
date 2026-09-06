@@ -615,7 +615,7 @@ reason the AI layer uses none. Requests identify the application in their
 `User-Agent`, which Nominatim's policy asks for and which is why a stock HTTP
 library's default would be rejected.
 
-## Export and the lock
+## Export, import, and the lock
 
 Getting your data out is under Settings → Data: the whole account as JSON, the
 contacts as a spreadsheet or as vCard, the dates as a calendar.
@@ -640,8 +640,23 @@ Everything else a person has entered is included, and a table that gains rows
 somebody typed has to be added to the export, or it quietly stops being what
 it says it is.
 
-Nothing is transmitted. The server action returns the file's contents and the
-browser saves them; there is no endpoint, and no request leaves the machine.
+**Import is gated by the same question, for a different reason.** Nothing is
+disclosed by bringing contacts in — but deciding whether somebody in the file
+is already here means comparing against what can be seen, and behind a closed
+lock private contacts cannot be. Importing then would quietly create a second,
+visible copy of somebody deliberately hidden. So the same gate applies, and the
+message says which problem it is avoiding.
+
+Two things about what import writes. A contact arriving from somewhere else is
+**never** marked private: nothing outside this account has any standing to say
+what is hidden inside it, and a row that arrived marked private would sit
+outside the counts the lock depends on. And the file is parsed again when the
+import is confirmed rather than the browser sending back what it was shown —
+the client chooses which rows, never what is in them.
+
+Nothing is transmitted either way. The export action returns the file's
+contents and the browser saves them; the import action is handed text the
+browser already read. There is no endpoint, and no request leaves the machine.
 
 ## Sign-in throttling
 

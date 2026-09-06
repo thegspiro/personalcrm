@@ -11,6 +11,7 @@ import {
 import { TAXONOMY_KIND_LABELS } from "@/server/taxonomy/defaults";
 import { PrivacySettings } from "@/components/dating/privacy-settings";
 import { ExportSettings } from "@/components/settings/export-settings";
+import { ImportSettings } from "@/components/settings/import-settings";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
 import { AppSettings } from "@/components/settings/app-settings";
 import { CustomFieldsSettings } from "@/components/settings/custom-fields-settings";
@@ -88,6 +89,11 @@ export default async function SettingsPage() {
   // Value counts drive the delete warning: deleting a field takes everything
   // recorded in it with it, so the confirmation has to say how much. Filtered
   // by the lock, because this page is reachable while it is closed.
+  // Export and import are gated together: one would produce a file that looks
+  // complete without being it, the other could not tell whether somebody in
+  // the file is already here. Same question, same answer.
+  const dataLocked = privacyState.enabled && !privacyState.unlocked && hiddenRows > 0;
+
   const counts = valueCounts;
   const withCount = (rows: typeof definitions.CONTACT) =>
     rows.map((row) => ({ ...row, valueCount: counts.get(row.id) ?? 0 }));
@@ -230,9 +236,10 @@ export default async function SettingsPage() {
           />
         }
         data={
-          <ExportSettings
-            locked={privacyState.enabled && !privacyState.unlocked && hiddenRows > 0}
-          />
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
+            <ExportSettings locked={dataLocked} />
+            <ImportSettings locked={dataLocked} />
+          </div>
         }
         app={
           <AppSettings
