@@ -20,9 +20,12 @@ code was written or a PR was opened.
 4. Run the gate:
 
 ```bash
-npm run verify        # typecheck → lint → lint:sw → changelog → test → build
-npx playwright test   # UI, navigation, forms, privacy, offline
+npm run verify                    # typecheck → lint → lint:sw → changelog → test → build
+.claude/skills/e2e/run-e2e.sh     # UI, navigation, forms, privacy, offline
 ```
+
+`npx playwright test` on its own connects to nothing — the config targets an
+already-running instance. The runner starts one; the `e2e` skill explains it.
 
 5. Inspect the whole diff, not just the files you remember touching:
 

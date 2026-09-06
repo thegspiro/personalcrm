@@ -22,9 +22,13 @@ DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_NAME=personalcrm
 TEST_DB_NAME=personalcrm_test
+# The end-to-end suite needs a database that starts empty so first-run setup
+# runs, and it wipes it on every run — so it is its own, never the dev one.
+E2E_DB_NAME=personalcrm_e2e
 
 DATABASE_URL="mysql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
 TEST_DATABASE_URL="mysql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${TEST_DB_NAME}"
+E2E_DATABASE_URL="mysql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${E2E_DB_NAME}"
 
 note() { printf '%s\n' "$*"; }
 
@@ -78,9 +82,11 @@ if start_database; then
   mariadb <<SQL
 CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS \`${TEST_DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS \`${E2E_DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASSWORD}';
 GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'%';
 GRANT ALL PRIVILEGES ON \`${TEST_DB_NAME}\`.* TO '${DB_USER}'@'%';
+GRANT ALL PRIVILEGES ON \`${E2E_DB_NAME}\`.* TO '${DB_USER}'@'%';
 FLUSH PRIVILEGES;
 SQL
   DATABASE_READY=yes
@@ -88,29 +94,43 @@ fi
 
 # ---------------------------------------------------------------------------
 # .env. Gitignored, and tests/setup-env.ts reads it, so this is what makes
-# TEST_DATABASE_URL visible to vitest. An existing file is never rewritten:
-# on a local checkout it is the developer's own configuration.
+# TEST_DATABASE_URL visible to vitest.
 # ---------------------------------------------------------------------------
-if [ ! -f .env ] && [ "$DATABASE_READY" = yes ]; then
-  AUTH_SECRET="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
-  cat > .env <<ENV
-# Written by .claude/hooks/session-start.sh. Not committed (.gitignore).
-DATABASE_URL="${DATABASE_URL}"
-TEST_DATABASE_URL="${TEST_DATABASE_URL}"
-UPLOADS_DIR="./data/uploads"
-APP_URL="http://127.0.0.1:3200"
-AUTH_SECRET="${AUTH_SECRET}"
-DISABLE_SIGNUP="false"
-TZ="America/New_York"
-ENV
+# Only the missing keys are appended, never an existing value rewritten, so a
+# container whose .env survives from an earlier session picks up a key added
+# since — E2E_DATABASE_URL was exactly that — without losing anything already
+# in it.
+ensure_env() {
+  grep -q "^$1=" .env 2>/dev/null && return 0
+  printf '%s="%s"\n' "$1" "$2" >> .env
+}
+
+if [ "$DATABASE_READY" = yes ]; then
+  if [ ! -f .env ]; then
+    echo '# Written by .claude/hooks/session-start.sh. Not committed (.gitignore).' > .env
+  fi
+  ensure_env DATABASE_URL "$DATABASE_URL"
+  ensure_env TEST_DATABASE_URL "$TEST_DATABASE_URL"
+  ensure_env E2E_DATABASE_URL "$E2E_DATABASE_URL"
+  ensure_env UPLOADS_DIR "./data/uploads"
+  ensure_env APP_URL "http://127.0.0.1:3200"
+  # Generated only when it is actually missing: the argument to ensure_env is
+  # evaluated before the call, so doing this unconditionally would start node
+  # on every resume to throw the result away.
+  grep -q '^AUTH_SECRET=' .env 2>/dev/null ||
+    ensure_env AUTH_SECRET "$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
+  ensure_env DISABLE_SIGNUP "false"
+  ensure_env TZ "America/New_York"
 fi
 
 mkdir -p data/uploads
 
 # ---------------------------------------------------------------------------
-# Schema. Both databases get the migrations: the test one for the integration
-# suites, the dev one so `npm run dev` and Playwright have somewhere to go.
-# `migrate deploy` is what the container runs, and it is a no-op once applied.
+# Schema. The test database for the integration suites, the dev one so
+# `npm run dev` has somewhere to go. `migrate deploy` is what the container
+# runs, and it is a no-op once applied. The e2e database is created above but
+# migrated by .claude/skills/e2e/run-e2e.sh instead, which has to empty it on
+# every run anyway.
 # ---------------------------------------------------------------------------
 if [ "$DATABASE_READY" = yes ]; then
   DATABASE_URL="$TEST_DATABASE_URL" npx --yes prisma migrate deploy >/dev/null
@@ -120,11 +140,12 @@ if [ "$DATABASE_READY" = yes ]; then
     {
       printf 'export DATABASE_URL=%s\n' "$DATABASE_URL"
       printf 'export TEST_DATABASE_URL=%s\n' "$TEST_DATABASE_URL"
+      printf 'export E2E_DATABASE_URL=%s\n' "$E2E_DATABASE_URL"
     } >> "$CLAUDE_ENV_FILE"
   fi
 
   note "Dependencies installed. MariaDB is up on ${DB_HOST}:${DB_PORT} with ${DB_NAME} and ${TEST_DB_NAME} migrated."
-  note "Integration tests will run for real: npm test. E2E needs the app started separately on 127.0.0.1:3200."
+  note "Integration tests will run for real: npm test. For end-to-end, .claude/skills/e2e/run-e2e.sh builds, starts and drives the app."
 else
   note "WARNING: MariaDB could not be started, so TEST_DATABASE_URL is unset and every integration suite will SKIP."
   note "Do not report 'all tests passed' from this session — report the skip, per Agent.md section 13."
