@@ -215,7 +215,7 @@ Important-date, overdue cadence, due-task, and timezone-aware daily digest
 reminders are delivered by the hourly scheduler through the channels configured
 under Settings → Reminders. Each delivery has a durable policy-specific key and
 retries re-check current owner, state, policy, and privacy before sending.
-`UserPreference.weekStartsOn` is likewise reserved and read by nothing. The
+The
 `svc-backup` service writes a daily dump to `/config/backups`, tags have a UI
 under Settings → Tags and on the people list, and Settings → Account manages
 the display name, email, password and signed-in sessions. Password recovery is

@@ -157,7 +157,7 @@ One row per user, PK is `userId`.
 | `accent` | `varchar(24)` | `violet` | |
 | `density` | `varchar(16)` | `comfortable` | |
 | `timezone` | `varchar(64)` | `America/New_York` | **Every** date calculation anchors here, never to `process.env.TZ` |
-| `weekStartsOn` | `int` | `0` | |
+| `weekStartsOn` | `int` | `0` | `0` = Sunday, `1` = Monday. Read by the calendar grid for the column order and the number of leading days; anything else is treated as Sunday |
 | `defaultCadenceDays` | `int?` | — | Fallback keep-in-touch cadence |
 | `digestHour` | `int` | `8` | Local hour after which the hourly scheduler sends that day's digest |
 | `digestEnabled` | `bool` | `true` | Enables one daily digest per configured channel |

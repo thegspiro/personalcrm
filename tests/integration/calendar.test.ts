@@ -1,0 +1,571 @@
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { asARestoreWould, createTestUser, hasTestDatabase, prisma, reset } from "./db";
+import { plainDateToDb, zonedTimeOfDay } from "@/lib/dates";
+
+const state = vi.hoisted(() => ({ locked: false }));
+vi.mock("@/server/db/client", async () => ({ prisma: (await import("./db")).prisma }));
+vi.mock("@/server/privacy/lock", () => ({
+  getPrivacyState: async () => ({ enabled: state.locked, unlocked: !state.locked }),
+  recordProtectedReadActivity: async () => {},
+}));
+
+const { getCalendarEntries } = await import("@/server/queries/calendar");
+
+/**
+ * The calendar's query — five sources, one window.
+ *
+ * The two things worth testing here are the two that cannot be seen by reading
+ * the component: where the window's edges actually fall once a timezone is
+ * involved, and whether the lock reaches every one of the five sources. Five
+ * sources means five chances to forget a where-fragment, and forgetting one is
+ * silent.
+ */
+describe.skipIf(!hasTestDatabase)("calendar", () => {
+  let ownerId: string;
+
+  /** Deliberately not UTC, and deliberately behind it, so a local evening is
+   * the next day in UTC — the arrangement that catches a bound computed
+   * against the server clock instead of the account's zone. */
+  const TZ = "America/New_York";
+
+  /** March 2026, Sunday-first: the grid runs 1 March to 11 April. */
+  const WINDOW = {
+    from: { year: 2026, month: 3, day: 1 },
+    to: { year: 2026, month: 4, day: 11 },
+  };
+
+  beforeEach(async () => {
+    await reset();
+    const user = await createTestUser();
+    ownerId = user.id;
+    state.locked = false;
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  async function makeContact(firstName: string, extra: Record<string, unknown> = {}) {
+    return prisma.contact.create({ data: { ownerId, firstName, ...extra } });
+  }
+
+  async function entries() {
+    return getCalendarEntries(ownerId, TZ, WINDOW);
+  }
+
+  it("puts a late local evening on the day it was local, not the day it was in UTC", async () => {
+    // 23:30 on the last day of the window, in New York, is 03:30 the next day
+    // in UTC. A bound built from the server clock would push it out of the
+    // window entirely, and a day worked out from the raw instant would file it
+    // on the 12th — a day the grid does not draw.
+    const friend = await makeContact("Marcus");
+    const lateNight = zonedTimeOfDay({ year: 2026, month: 4, day: 11 }, 23 * 60 + 30, TZ);
+    expect(lateNight.toISOString()).toBe("2026-04-12T03:30:00.000Z");
+
+    await prisma.interaction.create({
+      data: {
+        ownerId,
+        title: "Late one",
+        occurredAt: lateNight,
+        participants: { create: [{ contactId: friend.id }] },
+      },
+    });
+
+    const found = (await entries()).filter((entry) => entry.kind === "interaction");
+    expect(found).toHaveLength(1);
+    expect(found[0].day).toEqual({ year: 2026, month: 4, day: 11 });
+  });
+
+  it("leaves out the first local moment after the window closes", async () => {
+    const friend = await makeContact("Marcus");
+    await prisma.interaction.create({
+      data: {
+        ownerId,
+        title: "Just too late",
+        occurredAt: zonedTimeOfDay({ year: 2026, month: 4, day: 12 }, 0, TZ),
+        participants: { create: [{ contactId: friend.id }] },
+      },
+    });
+
+    expect((await entries()).filter((entry) => entry.kind === "interaction")).toHaveLength(0);
+  });
+
+  it("includes the first local moment the window opens", async () => {
+    const friend = await makeContact("Marcus");
+    await prisma.interaction.create({
+      data: {
+        ownerId,
+        title: "Bang on",
+        occurredAt: zonedTimeOfDay({ year: 2026, month: 3, day: 1 }, 0, TZ),
+        participants: { create: [{ contactId: friend.id }] },
+      },
+    });
+
+    const found = (await entries()).filter((entry) => entry.kind === "interaction");
+    expect(found).toHaveLength(1);
+    expect(found[0].day).toEqual({ year: 2026, month: 3, day: 1 });
+  });
+
+  it("gathers all five kinds of dated thing", async () => {
+    const friend = await makeContact("Marcus", {
+      birthDate: plainDateToDb({ year: 1990, month: 3, day: 14 }),
+      birthDatePrecision: "DAY",
+    });
+
+    await prisma.plan.create({
+      data: {
+        ownerId,
+        contactId: friend.id,
+        title: "Observatory",
+        plannedFor: plainDateToDb({ year: 2026, month: 3, day: 4 }),
+        plannedStartMinute: 1170,
+        status: "PLANNED",
+      },
+    });
+    await prisma.importantDate.create({
+      data: {
+        ownerId,
+        contactId: friend.id,
+        label: "Anniversary",
+        date: plainDateToDb({ year: 2019, month: 3, day: 6 }),
+        precision: "DAY",
+        recurrence: "ANNUAL",
+      },
+    });
+    await prisma.task.create({
+      data: {
+        ownerId,
+        contactId: friend.id,
+        title: "Send the photos",
+        dueDate: plainDateToDb({ year: 2026, month: 3, day: 9 }),
+      },
+    });
+    await prisma.happening.create({
+      data: {
+        ownerId,
+        contactId: friend.id,
+        title: "Away for work",
+        date: plainDateToDb({ year: 2026, month: 3, day: 16 }),
+        precision: "DAY",
+        endDate: plainDateToDb({ year: 2026, month: 3, day: 18 }),
+        endPrecision: "DAY",
+      },
+    });
+    await prisma.interaction.create({
+      data: {
+        ownerId,
+        title: "Coffee",
+        occurredAt: zonedTimeOfDay({ year: 2026, month: 3, day: 20 }, 600, TZ),
+        participants: { create: [{ contactId: friend.id }] },
+      },
+    });
+
+    const found = await entries();
+    const kinds = new Set(found.map((entry) => entry.kind));
+    expect(kinds).toEqual(new Set(["plan", "date", "task", "happening", "interaction"]));
+
+    // The birthday is projected onto this year, from a 1990 anchor.
+    const birthday = found.find((entry) => entry.title === "Birthday");
+    expect(birthday?.day).toEqual({ year: 2026, month: 3, day: 14 });
+
+    // A multi-day happening covers each of its days, because that is what being
+    // away from the 16th to the 18th looks like on a calendar.
+    const away = found.filter((entry) => entry.kind === "happening");
+    expect(away.map((entry) => entry.day.day)).toEqual([16, 17, 18]);
+
+    // Sorted by day, then by time, then by title — stable between renders
+    // rather than however the five queries happened to come back.
+    const days = found.map((entry) => entry.day.month * 100 + entry.day.day);
+    expect([...days].sort((a, b) => a - b)).toEqual(days);
+  });
+
+  it("reads an interaction's time off the clock, not from midnight", async () => {
+    // 1 November 2026 is New York's fall-back day, so local midnight to 7:30 PM
+    // is twenty and a half hours. Measuring the gap would call that 8:30 PM;
+    // the clock says 7:30, and the clock is what the row is displayed and
+    // sorted by.
+    const friend = await makeContact("Marcus");
+    await prisma.interaction.create({
+      data: {
+        ownerId,
+        title: "Fireworks",
+        occurredAt: zonedTimeOfDay({ year: 2026, month: 11, day: 1 }, 19 * 60 + 30, TZ),
+        participants: { create: [{ contactId: friend.id }] },
+      },
+    });
+
+    const november = await getCalendarEntries(ownerId, TZ, {
+      from: { year: 2026, month: 11, day: 1 },
+      to: { year: 2026, month: 11, day: 30 },
+    });
+    const found = november.find((entry) => entry.kind === "interaction");
+    expect(found?.minute).toBe(19 * 60 + 30);
+  });
+
+  it("does not give someone a birthday before they were born", async () => {
+    // The window's start stands in for `today` so past months keep their
+    // birthdays, which also lets an annual recurrence run backwards for ever.
+    // A real year is a floor; an unknown one cannot be.
+    await makeContact("Marcus", {
+      birthDate: plainDateToDb({ year: 1990, month: 3, day: 14 }),
+      birthDatePrecision: "DAY",
+    });
+
+    const before = await getCalendarEntries(ownerId, TZ, {
+      from: { year: 1980, month: 3, day: 1 },
+      to: { year: 1980, month: 3, day: 31 },
+    });
+    expect(before.filter((entry) => entry.title === "Birthday")).toHaveLength(0);
+
+    const after = await getCalendarEntries(ownerId, TZ, {
+      from: { year: 1990, month: 3, day: 1 },
+      to: { year: 1990, month: 3, day: 31 },
+    });
+    expect(after.filter((entry) => entry.title === "Birthday")).toHaveLength(1);
+  });
+
+  it("keeps a one-off whose year nobody recorded off the sentinel's calendar", async () => {
+    // MONTH_DAY stores 1904 as a placeholder. A recurrence projects it into
+    // whichever year is being drawn, which is fine; a one-off has no year to
+    // be projected into, so it would sit on the 1904 grid claiming that as the
+    // year it happened. Precision and recurrence are chosen independently, so
+    // nothing stops this pair being saved.
+    const friend = await makeContact("Marcus");
+    await prisma.importantDate.create({
+      data: {
+        ownerId,
+        contactId: friend.id,
+        label: "The day we met",
+        date: plainDateToDb({ year: 1904, month: 3, day: 9 }),
+        precision: "MONTH_DAY",
+        recurrence: "NONE",
+      },
+    });
+
+    const sentinelYear = await getCalendarEntries(ownerId, TZ, {
+      from: { year: 1904, month: 3, day: 1 },
+      to: { year: 1904, month: 3, day: 31 },
+    });
+    expect(sentinelYear.filter((entry) => entry.kind === "date")).toHaveLength(0);
+    expect((await entries()).filter((entry) => entry.kind === "date")).toHaveLength(0);
+  });
+
+  it("keeps projecting a birthday whose year nobody recorded", async () => {
+    // MONTH_DAY stores a placeholder year on purpose, so the floor above must
+    // not apply to it — or every birthday recorded without a year would vanish
+    // from the grid.
+    await makeContact("Robin", {
+      birthDate: plainDateToDb({ year: 1904, month: 3, day: 9 }),
+      birthDatePrecision: "MONTH_DAY",
+    });
+
+    const found = (await entries()).filter((entry) => entry.title === "Birthday");
+    expect(found).toHaveLength(1);
+    expect(found[0].day).toEqual({ year: 2026, month: 3, day: 9 });
+  });
+
+  it("keeps a trip whose start year nobody recorded off the grid entirely", async () => {
+    // MONTH_DAY stores 1904 for the start. Paired with a real end date,
+    // `happeningSpan` reads that literally and calls it a hundred-and-twenty
+    // year span — which, clamped to whatever window is being drawn, put a chip
+    // on every single square of every grid before the end date.
+    const friend = await makeContact("Marcus");
+    await prisma.happening.create({
+      data: {
+        ownerId,
+        contactId: friend.id,
+        title: "Started sometime in March",
+        date: plainDateToDb({ year: 1904, month: 3, day: 10 }),
+        precision: "MONTH_DAY",
+        endDate: plainDateToDb({ year: 2026, month: 3, day: 20 }),
+        endPrecision: "DAY",
+      },
+    });
+
+    expect((await entries()).filter((entry) => entry.kind === "happening")).toHaveLength(0);
+  });
+
+  it("keeps a trip whose end is only known to the year", async () => {
+    // An end recorded as "in 2026" is stored as 1 January, and only
+    // `happeningSpan` widens it to 31 December. Comparing the stored anchor
+    // against the window dropped a trip that is still running through March.
+    const friend = await makeContact("Marcus");
+    await prisma.happening.create({
+      data: {
+        ownerId,
+        contactId: friend.id,
+        title: "Travelling",
+        date: plainDateToDb({ year: 2026, month: 1, day: 5 }),
+        precision: "DAY",
+        endDate: plainDateToDb({ year: 2026, month: 1, day: 1 }),
+        endPrecision: "YEAR",
+      },
+    });
+
+    const found = (await entries()).filter((entry) => entry.kind === "happening");
+    expect(found.length).toBeGreaterThan(0);
+  });
+
+  it("leaves a plan that is finished or put away off the calendar", async () => {
+    // A completed plan is already here as the interaction it became, and an
+    // archived one was put away deliberately. Neither is reachable from the
+    // link the entry would carry.
+    const friend = await makeContact("Marcus");
+    for (const status of ["DONE", "ARCHIVED"] as const) {
+      await prisma.plan.create({
+        data: {
+          ownerId,
+          contactId: friend.id,
+          title: `${status} plan`,
+          plannedFor: plainDateToDb({ year: 2026, month: 3, day: 4 }),
+          status,
+        },
+      });
+    }
+
+    expect((await entries()).filter((entry) => entry.kind === "plan")).toHaveLength(0);
+  });
+
+  it("caps what it returns, not the rows it read them from", async () => {
+    // A happening covers a chip on every day it spans, so a row cap is not an
+    // entry cap — four hundred month-precision rows would have become
+    // thousands of chips. The bound the docs promise is per source and per
+    // entry, and it has now been got wrong twice by capping the wrong thing.
+    const friend = await makeContact("Marcus");
+    await prisma.happening.create({
+      data: {
+        ownerId,
+        contactId: friend.id,
+        title: "Away all March",
+        date: plainDateToDb({ year: 2026, month: 3, day: 1 }),
+        precision: "MONTH",
+      },
+    });
+
+    const found = (await entries()).filter((entry) => entry.kind === "happening");
+    // One row, many days — and every one of them inside the window it drew.
+    expect(found.length).toBeGreaterThan(1);
+    for (const entry of found) {
+      expect(entry.day.year).toBe(2026);
+      expect([3, 4]).toContain(entry.day.month);
+    }
+  });
+
+  it("shows a birthday in a month that has already gone by", async () => {
+    // `projectDateOccurrences` clamps its lower bound to the `today` it is
+    // given, so the dashboard cannot turn a past date into an upcoming one.
+    // A calendar showing last March has to show last March's birthdays, so the
+    // window's own start is passed as `today`. This is that behaviour.
+    await makeContact("Marcus", {
+      birthDate: plainDateToDb({ year: 1990, month: 3, day: 14 }),
+      birthDatePrecision: "DAY",
+    });
+
+    const past = await getCalendarEntries(ownerId, TZ, {
+      from: { year: 2020, month: 3, day: 1 },
+      to: { year: 2020, month: 3, day: 31 },
+    });
+    const birthday = past.find((entry) => entry.title === "Birthday");
+    expect(birthday?.day).toEqual({ year: 2020, month: 3, day: 14 });
+  });
+
+  it("keeps a date nobody can place off the grid", async () => {
+    // Invariant 8: storing "in 2019" as a specific Tuesday turns a vague memory
+    // into a confident-looking lie, and a grid square is exactly that.
+    const friend = await makeContact("Marcus");
+    await prisma.importantDate.create({
+      data: {
+        ownerId,
+        contactId: friend.id,
+        label: "Met sometime that year",
+        date: plainDateToDb({ year: 2019, month: 1, day: 1 }),
+        precision: "YEAR",
+        recurrence: "NONE",
+      },
+    });
+
+    expect((await entries()).filter((entry) => entry.kind === "date")).toHaveLength(0);
+  });
+
+  it("withholds every kind belonging to a private contact while locked", async () => {
+    const secret = await makeContact("Robin", {
+      isPrivate: true,
+      birthDate: plainDateToDb({ year: 1990, month: 3, day: 14 }),
+      birthDatePrecision: "DAY",
+    });
+
+    await prisma.plan.create({
+      data: {
+        ownerId,
+        contactId: secret.id,
+        title: "Observatory",
+        plannedFor: plainDateToDb({ year: 2026, month: 3, day: 4 }),
+        status: "PLANNED",
+      },
+    });
+    await prisma.importantDate.create({
+      data: {
+        ownerId,
+        contactId: secret.id,
+        label: "Anniversary",
+        date: plainDateToDb({ year: 2019, month: 3, day: 6 }),
+        precision: "DAY",
+        recurrence: "ANNUAL",
+      },
+    });
+    await prisma.task.create({
+      data: {
+        ownerId,
+        contactId: secret.id,
+        title: "Send the photos",
+        dueDate: plainDateToDb({ year: 2026, month: 3, day: 9 }),
+      },
+    });
+    await prisma.happening.create({
+      data: {
+        ownerId,
+        contactId: secret.id,
+        title: "Away for work",
+        date: plainDateToDb({ year: 2026, month: 3, day: 16 }),
+        precision: "DAY",
+      },
+    });
+    await prisma.interaction.create({
+      data: {
+        ownerId,
+        title: "Coffee",
+        occurredAt: zonedTimeOfDay({ year: 2026, month: 3, day: 20 }, 600, TZ),
+        participants: { create: [{ contactId: secret.id }] },
+      },
+    });
+
+    expect(await entries()).not.toHaveLength(0);
+
+    state.locked = true;
+    // Not "fewer" — none. A count that shifts on unlock is itself a
+    // disclosure, so every one of the five has to be filtered, not just the
+    // ones with an obvious marker.
+    expect(await entries()).toHaveLength(0);
+  });
+
+  it("keeps an archived contact's dates off the calendar, locked or not", async () => {
+    // Both conditions want the `contact` key, so spreading the privacy
+    // fragment beside `isArchived` replaced it — and only while locked, which
+    // is the one state nobody would think to check by hand.
+    const archived = await makeContact("Old friend", { isArchived: true });
+    await prisma.importantDate.create({
+      data: {
+        ownerId,
+        contactId: archived.id,
+        label: "Anniversary",
+        date: plainDateToDb({ year: 2019, month: 3, day: 6 }),
+        precision: "DAY",
+        recurrence: "ANNUAL",
+      },
+    });
+
+    expect((await entries()).filter((entry) => entry.kind === "date")).toHaveLength(0);
+    state.locked = true;
+    expect((await entries()).filter((entry) => entry.kind === "date")).toHaveLength(0);
+  });
+
+  it("keeps a plan saved against nobody visible while locked", async () => {
+    // A plan inherits the privacy of the person it names, and one saved against
+    // nobody has no one to be private. Withholding it would hide the user's own
+    // list from them behind a PIN.
+    await prisma.plan.create({
+      data: {
+        ownerId,
+        title: "Observatory",
+        plannedFor: plainDateToDb({ year: 2026, month: 3, day: 4 }),
+        status: "PLANNED",
+      },
+    });
+
+    state.locked = true;
+    const found = (await entries()).filter((entry) => entry.kind === "plan");
+    expect(found).toHaveLength(1);
+    expect(found[0].contact).toBeNull();
+  });
+
+  it("survives a restored row naming another account's contact", async () => {
+    // `mariadb-dump` emits SET FOREIGN_KEY_CHECKS=0, so restoring a dump taken
+    // before the composite keys existed can bring in a row the schema now
+    // forbids. `Happening.contact` and `InteractionParticipant.contact` are
+    // *required* relations, so such a row does not quietly render wrong — it
+    // makes Prisma refuse to return a required relation as null, which
+    // rejected the whole Promise.all and took the page down.
+    const stranger = await createTestUser();
+    const theirs = await prisma.contact.create({
+      data: { ownerId: stranger.id, firstName: "Nobody" },
+    });
+    const mine = await makeContact("Marcus");
+
+    await asARestoreWould(async (tx) => {
+      await tx.happening.create({
+        data: {
+          ownerId,
+          contactId: theirs.id,
+          title: "Restored from a dump",
+          date: plainDateToDb({ year: 2026, month: 3, day: 16 }),
+          precision: "DAY",
+        },
+      });
+      const interaction = await tx.interaction.create({
+        data: {
+          ownerId,
+          title: "Also restored",
+          occurredAt: zonedTimeOfDay({ year: 2026, month: 3, day: 17 }, 600, TZ),
+        },
+      });
+      await tx.interactionParticipant.create({
+        data: { ownerId, interactionId: interaction.id, contactId: theirs.id },
+      });
+    });
+
+    // The page still answers, and the unresolvable rows simply are not on it.
+    const found = await entries();
+    expect(found.filter((entry) => entry.kind === "happening")).toHaveLength(0);
+    const interactions = found.filter((entry) => entry.kind === "interaction");
+    expect(interactions).toHaveLength(1);
+    expect(interactions[0].contact).toBeNull();
+
+    // And nothing owned was lost along the way.
+    await prisma.plan.create({
+      data: {
+        ownerId,
+        contactId: mine.id,
+        title: "Still here",
+        plannedFor: plainDateToDb({ year: 2026, month: 3, day: 4 }),
+        status: "PLANNED",
+      },
+    });
+    expect((await entries()).filter((entry) => entry.kind === "plan")).toHaveLength(1);
+  });
+
+  it("never reaches into another account", async () => {
+    const stranger = await createTestUser();
+    const theirs = await prisma.contact.create({
+      data: { ownerId: stranger.id, firstName: "Nobody" },
+    });
+    await prisma.plan.create({
+      data: {
+        ownerId: stranger.id,
+        contactId: theirs.id,
+        title: "Not mine",
+        plannedFor: plainDateToDb({ year: 2026, month: 3, day: 4 }),
+        status: "PLANNED",
+      },
+    });
+    await prisma.task.create({
+      data: {
+        ownerId: stranger.id,
+        contactId: theirs.id,
+        title: "Not mine either",
+        dueDate: plainDateToDb({ year: 2026, month: 3, day: 9 }),
+      },
+    });
+
+    expect(await entries()).toHaveLength(0);
+  });
+});

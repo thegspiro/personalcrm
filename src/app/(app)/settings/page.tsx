@@ -114,6 +114,7 @@ export default async function SettingsPage() {
             accent={prefs.accent}
             density={prefs.density}
             defaultCadenceDays={prefs.defaultCadenceDays}
+            weekStartsOn={prefs.weekStartsOn}
             timezone={prefs.timezone}
           />
         }

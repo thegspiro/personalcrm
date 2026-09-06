@@ -25,11 +25,13 @@ export function AppearanceSettings({
   accent,
   density,
   defaultCadenceDays,
+  weekStartsOn,
   timezone,
 }: {
   accent: string;
   density: string;
   defaultCadenceDays: number | null;
+  weekStartsOn: number;
   timezone: string;
 }) {
   const run = useAction();
@@ -145,6 +147,22 @@ export function AppearanceSettings({
                   {preset.label}
                 </option>
               ))}
+            </select>
+          </Field>
+
+          <Field
+            label="Weeks start on"
+            htmlFor="weekStartsOn"
+            hint="Which column the calendar grid begins with."
+          >
+            <select
+              id="weekStartsOn"
+              name="weekStartsOn"
+              defaultValue={String(weekStartsOn === 1 ? 1 : 0)}
+              className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm"
+            >
+              <option value="0">Sunday</option>
+              <option value="1">Monday</option>
             </select>
           </Field>
 
