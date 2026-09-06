@@ -990,6 +990,28 @@ function touchPlans(contactId?: string | null) {
   if (contactId) revalidatePath(`/people/${contactId}`);
 }
 
+type PlanReminderPatch = { reminderDaysBefore: Prisma.InputJsonValue | typeof Prisma.DbNull };
+
+/**
+ * The reminder policy a plan submission carries, if it carries one at all.
+ *
+ * Presence, not value. A form without the control leaves the stored policy
+ * alone; only one that has it can change it. Without the distinction, a save
+ * from a form that never asks about reminders would read as "no reminders" and
+ * silently switch them off — and three different forms write this row.
+ */
+function planReminderPatch(
+  form: FormData,
+): { ok: true; patch: PlanReminderPatch | null } | { ok: false } {
+  if (!form.has("reminderMode")) return { ok: true, patch: null };
+  try {
+    const policy = parseReminderDays(str(form, "reminderMode"), str(form, "reminderDaysBefore"));
+    return { ok: true, patch: { reminderDaysBefore: policy === null ? Prisma.DbNull : policy } };
+  } catch {
+    return { ok: false };
+  }
+}
+
 /**
  * The fields create and update share.
  *
@@ -1033,7 +1055,11 @@ async function planFields(ownerId: string, form: FormData) {
   const plannedFor = plannedForRaw ? plainDate(form, "plannedFor") : null;
   if (plannedForRaw && !plannedFor) return null;
 
+  const reminders = planReminderPatch(form);
+  if (!reminders.ok) return null;
+
   return {
+    ...(reminders.patch ?? {}),
     categoryId,
     location: str(form, "location") ?? null,
     address: str(form, "address") ?? null,
@@ -1262,10 +1288,18 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
     return fail("Contact not found.");
   }
 
+  // Asked here as well as on the plan form, because this is the moment the
+  // question means anything: the scheduler only ever looks at PLANNED rows, so
+  // a policy set on an idea nobody has arranged sends nothing until it is.
+  const reminders = planReminderPatch(form);
+  if (!reminders.ok) return fail("Reminder offsets must be whole days from 0 to 365.");
+
   const scheduled = {
     plannedFor,
     plannedStartMinute: startMinute.value,
     status: "PLANNED" as const,
+    // Same presence rule as the duration below: absent means leave it alone.
+    ...(reminders.patch ?? {}),
     // Only when the form actually carried one. The schedule sheet has no
     // duration control, so writing `existing`'s value back would undo another
     // tab's edit to the one field this claim does not watch — and it is the
@@ -1335,6 +1369,16 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
       // A new row, so there is nothing to undo: it inherits the length unless
       // this submission named one.
       plannedDurationMinutes: duration.value ?? existing.plannedDurationMinutes,
+      // Same rule for the reminder policy, and the reason it is spelled out
+      // rather than left to `scheduled`: a `Json?` column reads back as `null`
+      // and Prisma will not take `null` as a write, so the inherited value has
+      // to be turned back into `DbNull` by hand.
+      ...(reminders.patch ?? {
+        reminderDaysBefore:
+          existing.reminderDaysBefore === null
+            ? Prisma.DbNull
+            : (existing.reminderDaysBefore as Prisma.InputJsonValue),
+      }),
     },
   });
 

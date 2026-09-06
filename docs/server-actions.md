@@ -221,6 +221,19 @@ second stale form would overwrite the person the first one attached and still
 report success. The copy re-checks both of the plan's foreign keys against the
 owner before taking them — `ownedPlanRefs`.
 
+Both the plan form and the schedule sheet carry the reminder control, and both
+read it **by presence, not by value** — `planReminderPatch`. A submission
+without a `reminderMode` field leaves the stored policy exactly as it was;
+only one that has the control can change it. Read by value instead, every save
+from a form that does not ask about reminders would land as "no reminders" and
+switch them off. The scheduling copy path inherits the original's policy when
+this submission names none, the same rule it already applies to the duration.
+Offsets go through `parseReminderDays` unchanged; what differs is the reading of
+null, which for a plan means no reminders rather than the account default —
+`effectivePlanReminderDays` and `planReminderPolicyLabel` are the plan-side
+pair, and `effectiveReminderDays` / `reminderPolicyLabel` stay correct for
+important dates.
+
 `completePlan` refuses outright on a plan that is already `DONE` or `ARCHIVED`.
 Both of its claims carry the status, but the shared-idea path has no claim — it
 never writes to the original — so that precondition is what stops a stale form

@@ -11,6 +11,7 @@ import { IdeaList } from "@/components/lists/idea-list";
 import { ListCapNotice } from "@/components/ui/list-cap-notice";
 import { applyCap } from "@/lib/list-cap";
 import { plainDateFromDb } from "@/lib/dates";
+import { readReminderPolicy } from "@/lib/reminders";
 import { displayName } from "@/lib/utils";
 import { privacyScope, viaOptionalContactPrivacyWhere } from "@/server/privacy/filter";
 import { offlineCacheable } from "@/server/privacy/offline";
@@ -78,6 +79,7 @@ export default async function IdeasPage() {
           plannedFor: plan.plannedFor ? plainDateFromDb(plan.plannedFor) : null,
           plannedStartMinute: plan.plannedStartMinute,
           plannedDurationMinutes: plan.plannedDurationMinutes,
+          reminderDaysBefore: readReminderPolicy(plan.reminderDaysBefore),
           categoryId: plan.categoryId,
           category: plan.category
             ? {

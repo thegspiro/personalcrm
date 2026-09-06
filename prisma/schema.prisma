@@ -1240,6 +1240,13 @@ model Plan {
   /// What it became. An interaction rather than a DateEntry: a plan carried
   /// out with a friend never produces one of those.
   usedInInteractionId String?
+  /// Which days before `plannedFor` to be reminded on, same shape and meaning
+  /// as `ImportantDate.reminderDaysBefore`. Null means **no reminders** here,
+  /// deliberately unlike an important date, where null means the account
+  /// default: an arrangement you made is not something the app should start
+  /// announcing on its own, and every already-scheduled plan would otherwise
+  /// have begun sending on the first hourly pass after the upgrade.
+  reminderDaysBefore  Json?
   /// Set only on a completed copy of a shared ("Anyone") idea, which has no
   /// original row to claim: `<sourcePlanId>:<contactId>:<local day>`. The
   /// unique index is what makes that path replay-safe — a second tab or a
@@ -1402,6 +1409,7 @@ enum ReminderEntity {
   CADENCE
   TASK
   DIGEST
+  PLAN
 }
 
 /// Dedupe ledger so a restart never re-sends a reminder.

@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
 import { calendarDateInTz, diffPlainDays, plainDateKey, type PlainDate } from "./dates";
 
-export type SchedulingPolicy = "IMPORTANT_DATE_OFFSET" | "OVERDUE_CADENCE" | "INCOMPLETE_TASK_DUE" | "DAILY_DIGEST";
+// Every value here is stored in `ReminderLog.schedulingPolicy VarChar(32)`, so
+// a longer name than that is a write that fails at the database.
+export type SchedulingPolicy =
+  | "IMPORTANT_DATE_OFFSET"
+  | "OVERDUE_CADENCE"
+  | "INCOMPLETE_TASK_DUE"
+  | "DAILY_DIGEST"
+  | "SCHEDULED_PLAN";
 
 export interface ReminderMessage {
   subject: string;
@@ -66,6 +73,35 @@ export function importantDateMessage(
   };
 }
 
+/**
+ * A plan you arranged, said from the day the reminder actually goes out.
+ *
+ * The time is included when the plan carries one, because "on Friday" and
+ * "on Friday at 7:30pm" are different amounts of use, and a plan is the one
+ * reminder kind that knows the hour.
+ */
+export function scheduledPlanMessage(
+  title: string,
+  person: string | null,
+  occurrence: PlainDate,
+  today: PlainDate,
+  startsAt: string | null,
+): ReminderMessage {
+  const days = diffPlainDays(today, occurrence);
+  const when =
+    days === 0 ? "is today"
+    : days === 1 ? "is tomorrow"
+    : days > 1 ? `is in ${days} days`
+    : days === -1 ? "was yesterday"
+    : `was ${-days} days ago`;
+  const who = person ? ` with ${person}` : "";
+  const at = startsAt ? ` at ${startsAt}` : "";
+  return {
+    subject: `Coming up: ${title}`,
+    body: `${title}${who} ${when}${at} (${plainDateKey(occurrence)}).`,
+  };
+}
+
 export function cadenceMessage(person: string, dueDay: PlainDate): ReminderMessage {
   return {
     subject: `Time to reach out to ${person}`,
@@ -92,6 +128,7 @@ export type DigestItem = { preview?: boolean } & (
   | { kind: "IMPORTANT_DATE"; label: string; contactName: string; date: PlainDate }
   | { kind: "CADENCE"; contactName: string; date: PlainDate }
   | { kind: "TASK"; title: string; contactName: string | null; date: PlainDate }
+  | { kind: "PLAN"; title: string; contactName: string | null; date: PlainDate }
 );
 
 /** Kept deliberately small enough for the most restrictive supported push channel. */
@@ -120,8 +157,11 @@ function digestEntry(item: DigestItem, today: PlainDate): string {
  * render in group order, and within a group this is the date order anyway.
  */
 export function digestMessage(items: DigestItem[], today: PlainDate, limit = DIGEST_ENTRY_LIMIT): ReminderMessage {
-  const kindOrder: DigestItem["kind"][] = ["IMPORTANT_DATE", "CADENCE", "TASK"];
+  // Plans lead: an evening you have actually arranged is the one thing in here
+  // with a time and a person waiting on it.
+  const kindOrder: DigestItem["kind"][] = ["PLAN", "IMPORTANT_DATE", "CADENCE", "TASK"];
   const headings: Record<DigestItem["kind"], string> = {
+    PLAN: "Arranged",
     IMPORTANT_DATE: "Important dates",
     CADENCE: "Keep in touch",
     TASK: "Tasks",

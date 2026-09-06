@@ -39,6 +39,7 @@ import { MilestonesSummary } from "@/components/contacts/milestones-summary";
 import { TimelineList } from "@/components/timeline/timeline-list";
 import { SectionCard } from "@/components/contacts/section-card";
 import { calendarDateInTz, plainDateFromDb, plainDateKey } from "@/lib/dates";
+import { readReminderPolicy } from "@/lib/reminders";
 import { cadenceMessage } from "@/lib/format";
 import { cadenceStatus, daysSinceLastInteraction, daysUntilTouch } from "@/lib/cadence";
 import { displayName } from "@/lib/utils";
@@ -543,6 +544,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             plannedFor: plan.plannedFor ? plainDateFromDb(plan.plannedFor) : null,
             plannedStartMinute: plan.plannedStartMinute,
             plannedDurationMinutes: plan.plannedDurationMinutes,
+            reminderDaysBefore: readReminderPolicy(plan.reminderDaysBefore),
             categoryId: plan.categoryId,
             category: plan.category
               ? {

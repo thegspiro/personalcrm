@@ -211,10 +211,15 @@ a `main` that already carried the instruction.
 
 ## Not implemented (do not assume otherwise)
 
-Important-date, overdue cadence, due-task, and timezone-aware daily digest
-reminders are delivered by the hourly scheduler through the channels configured
-under Settings → Reminders. Each delivery has a durable policy-specific key and
-retries re-check current owner, state, policy, and privacy before sending.
+Important-date, overdue cadence, due-task, scheduled-plan and timezone-aware
+daily digest reminders are delivered by the hourly scheduler through the
+channels configured under Settings → Reminders. Each delivery has a durable
+policy-specific key and retries re-check current owner, state, policy, and
+privacy before sending. A plan's reminders are **off until asked for**:
+`Plan.reminderDaysBefore` is null on every plan that predates the column, and
+for a plan null means no reminders — the opposite of an important date, where
+null is the account default. `effectivePlanReminderDays` exists for exactly that
+difference; do not collapse it into `effectiveReminderDays`.
 The
 `svc-backup` service writes a daily dump to `/config/backups`, tags have a UI
 under Settings → Tags and on the people list, and Settings → Account manages
