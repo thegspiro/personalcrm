@@ -54,7 +54,27 @@ export function anchorDate(
   anchorYear: number,
 ): PlainDate | null {
   if (!hasKnownMonth(precision) || !hasKnownDay(precision)) return null;
-  return hasKnownYear(precision) ? date : { ...date, year: anchorYear };
+  if (hasKnownYear(precision)) return date;
+
+  // The twenty-ninth of February, year unknown, has to be anchored to a year
+  // that has one. Dropped into an ordinary year it produces a start date that
+  // does not exist, which a calendar either rejects or silently reads as the
+  // first of March — turning somebody's birthday into the wrong day rather
+  // than admitting it could not place it.
+  const year =
+    date.month === 2 && date.day === 29 ? mostRecentLeapYear(anchorYear) : anchorYear;
+  return { ...date, year };
+}
+
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+/** The closest leap year at or before `year`, so the anchor stays in the past. */
+function mostRecentLeapYear(year: number): number {
+  let candidate = year;
+  while (!isLeapYear(candidate)) candidate -= 1;
+  return candidate;
 }
 
 function rrule(recurrence: IcsRecurrence): string | null {

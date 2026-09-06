@@ -56,13 +56,34 @@ describe.skipIf(!hasTestDatabase)("account export", () => {
     expect(result.error).toContain("Unlock first");
   });
 
-  it("allows a closed lock when there is nothing hidden to leave out", async () => {
-    // Same reasoning as offline caching: with nothing private in the account,
-    // what comes out behind a closed lock is already everything.
+  it("refuses behind a closed lock even with nothing marked private", async () => {
+    // An earlier version allowed this, reasoning that with no `isPrivate` rows
+    // there was nothing to leave out. That modelled the lock as the marker,
+    // and it is more: the dating layer is gated by the lock in its own right,
+    // so an account with a romantic profile and no marked rows would have
+    // exported private notes and date entries in a file. Branching on a count
+    // is also itself a disclosure — being refused would answer whether
+    // anything private exists.
     await addContact();
 
     const result = await exportAccount("json");
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Unlock first");
+  });
+
+  it("does not leak dating content behind a closed lock", async () => {
+    const contact = await addContact({ isRomantic: true });
+    await prisma.romanticProfile.create({
+      data: {
+        ownerId: state.ownerId,
+        contactId: contact.id,
+        privateNotes: "SECRET-RETROSPECTIVE",
+      },
+    });
+
+    const result = await exportAccount("json");
+    expect(result.ok).toBe(false);
+    expect(result.data).toBeUndefined();
   });
 
   it("exports everything once unlocked", async () => {
@@ -122,6 +143,22 @@ describe.skipIf(!hasTestDatabase)("account export", () => {
     expect(ics.data!.filename).toMatch(/\.ics$/);
     expect(ics.data!.content).toContain("BEGIN:VCALENDAR");
     expect(ics.data!.content).toContain("RRULE:FREQ=YEARLY");
+  });
+
+  it("writes a year-less birthday without inventing a year", async () => {
+    // The database stores a sentinel year for these. Printed into a
+    // spreadsheet it reads as real, whatever the precision column beside it
+    // says.
+    state.unlocked = true;
+    await addContact({
+      firstName: "Yearless",
+      birthDate: new Date(Date.UTC(1904, 3, 15)),
+      birthDatePrecision: "MONTH_DAY",
+    });
+
+    const csv = await exportAccount("csv");
+    expect(csv.data!.content).toContain("--04-15");
+    expect(csv.data!.content).not.toContain("1904");
   });
 
   it("refuses a format it does not produce", async () => {

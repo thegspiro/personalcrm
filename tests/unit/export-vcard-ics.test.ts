@@ -60,6 +60,69 @@ describe("vcardFor", () => {
     expect(vcardFor(contact())).toContain("UID:personalcrm-c1");
   });
 
+  it("gives a generic email no classification nobody recorded", () => {
+    // The built-in term records only that this is an email address. Emitting
+    // TYPE=home would hand an address book a home/work split the person never
+    // made — and the term is renameable, so its label says nothing either.
+    const lines = vcardFor(
+      contact({ methods: [{ kind: "email", value: "dave@example.com", label: null }] }),
+    );
+    expect(lines).toContain("EMAIL:dave@example.com");
+    expect(lines.join()).not.toContain("EMAIL;TYPE=home");
+  });
+
+  it("writes a URL as a URI, not as escaped text", () => {
+    // TEXT escaping would put a backslash before the comma in a map link's
+    // coordinates, and the importer would open somewhere else.
+    const lines = vcardFor(
+      contact({ methods: [{ kind: "url", value: "https://maps.example/@40.7,-74", label: null }] }),
+    );
+    expect(lines).toContain("URL:https://maps.example/@40.7,-74");
+  });
+
+  it("keeps a free-text address label out of the TYPE parameter", () => {
+    // TYPE is constrained; the form suggests labels like "Parents". Pushing
+    // one into TYPE either breaks the parameter or dresses a personal note up
+    // as a standard type.
+    const lines = vcardFor(
+      contact({
+        addresses: [
+          {
+            label: "Parents' house",
+            line1: "1 Elm",
+            line2: null,
+            city: null,
+            region: null,
+            postalCode: null,
+            country: null,
+          },
+        ],
+      }),
+    );
+    const adr = lines.find((l) => l.startsWith("ADR"))!;
+    expect(adr).not.toContain("TYPE=");
+    expect(adr).toContain(`LABEL="Parents' house"`);
+  });
+
+  it("still uses TYPE for the two the format actually defines", () => {
+    const lines = vcardFor(
+      contact({
+        addresses: [
+          {
+            label: "home",
+            line1: "1 Elm",
+            line2: null,
+            city: null,
+            region: null,
+            postalCode: null,
+            country: null,
+          },
+        ],
+      }),
+    );
+    expect(lines.find((l) => l.startsWith("ADR"))).toContain("TYPE=home");
+  });
+
   it("maps the methods a vCard has a property for", () => {
     const lines = vcardFor(
       contact({
@@ -69,7 +132,7 @@ describe("vcardFor", () => {
         ],
       }),
     );
-    expect(lines).toContain("EMAIL;TYPE=home:dave@example.com");
+    expect(lines).toContain("EMAIL:dave@example.com");
     expect(lines).toContain("TEL;TYPE=cell:+15550104477");
   });
 
@@ -141,6 +204,25 @@ describe("anchorDate", () => {
       year: 2026,
       month: 4,
       day: 15,
+    });
+  });
+
+  it("anchors a year-less 29 February to a year that has one", () => {
+    // Dropped into an ordinary year this produces a start date that does not
+    // exist, which a calendar either rejects or silently reads as 1 March —
+    // moving somebody's birthday rather than admitting it could not place it.
+    const anchored = anchorDate({ year: 1904, month: 2, day: 29 }, "MONTH_DAY", 2026)!;
+    expect(anchored.month).toBe(2);
+    expect(anchored.day).toBe(29);
+    expect(anchored.year).toBe(2024);
+    expect(new Date(Date.UTC(anchored.year, 1, 29)).getUTCDate()).toBe(29);
+  });
+
+  it("leaves a dated 29 February alone", () => {
+    expect(anchorDate({ year: 2024, month: 2, day: 29 }, "DAY", 2026)).toEqual({
+      year: 2024,
+      month: 2,
+      day: 29,
     });
   });
 

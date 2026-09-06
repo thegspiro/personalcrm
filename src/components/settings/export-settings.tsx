@@ -71,6 +71,13 @@ export function ExportSettings({ locked }: { locked: boolean }) {
       // click is still being handled cancels the download in some browsers.
       setTimeout(() => URL.revokeObjectURL(url), 0);
       toast.success(`Saved ${filename}`);
+    } catch (error) {
+      // A server action can reject rather than return — a dropped database
+      // connection, a restart mid-request. Without this the promise rejects
+      // into nothing, the button simply stops spinning, and the download looks
+      // like it silently did not happen.
+      console.error("Export failed", error);
+      toast.error("The export could not be produced.");
     } finally {
       setBusy(null);
     }

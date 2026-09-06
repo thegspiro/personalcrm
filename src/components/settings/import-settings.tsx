@@ -63,6 +63,14 @@ export function ImportSettings({ locked }: { locked: boolean }) {
             .map((row) => row.index),
         ),
       );
+    } catch (error) {
+      // Reading the file or the preview action can reject rather than return —
+      // a dropped connection, a restart mid-request. Without this the promise
+      // rejects into nothing and the panel just stops, with no preview and no
+      // reason given.
+      console.error("Reading the file failed", error);
+      toast.error("That file could not be read.");
+      reset();
     } finally {
       setBusy(false);
     }
@@ -82,6 +90,11 @@ export function ImportSettings({ locked }: { locked: boolean }) {
       );
       reset();
       router.refresh();
+    } catch (error) {
+      // As above: a rejected action would otherwise stop the button spinning
+      // and say nothing, leaving it unclear whether anything was written.
+      console.error("Import failed", error);
+      toast.error("The import did not run.");
     } finally {
       setBusy(false);
     }

@@ -3,8 +3,8 @@
 import { prisma } from "@/server/db/client";
 import { getUserContext } from "@/server/user/context";
 import { getPrivacyState } from "@/server/privacy/lock";
-import { countPrivateRows } from "@/server/privacy/counts";
-import { todayInTz, plainDateKey, plainDateFromDb } from "@/lib/dates";
+import { todayInTz, plainDateKey, plainDateFromDb, type PlainDate } from "@/lib/dates";
+import type { DatePrecision } from "@/lib/date-precision";
 import { csvDocument } from "@/lib/export/csv";
 import { vcardDocument } from "@/lib/export/vcard";
 import { icsDocument } from "@/lib/export/ics";
@@ -30,6 +30,24 @@ const FORMATS = new Set<ExportFormat>(["json", "csv", "vcard", "ics"]);
 /** Version the document, so a future import knows what it is reading. */
 const SCHEMA_VERSION = 1;
 
+/**
+ * A birthday at its own accuracy, in the reduced forms ISO 8601 defines and
+ * this app's importer reads back.
+ */
+function csvBirthDate(date: PlainDate, precision: DatePrecision): string | null {
+  const pad = (value: number, width: number) => String(value).padStart(width, "0");
+  switch (precision) {
+    case "DAY":
+      return `${pad(date.year, 4)}-${pad(date.month, 2)}-${pad(date.day, 2)}`;
+    case "MONTH_DAY":
+      return `--${pad(date.month, 2)}-${pad(date.day, 2)}`;
+    case "MONTH":
+      return `${pad(date.year, 4)}-${pad(date.month, 2)}`;
+    case "YEAR":
+      return pad(date.year, 4);
+  }
+}
+
 function contactRows(account: AccountExport) {
   return account.contacts.map((contact) => {
     const method = (slug: string) =>
@@ -46,9 +64,14 @@ function contactRows(account: AccountExport) {
       contact.country,
       contact.occupation,
       contact.employer,
-      // Written at the accuracy it is held at, so a birthday with no known
-      // year does not acquire one on the way into a spreadsheet.
-      contact.birthDate ? plainDateKey(plainDateFromDb(contact.birthDate)) : null,
+      // Written at the accuracy it is held at. `plainDateKey` would print the
+      // sentinel year the database stores for a year-less birthday — 1904 —
+      // and a spreadsheet reader has no reason to doubt it, whatever the
+      // precision column beside it says. The vCard forms round-trip through
+      // this app's own import.
+      contact.birthDate
+        ? csvBirthDate(plainDateFromDb(contact.birthDate), contact.birthDatePrecision)
+        : null,
       contact.birthDatePrecision,
       contact.cadenceDays,
       contact.lastInteractionAt?.toISOString() ?? null,
@@ -103,13 +126,20 @@ export async function exportAccount(format: string): Promise<ActionResult<Export
   const { user, timezone } = await getUserContext();
   const privacy = await getPrivacyState();
 
+  // Refused whenever the lock is shut, without asking how much is behind it.
+  //
+  // An earlier version allowed the export when nothing carried the `isPrivate`
+  // marker, reasoning that there was then nothing to leave out. That modelled
+  // the lock as the marker, and it is more than the marker: the dating layer is
+  // gated by the lock in its own right, so an account with a romantic profile
+  // and no marked rows would have exported private notes, date entries and
+  // flags — exactly the content the PIN exists to hold back — in a file. And
+  // branching on a count is itself a disclosure, since being refused or not
+  // would have answered whether anything private exists.
   if (privacy.enabled && !privacy.unlocked) {
-    const hidden = await countPrivateRows(prisma, user.id);
-    if (hidden > 0) {
-      return fail(
-        "Unlock first. Some of your data is hidden right now, and an export taken behind a closed lock would look complete without being it.",
-      );
-    }
+    return fail(
+      "Unlock first. An export taken behind a closed lock would either leave out what the lock is hiding, and look complete anyway, or carry it out of the app in a file.",
+    );
   }
 
   const account = await gatherAccount(user.id);

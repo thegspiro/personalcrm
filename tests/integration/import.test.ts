@@ -133,6 +133,7 @@ describe.skipIf(!hasTestDatabase)("contact import", () => {
     });
     state.unlocked = false;
 
+
     const preview = await previewImport("vcard", CARD);
     expect(preview.ok).toBe(false);
     expect(preview.error).toContain("Unlock first");
@@ -142,9 +143,14 @@ describe.skipIf(!hasTestDatabase)("contact import", () => {
     expect(await prisma.contact.count()).toBe(1);
   });
 
-  it("allows a closed lock when nothing is hidden", async () => {
+  it("refuses behind a closed lock regardless of how much is hidden", async () => {
+    // Gated on the lock alone, not on a count: the lock covers the dating
+    // layer as well as marked rows, and branching on a count would answer
+    // whether anything private exists.
     state.unlocked = false;
-    expect((await previewImport("vcard", CARD)).ok).toBe(true);
+    expect((await previewImport("vcard", CARD)).ok).toBe(false);
+    expect((await commitImport("vcard", CARD, [])).ok).toBe(false);
+    expect(await prisma.contact.count()).toBe(0);
   });
 
   it("reads a CSV as well", async () => {

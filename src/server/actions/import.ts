@@ -3,7 +3,6 @@
 import { prisma } from "@/server/db/client";
 import { getUserContext } from "@/server/user/context";
 import { getPrivacyState } from "@/server/privacy/lock";
-import { countPrivateRows } from "@/server/privacy/counts";
 import { plainDateToDb } from "@/lib/dates";
 import { normalizeToPrecision } from "@/lib/date-precision";
 import { recomputeContactActivity } from "@/server/services/contact-activity";
@@ -54,12 +53,10 @@ export interface ImportPreview {
  * quietly create a second, visible copy of someone deliberately hidden, which
  * is a worse outcome than being asked to unlock.
  */
-async function blockedByLock(ownerId: string): Promise<string | null> {
+async function blockedByLock(): Promise<string | null> {
   const privacy = await getPrivacyState();
   if (!privacy.enabled || privacy.unlocked) return null;
-  const hidden = await countPrivateRows(prisma, ownerId);
-  if (hidden === 0) return null;
-  return "Unlock first. Some of your contacts are hidden right now, so an import could not tell whether somebody in this file is already here.";
+  return "Unlock first. Some of your contacts are hidden while the lock is closed, so an import could not tell whether somebody in this file is already here.";
 }
 
 function parse(format: ImportFormat, text: string) {
@@ -109,7 +106,7 @@ export async function previewImport(
   const chosen = format as ImportFormat;
 
   const { user } = await getUserContext();
-  const blocked = await blockedByLock(user.id);
+  const blocked = await blockedByLock();
   if (blocked) return fail(blocked);
 
   if (text.length > MAX_CHARACTERS) {
@@ -178,7 +175,7 @@ export async function commitImport(
   const chosen = format as ImportFormat;
 
   const { user } = await getUserContext();
-  const blocked = await blockedByLock(user.id);
+  const blocked = await blockedByLock();
   if (blocked) return fail(blocked);
 
   if (text.length > MAX_CHARACTERS) {

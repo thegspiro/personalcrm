@@ -74,8 +74,13 @@ export function vcardDate(date: PlainDate, precision: DatePrecision): string | n
 function methodProperty(kind: string | null): { property: string; type?: string } | null {
   switch (kind) {
     case "email":
+      // No TYPE. The built-in term records only that this is an email address;
+      // emitting `home` would hand an address book a classification the person
+      // never made — and the term is renameable, so its label says nothing
+      // either.
+      return { property: "EMAIL" };
     case "work-email":
-      return { property: "EMAIL", type: kind === "work-email" ? "work" : "home" };
+      return { property: "EMAIL", type: "work" };
     case "mobile":
       return { property: "TEL", type: "cell" };
     case "phone":
@@ -97,6 +102,20 @@ function methodProperty(kind: string | null): { property: string; type?: string 
 function line(property: string, value: string, parameters?: string): string {
   return `${property}${parameters ? `;${parameters}` : ""}:${escapeValue(value)}`;
 }
+
+/**
+ * A URI-valued property, written without TEXT escaping.
+ *
+ * `URL` is a URI, not text, and TEXT escaping puts a backslash in front of
+ * every comma and semicolon. A map link carrying comma-separated coordinates
+ * would come out as `40.7\,-74` and open somewhere else.
+ */
+function uriLine(property: string, value: string): string {
+  return `${property}:${value}`;
+}
+
+/** The address types vCard actually defines. Anything else is not a type. */
+const ADDRESS_TYPES = new Set(["home", "work"]);
 
 /** One card. */
 export function vcardFor(contact: VCardContact): string[] {
@@ -132,7 +151,11 @@ export function vcardFor(contact: VCardContact): string[] {
       unmapped.push(`${method.label ?? method.kind ?? "contact"}: ${method.value}`);
       continue;
     }
-    lines.push(line(mapped.property, method.value, mapped.type ? `TYPE=${mapped.type}` : undefined));
+    lines.push(
+      mapped.property === "URL"
+        ? uriLine(mapped.property, method.value)
+        : line(mapped.property, method.value, mapped.type ? `TYPE=${mapped.type}` : undefined),
+    );
   }
 
   for (const address of contact.addresses) {
@@ -146,7 +169,18 @@ export function vcardFor(contact: VCardContact): string[] {
       address.postalCode ?? "",
       address.country ?? "",
     ].map(escapeValue);
-    lines.push(`ADR${address.label ? `;TYPE=${escapeValue(address.label)}` : ""}:${parts.join(";")}`);
+    // A label here is free text — the form suggests "Parents" and "Holiday" —
+    // and TYPE is a constrained parameter, so pushing one into the other can
+    // produce an invalid parameter or dress a personal note up as a standard
+    // type. Only the two vCard actually defines are emitted as TYPE; anything
+    // else travels as a quoted LABEL, which is where free text belongs.
+    const label = address.label?.trim().toLowerCase() ?? "";
+    const parameter = ADDRESS_TYPES.has(label)
+      ? `;TYPE=${label}`
+      : address.label
+        ? `;LABEL="${address.label.replace(/[\r\n"]/g, " ")}"`
+        : "";
+    lines.push(`ADR${parameter}:${parts.join(";")}`);
   }
 
   if (contact.category) lines.push(line("CATEGORIES", contact.category));

@@ -625,11 +625,17 @@ this app excludes private rows while the lock is shut, which for a page is
 exactly right — a hidden section simply is not there. Applying the same
 filtering to an export produces something worse than a hidden section: a file
 that presents itself as the complete account, is not, and gets carried onto a
-disk somewhere else where nobody will ever notice the difference. So the export
-asks the same question offline caching asks, and answers it the same way. With
-the lock closed and anything private in the account, it declines and says why.
-With nothing private to leave out, it proceeds, because what comes out is
-already everything.
+disk somewhere else where nobody will ever notice the difference.
+
+**And it refuses without asking how much is behind the lock.** A first version
+allowed the export when nothing carried the `isPrivate` marker, on the grounds
+that there was then nothing to leave out. That modelled the lock as the marker,
+and the lock is more than the marker: the dating layer is gated in its own
+right, so an account with a romantic profile and no marked rows would have
+carried private notes, date entries and flags out in a file. Branching on a
+count is also a disclosure by itself — being allowed or refused would answer
+whether anything private exists. So the rule is the simple one: closed lock,
+no export.
 
 **What the export leaves out, and why.** Notification channels are excluded.
 Their configuration holds credentials — an SMTP password, a webhook nobody
@@ -640,12 +646,12 @@ Everything else a person has entered is included, and a table that gains rows
 somebody typed has to be added to the export, or it quietly stops being what
 it says it is.
 
-**Import is gated by the same question, for a different reason.** Nothing is
-disclosed by bringing contacts in — but deciding whether somebody in the file
-is already here means comparing against what can be seen, and behind a closed
-lock private contacts cannot be. Importing then would quietly create a second,
-visible copy of somebody deliberately hidden. So the same gate applies, and the
-message says which problem it is avoiding.
+**Import is gated the same way, for a different reason.** Nothing is disclosed
+by bringing contacts in — but deciding whether somebody in the file is already
+here means comparing against what can be seen, and behind a closed lock private
+contacts cannot be. Importing then would quietly create a second, visible copy
+of somebody deliberately hidden. The gate is the lock alone here too, for the
+same reason as above: a count would be its own answer.
 
 Two things about what import writes. A contact arriving from somewhere else is
 **never** marked private: nothing outside this account has any standing to say

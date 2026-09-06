@@ -1,4 +1,5 @@
 import "server-only";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import { plainDateFromDb } from "@/lib/dates";
 import type { VCardContact } from "@/lib/export/vcard";
@@ -38,7 +39,14 @@ const CONTACT_INCLUDE = {
   addresses: true,
   facts: { include: { category: { select: { label: true } } } },
   importantDates: { include: { type: { select: { label: true } } } },
-  lifeEvents: { include: { type: { select: { label: true } } } },
+  lifeEvents: {
+    include: {
+      type: { select: { label: true } },
+      // Without these a shared event loses everyone but its anchor contact,
+      // so a restore could not say whose timelines it belonged to.
+      participants: { select: { contactId: true } },
+    },
+  },
   gifts: { include: { occasion: { select: { label: true } } } },
   debts: true,
   dietaryNeeds: true,
@@ -50,8 +58,20 @@ const CONTACT_INCLUDE = {
   },
 } as const;
 
-/** Everything in the account, for the full-fidelity export. */
+/**
+ * Everything in the account, for the full-fidelity export.
+ *
+ * Read inside one transaction rather than as independent queries. Separate
+ * reads see separate snapshots, so a write committing partway through produces
+ * a document that never existed: an interaction whose contact is not in the
+ * contacts array, for instance. For a file whose stated purpose is being able
+ * to put the account back, internally impossible is worse than slightly stale.
+ */
 export async function gatherAccount(ownerId: string) {
+  return prisma.$transaction(async (tx) => gatherWithin(tx, ownerId));
+}
+
+async function gatherWithin(prisma: Prisma.TransactionClient, ownerId: string) {
   const [
     contacts,
     interactions,

@@ -24,7 +24,6 @@ import { listChannelsForSettings } from "@/server/queries/notifications";
 import { getAiStatus } from "@/server/ai/config";
 import { getPrivacyState } from "@/server/privacy/lock";
 import { privacyScope } from "@/server/privacy/filter";
-import { countPrivateRows } from "@/server/privacy/counts";
 import { PROVIDERS } from "@/server/ai/providers";
 import { GeoSettings } from "@/components/settings/geo-settings";
 import { HomeBaseSettings } from "@/components/settings/home-base-settings";
@@ -56,7 +55,6 @@ export default async function SettingsPage() {
     geo,
     privacyState,
     channels,
-    hiddenRows,
     tags,
     sessions,
   ] = await Promise.all([
@@ -69,10 +67,6 @@ export default async function SettingsPage() {
     getGeoStatus(),
     getPrivacyState(),
     listChannelsForSettings(user.id),
-    // Whether an export taken right now would be complete. Counted here rather
-    // than inside the export itself so the tab can say so before anyone clicks,
-    // instead of only refusing afterwards.
-    countPrivateRows(prisma, user.id),
     listTags(user.id),
     listSessions(user.id),
   ]);
@@ -89,10 +83,12 @@ export default async function SettingsPage() {
   // Value counts drive the delete warning: deleting a field takes everything
   // recorded in it with it, so the confirmation has to say how much. Filtered
   // by the lock, because this page is reachable while it is closed.
-  // Export and import are gated together: one would produce a file that looks
-  // complete without being it, the other could not tell whether somebody in
-  // the file is already here. Same question, same answer.
-  const dataLocked = privacyState.enabled && !privacyState.unlocked && hiddenRows > 0;
+  // Export and import are gated together, and on the lock alone rather than on
+  // how much is behind it: the lock covers the dating layer as well as rows
+  // carrying the marker, so counting markers would have let a locked account
+  // export its dating notes. Branching on a count is also a disclosure in its
+  // own right — being allowed or refused would answer the question.
+  const dataLocked = privacyState.enabled && !privacyState.unlocked;
 
   const counts = valueCounts;
   const withCount = (rows: typeof definitions.CONTACT) =>
