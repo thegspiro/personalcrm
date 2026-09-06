@@ -176,6 +176,29 @@ describe.skipIf(!hasTestDatabase)("contact import", () => {
     expect((await previewImport("vcard", huge)).ok).toBe(false);
   });
 
+  it("imports a file large enough to outlast the default transaction timeout", async () => {
+    // An interactive transaction defaults to five seconds and this writes a
+    // row per person inside one, so a real address book — the whole reason
+    // import exists — would expire partway and roll back entirely. Two
+    // hundred is enough to catch a regression to the default without making
+    // the suite crawl.
+    const many = Array.from({ length: 200 }, (_, i) =>
+      [
+        "BEGIN:VCARD",
+        "VERSION:4.0",
+        `FN:Person ${i}`,
+        `N:Number${i};Person;;;`,
+        `EMAIL:person${i}@example.com`,
+        "END:VCARD",
+      ].join("\r\n"),
+    ).join("\r\n");
+
+    const result = await commitImport("vcard", many, []);
+    expect(result.ok).toBe(true);
+    expect(result.data!.created).toBe(200);
+    expect(await prisma.contact.count()).toBe(200);
+  });
+
   it("declines an empty selection instead of reporting a silent success", async () => {
     const result = await commitImport("vcard", CARD, [1]);
     expect(result.ok).toBe(false);

@@ -201,6 +201,14 @@ export async function commitImport(
   });
   const termBySlug = new Map(terms.map((term) => [term.slug, term.id]));
 
+  // The timeout is set explicitly, and it is not decoration. An interactive
+  // transaction defaults to five seconds, and this writes one row per person
+  // inside one — so an address book of any real size, which is the entire
+  // reason import exists, would expire partway and roll the whole thing back.
+  // `MAX_ROWS` is what makes the bound calculable: five thousand contacts at a
+  // few milliseconds each, with room for a slow disk. All-or-nothing is worth
+  // holding a transaction this long for; a half-finished import is the one
+  // outcome that would leave somebody worse off than not importing.
   const created = await prisma.$transaction(async (tx) => {
     const ids: string[] = [];
     for (const row of wanted) {
@@ -257,7 +265,7 @@ export async function commitImport(
     // this is what seeds the activity columns from their creation date.
     await recomputeContactActivity(tx, ids);
     return ids.length;
-  });
+  }, { timeout: 120_000, maxWait: 10_000 });
 
   return ok({ created, skipped: parsed.rows.length - created });
 }
