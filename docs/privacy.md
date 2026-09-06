@@ -386,7 +386,8 @@ discovered:
 
 A plan sends nothing unless you have asked it to: reminders are off on every
 plan until a policy is set on it, and off on every plan that existed before the
-setting did. The daily digest is the one exception, and worth knowing about
+setting did. Settings → Reminders says the same thing at the point where you
+decide whether to add a channel at all. The daily digest is the one exception, and worth knowing about
 before switching the digest on — it lists everything arranged in the next three
 days whether or not that plan sends a reminder of its own, because it is a
 summary of what is coming rather than a copy of what was sent. Either way an

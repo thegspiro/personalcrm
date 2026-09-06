@@ -147,6 +147,17 @@ function PlanReminderFields({
 }) {
   return (
     <>
+      {/* What was on screen when this form was drawn, so the action can tell a
+          choice the user made from the value they simply left alone. The select
+          is always submitted, so without this a sheet opened before another tab
+          switched a reminder on would post its own stale answer over the newer
+          one. Comparing against the stored row cannot stand in: by the time the
+          action reads it, the row already holds the newer value. */}
+      <input
+        type="hidden"
+        name="reminderPolicyWas"
+        value={effectivePlanReminderDays(policy).join(", ")}
+      />
       <Field label="Remind me" htmlFor={`${idPrefix}-reminderMode`}>
         <select
           id={`${idPrefix}-reminderMode`}

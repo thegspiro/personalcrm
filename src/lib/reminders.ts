@@ -60,6 +60,19 @@ export function effectivePlanReminderDays(policy: ReminderPolicy): number[] {
   return policy === null ? [] : policy;
 }
 
+/**
+ * Whether two policies would send the same reminders on the same days.
+ *
+ * Null and the empty list are the same answer for a plan — one is what a row
+ * written before the column existed carries, the other is what "No reminders"
+ * writes — so a form re-submitting one over the other has changed nothing.
+ */
+export function samePlanReminderPolicy(a: ReminderPolicy, b: ReminderPolicy): boolean {
+  const left = [...effectivePlanReminderDays(a)].sort((x, y) => x - y);
+  const right = [...effectivePlanReminderDays(b)].sort((x, y) => x - y);
+  return left.length === right.length && left.every((day, index) => day === right[index]);
+}
+
 export function dueOccurrence(
   anchor: PlainDate,
   recurrence: Recurrence,

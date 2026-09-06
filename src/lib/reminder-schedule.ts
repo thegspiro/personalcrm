@@ -54,22 +54,25 @@ export function dailyOccurrence(now: Date, timezone: string): string {
  * a reminder that failed on the last pass of one day and goes out on the first
  * pass of the next must not still claim the date is "tomorrow".
  */
+function relativeWhen(days: number): string {
+  return (
+    days === 0 ? "is today"
+    : days === 1 ? "is tomorrow"
+    : days > 1 ? `is in ${days} days`
+    : days === -1 ? "was yesterday"
+    : `was ${-days} days ago`
+  );
+}
+
 export function importantDateMessage(
   label: string,
   person: string,
   occurrence: PlainDate,
   today: PlainDate,
 ): ReminderMessage {
-  const days = diffPlainDays(today, occurrence);
-  const when =
-    days === 0 ? "is today"
-    : days === 1 ? "is tomorrow"
-    : days > 1 ? `is in ${days} days`
-    : days === -1 ? "was yesterday"
-    : `was ${-days} days ago`;
   return {
     subject: `Reminder: ${label}`,
-    body: `${label} for ${person} ${when} (${plainDateKey(occurrence)}).`,
+    body: `${label} for ${person} ${relativeWhen(diffPlainDays(today, occurrence))} (${plainDateKey(occurrence)}).`,
   };
 }
 
@@ -88,17 +91,17 @@ export function scheduledPlanMessage(
   startsAt: string | null,
 ): ReminderMessage {
   const days = diffPlainDays(today, occurrence);
-  const when =
-    days === 0 ? "is today"
-    : days === 1 ? "is tomorrow"
-    : days > 1 ? `is in ${days} days`
-    : days === -1 ? "was yesterday"
-    : `was ${-days} days ago`;
   const who = person ? ` with ${person}` : "";
   const at = startsAt ? ` at ${startsAt}` : "";
   return {
-    subject: `Coming up: ${title}`,
-    body: `${title}${who} ${when}${at} (${plainDateKey(occurrence)}).`,
+    // The subject carries the tense as well as the body. Every channel shows it
+    // — it is the email subject, the ntfy and Gotify title, the Discord heading
+    // — and several show nothing else until the message is opened, so a retry
+    // that finally lands the morning after would have announced a finished
+    // evening as "Coming up". `Reminder:` is what an important date already
+    // uses once its day has passed, and it makes no claim about the tense.
+    subject: `${days < 0 ? "Reminder" : "Coming up"}: ${title}`,
+    body: `${title}${who} ${relativeWhen(days)}${at} (${plainDateKey(occurrence)}).`,
   };
 }
 

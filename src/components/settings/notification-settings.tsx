@@ -104,12 +104,14 @@ export function NotificationSettings({
         <h3 className="text-sm font-semibold">Reminders and daily digest</h3>
         <p className="mt-1 text-xs text-muted-foreground">
           Once there is at least one channel switched on here, the app checks every hour for
-          important dates, overdue keep-in-touch cadences, due tasks, and your daily digest.
+          important dates, overdue keep-in-touch cadences, due tasks, evenings you have arranged
+          and asked to be reminded about, and your daily digest.
           Important dates keep their own timing — a week before, on the day, or whatever you set.
+          A plan keeps its own too, and sends nothing at all until you set one on it.
         </p>
         <p className="mt-2 text-xs text-muted-foreground">
           Messages, including the daily digest, can carry names, task titles, date labels,
-          and due or occurrence dates.
+          plan titles and their start times, and due or occurrence dates.
           Choose where that goes accordingly: an ntfy or webhook URL can point at a box on your
           own network, but email travels through a mail relay whose logs keep the contents.
         </p>
@@ -194,11 +196,13 @@ function DigestSettings({ digest }: { digest: DigestPreference }) {
       <h3 className="text-sm font-semibold">Daily digest</h3>
       <p className="mt-1 text-xs text-muted-foreground">
         One message a day to every channel, listing important dates, people you are due to
-        reach out to, and tasks that have fallen due — plus anything the next two days
-        would remind you about, which for a date set to warn you a month ahead means the
-        date itself may still be weeks away. It can contain their names, titles, labels,
-        and dates. The individual reminders above are sent either way, on their own
-        schedule.
+        reach out to, tasks that have fallen due, and anything you have arranged — plus
+        anything the next two days would remind you about, which for a date set to warn you
+        a month ahead means the date itself may still be weeks away. It can contain their
+        names, titles, labels, and dates. Arranged evenings are listed by their day whether
+        or not that plan sends a reminder of its own, so switching the digest on is what
+        starts plan titles travelling. The individual reminders above are sent either way,
+        on their own schedule.
       </p>
       <form action={submit(updateDigest, () => {}, "Saved")} className="mt-3 grid gap-2.5">
         <label className="flex items-center gap-2 text-sm">

@@ -226,13 +226,32 @@ claim catches it. It is deliberately not folded into `planAsRead`:
 completion over a change that cannot affect what completion records. The copy re-checks both of the plan's foreign keys against the
 owner before taking them — `ownedPlanRefs`.
 
-Both the plan form and the schedule sheet carry the reminder control, and both
-read it **by presence, not by value** — `planReminderPatch`. A submission
-without a `reminderMode` field leaves the stored policy exactly as it was;
-only one that has the control can change it. Read by value instead, every save
-from a form that does not ask about reminders would land as "no reminders" and
-switch them off. The scheduling copy path inherits the original's policy when
-this submission names none, the same rule it already applies to the duration.
+Both the plan form and the schedule sheet carry the reminder control, and
+`planReminderPatch` puts two gates in front of it.
+
+**Presence.** A submission without a `reminderMode` field leaves the stored
+policy exactly as it was. Read by value instead, every save from a form that
+does not ask about reminders would land as "no reminders" and switch them off.
+
+**Change.** A submission *with* the control still writes nothing unless the
+value differs from the one the form was rendered with, which the form reports in
+a hidden `reminderPolicyWas`. Presence cannot do this on its own: the schedule
+sheet always submits its select, so a sheet drawn before another tab switched a
+reminder on would post its own stale "no reminders" over the newer choice.
+Comparing against `Plan` as read in the action does not catch it either — by
+then the row already holds the newer value, so it would be comparing that value
+with itself. The comparison is semantic, so null and the empty list count as the
+same answer (`samePlanReminderPolicy`) and re-submitting one over the other is
+not a change.
+
+It skips rather than refuses, deliberately. The sheet's job is the day, the time
+and the person; rejecting the whole arrangement over a preference the user never
+touched would be the worse answer.
+
+The scheduling copy path inherits the original's policy when this submission
+names none, the same rule it already applies to the duration. All three writers
+report an unreadable offset with the same message rather than folding it into
+`planFields`' generic one, which names none of the fields it can fail on.
 Offsets go through `parseReminderDays` unchanged; what differs is the reading of
 null, which for a plan means no reminders rather than the account default —
 `effectivePlanReminderDays` and `planReminderPolicyLabel` are the plan-side

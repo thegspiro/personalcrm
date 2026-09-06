@@ -6,6 +6,7 @@ import {
   parseReminderDays,
   planReminderPolicyLabel,
   readReminderPolicy,
+  samePlanReminderPolicy,
 } from "@/lib/reminders";
 import { dailyOccurrence, digestIsDue, digestMessage, importantDateMessage, localClock, reminderDedupKey, scheduledPlanMessage } from "@/lib/reminder-schedule";
 
@@ -49,6 +50,16 @@ describe("reminder policies", () => {
     expect(planReminderPolicyLabel([0])).toBe("Reminder · on the day");
     expect(planReminderPolicyLabel([1])).toBe("Reminder · 1 day before");
     expect(planReminderPolicyLabel([7, 0])).toBe("Reminders · 7 days before, on the day");
+  });
+
+  it("reads null and the empty list as the same answer for a plan", () => {
+    // What lets a form tell a choice from a value left alone: a plan written
+    // before the column existed carries null, "No reminders" writes [], and a
+    // submission swapping one for the other has changed nothing.
+    expect(samePlanReminderPolicy(null, [])).toBe(true);
+    expect(samePlanReminderPolicy([7, 0], [0, 7])).toBe(true);
+    expect(samePlanReminderPolicy(null, [0])).toBe(false);
+    expect(samePlanReminderPolicy([1], [1, 0])).toBe(false);
   });
 
   it("rejects an empty or malformed custom policy instead of treating it as default", () => {
@@ -135,6 +146,19 @@ describe("reminder wording", () => {
     expect(scheduledPlanMessage("Alamo", null, { year: 2026, month: 8, day: 30 }, today, null).body)
       .toBe("Alamo was 3 days ago (2026-08-30).");
     expect(scheduledPlanMessage("Alamo", "Robin", today, today, null).subject).toBe("Coming up: Alamo");
+  });
+
+  it("drops the forward-looking subject once the evening is behind", () => {
+    // Every channel shows the subject — it is the email subject line, the ntfy
+    // and Gotify title, the Discord heading — and several show nothing else
+    // until the message is opened. A retry landing the morning after would
+    // otherwise announce a finished evening as "Coming up".
+    const subject = (day: number) =>
+      scheduledPlanMessage("Alamo", null, { year: 2026, month: 9, day }, today, null).subject;
+    expect(subject(3)).toBe("Coming up: Alamo");
+    expect(subject(2)).toBe("Coming up: Alamo");
+    expect(subject(1)).toBe("Reminder: Alamo");
+    expect(subject(1)).toBe(importantDateMessage("Alamo", "Robin", { year: 2026, month: 9, day: 1 }, today).subject);
   });
 
   it("leads the digest with what has actually been arranged", () => {

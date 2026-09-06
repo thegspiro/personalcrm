@@ -389,6 +389,81 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     expect(after.status).toBe("OPEN");
   });
 
+  it("leaves a reminder switched on elsewhere alone when the sheet did not touch it", async () => {
+    // The window the claim cannot close. The sheet was drawn before another tab
+    // set the reminder, so by the time this action reads the row it already
+    // holds the newer value — comparing the row with itself would match. What
+    // distinguishes them is what the *form* was rendered with, which it sends.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id);
+    await prisma.plan.update({ where: { id: plan.id }, data: { reminderDaysBefore: [1] } });
+
+    // The sheet as it was drawn: no reminders, and the user never moved it.
+    expect(
+      await schedulePlan(
+        actionForm({
+          id: plan.id,
+          plannedFor: "2026-10-02",
+          reminderMode: "disabled",
+          reminderDaysBefore: "",
+          reminderPolicyWas: "",
+        }),
+      ),
+    ).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    // The arrangement went through; the preference the user never touched did
+    // not get reverted. Refusing the whole schedule over it would be worse.
+    expect(after.status).toBe("PLANNED");
+    expect(after.reminderDaysBefore).toEqual([1]);
+  });
+
+  it("writes a reminder the user did move, even against a policy set elsewhere", async () => {
+    // The other side of the same rule: a value that differs from what was on
+    // screen is a choice, and a choice made now wins.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id);
+
+    expect(
+      await schedulePlan(
+        actionForm({
+          id: plan.id,
+          plannedFor: "2026-10-02",
+          reminderMode: "on-day",
+          reminderDaysBefore: "",
+          reminderPolicyWas: "",
+        }),
+      ),
+    ).toMatchObject({ ok: true });
+
+    expect(
+      (await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } })).reminderDaysBefore,
+    ).toEqual([0]);
+  });
+
+  it("refuses an unreadable reminder offset by name rather than as a generic save failure", async () => {
+    // The offsets are free text, and "Check the category, checklist and time"
+    // names none of the fields this can fail on.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id);
+
+    for (const bad of ["-1", "400", "tomorrow", ""]) {
+      expect(
+        await updatePlan(
+          actionForm({
+            id: plan.id,
+            title: "Go to the observatory",
+            reminderMode: "custom",
+            reminderDaysBefore: bad,
+          }),
+        ),
+      ).toMatchObject({ ok: false, error: "Reminder offsets must be whole days from 0 to 365." });
+    }
+    expect(
+      (await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } })).reminderDaysBefore,
+    ).toBeNull();
+  });
+
   it("writes the reminder policy the sheet carried, and pins only what it writes", async () => {
     // The other half of the same predicate: a submission that does carry the
     // control writes it, and one that does not carry it at all leaves the
