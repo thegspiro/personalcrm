@@ -218,7 +218,12 @@ unticked checklist, because inherited ticks would claim a booking nobody made.
 The write is a compare-and-set on both the status *and* the contact, not just an
 update after the read: several awaits separate the two, and on status alone a
 second stale form would overwrite the person the first one attached and still
-report success. The copy re-checks both of the plan's foreign keys against the
+report success. The reminder policy is pinned in that predicate too, but only
+when the submission means to write one — it is the single field a second tab can
+change without touching the day, the time or the person, so nothing else in the
+claim catches it. It is deliberately not folded into `planAsRead`:
+`completePlan` never writes the policy, and pinning it there would refuse a
+completion over a change that cannot affect what completion records. The copy re-checks both of the plan's foreign keys against the
 owner before taking them — `ownedPlanRefs`.
 
 Both the plan form and the schedule sheet carry the reminder control, and both

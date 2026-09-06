@@ -28,4 +28,6 @@
   second copy of what has already been sent.
 
 An evening with someone marked private is withheld from both while the privacy
-lock is closed, and an evening saved against "Nobody yet" still reminds.
+lock is closed, and an evening saved against "Nobody yet" still reminds. What
+each kind of reminder puts on the wire is written out in full under
+[Privacy → What a reminder sends](../docs/privacy.md#what-a-reminder-sends).

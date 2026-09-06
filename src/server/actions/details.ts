@@ -1307,6 +1307,20 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
     ...(durationRaw === undefined ? {} : { plannedDurationMinutes: duration.value }),
   };
 
+  // The policy this submission read, pinned for the claim below — and only when
+  // it actually means to write one, since a submission that leaves the policy
+  // alone cannot overwrite it. Deliberately *not* folded into `planAsRead`:
+  // `completePlan` never writes the policy, so pinning it there would refuse a
+  // completion over a change that cannot affect what completion records.
+  const policyAsRead: Prisma.PlanWhereInput = reminders.patch
+    ? {
+        reminderDaysBefore:
+          existing.reminderDaysBefore === null
+            ? { equals: Prisma.DbNull }
+            : { equals: existing.reminderDaysBefore as Prisma.InputJsonValue },
+      }
+    : {};
+
   // Copy only when there is a person to attach and an original worth keeping.
   const copying = existing.contactId === null && withContactId !== null && bool(form, "keepInList");
 
@@ -1322,8 +1336,14 @@ export async function schedulePlan(form: FormData): Promise<ActionResult<{ id: s
     // overwrites the person the first attached while still reporting success —
     // against the rule, three lines below, that an attached plan never moves
     // between people.
+    //
+    // And the reminder policy, for the same reason once more: the sheet carries
+    // that control, so a sheet opened before another tab switched a reminder on
+    // would write its own stale "no reminders" over the newer choice and report
+    // success. It is the one field a second tab can change without touching the
+    // day, the time or the person, so nothing else in this predicate catches it.
     const moved = await prisma.plan.updateMany({
-      where: { id, ownerId, ...planAsRead(existing), status: PLAN_STILL_OPEN },
+      where: { id, ownerId, ...planAsRead(existing), ...policyAsRead, status: PLAN_STILL_OPEN },
       data: {
         ...scheduled,
         // The one place a plan changes hands, and only ever from nobody to

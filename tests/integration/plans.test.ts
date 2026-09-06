@@ -358,6 +358,88 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     expect(await prisma.plan.count()).toBe(1);
   });
 
+  it("abandons a schedule whose reminder policy was changed mid-request", async () => {
+    // The one field a second tab can change without touching the day, the time
+    // or the person — so nothing else in the claim catches it, and a sheet
+    // opened before that change would write its own stale "no reminders" over
+    // the newer choice and still report success.
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id);
+
+    afterPlanRead.current = async () => {
+      await prisma.plan.update({
+        where: { id: plan.id },
+        data: { reminderDaysBefore: [1] },
+      });
+    };
+
+    expect(
+      await schedulePlan(
+        actionForm({
+          id: plan.id,
+          plannedFor: "2026-10-02",
+          reminderMode: "disabled",
+          reminderDaysBefore: "",
+        }),
+      ),
+    ).toMatchObject({ ok: false });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.reminderDaysBefore).toEqual([1]);
+    expect(after.status).toBe("OPEN");
+  });
+
+  it("writes the reminder policy the sheet carried, and pins only what it writes", async () => {
+    // The other half of the same predicate: a submission that does carry the
+    // control writes it, and one that does not carry it at all leaves the
+    // stored policy alone rather than reading an absent field as "off".
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id);
+
+    expect(
+      await schedulePlan(
+        actionForm({
+          id: plan.id,
+          plannedFor: "2026-10-02",
+          reminderMode: "custom",
+          reminderDaysBefore: "1, 0",
+        }),
+      ),
+    ).toMatchObject({ ok: true });
+    expect(
+      (await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } })).reminderDaysBefore,
+    ).toEqual([1, 0]);
+
+    // A form with no control at all — the shape every caller had before this
+    // shipped — must not switch the reminders off on its way past.
+    expect(
+      await schedulePlan(actionForm({ id: plan.id, plannedFor: "2026-10-03" })),
+    ).toMatchObject({ ok: true });
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.reminderDaysBefore).toEqual([1, 0]);
+    expect(after.plannedFor).toEqual(new Date("2026-10-03T00:00:00.000Z"));
+  });
+
+  it("carries the reminder policy onto a copy taken from a shared idea", async () => {
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(null, { reminderDaysBefore: [7] });
+
+    const result = await schedulePlan(
+      actionForm({
+        id: plan.id,
+        plannedFor: "2026-10-02",
+        contactId: friend.id,
+        keepInList: "true",
+      }),
+    );
+    expect(result).toMatchObject({ ok: true });
+
+    const copyId = (result as { data?: { id: string } }).data!.id;
+    expect(
+      (await prisma.plan.findUniqueOrThrow({ where: { id: copyId } })).reminderDaysBefore,
+    ).toEqual([7]);
+  });
+
   it("copies an Anyone plan rather than taking it out of everyone else's list", async () => {
     // `listPlans` offers a contactId-null plan on every person's page, so
     // scheduling it with one of them must not consume the shared one.
