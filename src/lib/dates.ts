@@ -209,6 +209,26 @@ export function addPlainDays(date: PlainDate, days: number): PlainDate {
   return plainDateFromDb(new Date(t));
 }
 
+/**
+ * The range MariaDB's `DATE` can hold.
+ *
+ * A bound outside it is not a wide query — the server rejects the statement,
+ * so a page that reaches past either end fails rather than returning
+ * everything. Any query that widens a window on its own account has to clamp
+ * the result: the caller cannot be expected to know how far a prefilter
+ * reaches back, and asking it to is how the calendar's month parser came to be
+ * guarding a number it could not see.
+ */
+export const MIN_DB_DATE: PlainDate = { year: 1000, month: 1, day: 1 };
+export const MAX_DB_DATE: PlainDate = { year: 9999, month: 12, day: 31 };
+
+/** Pull a bound back inside what the database can store. */
+export function clampToDbDate(date: PlainDate): PlainDate {
+  if (diffPlainDays(MIN_DB_DATE, date) < 0) return MIN_DB_DATE;
+  if (diffPlainDays(date, MAX_DB_DATE) < 0) return MAX_DB_DATE;
+  return date;
+}
+
 /** Whole calendar days from `from` to `to`; negative when `to` is earlier. */
 export function diffPlainDays(from: PlainDate, to: PlainDate): number {
   const a = Date.UTC(from.year, from.month - 1, from.day);

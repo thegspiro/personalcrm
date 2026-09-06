@@ -47,6 +47,9 @@ describe("month keys", () => {
     // very edges of MariaDB's DATE range are out too.
     expect(parsePlainMonth("1000-01")).toBeNull();
     expect(parsePlainMonth("9999-12")).toBeNull();
+    // Accepted by the parser, and safe because the query clamps its own
+    // reach-back: the grid for this month starts in December 1000, and the
+    // prefilters widen it another year past that.
     expect(parsePlainMonth("1001-01")).toEqual({ year: 1001, month: 1 });
     expect(parsePlainMonth("9998-12")).toEqual({ year: 9998, month: 12 });
   });

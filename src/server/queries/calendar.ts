@@ -5,6 +5,7 @@ import {
   type PlainDate,
   addPlainDays,
   calendarDateInTz,
+  clampToDbDate,
   diffPlainDays,
   plainDateFromDb,
   plainDateKey,
@@ -82,6 +83,20 @@ const PER_SOURCE_CAP = 400;
  * deliberately from `getHappeningsDigest`, which learned this the same way.
  */
 const HAPPENING_REACH_BACK_DAYS = 366;
+
+/**
+ * The widened lower bound the two vague-anchor prefilters share.
+ *
+ * Clamped, because the reach-back is this query's own doing and can walk off
+ * the end of what MariaDB's `DATE` holds: the grid for January 1001 already
+ * starts in December 1000, and another 366 days puts the bound in year 999,
+ * which the server rejects outright. The month parser guards the grid, and it
+ * cannot also be expected to know how far a prefilter it never sees reaches
+ * back — so the widening clamps itself.
+ */
+function reachBackFrom(from: PlainDate): Date {
+  return plainDateToDb(clampToDbDate(addPlainDays(from, -HAPPENING_REACH_BACK_DAYS)));
+}
 
 /** Only a real day belongs in a square. */
 function hasKnownDay(precision: DatePrecision): boolean {
@@ -162,7 +177,7 @@ export async function getCalendarEntries(
             {
               recurrence: "NONE",
               date: {
-                gte: plainDateToDb(addPlainDays(window.from, -HAPPENING_REACH_BACK_DAYS)),
+                gte: reachBackFrom(window.from),
                 lte: plainDateToDb(window.to),
               },
             },
@@ -210,13 +225,11 @@ export async function getCalendarEntries(
           // memory below.
           OR: [
             {
-              endDate: {
-                gte: plainDateToDb(addPlainDays(window.from, -HAPPENING_REACH_BACK_DAYS)),
-              },
+              endDate: { gte: reachBackFrom(window.from) },
             },
             {
               endDate: null,
-              date: { gte: plainDateToDb(addPlainDays(window.from, -HAPPENING_REACH_BACK_DAYS)) },
+              date: { gte: reachBackFrom(window.from) },
             },
           ],
           // Owned first, privacy second — not the privacy fragment alone.
@@ -405,6 +418,15 @@ export async function getCalendarEntries(
   }
 
   for (const happening of happeningRows) {
+    // A happening happens once, so an unknown start year is not a placeholder
+    // to project through — it is a start nobody can place. `MONTH_DAY` stores
+    // 1904, and `happeningSpan` takes that literally: paired with a real end
+    // date, "March 10th" through 20 March 2026 is a span of a hundred and
+    // twenty years, and the clamps below would then put a chip on every square
+    // of every grid before it. Precision is chosen per end independently, so
+    // this pair is one the form will make.
+    if (!hasKnownYear(happening.precision)) continue;
+
     const span = happeningSpan(happeningDatesOf(happening));
     // On every day it covers that the window shows, because that is what a trip
     // looks like on a calendar. The span is already widened to cover a vague

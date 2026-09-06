@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_DB_DATE,
+  MIN_DB_DATE,
+  clampToDbDate,
   addPlainDays,
   calendarDateInTz,
   clampPlainDate,
@@ -438,5 +441,21 @@ describe("endOfDayInTz", () => {
   it("covers a whole ordinary day", () => {
     const end = endOfDayInTz(new Date("2026-07-15T18:45:00Z"), NY);
     expect(end.toISOString()).toBe("2026-07-16T03:59:59.999Z");
+  });
+});
+
+describe("the storable date range", () => {
+  it("pulls a bound back inside what MariaDB can hold", () => {
+    // A query that widens a window on its own account can walk off either end,
+    // and the server rejects the statement rather than returning everything.
+    expect(clampToDbDate({ year: 999, month: 12, day: 31 })).toEqual(MIN_DB_DATE);
+    expect(clampToDbDate({ year: 10000, month: 1, day: 1 })).toEqual(MAX_DB_DATE);
+  });
+
+  it("leaves a bound already inside it alone", () => {
+    const inside = { year: 2026, month: 3, day: 4 };
+    expect(clampToDbDate(inside)).toEqual(inside);
+    expect(clampToDbDate(MIN_DB_DATE)).toEqual(MIN_DB_DATE);
+    expect(clampToDbDate(MAX_DB_DATE)).toEqual(MAX_DB_DATE);
   });
 });

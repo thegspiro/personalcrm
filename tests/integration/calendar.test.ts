@@ -264,6 +264,27 @@ describe.skipIf(!hasTestDatabase)("calendar", () => {
     expect(found[0].day).toEqual({ year: 2026, month: 3, day: 9 });
   });
 
+  it("keeps a trip whose start year nobody recorded off the grid entirely", async () => {
+    // MONTH_DAY stores 1904 for the start. Paired with a real end date,
+    // `happeningSpan` reads that literally and calls it a hundred-and-twenty
+    // year span — which, clamped to whatever window is being drawn, put a chip
+    // on every single square of every grid before the end date.
+    const friend = await makeContact("Marcus");
+    await prisma.happening.create({
+      data: {
+        ownerId,
+        contactId: friend.id,
+        title: "Started sometime in March",
+        date: plainDateToDb({ year: 1904, month: 3, day: 10 }),
+        precision: "MONTH_DAY",
+        endDate: plainDateToDb({ year: 2026, month: 3, day: 20 }),
+        endPrecision: "DAY",
+      },
+    });
+
+    expect((await entries()).filter((entry) => entry.kind === "happening")).toHaveLength(0);
+  });
+
   it("keeps a trip whose end is only known to the year", async () => {
     // An end recorded as "in 2026" is stored as 1 January, and only
     // `happeningSpan` widens it to 31 December. Comparing the stored anchor
