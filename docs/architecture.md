@@ -32,7 +32,9 @@ src/
     api/avatars/    authenticated, owner- and privacy-filtered avatar reads
     offline/        what the service worker serves for an uncached page
     manifest.ts     PWA manifest;  icon.tsx / apple-icon.tsx draw them at build
-                    time;  not-found.tsx is the 404
+                    time;  not-found.tsx is the 404 and global-error.tsx the
+                    last-resort boundary. Each route group has its own
+                    error.tsx
   components/       UI, grouped by feature; ui/ is the Radix-backed primitives
   lib/              pure logic — no Prisma, no request context, unit-testable
   server/
@@ -45,6 +47,7 @@ src/
     ai/             optional assisted parsing (off by default — see below)
     db/             Prisma client, app settings
     user/           per-request user + preferences context
+    log.ts          the log sink — levels, scopes, redaction on the way out
     startup.ts      idempotent boot tasks
 prisma/             schema, migrations, seeds
 root/               s6-overlay service definitions baked into the image
@@ -197,6 +200,55 @@ runs two idempotent tasks: re-provisioning taxonomy defaults for every account
 (so a release can add default terms without a manual seed) and purging expired
 sessions. Both log and swallow failures — a container that refuses to start is
 worse than one that missed a housekeeping pass.
+
+## Failure states
+
+Every page is `force-dynamic` and queries Prisma before its first byte, so a
+failure anywhere in that round trip is what the reader gets instead of a page.
+
+| File | Catches |
+| --- | --- |
+| `app/global-error.tsx` | A throw in the root layout or a group layout — including `(app)/layout.tsx`, which loads the user, the privacy state and four queries. It replaces the root layout, so it renders its own `<html>` and depends on nothing but the stylesheet |
+| `app/(app)/error.tsx` | Any signed-in page. The shell renders above the boundary, so the nav survives and "Try again" re-runs the segment |
+| `app/(auth)/error.tsx` | Sign-in, sign-up, first-run setup. Its second action is `/login`, not `/` — `/` is behind the session these routes exist to create |
+| `app/(onboarding)/error.tsx` | The welcome flow. Its second action is `/welcome`, because `/` redirects back there until onboarding completes |
+
+Each boundary shows `error.digest`. In production React replaces the message
+with a generic one and keeps only that hash — and writes the same hash to the
+server log beside the real stack, so it is the only thing that lets a report
+and a log line be matched up.
+
+**There is deliberately no `loading.tsx`.** Adding one at `(app)/` is the
+obvious way to stop a navigation leaving the previous page on screen, and it
+was tried: it made the e2e suite fail 18 ways across both projects, because a
+route-level Suspense fallback loses a link click made shortly after the
+previous navigation settles — the router stays on the old URL. That is a real
+lost navigation, not a test artefact; Playwright waits for the link to be
+visible and stable before clicking. Anything done here has to be measured
+against the full e2e suite, and per-page `<Suspense>` around the slow part of a
+page is the shape to try next, since it does not change router semantics.
+
+## Logging
+
+[`server/log.ts`](../src/server/log.ts) is the sink; the pure half — levels,
+formatting, redaction — is [`lib/logger.ts`](../src/lib/logger.ts) so the rules
+can be asserted directly.
+
+- `createLogger(scope)` produces `debug` / `info` / `warn` / `error`, with
+  `error` taking the thrown value as its second argument. `child()` nests a
+  scope and carries bound fields.
+- `warn` and `error` go to stderr, the rest to stdout, so s6 keeps failures
+  visible when stdout is collected elsewhere.
+- `LOG_LEVEL` and `LOG_FORMAT` are read once per process and both default to
+  what the container printed before — see
+  [configuration.md](configuration.md#environment-variables).
+- **Redaction happens on the way out, not at the call site.** A credential
+  inside a connection string is masked wherever it appears, and any field whose
+  name contains a secret word (`password`, `token`, `apiKey`, `pin`, …) is
+  replaced with `***`. Matching is by whole word, so `passes` and `attempts`
+  survive — but the plain names `key` and `auth` do not, so prefer `setting`
+  and `scheme`. This is why `/api/health` can log the driver error that it
+  refuses to return.
 
 ## Client-side pieces
 

@@ -13,6 +13,8 @@ Everything the app reads from its environment, and everything it keeps on disk.
 | `AUTH_SECRET` | generated | No (container) / Yes (bare) | 32+ random bytes. Signs sessions **and** derives the keys that encrypt a stored AI key and every notification channel credential. Generated into `/config/secrets.json` on first boot. Rotating it signs everyone out, makes a stored AI key undecryptable — treated as no key — and **stops reminder delivery** on any channel with a saved password or token until it is re-entered |
 | `DISABLE_SIGNUP` | `false` | No | Set `true` once your accounts exist. The first-run wizard still works on an empty instance |
 | `TZ` | `Etc/UTC` (image) | No | Container clock. Note the account's own `UserPreference.timezone` is what every reminder and "overdue" calculation actually uses — this only affects logs and the default for a brand-new account |
+| `LOG_LEVEL` | `info` (production) / `debug` | No | `debug`, `info`, `warn`, `error` or `silent`. A value that is none of these falls back to the default rather than refusing to boot |
+| `LOG_FORMAT` | `text` | No | `text` or `json`. `text` keeps the `[scope]` prefix the log has always carried, with a timestamp and level in front of it; `json` writes one object per line for a log shipper. Either way, a password inside a connection string and any field named after a secret are masked before the line is written |
 | `PUID` / `PGID` | `99` / `100` | No | Unraid's `nobody:users`. `/config` is chowned to this |
 | `PORT` / `HOSTNAME` | `3000` / `0.0.0.0` | No | Set in the image |
 | `APP_VERSION` | `dev` | No | Reported by `/api/health` |

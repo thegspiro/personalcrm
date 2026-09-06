@@ -647,7 +647,9 @@ exists to prevent:
 
 `GET /api/health` → `200` with `{ status, database, setup, latencyMs, version,
 uptimeSeconds }`, or `503` with `{ status: "error", database: "down", message }`.
-`cache-control: no-store`, runtime `nodejs`, `force-dynamic`.
+`cache-control: no-store`, runtime `nodejs`, `force-dynamic`. The `503` message
+is a fixed sentence, never the driver's: this endpoint is unauthenticated and
+the driver quotes the connection string. The real error is logged instead.
 
 `setup` is `"complete"` or `"pending"`, so an operator can tell a
 booted-but-unconfigured instance from a working one without opening a browser.
