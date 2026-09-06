@@ -51,13 +51,24 @@ close enough for the suites, but not for the rollback behaviour behind the
 `transact` invariant in [CLAUDE.md](CLAUDE.md), which is 11.6.2 and up. A green
 local run says nothing about that one.
 
-`.claude/skills/` holds four checklists — `db-change`, `privacy-check`,
-`merge-main` and `ship-it` — that an agent loads when it reaches that part of a
-task instead of carrying all of them all the time. They point at this file,
-[AGENTS.md](AGENTS.md), [Agent.md](Agent.md), [CLAUDE.md](CLAUDE.md) and
+`.claude/skills/` holds five checklists — `db-change`, `privacy-check`,
+`merge-main`, `ship-it` and `e2e` — that an agent loads when it reaches that
+part of a task instead of carrying all of them all the time. They point at this
+file, [AGENTS.md](AGENTS.md), [Agent.md](Agent.md), [CLAUDE.md](CLAUDE.md) and
 [`docs/`](docs/) rather than restating them, deliberately: a fifth copy of the
 migration rules would be a fifth copy to drift. If you change a rule, change it
 in its own document — the skills will follow it there.
+
+`e2e` is the one that carries a script rather than only prose:
+`.claude/skills/e2e/run-e2e.sh` builds the standalone bundle, starts it on
+`127.0.0.1:3200` against a throwaway `personalcrm_e2e` database, runs
+Playwright and stops the server again — the CI job's steps, in one command. It
+is as useful from a terminal as from an agent:
+
+```bash
+.claude/skills/e2e/run-e2e.sh                             # the whole suite
+.claude/skills/e2e/run-e2e.sh tests/e2e/privacy.spec.ts   # one file
+```
 
 ## Before pushing
 
@@ -68,7 +79,8 @@ npm run verify
 That is typecheck, lint, the service-worker parse check, the changelog check,
 the unit and integration suites, and a production build — the same set CI runs,
 in one command so that running it is easier than remembering it. For anything
-touching the UI, add `npx playwright test` against a running instance. See
+touching the UI, add `npx playwright test` against a running instance — or
+`.claude/skills/e2e/run-e2e.sh`, which starts one first. See
 [docs/testing.md](docs/testing.md#ci).
 
 **One `tsc` error usually reads as three broken jobs.** `next build`
