@@ -35,10 +35,20 @@ if [ -z "$DB_URL" ]; then
   echo "at a throwaway database — the suite wipes it — and re-run." >&2
   exit 1
 fi
-case "$DB_URL" in
-  *personalcrm|*personalcrm_test)
-    echo "E2E_DATABASE_URL points at ${DB_URL##*/}, which is not a throwaway database." >&2
-    echo "The suite resets it before every run. Refusing." >&2
+# A whitelist, not a blacklist of the two names that came to mind: the database
+# is emptied on every run, and `migrate deploy` below touches it before
+# reset-db.mjs gets to enforce anything. A blacklist let
+# `…/personalcrm?connection_limit=5` through — it ends in neither name — and
+# would have applied pending migrations to the dev database. Same rule
+# reset-db.mjs applies, and the same shape as the `_test` guard in
+# tests/integration/db.ts.
+DB_NAME="${DB_URL##*/}"      # everything after the last slash
+DB_NAME="${DB_NAME%%\?*}"    # minus any query string
+case "$DB_NAME" in
+  *_e2e) ;;
+  *)
+    echo "E2E_DATABASE_URL names \"${DB_NAME}\", which does not end in \"_e2e\"." >&2
+    echo "This script empties that database on every run. Refusing." >&2
     exit 1
     ;;
 esac
@@ -49,7 +59,11 @@ mkdir -p "$WORK_DIR"
 # necessarily ship. playwright.config.ts reads PLAYWRIGHT_CHROMIUM_PATH for
 # exactly this: launching the browser that is already here beats downloading a
 # second copy of one.
-if [ -z "${PLAYWRIGHT_CHROMIUM_PATH:-}" ] && [ -x /opt/pw-browsers/chromium ]; then
+# `${VAR+set}` is empty only when VAR is *unset*, so exporting
+# PLAYWRIGHT_CHROMIUM_PATH= (empty) opts out and lets Playwright use its own
+# managed browser — which is what makes the `npx playwright install chromium`
+# fallback below reachable when the pre-provisioned one will not launch.
+if [ -z "${PLAYWRIGHT_CHROMIUM_PATH+set}" ] && [ -x /opt/pw-browsers/chromium ]; then
   PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium
   export PLAYWRIGHT_CHROMIUM_PATH
 fi
@@ -61,20 +75,51 @@ cleanup() {
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
   fi
-  # The server log is the only place a 500 during a test explains itself.
-  if [ "$status" -ne 0 ] && [ -s "$SERVER_LOG" ]; then
+  # The server log is the only place a 500 during a test explains itself — but
+  # only this run's. Guarded on SERVER_PID because a failure before the server
+  # started would otherwise print the previous run's log as if it were the
+  # explanation.
+  if [ "$status" -ne 0 ] && [ -n "$SERVER_PID" ] && [ -s "$SERVER_LOG" ]; then
     echo "--- $SERVER_LOG (last 40 lines) ---" >&2
     tail -40 "$SERVER_LOG" >&2
   fi
   exit "$status"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+# Their own traps, exiting non-zero: sharing the EXIT handler meant a signal
+# arriving after the last command succeeded entered cleanup with $? = 0 and
+# reported an interrupted run as a passing one.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Nothing else may already own the port. The health poll below cannot tell a
+# stale instance from ours — it would accept the old one's 200, and Playwright
+# would then drive an app on a different database while the specs that write
+# through Prisma use this one.
+if node -e '
+  const socket = require("node:net").connect({ host: process.argv[1], port: Number(process.argv[2]) });
+  socket.on("connect", () => { socket.end(); process.exit(0); });
+  socket.on("error", () => process.exit(1));
+  setTimeout(() => process.exit(1), 2000);
+' "$HOST" "$PORT" 2>/dev/null; then
+  echo "Something is already listening on ${BASE_URL}." >&2
+  echo "Stop it, or set E2E_PORT to a free port. Refusing to test an instance this" >&2
+  echo "script did not start — it would be running against a different database." >&2
+  exit 1
+fi
+
+# The generated client has to match the schema being tested. CI regenerates
+# before it migrates and builds; without this, a run started right after a
+# schema edit builds against a stale client and cannot validate the very change
+# it was invoked for.
+echo "==> Generating the Prisma client"
+npx --yes prisma generate >/dev/null
 
 # Migrations first, so a table added since the last run exists and is swept
 # too; then empty it. `migrate deploy` is the non-destructive command the
 # container runs, and reset-db.mjs truncates rather than dropping — see its
 # header for why.
-echo "==> Preparing ${DB_URL##*/}"
+echo "==> Preparing ${DB_NAME}"
 DATABASE_URL="$DB_URL" npx --yes prisma migrate deploy >/dev/null
 DATABASE_URL="$DB_URL" node .claude/skills/e2e/reset-db.mjs
 
@@ -90,6 +135,7 @@ cp -r public .next/standalone/public
 cp -r .next/static .next/standalone/.next/static
 
 echo "==> Starting the app on ${BASE_URL}"
+: > "$SERVER_LOG"
 PORT="$PORT" \
 HOSTNAME="$HOST" \
 DATABASE_URL="$DB_URL" \
@@ -101,15 +147,18 @@ TZ="${TZ:-America/New_York}" \
   node .next/standalone/server.js >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
+# Liveness is checked before the health response is accepted, not after: if the
+# process died the answer can only have come from something else.
 attempt=0
-until curl -fsS "${BASE_URL}/api/health" >/dev/null 2>&1; do
+while :; do
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "The app exited before it became healthy." >&2
+    exit 1
+  fi
+  curl -fsS "${BASE_URL}/api/health" >/dev/null 2>&1 && break
   attempt=$((attempt + 1))
   if [ "$attempt" -ge 60 ]; then
     echo "The app never became healthy on ${BASE_URL}." >&2
-    exit 1
-  fi
-  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo "The app exited before it became healthy." >&2
     exit 1
   fi
   sleep 2

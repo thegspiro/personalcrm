@@ -47,16 +47,22 @@ try {
   if (tables.length === 0) {
     console.log(`reset-db: ${schema} has no tables yet; nothing to truncate.`);
   } else {
-    await prisma.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS = 0");
-    try {
-      for (const table of tables) {
-        // Identifiers cannot be bound as parameters. Every name here came from
-        // information_schema for this schema, and is backquote-escaped.
-        await prisma.$executeRawUnsafe(`TRUNCATE TABLE \`${table.replace(/`/g, "``")}\``);
-      }
-    } finally {
-      await prisma.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS = 1");
-    }
+    // One $transaction, not a loop of awaits: FOREIGN_KEY_CHECKS is a session
+    // variable, and separate Prisma calls can land on different pooled
+    // connections — so the truncates would run with checks still enabled and
+    // the first referenced table would abort. reset() in
+    // tests/integration/db.ts pins the same sequence to one connection the
+    // same way.
+    //
+    // Identifiers cannot be bound as parameters. Every name here came from
+    // information_schema for this schema, and is backquote-escaped.
+    await prisma.$transaction([
+      prisma.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS = 0"),
+      ...tables.map((table) =>
+        prisma.$executeRawUnsafe(`TRUNCATE TABLE \`${table.replace(/`/g, "``")}\``),
+      ),
+      prisma.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS = 1"),
+    ]);
     console.log(`reset-db: emptied ${tables.length} table(s) in ${schema}.`);
   }
 } finally {
