@@ -113,15 +113,25 @@ export function parseProperty(line: string): Property | null {
   for (const param of rawParams) {
     const equals = param.indexOf("=");
     if (equals === -1) {
-      // vCard 2.1 wrote a bare type, e.g. `TEL;CELL:...`, and plenty of
-      // exporters still do. Reading it as a TYPE keeps those files usable.
-      params.set("TYPE", param.trim().toLowerCase());
+      // vCard 2.1 wrote bare types, e.g. `TEL;CELL;VOICE:...`, and plenty of
+      // exporters still do. They accumulate rather than overwrite: keeping
+      // only the last would read `TEL;CELL;VOICE` as a voice line and file a
+      // mobile number as a landline.
+      const existing = params.get("TYPE");
+      const token = param.trim().toLowerCase();
+      params.set("TYPE", existing ? `${existing} ${token}` : token);
       continue;
     }
-    params.set(
-      param.slice(0, equals).trim().toUpperCase(),
-      param.slice(equals + 1).replace(/^"|"$/g, "").trim().toLowerCase(),
-    );
+    const key = param.slice(0, equals).trim().toUpperCase();
+    const value = param.slice(equals + 1).replace(/^"|"$/g, "").trim().toLowerCase();
+    // A TYPE written the modern way may still carry several comma-separated
+    // values, and it may appear beside bare tokens.
+    if (key === "TYPE") {
+      const existing = params.get("TYPE");
+      params.set("TYPE", existing ? `${existing} ${value}` : value);
+      continue;
+    }
+    params.set(key, value);
   }
 
   // The property name may be prefixed with a group, as in `item1.TEL`.
@@ -151,7 +161,7 @@ export function parseVCardDate(raw: string): { date: PlainDate; precision: DateP
   const full = /^(\d{4})-?(\d{2})-?(\d{2})$/.exec(value);
   if (full) {
     const [year, month, day] = [Number(full[1]), Number(full[2]), Number(full[3])];
-    if (!valid(month, day)) return null;
+    if (!valid(month, day, year)) return null;
     return { date: { year, month, day }, precision: "DAY" };
   }
 
@@ -171,14 +181,33 @@ export function parseVCardDate(raw: string): { date: PlainDate; precision: DateP
   return null;
 }
 
-function valid(month: number, day: number): boolean {
-  return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+/**
+ * Whether this really is a day in that month.
+ *
+ * Checking only 1–31 lets `19900231` through, and it is then normalised into
+ * the twenty-eighth on the way to the database — turning malformed source data
+ * into confident, wrong account data. Refusing it leaves the contact with no
+ * birthday, which is what the file actually said.
+ *
+ * February is allowed 29 whatever the year, because a year-less birthday
+ * carries a placeholder year that says nothing about leap years.
+ */
+function valid(month: number, day: number, year?: number): boolean {
+  if (month < 1 || month > 12 || day < 1) return false;
+  const lengths = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (month === 2 && year !== undefined && day === 29) {
+    const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+    return leap;
+  }
+  return day <= lengths[month - 1]!;
 }
 
 /** Which contact-method slug a vCard property and its TYPE correspond to. */
 function methodSlug(property: string, type: string | undefined): string | null {
   if (property === "EMAIL") return "email";
-  if (property === "URL") return "url";
+  // The shipped term is `website`; `url` resolves to nothing, which would
+  // leave the method untyped and demote it to a NOTE on the way back out.
+  if (property === "URL") return "website";
   if (property === "TEL") {
     if (type?.includes("cell") || type?.includes("mobile")) return "mobile";
     if (type?.includes("work")) return "work-phone";
@@ -187,8 +216,44 @@ function methodSlug(property: string, type: string | undefined): string | null {
   return null;
 }
 
+/**
+ * Undo quoted-printable, which vCard 2.1 exporters use for anything non-ASCII.
+ *
+ * Without this a name arrives as the literal `Jos=C3=A9`. Decoding is done on
+ * bytes and then read as UTF-8, because one accented character is two or three
+ * `=XX` pairs and decoding them one at a time produces mojibake rather than the
+ * name.
+ */
+export function decodeQuotedPrintable(value: string): string {
+  // A trailing `=` is a soft line break; the folding has already been undone,
+  // so it carries no meaning here.
+  const text = value.replace(/=$/, "");
+  const bytes: number[] = [];
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === "=" && /^[0-9a-f]{2}$/i.test(text.slice(i + 1, i + 3))) {
+      bytes.push(parseInt(text.slice(i + 1, i + 3), 16));
+      i += 2;
+      continue;
+    }
+    // Anything not part of an escape is already a literal, and ASCII here.
+    for (const byte of new TextEncoder().encode(text[i]!)) bytes.push(byte);
+  }
+  return new TextDecoder("utf-8").decode(new Uint8Array(bytes));
+}
+
+function decodeIfNeeded(property: Property, raw: string): string {
+  return property.params.get("ENCODING")?.includes("quoted-printable")
+    ? decodeQuotedPrintable(raw)
+    : raw;
+}
+
 function firstValue(text: string): string {
   return unescapeValue(text).trim();
+}
+
+/** Strip the URI scheme a vCard 4.0 telephone or email may be written with. */
+export function stripScheme(value: string): string {
+  return value.replace(/^(tel|mailto):/i, "").trim();
 }
 
 /** Read one card. Returns null when it carries no name to file it under. */
@@ -202,17 +267,18 @@ function cardToContact(lines: readonly string[]): ImportedContact | null {
 
     switch (property.name) {
       case "FN":
-        formattedName = firstValue(property.value);
+        formattedName = firstValue(decodeIfNeeded(property, property.value));
         break;
       case "N": {
         // family;given;additional;prefix;suffix
-        const parts = splitStructured(property.value).map(firstValue);
+        const parts = splitStructured(decodeIfNeeded(property, property.value)).map(firstValue);
         contact.lastName = parts[0] || null;
         contact.firstName = parts[1] || "";
         break;
       }
       case "NICKNAME":
-        contact.nickname = splitStructured(property.value, ",").map(firstValue)[0] || null;
+        contact.nickname =
+          splitStructured(decodeIfNeeded(property, property.value), ",").map(firstValue)[0] || null;
         break;
       case "BDAY": {
         const parsed = parseVCardDate(property.value);
@@ -224,30 +290,35 @@ function cardToContact(lines: readonly string[]): ImportedContact | null {
       }
       case "ORG":
         // Organisation is structured; the first part is the company itself.
-        contact.employer = splitStructured(property.value).map(firstValue)[0] || null;
+        contact.employer =
+          splitStructured(decodeIfNeeded(property, property.value)).map(firstValue)[0] || null;
         break;
       case "TITLE":
-        contact.occupation = firstValue(property.value) || null;
+        contact.occupation = firstValue(decodeIfNeeded(property, property.value)) || null;
         break;
       case "NOTE":
-        contact.summary = firstValue(property.value) || null;
+        contact.summary = firstValue(decodeIfNeeded(property, property.value)) || null;
         break;
       case "EMAIL":
       case "TEL":
       case "URL": {
         const slug = methodSlug(property.name, property.params.get("TYPE"));
-        const value = firstValue(property.value);
+        const value = stripScheme(firstValue(decodeIfNeeded(property, property.value)));
         if (slug && value) {
           contact.methods.push({ slug, value, label: property.params.get("TYPE") ?? null });
         }
         break;
       }
       case "ADR": {
-        const parts = splitStructured(property.value).map(firstValue);
+        const parts = splitStructured(decodeIfNeeded(property, property.value)).map(firstValue);
+        // parts[0] is the post-office box. Skipping it discards a box-only
+        // address entirely and silently drops the box from one that also has a
+        // street, so it joins the second line rather than being thrown away.
+        const extended = [parts[0], parts[1]].filter(Boolean).join(", ");
         const address = {
           label: property.params.get("TYPE") ?? null,
           line1: parts[2] || null,
-          line2: parts[1] || null,
+          line2: extended || null,
           city: parts[3] || null,
           region: parts[4] || null,
           postalCode: parts[5] || null,
@@ -270,6 +341,9 @@ function cardToContact(lines: readonly string[]): ImportedContact | null {
     const cut = formattedName.lastIndexOf(" ");
     if (cut === -1) {
       contact.firstName = formattedName;
+      // `N:Doe;;;;` with `FN:Doe` already put the one name in lastName, and
+      // copying it into firstName as well files the person as "Doe Doe".
+      if (contact.lastName === formattedName) contact.lastName = null;
     } else {
       contact.firstName = formattedName.slice(0, cut);
       contact.lastName = contact.lastName ?? formattedName.slice(cut + 1);

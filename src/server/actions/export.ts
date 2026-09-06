@@ -50,15 +50,20 @@ function csvBirthDate(date: PlainDate, precision: DatePrecision): string | null 
 
 function contactRows(account: AccountExport) {
   return account.contacts.map((contact) => {
-    const method = (slug: string) =>
-      contact.methods.find((m) => m.type?.slug === slug)?.value ?? null;
+    const method = (...slugs: string[]) =>
+      slugs
+        .map((slug) => contact.methods.find((m) => m.type?.slug === slug)?.value)
+        .find((value) => value) ?? null;
     return [
       contact.firstName,
       contact.lastName,
       contact.nickname,
       contact.category?.label ?? null,
       method("email"),
-      method("mobile") ?? method("phone"),
+      // The shipped terms are `mobile`, `home-phone` and `work-phone`; there is
+      // no plain `phone`, so looking for one left the cell empty for anybody
+      // whose only number was a landline.
+      method("mobile", "home-phone", "work-phone"),
       contact.city,
       contact.region,
       contact.country,

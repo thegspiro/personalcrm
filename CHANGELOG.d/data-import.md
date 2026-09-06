@@ -20,6 +20,15 @@
   without a year arrives as a birthday without a year rather than acquiring
   one, which is the same care the export takes on the way out.
 
+  Files from older exporters are read rather than refused. A `.vcf` written
+  by a phone from the 2.1 era stores anything non-ASCII as escape codes and
+  writes a mobile as `TEL;CELL;VOICE`; a name arrives as José rather than
+  `Jos=C3=A9`, and that number is filed as a mobile rather than a landline. A
+  number written `tel:+1555…` loses the prefix, and a post-office box survives
+  on the second address line instead of being dropped. A birthday of the
+  thirty-first of April is left off entirely, because moving it to the
+  thirtieth would put a date in your account that the file never gave.
+
   Imported contacts are never marked private, whatever the file says. Nothing
   arriving from outside has any standing to decide what is hidden inside your
   account.

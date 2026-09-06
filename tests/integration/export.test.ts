@@ -161,6 +161,46 @@ describe.skipIf(!hasTestDatabase)("account export", () => {
     expect(csv.data!.content).not.toContain("1904");
   });
 
+  it("writes a landline into the CSV phone column", async () => {
+    // The CSV looked for a `phone` term, which the app does not ship. Anyone
+    // whose only number was a home or work line exported with an empty cell —
+    // silently, since the file still had a phone column.
+    state.unlocked = true;
+    const contact = await addContact({ firstName: "Landline" });
+    const term = await prisma.taxonomyTerm.create({
+      data: {
+        ownerId: state.ownerId,
+        kind: "CONTACT_METHOD_TYPE",
+        slug: "home-phone",
+        label: "Home phone",
+      },
+    });
+    await prisma.contactMethod.create({
+      data: { contactId: contact.id, typeId: term.id, value: "+15550104477" },
+    });
+
+    const csv = await exportAccount("csv");
+    expect(csv.data!.content).toContain("+15550104477");
+  });
+
+  it("prefers the mobile when a contact has several numbers", async () => {
+    state.unlocked = true;
+    const contact = await addContact({ firstName: "Both" });
+    for (const [slug, label, value] of [
+      ["home-phone", "Home phone", "+15550100000"],
+      ["mobile", "Mobile", "+15550104477"],
+    ] as const) {
+      const term = await prisma.taxonomyTerm.create({
+        data: { ownerId: state.ownerId, kind: "CONTACT_METHOD_TYPE", slug, label },
+      });
+      await prisma.contactMethod.create({ data: { contactId: contact.id, typeId: term.id, value } });
+    }
+
+    const csv = await exportAccount("csv");
+    expect(csv.data!.content).toContain("+15550104477");
+    expect(csv.data!.content).not.toContain("+15550100000");
+  });
+
   it("refuses a format it does not produce", async () => {
     const result = await exportAccount("pdf");
     expect(result.ok).toBe(false);

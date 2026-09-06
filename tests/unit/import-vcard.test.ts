@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  decodeQuotedPrintable,
   parseProperty,
   parseVCard,
   parseVCardDate,
   splitStructured,
+  stripScheme,
   unescapeValue,
   unfold,
 } from "@/lib/import/vcard";
@@ -132,6 +134,29 @@ describe("parseVCardDate", () => {
     expect(parseVCardDate("19901345")).toBeNull();
     expect(parseVCardDate("")).toBeNull();
   });
+
+  it("refuses a day that month does not have, instead of moving it", () => {
+    // Accepting these means the database ends up with a confident 28 February
+    // that the file never said, which is the failure mode DatePrecision exists
+    // to prevent.
+    expect(parseVCardDate("19900231")).toBeNull();
+    expect(parseVCardDate("--0431")).toBeNull();
+    expect(parseVCardDate("19900931")).toBeNull();
+    expect(parseVCardDate("1990-04-00")).toBeNull();
+  });
+
+  it("allows 29 February only in a year that has one", () => {
+    expect(parseVCardDate("19910229")).toBeNull();
+    expect(parseVCardDate("19000229")).toBeNull();
+    expect(parseVCardDate("19920229")!.precision).toBe("DAY");
+    expect(parseVCardDate("20000229")!.precision).toBe("DAY");
+    // Year-less, so the placeholder year says nothing about leap years.
+    expect(parseVCardDate("--0229")!.precision).toBe("MONTH_DAY");
+  });
+
+  it("refuses a month a year-and-month value does not have", () => {
+    expect(parseVCardDate("1990-13")).toBeNull();
+  });
 });
 
 describe("parseVCard", () => {
@@ -203,5 +228,102 @@ describe("parseVCard", () => {
 
   it("survives an unterminated card rather than throwing", () => {
     expect(() => parseVCard("BEGIN:VCARD\r\nFN:Dave")).not.toThrow();
+  });
+});
+
+describe("decodeQuotedPrintable", () => {
+  it("reads a multi-byte character from its several escapes at once", () => {
+    // Decoding =C3 and =A9 separately would produce mojibake, not "é".
+    expect(decodeQuotedPrintable("Jos=C3=A9")).toBe("José");
+  });
+
+  it("leaves unescaped text alone", () => {
+    expect(decodeQuotedPrintable("Dave Kim")).toBe("Dave Kim");
+  });
+
+  it("drops the soft line break an exporter leaves at the end", () => {
+    expect(decodeQuotedPrintable("Kim=")).toBe("Kim");
+  });
+
+  it("keeps an = that does not introduce a hex pair", () => {
+    expect(decodeQuotedPrintable("a=zz")).toBe("a=zz");
+  });
+});
+
+describe("stripScheme", () => {
+  it("removes a tel URI scheme", () => {
+    expect(stripScheme("tel:+15550104477")).toBe("+15550104477");
+  });
+
+  it("removes a mailto scheme whatever its case", () => {
+    expect(stripScheme("MAILTO:dave@example.com")).toBe("dave@example.com");
+  });
+
+  it("leaves a bare number untouched", () => {
+    expect(stripScheme("+15550104477")).toBe("+15550104477");
+  });
+
+  it("does not strip the scheme from a web address", () => {
+    expect(stripScheme("https://example.com")).toBe("https://example.com");
+  });
+});
+
+describe("vCard 2.1 and other exporter quirks", () => {
+  it("keeps every bare type token rather than only the last", () => {
+    // `TEL;CELL;VOICE` is a mobile; reading only VOICE files it as a landline.
+    const property = parseProperty("TEL;CELL;VOICE:+15550104477")!;
+    expect(property.params.get("TYPE")).toBe("cell voice");
+  });
+
+  it("files a CELL;VOICE number as a mobile", () => {
+    const { rows } = parseVCard("BEGIN:VCARD\r\nFN:Dave\r\nTEL;CELL;VOICE:+15550104477\r\nEND:VCARD");
+    expect(rows[0].contact!.methods[0]).toMatchObject({ slug: "mobile" });
+  });
+
+  it("decodes a quoted-printable name instead of importing the escapes", () => {
+    const { rows } = parseVCard(
+      "BEGIN:VCARD\r\nFN;ENCODING=QUOTED-PRINTABLE:Jos=C3=A9 Garc=C3=ADa\r\nEND:VCARD",
+    );
+    expect(rows[0].contact).toMatchObject({ firstName: "José", lastName: "García" });
+  });
+
+  it("strips the tel scheme off an imported number", () => {
+    const { rows } = parseVCard("BEGIN:VCARD\r\nFN:Dave\r\nTEL;TYPE=cell:tel:+15550104477\r\nEND:VCARD");
+    expect(rows[0].contact!.methods[0].value).toBe("+15550104477");
+  });
+
+  it("resolves a URL to the website term, which is the one that exists", () => {
+    const { rows } = parseVCard("BEGIN:VCARD\r\nFN:Dave\r\nURL:https://example.com\r\nEND:VCARD");
+    expect(rows[0].contact!.methods[0]).toMatchObject({
+      slug: "website",
+      value: "https://example.com",
+    });
+  });
+
+  it("keeps the post-office box rather than discarding it", () => {
+    const { rows } = parseVCard(
+      "BEGIN:VCARD\r\nFN:Dave\r\nADR:PO Box 12;Suite 4;123 Main St;Springfield;IL;62704;USA\r\nEND:VCARD",
+    );
+    expect(rows[0].contact!.addresses[0]).toMatchObject({
+      line1: "123 Main St",
+      line2: "PO Box 12, Suite 4",
+    });
+  });
+
+  it("keeps a box-only address, which would otherwise vanish entirely", () => {
+    const { rows } = parseVCard(
+      "BEGIN:VCARD\r\nFN:Dave\r\nADR:PO Box 12;;;Springfield;IL;62704;USA\r\nEND:VCARD",
+    );
+    expect(rows[0].contact!.addresses[0]).toMatchObject({ line2: "PO Box 12", city: "Springfield" });
+  });
+
+  it("does not file a surname-only card as the name twice over", () => {
+    const { rows } = parseVCard("BEGIN:VCARD\r\nFN:Doe\r\nN:Doe;;;;\r\nEND:VCARD");
+    expect(rows[0].contact).toMatchObject({ firstName: "Doe", lastName: null });
+  });
+
+  it("still keeps a surname that differs from the formatted name", () => {
+    const { rows } = parseVCard("BEGIN:VCARD\r\nFN:Prince\r\nN:Nelson;;;;\r\nEND:VCARD");
+    expect(rows[0].contact).toMatchObject({ firstName: "Prince", lastName: "Nelson" });
   });
 });
