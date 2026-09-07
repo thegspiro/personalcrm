@@ -6,6 +6,10 @@ import { z } from "zod";
 import { prisma } from "@/server/db/client";
 import { createAccount, needsFirstRunSetup, signupsAllowed } from "@/server/auth/provision";
 import { checkPasswordStrength, verifyPassword } from "@/server/auth/password";
+import {
+  clientAddressForRecord,
+  clientAddressForThrottle,
+} from "@/server/auth/client-address";
 import { createSession, destroySession } from "@/server/auth/session";
 import { clearLoginAttempts, reserveLoginAttempt } from "@/server/auth/login-throttle";
 
@@ -41,7 +45,10 @@ async function requestMeta() {
   const h = await headers();
   return {
     userAgent: h.get("user-agent"),
-    ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? h.get("x-real-ip"),
+    // Never the leftmost `X-Forwarded-For` entry, which is whatever the caller
+    // wrote. See `@/lib/client-address`.
+    ip: await clientAddressForRecord(),
+    throttleKey: await clientAddressForThrottle(),
   };
 }
 
@@ -60,7 +67,7 @@ export async function loginAction(_prev: FormState, formData: FormData): Promise
   // turn. Attempts against an address with no account are counted on the same
   // terms, because a throttle that fired only for real accounts would answer
   // the question the error message below carefully refuses to.
-  const throttle = reserveLoginAttempt(email, meta.ip);
+  const throttle = reserveLoginAttempt(email, meta.throttleKey);
   if (throttle.blocked) {
     return {
       error: throttle.message ?? "Too many sign-in attempts. Try again shortly.",
@@ -82,8 +89,8 @@ export async function loginAction(_prev: FormState, formData: FormData): Promise
     return { error: "This account has been disabled." };
   }
 
-  clearLoginAttempts(email, meta.ip);
-  await createSession(user.id, meta);
+  clearLoginAttempts(email, meta.throttleKey);
+  await createSession(user.id, { userAgent: meta.userAgent, ip: meta.ip });
   redirect("/");
 }
 

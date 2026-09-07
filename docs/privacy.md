@@ -826,20 +826,50 @@ the other direction. The honest statement is that per-key throttling degrades
 under flood, and that the volume required to make it degrade is itself the
 thing a reverse proxy is for.
 
-It is also worth putting these next to the cheaper bypass below. Resetting a
-counter through eviction costs four or five figures of requests. Varying the
-forwarded client address costs one. Closing the eviction path would not change
-what an attacker who can do the second would actually do.
+It is also worth putting these next to what used to be the cheaper bypass.
+Resetting a counter through eviction costs four or five figures of requests.
+Varying the forwarded client address used to cost one — which is why the
+eviction path was never the thing worth closing first.
 
-**What it does not do.** The client half of the key is whatever the request
-presents as `X-Forwarded-For` (falling back to `X-Real-IP`, then to no address
-at all, which is counted as one group). Nothing verifies it. Someone who can
-vary that header can have as many buckets as they like, and the per-client
-dimension is worth exactly as much as the proxy in front of the app — which, in
-the intended deployment, is one the operator controls and which overwrites the
-header. What the throttle buys unconditionally is that a single client cannot
-grind through a password list. It is not a substitute for a strong password or
-for keeping the instance off the open internet.
+### Which client an attempt is counted against
+
+`X-Forwarded-For` is a list each proxy appends to, so the **leftmost** entry is
+whatever the original caller wrote and every entry right of the last trusted hop
+is equally unverifiable. This app read the leftmost one, which handed the key
+straight to whoever was knocking: one varied header bought a fresh allowance on
+every request.
+
+The entry worth anything is the one your own proxy appended, and its position is
+counted from the right. The app cannot discover how many proxies it sits behind
+— guessing is the mistake — so it is told:
+
+| `TRUSTED_PROXY_HOPS` | Behaviour |
+| --- | --- |
+| `0` (default) | Forwarded headers are ignored outright. A directly-reached install receives none in legitimate traffic, so any that arrive were written by the caller |
+| `1` | The last entry in the chain, which your reverse proxy appended and the caller could not have written. `X-Real-IP` is honoured when a proxy sets that instead |
+| `n` | The nth entry counted from the right |
+
+Spoofed entries are prepended, so padding the header only lengthens the chain
+and never moves the trusted entry. A chain **shorter** than configured is
+treated as untrusted rather than falling back to the leftmost entry: a
+misconfiguration fails closed, because failing open is how the original bug
+would return.
+
+**The trade-off, stated plainly.** With nothing trustworthy to key on — the
+default — every caller shares one counter per email address. That is
+account-level throttling: it genuinely stops password grinding, and it also
+means somebody who can reach your sign-in page can hold one account in backoff
+by attempting it. The window is bounded by the same schedule as any other
+lockout, the message still says nothing about whether the address has an account
+behind it, and setting `TRUSTED_PROXY_HOPS` behind a real proxy restores
+per-client granularity and removes the lockout entirely. The previous behaviour
+had no such lockout and no such protection, which is the trade being made.
+
+**What it still does not do.** Counters live in the process, so they reset when
+the container restarts and each replica keeps its own — single-container is the
+intended shape. Volumetric defence belongs at the proxy. None of this is a
+substitute for a strong password or for keeping the instance off the open
+internet.
 
 ## What the app never does
 

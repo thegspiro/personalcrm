@@ -1,7 +1,6 @@
 "use server";
 
 import { Prisma } from "@prisma/client";
-import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/server/db/client";
@@ -10,6 +9,7 @@ import {
   hashPassword,
   verifyPassword,
 } from "@/server/auth/password";
+import { clientAddressForThrottle } from "@/server/auth/client-address";
 import {
   revokeAllOtherSessions,
   revokeOtherSession,
@@ -110,8 +110,7 @@ async function confirmPassword(
   });
   if (!user) return refused;
 
-  const address = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim()
-    ?? (await headers()).get("x-real-ip");
+  const address = await clientAddressForThrottle();
   const throttle = reserveLoginAttempt(user.email, address);
   if (throttle.blocked) {
     return {
