@@ -79,6 +79,11 @@ and explicitly exclude the current token hash.
 | `previewImport` | Reads a `.vcf` or `.csv` and says what would happen. Writes nothing. Flags rows that match somebody already here, and rows that repeat within the file itself |
 | `commitImport` | Writes the confirmed rows. Parses the file **again** rather than trusting what the browser sends back — the client chooses which rows, never what is in them, so nothing absent from the file can be written by a crafted request. Imported contacts are never private; activity columns are seeded through `contact-activity.ts` rather than written directly |
 | `exportAccount` | Returns the file rather than serving one. There is no route handler for it by design — a download the signed-in browser can assemble itself does not need one, and doing it this way keeps the export out of the service worker's fetch handling. Refuses outright while the privacy lock is closed over an account that holds anything private: every read here filters those rows, so an export built the same way would be a file that claims to be everything and silently is not |
+| `startTwoFactorEnrolment` | Confirms the account password, then returns the key to show once. Refuses while a confirmed factor exists — re-enrolling is disabling and enrolling again, said explicitly |
+| `confirmTwoFactorEnrolment` | Proves the authenticator holds the same secret and returns the recovery codes. Until this succeeds nothing gates a sign-in |
+| `regenerateTwoFactorRecoveryCodes` | Password-confirmed. Replaces every code already issued |
+| `turnOffTwoFactor` | Password-confirmed. Deletes the secret and every recovery code, and ends every other session |
+| `verifyTwoFactorAction` | The second sign-in step. Takes an authenticator code or a recovery code — the person cannot be asked which they hold without telling an attacker which to try. Throttled on the same counter as the password |
 | `regenerateCalendarFeed` | Creates the subscription, or replaces the existing one — the same action, because one account has one address and replacing it *is* how you revoke it. Lock-gated |
 | `disableCalendarFeed` | Deletes the subscription; the address stops resolving immediately. Lock-gated |
 

@@ -21,6 +21,7 @@ import { DashboardSettings } from "@/components/settings/dashboard-settings";
 import { TaxonomySettings } from "@/components/settings/taxonomy-settings";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
+import { TwoFactorSettings } from "@/components/settings/two-factor-settings";
 import { AiSettings } from "@/components/settings/ai-settings";
 import { NotificationSettings } from "@/components/settings/notification-settings";
 import { listChannelsForSettings } from "@/server/queries/notifications";
@@ -37,6 +38,7 @@ import { getGeoStatus } from "@/server/geo/config";
 import { GEO_PROVIDERS } from "@/server/geo/providers";
 import { listTags } from "@/server/queries/tags";
 import { getFeedStatus } from "@/server/services/calendar-feed";
+import { getTwoFactorStatus } from "@/server/auth/two-factor";
 import { TagSettings } from "@/components/settings/tag-settings";
 import { AccountSettings } from "@/components/settings/account-settings";
 import { listSessions } from "@/server/auth/session";
@@ -70,6 +72,7 @@ export default async function SettingsPage() {
     channels,
     tags,
     calendarFeed,
+    twoFactor,
     sessions,
   ] = await Promise.all([
     listTaxonomyAdmin(user.id),
@@ -83,6 +86,7 @@ export default async function SettingsPage() {
     listChannelsForSettings(user.id),
     listTags(user.id),
     getFeedStatus(user.id),
+    getTwoFactorStatus(user.id),
     listSessions(user.id),
   ]);
 
@@ -126,12 +130,20 @@ export default async function SettingsPage() {
 
       <SettingsTabs
         account={
-          <AccountSettings
-            name={user.name}
-            email={user.email}
-            sessions={sessions}
-            timezone={prefs.timezone}
-          />
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
+            <AccountSettings
+              name={user.name}
+              email={user.email}
+              sessions={sessions}
+              timezone={prefs.timezone}
+            />
+            <TwoFactorSettings
+              state={{
+                enabled: twoFactor.enabled,
+                recoveryCodesLeft: twoFactor.recoveryCodesLeft,
+              }}
+            />
+          </div>
         }
         appearance={
           <AppearanceSettings

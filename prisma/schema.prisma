@@ -49,6 +49,8 @@ model User {
 
   sessions             Session[]
   calendarFeed         CalendarFeed?
+  twoFactor            TwoFactor?
+  recoveryCodes        RecoveryCode[]
   preference           UserPreference?
   dashboardLayout      DashboardLayout?
   taxonomyTerms        TaxonomyTerm[]
@@ -113,10 +115,61 @@ model Session {
 /// it does not expire: a subscription that silently stopped updating is worse
 /// than no subscription, and this credential reads a strict subset of what a
 /// locked browser session can already see.
+/// A second factor for signing in: a time-based code from an authenticator app.
+///
+/// Optional, per account, and off until somebody turns it on. Nothing else in
+/// the app changes shape when it is on — it stands in front of session
+/// creation, so a session that exists is one that cleared every factor.
+model TwoFactor {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  /// The base32 shared secret, encrypted at rest under an `AUTH_SECRET`-derived
+  /// key. Anyone holding both this and the password holds the account, so a
+  /// database dump alone must not carry it in the clear.
+  secret String @db.Text
+
+  /// Null between "show me the key" and the first correct code. An unconfirmed
+  /// row never gates a sign-in: enrolling is not finished until the app has
+  /// proved it holds the same secret, or a typo would lock the account out.
+  confirmedAt DateTime?
+
+  /// The most recent time step accepted, so a code cannot be used twice inside
+  /// its own window. A code is valid for the whole step; without this, one
+  /// observed over a shoulder stays usable until it rolls over.
+  lastUsedStep Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// A single-use way back in when the authenticator is gone.
+///
+/// Ten are issued at once and shown once. Stored as a sha256 hash: they are
+/// high-entropy and random, so there is nothing to slow down a guess of, and
+/// the lookup happens on every recovery attempt.
+model RecoveryCode {
+  id       String @id @default(cuid())
+  ownerId  String
+  codeHash String @db.VarChar(191)
+
+  /// Set the moment it is accepted. Spent codes are kept rather than deleted so
+  /// "you have three left" is answerable and a reused one is refused knowingly.
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, codeHash])
+  @@index([ownerId, usedAt])
+}
+
 model CalendarFeed {
-  id        String   @id @default(cuid())
-  ownerId   String   @unique
-  tokenHash String   @unique @db.VarChar(191)
+  id        String @id @default(cuid())
+  ownerId   String @unique
+  tokenHash String @unique @db.VarChar(191)
 
   /// The same token, encrypted at rest under an `AUTH_SECRET`-derived key.
   ///

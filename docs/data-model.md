@@ -147,6 +147,28 @@ token; only its SHA-256 hash is stored.
 
 Indexes: `userId`, `expiresAt` (the expiry sweep at boot).
 
+### `TwoFactor` / `RecoveryCode`
+
+An optional second factor at sign-in: a time-based code (RFC 6238) from an
+authenticator app, with single-use recovery codes behind it.
+
+| `TwoFactor` | Type | Notes |
+| -------------- | ---------- | ----------------------------------------------------------------------------------------------------------------- |
+| `id` | `cuid` | PK |
+| `userId` | `cuid` | → `User`, cascade. **Unique** |
+| `secret` | `text` | The base32 shared secret, encrypted under an `AUTH_SECRET`-derived key |
+| `confirmedAt` | `datetime?` | Null between "show me the key" and the first correct code. **An unconfirmed row gates nothing** — that is what stops a mistyped key locking an account out of an app with no password recovery |
+| `lastUsedStep` | `int?` | The most recent accepted time step, so a code cannot be used twice inside its own 30-second window |
+
+| `RecoveryCode` | Type | Notes |
+| -------------- | -------------- | ------------------------------------------------------------------------------------ |
+| `ownerId` | `cuid` | → `User`, cascade |
+| `codeHash` | `varchar(191)` | sha256. The codes are high-entropy and random, so there is nothing to slow a guess of |
+| `usedAt` | `datetime?` | Spent codes are kept rather than deleted, so "three left" is answerable |
+
+Ten are issued at once, shown once, and replaced wholesale when regenerated.
+Migration: `20260906140000_add_two_factor`.
+
 ### `CalendarFeed`
 
 The read-only iCalendar subscription URL, one per account. Served by

@@ -779,6 +779,50 @@ never sees the request and could not be given one. It carries its own
 stylesheet and picks light or dark from `prefers-color-scheme` instead, which
 needs no script at all.
 
+## Two-factor sign-in
+
+Optional, per account, and off until somebody turns it on. A time-based code
+(RFC 6238) from an authenticator app, with ten single-use recovery codes behind
+it. The algorithm is written out in `src/server/crypto/totp.ts` rather than
+taken from a package — it is a HMAC, a counter and a truncation, the RFC
+publishes vectors to prove it against, and a dependency in the sign-in path is a
+dependency that can be compromised into the sign-in path.
+
+Three properties are load-bearing:
+
+- **A `Session` row still means every factor cleared.** Between a correct
+  password and a correct code there is no session — the pending state is a
+  short-lived encrypted cookie naming the account, and nothing is written to the
+  database. A half-authenticated session would put the check on every page and
+  every action, and the first one that forgot would be a password-only sign-in.
+- **An unconfirmed enrolment gates nothing.** The secret is stored when the key
+  is shown, but sign-in is not affected until a code proves the authenticator
+  holds the same one. Confirming on the first screen is how a mistyped key locks
+  somebody out — permanently, on an app with no password recovery.
+- **A code cannot be replayed inside its own window.** A code is valid for a
+  whole 30-second step, so the step it was accepted for is recorded and refused
+  thereafter. Without that, one seen over a shoulder stays usable until it rolls
+  over.
+
+The second step is throttled on the same counter as the password, because it is
+the other half of the same sign-in and six digits are worth far less than a
+password to guess at speed. The form cannot name an account — only the pending
+cookie can — or it would be a way to spend somebody else's attempts.
+
+Turning it off, replacing the recovery codes, and beginning enrolment all
+re-confirm the account password, on the throttled path. These are the changes
+somebody holding a borrowed unlocked laptop would make. Turning it off also ends
+every other session, so the change takes effect everywhere rather than only on
+the device that made it.
+
+Rotating `AUTH_SECRET` makes the stored secret undecryptable, and verification
+fails closed. The recovery codes are the way back, which is one more reason they
+are worth keeping somewhere that is not the phone.
+
+**No QR code.** The key is shown for manual entry and as an `otpauth://` link,
+which every authenticator accepts. Rendering a QR would mean adding a
+dependency, and this is not a decision to take on somebody's behalf.
+
 ## Sign-in throttling
 
 The privacy lock has always backed off after repeated wrong PINs. The front

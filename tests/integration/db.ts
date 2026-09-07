@@ -60,6 +60,8 @@ const TABLES = [
   "NotificationChannel",
   "DashboardLayout",
   "CalendarFeed",
+  "RecoveryCode",
+  "TwoFactor",
   "TaxonomyTerm",
   "UserPreference",
   "Session",

@@ -12,6 +12,12 @@ import {
 } from "@/server/auth/client-address";
 import { createSession, destroySession } from "@/server/auth/session";
 import { clearLoginAttempts, reserveLoginAttempt } from "@/server/auth/login-throttle";
+import { requiresTwoFactor, verifySecondFactor } from "@/server/auth/two-factor";
+import {
+  clearPendingTwoFactor,
+  readPendingTwoFactor,
+  startPendingTwoFactor,
+} from "@/server/auth/pending-two-factor";
 
 export interface FormState {
   error?: string;
@@ -90,7 +96,73 @@ export async function loginAction(_prev: FormState, formData: FormData): Promise
   }
 
   clearLoginAttempts(email, meta.throttleKey);
+
+  // The password was right, so the guess budget is spent and reset either way.
+  // What happens next depends on whether a second factor stands in front of the
+  // session: nothing is created here if one does, because a Session row is the
+  // app's statement that every factor has been cleared, and weakening that into
+  // "created but not yet allowed to do anything" would put the check on every
+  // page and action instead of on this one path.
+  if (await requiresTwoFactor(user.id)) {
+    await startPendingTwoFactor({
+      userId: user.id,
+      userAgent: meta.userAgent,
+      ip: meta.ip,
+    });
+    redirect("/login/verify");
+  }
+
   await createSession(user.id, { userAgent: meta.userAgent, ip: meta.ip });
+  redirect("/");
+}
+
+/**
+ * The second step: an authenticator code, or a recovery code.
+ *
+ * Throttled on the same counter as the password, because this is the other
+ * half of the same sign-in and a six-digit code is worth far less than a
+ * password to guess at unlimited speed. The pending cookie is the only thing
+ * that says who is being signed in — the form cannot name an account, or this
+ * would be a way to spend somebody else's attempts.
+ */
+export async function verifyTwoFactorAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const pending = await readPendingTwoFactor();
+  if (!pending) {
+    return { error: "That took too long. Sign in again." };
+  }
+
+  const submitted = String(formData.get("code") ?? "").trim();
+  if (!submitted) return { fieldErrors: { code: "Enter the code from your authenticator." } };
+
+  const user = await prisma.user.findUnique({
+    where: { id: pending.userId },
+    select: { id: true, email: true, isActive: true },
+  });
+  if (!user || !user.isActive) {
+    await clearPendingTwoFactor();
+    return { error: "Sign in again." };
+  }
+
+  const address = await clientAddressForThrottle();
+  const throttle = reserveLoginAttempt(user.email, address);
+  if (throttle.blocked) {
+    return {
+      error: throttle.message ?? "Too many attempts. Try again shortly.",
+      retryAfterSeconds: throttle.retryAfterSeconds,
+    };
+  }
+
+  const outcome = await verifySecondFactor(user.id, submitted);
+  if (outcome !== "ok") {
+    return { fieldErrors: { code: "That code is not right." } };
+  }
+
+  clearLoginAttempts(user.email, address);
+  await clearPendingTwoFactor();
+  await createSession(user.id, { userAgent: pending.userAgent, ip: pending.ip });
   redirect("/");
 }
 

@@ -41,7 +41,8 @@ const TAG_BYTES = 16;
 export type SecretPurpose =
   | "personalcrm-api-key"
   | "personalcrm-channel-secret"
-  | "personalcrm-calendar-feed";
+  | "personalcrm-calendar-feed"
+  | "personalcrm-two-factor";
 
 function secret(): string {
   const value = process.env.AUTH_SECRET;
