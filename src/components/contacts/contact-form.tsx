@@ -94,7 +94,7 @@ export function ContactForm({
       {contact ? <input type="hidden" name="id" value={contact.id} /> : null}
 
       {state.error ? (
-        <p className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        <p className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive-11">
           <AlertCircle className="mt-px size-3.5 shrink-0" />
           {state.error}
         </p>

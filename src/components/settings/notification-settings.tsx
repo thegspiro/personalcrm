@@ -120,7 +120,7 @@ export function NotificationSettings({
           included — whether or not you happen to be unlocked when the check runs.
         </p>
         {channels.length > 0 && channels.every((channel) => !channel.isEnabled) ? (
-          <p className="mt-2 text-xs font-medium text-[var(--warning)]">
+          <p className="mt-2 text-xs font-medium text-[var(--warning-11)]">
             Every channel is switched off, so nothing is being sent.
           </p>
         ) : null}

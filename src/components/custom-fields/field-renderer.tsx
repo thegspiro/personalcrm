@@ -145,7 +145,7 @@ function CustomFieldInput({
           {error ? (
             <p className="text-xs text-destructive">{error}</p>
           ) : definition.description ? (
-            <p className="text-xs text-muted-foreground/80">{definition.description}</p>
+            <p className="text-xs text-muted-foreground">{definition.description}</p>
           ) : null}
         </div>
       );
@@ -194,7 +194,7 @@ function CustomFieldInput({
           {error ? (
             <p className="text-xs text-destructive">{error}</p>
           ) : definition.description ? (
-            <p className="text-xs text-muted-foreground/80">{definition.description}</p>
+            <p className="text-xs text-muted-foreground">{definition.description}</p>
           ) : null}
         </div>
       );

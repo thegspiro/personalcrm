@@ -750,10 +750,10 @@ export interface FlagItem {
 const FLAG_META: Record<string, { label: string; className: string; icon: React.ReactNode }> = {
   GREEN: {
     label: "Green flags",
-    className: "text-[var(--success)]",
+    className: "text-[var(--success-11)]",
     icon: <ThumbsUp className="size-3.5" />,
   },
-  RED: { label: "Red flags", className: "text-[var(--warning)]", icon: <Flag className="size-3.5" /> },
+  RED: { label: "Red flags", className: "text-[var(--warning-11)]", icon: <Flag className="size-3.5" /> },
   DEALBREAKER: {
     label: "Dealbreakers",
     className: "text-destructive",

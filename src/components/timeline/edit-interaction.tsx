@@ -136,7 +136,7 @@ export function EditInteractionSheet({
 
             <SheetBody className="grid gap-3.5">
               {error ? (
-                <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive-11">
                   {error}
                 </p>
               ) : null}

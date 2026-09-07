@@ -74,7 +74,7 @@ export function OverdueWidget({ contacts }: { contacts: OverdueContact[] }) {
                 "shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium",
                 upcoming
                   ? "bg-accent/12 text-accent-11"
-                  : "bg-destructive/12 text-destructive",
+                  : "bg-destructive/12 text-destructive-11",
               )}
             >
               {dueLabel(contact.daysUntilDue)}
@@ -457,7 +457,7 @@ export function HappeningsWidget({ digest }: { digest: HappeningDigest }) {
         <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
           {ahead.length > 0 ? (
             <div className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
-              <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+              <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 Coming up
               </p>
               <ul className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
@@ -487,7 +487,7 @@ export function HappeningsWidget({ digest }: { digest: HappeningDigest }) {
 
           {justEnded.length > 0 ? (
             <div className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
-              <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+              <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 Ask how it went
               </p>
               <ul className="grid grid-cols-[minmax(0,1fr)] gap-1.5">

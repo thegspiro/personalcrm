@@ -202,8 +202,10 @@ a `main` that already carried the instruction.
   claimed here — is that the directory can simply be deleted: the settings page
   and its action import the provider table statically, so removing one is a
   build change.
-- **Mobile-first is tested, not assumed.** `tests/e2e/layout.spec.ts` asserts no
-  route scrolls horizontally. `truncate` only shrinks when *every* flex and grid
+- **Mobile-first and accessible are tested, not assumed.**
+  `tests/e2e/layout.spec.ts` asserts no route scrolls horizontally, and
+  `tests/e2e/a11y.spec.ts` runs axe over every main route — serious and critical
+  findings fail, lower ones are printed. `truncate` only shrinks when *every* flex and grid
   ancestor carries `min-w-0` (both default to `min-width: auto`); overflow on a
   phone pushes buttons off-screen where they look tappable and are not. Input
   font size has a 16px floor outside `@layer` so no utility can defeat it —

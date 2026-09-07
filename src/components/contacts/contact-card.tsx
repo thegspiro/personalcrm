@@ -8,8 +8,8 @@ import { cadenceStatus, daysUntilTouch } from "@/lib/cadence";
 import type { ContactListItem } from "@/server/queries/contacts";
 
 const STATUS_STYLES: Record<string, string> = {
-  overdue: "bg-destructive/12 text-destructive",
-  "due-soon": "bg-[color-mix(in_oklab,var(--warning)_18%,transparent)] text-[var(--warning)]",
+  overdue: "bg-destructive/12 text-destructive-11",
+  "due-soon": "bg-[color-mix(in_oklab,var(--warning)_18%,transparent)] text-[var(--warning-11)]",
   ok: "bg-muted text-muted-foreground",
   none: "",
 };

@@ -30,8 +30,8 @@ import { markAsRomantic } from "@/server/actions/dating";
 import { setPrivate } from "@/server/actions/privacy";
 
 const STATUS_STYLES: Record<string, string> = {
-  overdue: "bg-destructive/12 text-destructive",
-  "due-soon": "bg-[color-mix(in_oklab,var(--warning)_18%,transparent)] text-[var(--warning)]",
+  overdue: "bg-destructive/12 text-destructive-11",
+  "due-soon": "bg-[color-mix(in_oklab,var(--warning)_18%,transparent)] text-[var(--warning-11)]",
   ok: "bg-muted text-muted-foreground",
 };
 
@@ -183,7 +183,7 @@ export function ContactHeader({
               </span>
             ) : null}
             {allergySummary ? (
-              <a href="#allergies" className="rounded-full bg-destructive/12 px-2 py-0.5 text-[11px] font-medium text-destructive">
+              <a href="#allergies" className="rounded-full bg-destructive/12 px-2 py-0.5 text-[11px] font-medium text-destructive-11">
                 Allergies: {allergySummary}
               </a>
             ) : null}

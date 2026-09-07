@@ -23,7 +23,7 @@ function Row({ done, children }: { done: boolean; children: React.ReactNode }) {
       {done ? (
         <Check className="mt-0.5 size-4 shrink-0 text-accent-11" />
       ) : (
-        <Circle className="mt-0.5 size-4 shrink-0 text-muted-foreground/50" />
+        <Circle className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
       )}
       <span className={done ? "text-muted-foreground line-through" : undefined}>{children}</span>
     </li>

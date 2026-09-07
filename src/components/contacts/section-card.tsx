@@ -183,7 +183,7 @@ export function SectionRow({
                 if (!deleteConfirm || window.confirm(deleteConfirm)) onDelete();
               }}
               aria-label={deleteLabel}
-              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive-11"
             >
               <span aria-hidden>×</span>
             </button>

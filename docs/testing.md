@@ -174,6 +174,21 @@ container. Horizontal overflow on a phone pushes buttons off-screen where they
 look tappable and are not, and it has recurred often enough to earn a permanent
 test.
 
+`a11y.spec.ts` runs axe over every main route, the sign-in page, the person
+form and the two-factor screens, against WCAG 2.1 A and AA.
+
+**Serious and critical fail the run; moderate and minor are printed.** Those two
+tiers are what stops somebody using the app at all. The lower ones are often
+arguable, and a suite that fails on an arguable finding is one people learn to
+skip — so they are reported rather than hidden, and acting on them stays a
+decision somebody makes.
+
+A contrast failure cannot be fixed from a selector, so the assertion carries
+axe's own measurement — the two colours, the ratio and the font size. That is
+what turned "the calendar is wrong somewhere" into "4.36 against `#e8eaec`, a
+background no token predicts", which was a translucent cell blending with the
+grid lines behind it rather than anything in the palette.
+
 `edit-interaction.spec.ts` walks the loop quick add opens: type a line with a
 possessive in it, check the person survives into the title, then correct that
 title from the timeline. It is the only spec that exercises `updateInteraction`
@@ -313,6 +328,6 @@ Everything else, `react-hooks/rules-of-hooks` included, fails the build.
 | A new table | An entry in the integration `TABLES` list |
 | An `isPrivate` column | A line in `countPrivateRows`, plus privacy coverage |
 | A new write path | Integration coverage that the denormalised activity fields survive backdating and deletion |
-| A new page or widget | It must appear in `layout.spec.ts`'s route sweep |
+| A new page or widget | It must appear in `layout.spec.ts`'s route sweep, and in `a11y.spec.ts`'s |
 | Anything user-visible | An entry in [`CHANGELOG.d/`](../CHANGELOG.d/README.md) |
 | A merge of `main` into the branch | The whole set again, on the merged tree — see [CONTRIBUTING.md](../CONTRIBUTING.md#merging-main-into-a-long-lived-branch) |
