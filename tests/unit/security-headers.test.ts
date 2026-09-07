@@ -11,9 +11,17 @@ describe("security response headers", () => {
         { key: "X-Frame-Options", value: "DENY" },
         { key: "X-Content-Type-Options", value: "nosniff" },
         { key: "Referrer-Policy", value: "no-referrer" },
-        expect.objectContaining({ key: "Content-Security-Policy" }),
         expect.objectContaining({ key: "Permissions-Policy" }),
       ]),
+    );
+
+    // Deliberately absent here. The policy needs a per-request nonce, which a
+    // build-time header cannot carry, so middleware owns it — and must own it
+    // alone: two CSP headers on one response are enforced as their
+    // intersection, so leaving a second one here would quietly narrow the
+    // policy to something nobody wrote.
+    expect(global?.headers.map((header) => header.key)).not.toContain(
+      "Content-Security-Policy",
     );
 
     // Anything the closed lock is meant to hide must not survive in a browser

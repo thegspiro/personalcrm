@@ -743,6 +743,42 @@ the one kind that would grow without bound. The window is a rolling thirteen
 months forward and one month back, re-fetched on the client's own schedule,
 rather than an endless recurrence rule.
 
+## Content-Security-Policy
+
+The policy used to name only `frame-ancestors`, `base-uri` and `form-action` —
+all real, none of them a mitigation for script injection. There is now a
+`script-src`, which is the point: a `<script>` an attacker manages to inject has
+no way to acquire the nonce, so it never runs.
+
+The nonce is fresh per request, which a header baked into the build at compile
+time cannot be — so `src/middleware.ts` exists, and is the **only** place that
+sets a CSP. Two CSP headers on one response are not "the later wins": a browser
+enforces both and the effective policy is their intersection, which is a very
+quiet way to end up with something nobody wrote.
+
+| Directive | Why |
+| --- | --- |
+| `script-src 'nonce-…' 'strict-dynamic' 'self'` | `strict-dynamic` lets the bundles Next loads from a nonced bootstrap run, and makes a conforming browser ignore the host allow-list, so writing a file under our own origin does not make it a script source. `'self'` is there only for browsers that do not honour `strict-dynamic` |
+| `style-src 'self' 'unsafe-inline'` | Next and Tailwind both emit inline style and no nonce path reaches all of it. A known trade: style injection is defacement and an exfiltration aid, not code execution |
+| `img-src 'self' data: blob:` | `data:` for the icons drawn at build time, `blob:` for an avatar being previewed before upload |
+| `connect-src 'self'` | Nothing in the browser talks to a third party. The optional AI and address-lookup calls are made by the server, which no browser policy binds |
+| `default-src`, `object-src`, `frame-src` | Closed by default, and `'none'` where nothing legitimate needs them |
+
+`'unsafe-eval'` appears in development builds only, where fast refresh compiles
+in the browser. The container ships a production build and never carries it.
+
+Enforcing is the default, because a report-only policy mitigates nothing and in
+practice is never switched over. `CSP_REPORT_ONLY=true` downgrades it for an
+operator whose deployment trips the policy and who needs a way back that is not
+waiting for a release.
+
+The app has one inline script of its own — the few lines that apply your accent
+and density before first paint — and it carries the nonce. The crash screen
+(`global-error.tsx`) deliberately has none: it is a client component, so it
+never sees the request and could not be given one. It carries its own
+stylesheet and picks light or dark from `prefers-color-scheme` instead, which
+needs no script at all.
+
 ## Sign-in throttling
 
 The privacy lock has always backed off after repeated wrong PINs. The front

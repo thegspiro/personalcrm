@@ -91,6 +91,8 @@ src/app/(app)|(auth)|(onboarding)
                        routes;  src/app/api/ has three route handlers: health,
                        the authenticated avatar read, and the token-addressed
                        calendar subscription
+src/middleware.ts      the only middleware — a per-request CSP nonce, and the
+                       sole owner of the Content-Security-Policy header
 ```
 
 There is no REST API and no client data store. Pages are server components

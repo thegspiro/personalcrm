@@ -34,6 +34,7 @@ src/
     api/avatars/    authenticated, owner- and privacy-filtered avatar reads
     api/calendar/   token-addressed .ics subscription; no session, so it reads
                     under a permanently closed privacy lock
+  middleware.ts     the only middleware: a per-request CSP nonce. Edge runtime
     offline/        what the service worker serves for an uncached page
     manifest.ts     PWA manifest;  icon.tsx / apple-icon.tsx draw them at build
                     time;  not-found.tsx is the 404 and global-error.tsx the
