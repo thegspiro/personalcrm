@@ -177,6 +177,15 @@ test.
 `a11y.spec.ts` runs axe over every main route, the sign-in page, the person
 form and the two-factor screens, against WCAG 2.1 A and AA.
 
+It measures **what renders**, which is both its value and its limit. It caught
+a calendar cell failing against a background no token predicts — a translucent
+tint blending with the grid lines behind it — which no amount of reading the
+palette would have found. It equally cannot see a colour no spec happens to
+put on screen, and the eighteen-colour term palette is mostly that.
+`tests/unit/contrast.test.ts` closes the other half: every palette entry in
+both themes, and the semantic tokens on tints of themselves, computed rather
+than rendered. The two are complementary and neither replaces the other.
+
 **Serious and critical fail the run; moderate and minor are printed.** Those two
 tiers are what stops somebody using the app at all. The lower ones are often
 arguable, and a suite that fails on an arguable finding is one people learn to

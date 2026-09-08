@@ -114,16 +114,18 @@ export function cadenceMessage(days: number | null): string | null {
 }
 
 /**
- * Tailwind classes for a taxonomy term's colour, in both themes.
+ * A taxonomy term's colour, as the classes that render it in both themes.
  *
- * The light-mode text is `-700` throughout rather than `-600` for some hues:
- * on a 12% tint of the same hue, `-600` does not clear 4.5:1 for text this
- * small, which `tests/e2e/a11y.spec.ts` fails on. The palette already used
- * `-700` for the lighter hues, so this makes the rest agree rather than
- * inventing a shade.
+ * Exported so `tests/unit/contrast.test.ts` can check every entry rather than
+ * only the handful that happen to be on screen during the end-to-end sweep.
+ * That sweep measures what renders; this table is the whole palette, and a
+ * colour nobody has used yet is exactly the one nobody has looked at.
+ *
+ * The light text is `-700` (and `-800` for green, which needs the extra step)
+ * rather than `-600`: on a 12% tint of the same hue, `-600` does not clear
+ * 4.5:1 for text this small.
  */
-export function termColorClasses(color: string | null | undefined): string {
-  const palette: Record<string, string> = {
+export const TERM_COLOR_CLASSES: Record<string, string> = {
     slate: "bg-slate-500/12 text-slate-700 dark:text-slate-300",
     red: "bg-red-500/12 text-red-700 dark:text-red-400",
     orange: "bg-orange-500/12 text-orange-700 dark:text-orange-400",
@@ -143,5 +145,9 @@ export function termColorClasses(color: string | null | undefined): string {
     pink: "bg-pink-500/12 text-pink-700 dark:text-pink-400",
     rose: "bg-rose-500/12 text-rose-700 dark:text-rose-400",
   };
-  return palette[color ?? ""] ?? "bg-muted text-muted-foreground";
+
+/** Tailwind classes for a taxonomy term's colour, in both themes. */
+export function termColorClasses(color: string | null | undefined): string {
+  return TERM_COLOR_CLASSES[color ?? ""] ?? "bg-muted text-muted-foreground";
 }
+
