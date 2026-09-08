@@ -7,6 +7,7 @@ import { mapLinkFor } from "@/lib/locations";
 import {
   contactPrivacyWhere,
   interactionPrivacyWhere,
+  lifeEventPrivacyWhere,
   privacyScope,
   viaOptionalContactPrivacyWhere,
   type PrivacyScope,
@@ -25,6 +26,13 @@ import {
  * Note the `AND`. `interactionPrivacyWhere` also keys on `participants`, so
  * spreading it beside another filter on the same key silently replaces that
  * filter — the bug that made every place look like one contact's in 6aeaa52.
+ *
+ * The three clauses go inside the one `AND` member's `OR`, never as a second
+ * `AND` member: a place is visible through *any* of the three, and a second
+ * member would demand all of them. `lifeEventPrivacyWhere` is `{}` when
+ * unlocked, which is why it sits inside `some` — an empty member of an `OR`
+ * matches nothing rather than everything, the inversion documented on
+ * `viaOptionalContactPrivacyWhere`.
  */
 export function locationVisibleWhere(
   ownerId: string,
@@ -43,6 +51,11 @@ export function locationVisibleWhere(
           {
             plans: {
               some: { ownerId, ...viaOptionalContactPrivacyWhere(scope) },
+            },
+          },
+          {
+            lifeEvents: {
+              some: { ownerId, ...lifeEventPrivacyWhere(scope) },
             },
           },
         ],
@@ -150,11 +163,19 @@ export async function listLocations(ownerId: string, search?: string) {
         where: { ownerId, ...viaOptionalContactPrivacyWhere(scope) },
         select: { id: true, status: true },
       },
+      // Counted so a place reached only through a life event does not read
+      // "0 visits · 0 people" — it has a reason to exist, and the card should
+      // say what it is.
+      lifeEvents: {
+        where: { ownerId, ...lifeEventPrivacyWhere(scope) },
+        select: { id: true },
+      },
     },
     orderBy: { name: "asc" },
   });
   return rows.map((row) => ({
     ...row,
+    lifeEventCount: row.lifeEvents.length,
     visitCount: row.interactions.length,
     peopleCount: new Set(
       row.interactions.flatMap((item) =>
@@ -397,15 +418,22 @@ export async function getLocation(ownerId: string, id: string) {
   const scope = await privacyScope();
   const visibleInteraction = { ownerId, ...interactionPrivacyWhere(scope) };
   const visiblePlan = { ownerId, ...viaOptionalContactPrivacyWhere(scope) };
+  const visibleLifeEvent = { ownerId, ...lifeEventPrivacyWhere(scope) };
   return prisma.location.findFirst({
     // Deliberately not filtered on `isArchived`: an archived place keeps its
     // page and its history, it just leaves the directory.
+    //
+    // This `OR` hand-copies `locationVisibleWhere`'s, because the include below
+    // needs the same three predicates by name. Both must gain a clause
+    // together, or a place known only through a life event 404s from its own
+    // page while the directory happily links to it.
     where: {
       id,
       ownerId,
       OR: [
         { interactions: { some: visibleInteraction } },
         { plans: { some: visiblePlan } },
+        { lifeEvents: { some: visibleLifeEvent } },
       ],
     },
     include: {

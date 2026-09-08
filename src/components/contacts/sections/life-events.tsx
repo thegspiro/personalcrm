@@ -12,6 +12,7 @@ import { parsePlainDate } from "@/lib/dates";
 import { LifeEventFields, type LifeEventValue } from "../detail-field-groups";
 import { createLifeEvent, deleteLifeEvent, updateLifeEvent } from "@/server/actions/details";
 import { ContactPicker, type PickerContact } from "@/components/form/contact-picker";
+import type { PlaceSuggestion } from "@/components/form/place-picker";
 import Link from "next/link";
 
 export interface LifeEventItem extends LifeEventValue {
@@ -42,6 +43,8 @@ function LifeEventForm({
   event,
   contactId,
   contacts,
+  places,
+  placesTruncated,
   children,
 }: {
   action: (form: FormData) => void | Promise<void>;
@@ -50,6 +53,8 @@ function LifeEventForm({
   event?: LifeEventItem;
   contactId?: string;
   contacts: PickerContact[];
+  places: PlaceSuggestion[];
+  placesTruncated: boolean;
   children: React.ReactNode;
 }) {
   const [endDateError, setEndDateError] = React.useState<string>();
@@ -75,7 +80,7 @@ function LifeEventForm({
     <form action={action} onSubmit={validateRange} className="grid gap-2.5">
       {contactId ? <input type="hidden" name="contactId" value={contactId} /> : null}
       {event ? <input type="hidden" name="id" value={event.id} /> : null}
-      <LifeEventFields formId={formId} types={types} event={event} endDateError={endDateError} />
+      <LifeEventFields formId={formId} types={types} event={event} endDateError={endDateError} places={places} placesTruncated={placesTruncated} />
       <ContactPicker
         name="contactIds"
         label="Who shares this moment?"
@@ -92,11 +97,16 @@ export function LifeEventsSection({
   events,
   types,
   contacts,
+  places = [],
+  placesTruncated = false,
 }: {
   contactId: string;
   events: LifeEventItem[];
   types: TermOption[];
   contacts: PickerContact[];
+  /** Places you have already been, for the "Where" box. */
+  places?: PlaceSuggestion[];
+  placesTruncated?: boolean;
 }) {
   const run = useAction();
   const add = useAddAction();
@@ -116,6 +126,8 @@ export function LifeEventsSection({
           types={types}
           contactId={contactId}
           contacts={contacts}
+          places={places}
+          placesTruncated={placesTruncated}
         >
           <SubmitButton size="sm">Add</SubmitButton>
         </LifeEventForm>
@@ -143,6 +155,8 @@ export function LifeEventsSection({
                 event={event}
                 contactId={contactId}
                 contacts={contacts}
+                places={places}
+                placesTruncated={placesTruncated}
               >
                 <SubmitButton size="sm">Save</SubmitButton>
               </LifeEventForm>

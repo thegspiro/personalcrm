@@ -70,7 +70,7 @@ export interface TimelineEntry {
   href: string;
   editable?:
     | { kind: "important-date"; recurrence: "NONE" | "ANNUAL" | "MONTHLY"; typeId: string | null; notes: string | null; reminderDaysBefore: number[] | null }
-    | { kind: "life-event"; typeId: string | null; description: string | null; endDate: PlainDate | null; endPrecision: DatePrecision | null; isMilestone: boolean }
+    | { kind: "life-event"; typeId: string | null; description: string | null; endDate: PlainDate | null; endPrecision: DatePrecision | null; isMilestone: boolean; location: string | null }
     | { kind: "contact-birthday"; contactId: string };
 }
 
@@ -411,7 +411,7 @@ function lifeEventEntry(row: LifeEventRow): TimelineEntry {
     href: `/people/${row.contactId}#life-event-${row.id}`,
     editable: { kind: "life-event", typeId: row.typeId, description: row.description,
       endDate: row.endDate ? plainDateFromDb(row.endDate) : null, endPrecision: row.endPrecision,
-      isMilestone: row.isMilestone },
+      isMilestone: row.isMilestone, location: row.location },
   };
 }
 

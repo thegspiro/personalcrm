@@ -157,15 +157,29 @@ test("a life event can be moved to a year it is only known to", async ({ page })
   // outside the section, so it is addressed from the page.
   await events.getByLabel("When").click();
   await page.getByRole("button", { name: "Last year" }).click();
+  await events.getByLabel("Where").fill("Cedar Door");
   await events.getByRole("button", { name: "Add", exact: true }).click();
   await expect(events.getByText("Moved to Austin")).toBeVisible();
 
   await events.getByRole("button", { name: "Edit life event" }).first().click();
   await expect(events.getByLabel("What happened?")).toHaveValue("Moved to Austin");
+  // The place is on the edit form too, carrying its saved value. It has to be:
+  // `updateLifeEvent` writes every field it is given, so a box on the add form
+  // and missing here would be cleared by every correction.
+  await expect(events.getByLabel("Where")).toHaveValue("Cedar Door");
   await events.getByLabel("What happened?").fill("Moved to Austin for the job");
   await events.getByRole("button", { name: "Save", exact: true }).click();
 
   await expect(events.getByText("Moved to Austin for the job")).toBeVisible();
+
+  // Editing only the title left the place alone, and the place is reachable in
+  // its own right even though nothing was ever logged as happening there.
+  await events.getByRole("button", { name: "Edit life event" }).first().click();
+  await expect(events.getByLabel("Where")).toHaveValue("Cedar Door");
+  await events.getByRole("button", { name: "Save", exact: true }).click();
+
+  await page.goto("/locations?search=Cedar%20Door");
+  await expect(page.getByRole("link", { name: /Cedar Door/ })).toBeVisible();
 });
 
 test("a debt recorded the wrong way round can be turned round", async ({ page }) => {

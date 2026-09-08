@@ -212,6 +212,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     endDate: event.endDate ? plainDateFromDb(event.endDate) : null,
     endPrecision: event.endPrecision,
     isMilestone: event.isMilestone,
+    location: event.location,
     participantIds: event.participants.map((participant) => participant.contactId),
     participants: event.participants.map((participant) => ({
       id: participant.contact.id,
@@ -611,6 +612,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           events={lifeEvents}
           types={terms.LIFE_EVENT_TYPE}
           contacts={contactOptions}
+          places={placeSuggestions.items}
+          placesTruncated={placeSuggestions.truncated}
         />
 
         <HappeningsSection
