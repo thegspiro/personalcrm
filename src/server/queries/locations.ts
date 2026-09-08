@@ -2,6 +2,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import { pointOf, withDistance, type Point, type Unit } from "@/lib/geo";
+import { applyCap, type CappedList } from "@/lib/list-cap";
 import { mapLinkFor } from "@/lib/locations";
 import {
   interactionPrivacyWhere,
@@ -203,6 +204,126 @@ export async function listLocationOptions(ownerId: string) {
     // for the places one person has actually been is a small read.
     orderBy: { name: "asc" },
   });
+}
+
+/** How many places a picker offers before it admits it is not showing them all. */
+export const PLACE_SUGGESTIONS_CAP = 200;
+
+export interface PlaceSuggestion {
+  id: string;
+  name: string;
+  /** "visited 4 times · last May 2026", or null somewhere only ever planned. */
+  subtitle: string | null;
+  address: string | null;
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  latitude: string | null;
+  longitude: string | null;
+  osmType: string | null;
+  osmId: string | null;
+}
+
+/**
+ * What a place says under its own name in a picker.
+ *
+ * Formatted here rather than in the component, for two reasons: a `Date` does
+ * not survive the crossing into a client component, and the browser's zone is
+ * not the one the rest of this app counts days in.
+ */
+function visitSubtitle(
+  visits: number,
+  lastVisitedAt: Date | null,
+  timezone: string,
+): string | null {
+  if (visits === 0) return null;
+  const counted = visits === 1 ? "visited once" : `visited ${visits} times`;
+  if (!lastVisitedAt) return counted;
+  const month = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: timezone,
+  }).format(lastVisitedAt);
+  return `${counted} · last ${month}`;
+}
+
+/**
+ * The places you already have, for the picker beside every "Where" box.
+ *
+ * A sibling of `listLocationOptions` rather than an extension of it, and the
+ * two must stay apart. That one is the quick-add parser's vocabulary and is
+ * uncapped for the reason written above it; this one feeds a list a human
+ * reads, so it caps, and it carries visit counts the parser has no use for.
+ * Folding them together would put a cap on the parser and a hole in what it
+ * recognises.
+ *
+ * Ordered by name, never by recency. A privacy-filtered `visitCount` is safe
+ * to show — the Places directory already renders that same number off this
+ * same filtered relation — but ordering by the last visit is not: a row whose
+ * *position* moves when the lock opens is itself the disclosure. Sorting in
+ * process would not dodge that, it would reintroduce it one layer up.
+ *
+ * Capping is safe here where it is not in `listLocationOptions`, because the
+ * free-text box stays live: a place past the cap is still typeable and still
+ * resolves to the same row through `resolveLocation`.
+ */
+export async function listPlaceSuggestions(
+  ownerId: string,
+  timezone: string,
+): Promise<CappedList<PlaceSuggestion>> {
+  const scope = await privacyScope();
+  const visibleInteraction = { ownerId, ...interactionPrivacyWhere(scope) };
+  const rows = await prisma.location.findMany({
+    where: { ...locationVisibleWhere(ownerId, scope), isArchived: false },
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      city: true,
+      region: true,
+      country: true,
+      latitude: true,
+      longitude: true,
+      osmType: true,
+      osmId: true,
+      // The count and the newest visit, not the visits themselves: a place with
+      // three hundred interactions would otherwise ship all of them to render
+      // one line of text.
+      _count: { select: { interactions: { where: visibleInteraction } } },
+      interactions: {
+        where: visibleInteraction,
+        select: { occurredAt: true },
+        orderBy: { occurredAt: "desc" },
+        take: 1,
+      },
+    },
+    orderBy: { name: "asc" },
+    take: PLACE_SUGGESTIONS_CAP + 1,
+  });
+
+  const capped = applyCap(rows, PLACE_SUGGESTIONS_CAP);
+  return {
+    truncated: capped.truncated,
+    items: capped.items.map((row) => ({
+      id: row.id,
+      name: row.name,
+      subtitle: visitSubtitle(
+        row._count.interactions,
+        row.interactions[0]?.occurredAt ?? null,
+        timezone,
+      ),
+      address: row.address,
+      city: row.city,
+      region: row.region,
+      country: row.country,
+      // `Decimal` and `BigInt` do not survive the crossing into a client
+      // component, and the address form fills its coordinates from these.
+      latitude: row.latitude === null ? null : String(row.latitude),
+      longitude: row.longitude === null ? null : String(row.longitude),
+      osmType: row.osmType,
+      osmId: row.osmId === null ? null : String(row.osmId),
+    })),
+  };
 }
 
 export async function getLocation(ownerId: string, id: string) {

@@ -23,6 +23,7 @@ import {
 import { DateTimeField } from "@/components/form/date-field";
 import { TermChips, type TermOption } from "@/components/form/term-select";
 import { ContactPicker, type PickerContact } from "@/components/form/contact-picker";
+import { PlacePicker, type PlaceSuggestion } from "@/components/form/place-picker";
 import { SENTIMENTS } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { createInteraction } from "@/server/actions/interactions";
@@ -52,6 +53,8 @@ export function LogInteractionSheet({
   defaultOccurredAt,
   onLogged,
   customFields = [],
+  places = [],
+  placesTruncated = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -62,12 +65,20 @@ export function LogInteractionSheet({
   onLogged?: () => void;
   /** Your own interaction fields — collapsed, so logging stays fast. */
   customFields?: RenderableField[];
+  /** Places you have already been, to fill "Where" from. */
+  places?: PlaceSuggestion[];
+  placesTruncated?: boolean;
 }) {
   const router = useRouter();
   const [error, setError] = React.useState<string>();
   const [sentiment, setSentiment] = React.useState<number | null>(null);
   const [reachedOutBy, setReachedOutBy] = React.useState<ReachedOutBy | null>(null);
   const formRef = React.useRef<HTMLFormElement>(null);
+  // The place picker fills this box by reference rather than through state.
+  // This form's `reset()` is load-bearing — it runs on open and after every
+  // save — and an uncontrolled input is cleared by it for free, where a
+  // controlled one would need its own listener to stay in step.
+  const locationRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
     if (open) formRef.current?.reset();
@@ -145,7 +156,20 @@ export function LogInteractionSheet({
             </Field>
 
             <Field label="Where" htmlFor="location">
-              <Input id="location" name="location" placeholder="Northside Cafe" />
+              <Input
+                id="location"
+                name="location"
+                ref={locationRef}
+                maxLength={191}
+                placeholder="Northside Cafe"
+              />
+              <PlacePicker
+                places={places}
+                truncated={placesTruncated}
+                onPick={(place) => {
+                  if (locationRef.current) locationRef.current.value = place.name;
+                }}
+              />
             </Field>
 
             <div className="grid gap-1.5">
