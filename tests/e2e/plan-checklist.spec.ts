@@ -161,8 +161,14 @@ test("the checklist is on the row, tickable there, and closed plans can be looke
     .first();
   await expect(closed.getByText("done", { exact: true })).toBeVisible();
   // The controls that would only ever error are not offered on a closed row.
+  // `updatePlan` refuses a closed plan — the outing it became already carries
+  // the title, the venue and the time — so the pencil would open a form whose
+  // only outcome is a refusal.
   await expect(closed.getByLabel("Mark as done")).toHaveCount(0);
   await expect(closed.locator("summary").filter({ hasText: "Schedule it" })).toHaveCount(0);
+  await expect(closed.getByRole("button", { name: "Edit plan" })).toHaveCount(0);
+  // Deleting stays: it is explicit, and it is the one thing still meaningful.
+  await expect(closed.getByRole("button", { name: "Delete plan" })).toBeVisible();
 
   await closed.getByRole("button", { name: "Back on the list" }).click();
   await page.getByRole("link", { name: "Open", exact: true }).click();

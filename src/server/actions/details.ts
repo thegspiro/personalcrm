@@ -40,7 +40,11 @@ import {
   happeningDatesOf,
   syncFollowUpTask,
 } from "@/server/services/happenings";
-import { planChecklistSchema, readPlanChecklist } from "@/lib/plan-checklist";
+import {
+  planChecklistSchema,
+  readPlanChecklist,
+  type PlanChecklistItem,
+} from "@/lib/plan-checklist";
 import { PLAN_MINUTE_MAX, parsePlanDuration, parsePlanMinute, planInstant } from "@/lib/plan-time";
 import { closePlanAsInteraction } from "@/server/services/plans";
 import { recomputeContactActivity } from "@/server/services/contact-activity";
@@ -1192,11 +1196,24 @@ export async function updatePlan(form: FormData): Promise<ActionResult> {
   const id = str(form, "id");
   if (!id) return fail("Missing plan.");
 
+  // Not a closed one. `completePlan` has already copied the title, the venue
+  // and the time it happened into an `Interaction`, so rewriting the plan
+  // afterwards leaves the history saying one thing and the plan another. This
+  // was unreachable while closed plans were never rendered; the Done view
+  // reaches them, and the UI dropping the pencil is not the guarantee — the
+  // action is a public POST.
   const existing = await prisma.plan.findFirst({
     where: { id, ownerId, ...viaOptionalContactPrivacyWhere(await privacyScope()) },
-    select: { contactId: true },
+    select: { contactId: true, status: true, checklist: true },
   });
+  // Ownership and the lock first, and only then the status, so a plan that is
+  // not yours still answers "Not found." rather than being confirmed to exist
+  // by a more specific refusal. Someone who already passed both checks is told
+  // what is actually wrong.
   if (!existing) return fail("Not found.");
+  if (existing.status === "DONE" || existing.status === "ARCHIVED") {
+    return fail("Put it back on the list before editing it.");
+  }
 
   const title = str(form, "title");
   if (!title) return fail("What do you want to do?");
@@ -1209,14 +1226,32 @@ export async function updatePlan(form: FormData): Promise<ActionResult> {
   const fields = await planFields(ownerId, form);
   if (!fields) return fail("Check the category, checklist and time.");
 
+  const checklist = planChecklistPatch(
+    form,
+    readPlanChecklist(fields.checklist),
+    readPlanChecklist(existing.checklist),
+  );
+  if (checklist.kind === "conflict") {
+    return fail("This plan's checklist changed elsewhere. Reopen it to see the current one.");
+  }
+
   await transact(async (tx) => {
     const place = await resolveLocation(tx, ownerId, fields.location ?? undefined, {
       address: fields.address,
       url: fields.url,
     });
+    // `checklist` is dropped from the write when the form did not touch it, so
+    // a tick that landed while the editor was open survives an unrelated save.
+    const { checklist: submitted, ...rest } = fields;
     await tx.plan.update({
       where: { id },
-      data: { title, ...fields, ...(reminders.patch ?? {}), locationId: place?.id ?? null },
+      data: {
+        title,
+        ...rest,
+        ...(checklist.kind === "untouched" ? {} : { checklist: submitted }),
+        ...(reminders.patch ?? {}),
+        locationId: place?.id ?? null,
+      },
     });
   });
 
@@ -1346,6 +1381,54 @@ export async function setPlanChecklistItem(
   if (outcome === "invalid") return fail("That checklist could not be saved.");
   if (outcome === "written") touchPlans(existing.contactId);
   return ok();
+}
+
+/**
+ * Whether an editor's checklist may be written, given what it was drawn with.
+ *
+ * The row's tickboxes made this column a two-writer field. `updatePlan` posts
+ * the whole array, so an editor opened before somebody ticked an item — another
+ * tab, a phone, the same person a minute earlier — carries the pre-tick list and
+ * would put it straight back. `setPlanChecklistItem`'s row lock does not help:
+ * it serialises ticks against each other, and this write never joins it.
+ *
+ * So the form reports what it was drawn with, and the three cases separate:
+ *
+ * - **untouched** — submitted list equals what was drawn. The user edited other
+ *   fields; skip the column and keep whatever ticks landed. This is the common
+ *   case and the one the reminder policy already answers the same way.
+ * - **safe** — the user edited the checklist and nothing else has moved.
+ * - **conflict** — the user edited the checklist *and* it moved underneath
+ *   them. Refuse: skipping would silently drop a real edit, and writing would
+ *   silently drop a real tick. Only here does anyone need to be told.
+ *
+ * A submission with no `checklistWas` is treated as safe, so `createPlan` and
+ * any form that predates this field behave exactly as before.
+ */
+function planChecklistPatch(
+  form: FormData,
+  submitted: PlanChecklistItem[],
+  stored: PlanChecklistItem[],
+): { kind: "untouched" } | { kind: "safe" } | { kind: "conflict" } {
+  const raw = str(form, "checklistWas");
+  if (raw === undefined) return { kind: "safe" };
+
+  let drawnValue: unknown;
+  try {
+    drawnValue = JSON.parse(raw);
+  } catch {
+    return { kind: "safe" };
+  }
+  const drawn = readPlanChecklist(drawnValue);
+
+  // Compared as the reader sees them, not as text: key order and whitespace in
+  // the JSON are not a change to the checklist.
+  const same = (a: PlanChecklistItem[], b: PlanChecklistItem[]) =>
+    a.length === b.length &&
+    a.every((item, i) => item.id === b[i].id && item.text === b[i].text && item.completed === b[i].completed);
+
+  if (same(submitted, drawn)) return { kind: "untouched" };
+  return same(stored, drawn) ? { kind: "safe" } : { kind: "conflict" };
 }
 
 /**

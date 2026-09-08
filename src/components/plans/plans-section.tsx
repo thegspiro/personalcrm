@@ -381,6 +381,21 @@ function PlanFields({
             </button>
           </div>
           <input type="hidden" name="checklist" value={JSON.stringify(checklist.filter((item) => item.text.trim()))} />
+          {/* The checklist as this form was drawn, so the action can tell an
+              edit the user made from a list they simply left alone — the same
+              job `reminderPolicyWas` does above, and now needed for the same
+              reason: the row's tickboxes are a second writer of this column, so
+              a save from an editor opened before a tick would otherwise post
+              the pre-tick list straight back over it. Comparing against the
+              stored row cannot stand in; by the time the action reads it, it
+              already holds the newer value. */}
+          {plan ? (
+            <input
+              type="hidden"
+              name="checklistWas"
+              value={JSON.stringify(readPlanChecklist(plan.checklist))}
+            />
+          ) : null}
           {checklist.map((item, index) => (
             <div key={item.id} className="flex min-w-0 items-center gap-2">
               <Checkbox checked={item.completed} onCheckedChange={(checked) => updateChecklist(item.id, { completed: checked === true })} aria-label={`Mark ${item.text || `item ${index + 1}`} complete`} />
@@ -610,20 +625,29 @@ export function PlansSection({
             onDelete={() => void run(() => deletePlan(plan.id), "Removed")}
             deleteLabel="Delete plan"
             editLabel="Edit plan"
-            editForm={(close) => (
-              <form action={edit(update(plan), close, "Saved")} className="grid gap-2.5">
-                <PlanFields
-                  formId={`plan-${plan.id}`}
-                  categories={categories}
-                  contactId={contactId}
-                  people={people}
-                  plan={plan}
-                  places={places}
-                  placesTruncated={placesTruncated}
-                />
-                <SubmitButton size="sm">Save</SubmitButton>
-              </form>
-            )}
+            // No editor on a finished row. `updatePlan` refuses one — the
+            // outing it became already carries the title, the venue and the
+            // time — so the pencil would open a form whose only outcome is a
+            // refusal. "Back on the list" is the way back to editing, and it
+            // takes nothing away.
+            editForm={
+              isClosed(plan)
+                ? undefined
+                : (close) => (
+                    <form action={edit(update(plan), close, "Saved")} className="grid gap-2.5">
+                      <PlanFields
+                        formId={`plan-${plan.id}`}
+                        categories={categories}
+                        contactId={contactId}
+                        people={people}
+                        plan={plan}
+                        places={places}
+                        placesTruncated={placesTruncated}
+                      />
+                      <SubmitButton size="sm">Save</SubmitButton>
+                    </form>
+                  )
+            }
           >
             <div className="flex items-start gap-2">
               {/* Records what the plan became, not just that it is over:

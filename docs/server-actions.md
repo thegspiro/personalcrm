@@ -299,6 +299,27 @@ undo an edit to the one field the claim does not watch. What each predicate expe
 than being restated at each site, because restating it is how four of these
 paths each ended up missing a different field.
 
+`updatePlan` refuses a plan that is already `DONE` or `ARCHIVED`. Closed plans
+were unreachable while nothing rendered them; the Done view reaches them, and
+`completePlan` has by then copied the title, the venue and the occurrence time
+into an `Interaction` — so an edit afterwards leaves the history saying one
+thing and the plan another. Ownership and the lock are checked first and the
+status only after, so a plan that is not yours still answers "Not found."
+rather than being confirmed to exist by a more specific refusal.
+
+It also no longer writes the checklist unconditionally. The row's tickboxes made
+that column a two-writer field, and `updatePlan` posts the whole array, so an
+editor drawn before a tick would put the pre-tick list straight back;
+`setPlanChecklistItem`'s row lock serialises ticks against each other and this
+write never joins it. The form reports what it was drawn with in a hidden
+`checklistWas` — the same device as `reminderPolicyWas` — and
+`planChecklistPatch` separates three cases: a list the user left alone is
+skipped, so a tick that landed meanwhile survives; an edited list is written
+when nothing moved underneath it; and an edited list whose stored value *has*
+moved is refused, because skipping would drop a real edit and writing would drop
+a real tick. A submission carrying no `checklistWas` writes as it always did, so
+`createPlan` and any older form are unaffected.
+
 `setPlanChecklistItem` ticks one preparation item off from the plan's own row.
 It is positional rather than a `FormData` action because it is a checkbox and
 not a form, and `updatePlan` cannot stand in: that rewrites every field the form

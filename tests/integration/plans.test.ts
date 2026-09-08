@@ -1366,6 +1366,155 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     expect(plan.distance).toBeNull();
   });
 
+  it("refuses to edit a plan that is already closed", async () => {
+    // The Done view puts these on screen for the first time. `completePlan` has
+    // already copied the title, the venue and the time into an interaction, so
+    // rewriting the plan afterwards leaves the two disagreeing.
+    for (const status of ["DONE", "ARCHIVED"] as const) {
+      const plan = await planFor(null, { title: `Closed ${status}`, status });
+      const result = await updatePlan(actionForm({ id: plan.id, title: "Rewritten" }));
+
+      expect(result).toMatchObject({ ok: false });
+      const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+      expect(after.title).toBe(`Closed ${status}`);
+    }
+  });
+
+  it("drops a category belonging to another account", async () => {
+    // The other half of the cross-owner pointer: `Plan.category` is keyed on
+    // the term id alone, exactly as `place` is, and a category is drawn on the
+    // row as a label, an icon and a colour.
+    const stranger = await createTestUser();
+    const theirs = await prisma.taxonomyTerm.findFirstOrThrow({
+      where: { ownerId: stranger.id, kind: "PLAN_CATEGORY" },
+    });
+    const plan = await planFor(null, { title: "Stray category" });
+    await prisma.plan.update({ where: { id: plan.id }, data: { categoryId: theirs.id } });
+
+    const [row] = await listPlans(ownerId);
+    expect(row.title).toBe("Stray category");
+    expect(row.category).toBeNull();
+    // The plan keeps its own column; only the pointer's contents are withheld.
+    expect(row.categoryId).toBe(theirs.id);
+  });
+
+  it("reaches an archived plan sitting behind more done ones than the cap", async () => {
+    // Statuses sort DONE before ARCHIVED, so a status-first ordering on the
+    // closed view truncates away the archived half — the same bug as fetching
+    // closed rows behind open ones, one level down.
+    const friend = await makeContact("Marcus");
+    await prisma.plan.createMany({
+      data: Array.from({ length: 12 }, (_, i) => ({
+        ownerId,
+        contactId: friend.id,
+        title: `Done ${i}`,
+        status: "DONE" as const,
+      })),
+    });
+    const archived = await planFor(friend.id, { title: "Shelved", status: "ARCHIVED" });
+    // Newest of the lot, so recency ordering must reach it.
+    await prisma.plan.update({
+      where: { id: archived.id },
+      data: { title: "Shelved" },
+    });
+
+    const closed = await listPlans(ownerId, { closedOnly: true, take: 5 });
+    expect(closed.map((plan) => plan.title)).toContain("Shelved");
+  });
+
+  it("keeps a tick that landed while an editor was open", async () => {
+    // Two writers of one column now. A save from an editor drawn before the
+    // tick used to post the pre-tick list straight back over it.
+    const plan = await planFor(null, {
+      checklist: [
+        { id: "tickets", text: "Reserve or buy tickets", completed: false },
+        { id: "travel", text: "Check travel time", completed: false },
+      ],
+    });
+    const drawn = JSON.stringify([
+      { id: "tickets", text: "Reserve or buy tickets", completed: false },
+      { id: "travel", text: "Check travel time", completed: false },
+    ]);
+
+    // Another tab ticks one.
+    expect(await setPlanChecklistItem(plan.id, "travel", true)).toMatchObject({ ok: true });
+
+    // The stale editor saves an unrelated field, its checklist untouched.
+    expect(
+      await updatePlan(
+        actionForm({ id: plan.id, title: "Renamed", checklist: drawn, checklistWas: drawn }),
+      ),
+    ).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.title).toBe("Renamed");
+    expect(after.checklist).toEqual([
+      { id: "tickets", text: "Reserve or buy tickets", completed: false },
+      { id: "travel", text: "Check travel time", completed: true },
+    ]);
+  });
+
+  it("writes a checklist the user actually edited", async () => {
+    const plan = await planFor(null);
+    const drawn = JSON.stringify([
+      { id: "tickets", text: "Reserve or buy tickets", completed: true },
+    ]);
+    const edited = JSON.stringify([
+      { id: "tickets", text: "Book the good seats", completed: true },
+    ]);
+
+    expect(
+      await updatePlan(
+        actionForm({ id: plan.id, title: "Go", checklist: edited, checklistWas: drawn }),
+      ),
+    ).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.checklist).toEqual([
+      { id: "tickets", text: "Book the good seats", completed: true },
+    ]);
+  });
+
+  it("refuses a checklist edit made against a list that has since moved", async () => {
+    // The only case anybody needs telling about: skipping would drop the
+    // user's edit, writing would drop the tick.
+    const plan = await planFor(null, {
+      checklist: [{ id: "tickets", text: "Reserve or buy tickets", completed: false }],
+    });
+    const drawn = JSON.stringify([
+      { id: "tickets", text: "Reserve or buy tickets", completed: false },
+    ]);
+    const edited = JSON.stringify([
+      { id: "tickets", text: "Book the good seats", completed: false },
+    ]);
+
+    expect(await setPlanChecklistItem(plan.id, "tickets", true)).toMatchObject({ ok: true });
+
+    expect(
+      await updatePlan(
+        actionForm({ id: plan.id, title: "Go", checklist: edited, checklistWas: drawn }),
+      ),
+    ).toMatchObject({ ok: false });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.checklist).toEqual([
+      { id: "tickets", text: "Reserve or buy tickets", completed: true },
+    ]);
+  });
+
+  it("still writes the checklist when the form carries no record of what it drew", async () => {
+    // `createPlan` and any form predating the marker must behave as before.
+    const plan = await planFor(null);
+    const edited = JSON.stringify([{ id: "new", text: "Pack a blanket", completed: false }]);
+
+    expect(
+      await updatePlan(actionForm({ id: plan.id, title: "Go", checklist: edited })),
+    ).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.checklist).toEqual([{ id: "new", text: "Pack a blanket", completed: false }]);
+  });
+
   it("refuses a completion value that is not a boolean", async () => {
     // A public POST endpoint: the signature is a promise to TypeScript, not a
     // runtime check. A non-boolean in the JSON makes `readPlanChecklist` reject
