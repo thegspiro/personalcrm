@@ -128,7 +128,17 @@ test("the checklist is on the row, tickable there, and closed plans can be looke
   // Ticked from the row itself, with no editor opened. The row's checkboxes are
   // named for the item alone — the editor's say "Mark … complete" — so the two
   // never collide while an add panel is open over a list of existing rows.
-  await row.getByRole("checkbox", { name: "Check travel time" }).check();
+  //
+  // `click` and then assert, rather than `check`. This box holds no state of
+  // its own: it says what the server last said, so it only turns once the
+  // action has been round-tripped and the refreshed tree has rendered.
+  // `check()` verifies the moment its click returns and does not wait for any
+  // of that, so it reports a working tick as a click that changed nothing —
+  // which is exactly how this read on the first three runs, with the count and
+  // the box in the failure snapshot both already correct.
+  const travel = row.getByRole("checkbox", { name: "Check travel time" });
+  await travel.click();
+  await expect(travel).toBeChecked();
   await expect(summary).toHaveText("Checklist · 2 of 5");
 
   await page.reload();
