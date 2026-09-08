@@ -203,8 +203,11 @@ describe.skipIf(!hasTestDatabase)("place suggestions", () => {
 
     // The parser's vocabulary is deliberately not capped alongside it: past a
     // cap a known venue stops being recognised and part of its name gets
-    // offered as a person instead.
-    expect(await listLocationOptions(state.ownerId)).toHaveLength(total);
+    // offered as a person instead. If these two are ever consolidated, this is
+    // the assertion that should stop it.
+    const vocabulary = await listLocationOptions(state.ownerId);
+    expect(vocabulary).toHaveLength(total);
+    expect(vocabulary.map((row) => row.name)).toEqual([...names].sort());
   });
 
   it("withholds a locality known only through something hidden", async () => {

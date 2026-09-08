@@ -29,11 +29,11 @@ export default async function LocationsPage({ searchParams }: { searchParams: Pr
     <div className="grid gap-3 sm:grid-cols-2">
       {locations.map((location) => <Link key={location.id} href={`/locations/${location.id}`} className="rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted/50">
         <div className="flex items-start justify-between gap-3"><div><h3 className="font-medium">{location.name}</h3>{location.address ? <p className="mt-0.5 text-xs text-muted-foreground">{location.address}</p> : null}</div><MapPin className="size-4 shrink-0 text-accent-11" /></div>
-        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"><span>{location.visitCount} visit{location.visitCount === 1 ? "" : "s"}</span><span><Users className="mr-1 inline size-3" />{location.peopleCount} people</span>{location.openPlanCount ? <span>{location.openPlanCount} open plan{location.openPlanCount === 1 ? "" : "s"}</span> : null}</div>
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"><span>{location.visitCount} visit{location.visitCount === 1 ? "" : "s"}</span><span><Users className="mr-1 inline size-3" />{location.peopleCount} people</span>{location.openPlanCount ? <span>{location.openPlanCount} open plan{location.openPlanCount === 1 ? "" : "s"}</span> : null}{location.lifeEventCount ? <span>{location.lifeEventCount} moment{location.lifeEventCount === 1 ? "" : "s"}</span> : null}</div>
         {location.lastVisitedAt ? <p className="mt-2 text-xs text-muted-foreground">Last visited {new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: timezone }).format(location.lastVisitedAt)}</p> : null}
       </Link>)}
     </div>
-    {!locations.length ? <div className="rounded-xl border border-dashed p-8 text-center"><MapPin className="mx-auto mb-2 size-6 text-muted-foreground" /><p className="text-sm font-medium">No places yet</p><p className="text-xs text-muted-foreground">Add a venue to an interaction or plan and it will appear here.</p></div> : null}
+    {!locations.length ? <div className="rounded-xl border border-dashed p-8 text-center"><MapPin className="mx-auto mb-2 size-6 text-muted-foreground" /><p className="text-sm font-medium">No places yet</p><p className="text-xs text-muted-foreground">Add a venue to an interaction, a plan or a significant moment and it will appear here.</p></div> : null}
   </div>;
 }
 
