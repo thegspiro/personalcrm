@@ -142,7 +142,7 @@ export function ContactFilters({
           active={showFavorites}
           onClick={() => update("favorites", showFavorites ? null : "1")}
         >
-          Favourites
+          Favorites
         </FilterChip>
         <FilterChip
           active={showArchived}

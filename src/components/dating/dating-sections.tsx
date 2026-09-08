@@ -18,6 +18,8 @@ import {
 import { DateField, DateTimeField } from "@/components/form/date-field";
 import { RatingInput, RatingDisplay } from "@/components/form/rating-input";
 import { TermChips, TermSelect, type TermOption } from "@/components/form/term-select";
+import { PlacePicker, type PlaceSuggestion } from "@/components/form/place-picker";
+import { LOCALITY_LIST_IDS } from "@/components/form/locality-options";
 import { SectionCard, SectionEmpty, SectionRow } from "@/components/contacts/section-card";
 import { PrivateText } from "./private-text";
 import { EndRelationshipSheet } from "./end-relationship-sheet";
@@ -398,12 +400,17 @@ function DateEntryFields({
   venue,
   onVenueChange,
   customFields = [],
+  places = [],
+  placesTruncated = false,
 }: {
   formId: string;
   activityTypes: TermOption[];
   entry?: DateLogItem;
   venue?: string;
   onVenueChange?: (value: string) => void;
+  /** Places you have already been, for the "Where" box. */
+  places?: PlaceSuggestion[];
+  placesTruncated?: boolean;
   /**
    * Defined under Settings → Fields → Dates. Rendered here rather than on each
    * form, so the hidden "which fields were on screen" marker is present on
@@ -412,6 +419,11 @@ function DateEntryFields({
    */
   customFields?: RenderableField[];
 }) {
+  // Only the uncontrolled branch below needs this. The add form is controlled
+  // — picking a plan prefills its venue — so there the pick has to go through
+  // `onVenueChange` or React would overwrite it on the next render.
+  const venueRef = React.useRef<HTMLInputElement>(null);
+
   return (
     <>
       <TermChips
@@ -441,13 +453,29 @@ function DateEntryFields({
             <Input
               id={`${formId}-venue`}
               name="venue"
+              ref={venueRef}
               defaultValue={entry?.venue ?? ""}
               placeholder="Northside Social"
             />
           )}
+          <PlacePicker
+            places={places}
+            truncated={placesTruncated}
+            value={onVenueChange ? venue : undefined}
+            onPick={(place) => {
+              if (onVenueChange) onVenueChange(place.name);
+              else if (venueRef.current) venueRef.current.value = place.name;
+            }}
+          />
         </Field>
         <Field label="City" htmlFor={`${formId}-city`}>
-          <Input id={`${formId}-city`} name="city" defaultValue={entry?.city ?? ""} />
+          <Input
+            id={`${formId}-city`}
+            name="city"
+            list={LOCALITY_LIST_IDS.city}
+            maxLength={120}
+            defaultValue={entry?.city ?? ""}
+          />
         </Field>
       </div>
       <div className="grid gap-2.5 sm:grid-cols-2">
@@ -533,6 +561,8 @@ export function DateLogSection({
   blurPrivate,
   customFields = [],
   customFieldsByDate = {},
+  places = [],
+  placesTruncated = false,
 }: {
   contactId: string;
   dates: DateLogItem[];
@@ -540,6 +570,9 @@ export function DateLogSection({
   /** Plans saved for this person — picking one closes it out. */
   plans?: PlanOption[];
   blurPrivate: boolean;
+  /** Places you have already been, for each date's "Where" box. */
+  places?: PlaceSuggestion[];
+  placesTruncated?: boolean;
   /** Field definitions for a new date, with no values yet. */
   customFields?: RenderableField[];
   /** The same definitions carrying each existing date's saved values. */
@@ -612,6 +645,8 @@ export function DateLogSection({
             venue={venue}
             onVenueChange={setVenue}
             customFields={customFields}
+            places={places}
+            placesTruncated={placesTruncated}
           />
           <SubmitButton size="sm">Log it</SubmitButton>
         </form>
@@ -633,6 +668,8 @@ export function DateLogSection({
                   activityTypes={activityTypes}
                   entry={entry}
                   customFields={customFieldsByDate[entry.id] ?? []}
+                  places={places}
+                  placesTruncated={placesTruncated}
                 />
                 <SubmitButton size="sm">Save</SubmitButton>
               </form>

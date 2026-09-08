@@ -59,13 +59,15 @@ backfilled from their parent, and key on it from both sides:
 and nothing else makes them agree. `Interaction`, `LifeEvent` and `Household`
 each gained the `@@unique([ownerId, id])` those keys point at.
 
-**Three exceptions, for a reason MariaDB imposes.** `Interaction.place`,
-`Plan.place` and `Associate.promotedContactId` are `ON DELETE SET NULL`, and
+**Four exceptions, for a reason MariaDB imposes.** `Interaction.place`,
+`Plan.place`, `LifeEvent.place` and `Associate.promotedContactId` are
+`ON DELETE SET NULL`, and
 MariaDB refuses a `SET NULL` foreign key unless every column in it is nullable;
 `ownerId` is not, and making it nullable would cost the guarantee the key exists
 to give. They keep an explicit owner predicate in code instead.
 
-For the two places that is `src/server/services/locations.ts` on the write path,
+For the three places that is `src/server/services/locations.ts` on the write
+path,
 and on the read every query that returns the place:
 `src/server/queries/timeline.ts`, where it is both searched and rendered, and
 `src/server/queries/dating.ts`, which reads a logged date's venue through its
@@ -618,7 +620,13 @@ Deliberately not an `Interaction` (which assumes you were there) and not an
 2019" and "the trip where we became friends" are context, not anniversaries.
 
 Adds `endDate` / `endPrecision` for events that span a period, and
-`isMilestone` to pin one to the top of the profile. `LifeEventParticipant` is
+`isMilestone` to pin one to the top of the profile. `location` keeps the words
+entered at the time and `locationId` resolves them to a shared `Location`
+through the same `resolveLocation` every venue box uses, so a move and a coffee
+naming the same café land on one place. A place reached only through a life
+event is visible in the directory: `locationVisibleWhere` counts life events
+alongside interactions and plans, gated by `lifeEventPrivacyWhere`, so somewhere
+known only through a private person's event stays withheld. `LifeEventParticipant` is
 the join that lets one marriage, move, birth, reunion, or bereavement appear in
 every selected person's history; it carries an `ownerId` from its event and
 keys on it from both sides. `contactId` remains the compatibility anchor; the
@@ -1137,6 +1145,7 @@ the `init-migrate` s6 oneshot).
 | `20260905120000_add_address_coordinates_and_home_base` | Adds `latitude`, `longitude`, `osmType` and `osmId` to `Address`, and the home base plus `distanceUnit` to `UserPreference`. Entirely additive — every column nullable or defaulted, nothing removed or renamed, so there is nothing to backfill and nothing that can be lost |
 | `20260905180000_add_plan_completion_key` | Additive nullable `Plan.completionKey` and a unique index on `(ownerId, completionKey)`, making the shared-idea completion path replay-safe. Purely additive: the column is null on every existing row, and both MySQL and MariaDB allow unlimited `NULL`s under a unique index, so nothing stored changes meaning |
 | `20260906010000_add_plan_reminders` | Additive nullable `Plan.reminderDaysBefore` and `PLAN` appended to `ReminderEntity`. Appended, not reordered: MySQL stores an enum by position, so inserting a value in the middle would change the meaning of every stored `ReminderLog.entityType`. Nothing to backfill — the column is null on every existing row, and for a plan null means no reminders, so no already-scheduled plan starts sending on the first pass after the upgrade |
+| `20260908120000_add_life_event_place` | Additive nullable `LifeEvent.location` and `LifeEvent.locationId`, its index, and the `SET NULL` foreign key to `Location`. Nothing to backfill and nothing dropped — both columns are null on every existing row, which reads exactly as "no place recorded". The foreign key names `Location(id)` rather than the same-owner composite, for the MariaDB reason above |
 | `20260905153056_add_associates` | Adds `Associate` — the people in a contact's life who are not tracked themselves. Purely additive: one new table, no existing column re-expressed and no enum modified, so there is nothing to backfill and nothing that can be lost. `promotedContactId` is the third single-column key into `Contact`, for the `SET NULL` reason above |
 
 Writing a migration that changes the meaning of existing data — not just its

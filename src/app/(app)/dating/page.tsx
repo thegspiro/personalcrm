@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { Columns2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getUserContext } from "@/server/user/context";
+import { listPlaceSuggestions } from "@/server/queries/locations";
 import { listPipeline } from "@/server/queries/dating";
 import { listPlans } from "@/server/queries/plans";
 import { originsFor } from "@/server/queries/origins";
@@ -31,7 +32,7 @@ export default async function DatingPage() {
 
   const origins = await originsFor(user.id);
 
-  const [pipeline, plans, planCategories] = await Promise.all([
+  const [pipeline, plans, planCategories, placeSuggestions] = await Promise.all([
     listPipeline(user.id),
     // The same plans the rest of the app holds, filtered to the people this
     // page is about — plus the ones saved against nobody.
@@ -45,6 +46,7 @@ export default async function DatingPage() {
       sortByDistance: Boolean(origins.home),
     }),
     listTerms(user.id, "PLAN_CATEGORY"),
+    listPlaceSuggestions(user.id, timezone),
   ]);
   const today = calendarDateInTz(new Date(), timezone);
 
@@ -122,6 +124,8 @@ export default async function DatingPage() {
         }))}
         categories={planCategories}
         people={people}
+        places={placeSuggestions.items}
+        placesTruncated={placeSuggestions.truncated}
         defaultOpen={plans.length > 0}
       />
     </div>

@@ -6,6 +6,7 @@ import { Plus } from "lucide-react";
 import { LogInteractionSheet } from "@/components/contacts/log-interaction";
 import type { TermOption } from "@/components/form/term-select";
 import type { PickerContact } from "@/components/form/contact-picker";
+import type { PlaceSuggestion } from "@/components/form/place-picker";
 import type { RenderableField } from "@/components/custom-fields/field-renderer";
 
 /** Screens where you are browsing rather than filling something in. */
@@ -26,10 +27,14 @@ export function QuickLogFab({
   contacts,
   types,
   customFields = [],
+  places = [],
+  placesTruncated = false,
 }: {
   contacts: PickerContact[];
   types: TermOption[];
   customFields?: RenderableField[];
+  places?: PlaceSuggestion[];
+  placesTruncated?: boolean;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -70,6 +75,8 @@ export function QuickLogFab({
         contacts={contacts}
         types={types}
         customFields={customFields}
+        places={places}
+        placesTruncated={placesTruncated}
       />
     </>
   );

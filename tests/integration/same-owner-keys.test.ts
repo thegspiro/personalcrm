@@ -11,10 +11,11 @@ import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
  * case per converted relation, because a key that was missed looks exactly like
  * a key that was added until something tries to write across it.
  *
- * `Interaction.place` and `Plan.place` are deliberately absent: they are
- * `ON DELETE SET NULL`, and MariaDB refuses a SET NULL foreign key unless every
- * column in it is nullable. They are covered by the last case here instead,
- * which checks the reader drops what the key cannot. See docs/data-model.md.
+ * `Interaction.place`, `Plan.place` and `LifeEvent.place` are deliberately
+ * absent: they are `ON DELETE SET NULL`, and MariaDB refuses a SET NULL foreign
+ * key unless every column in it is nullable. They are covered by the last case
+ * here instead, which checks the reader drops what the key cannot. See
+ * docs/data-model.md.
  */
 
 interface Context {

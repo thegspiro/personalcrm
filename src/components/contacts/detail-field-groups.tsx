@@ -3,6 +3,7 @@
 import * as React from "react";
 import { DateField } from "@/components/form/date-field";
 import { TermSelect, type TermOption } from "@/components/form/term-select";
+import { PlacePicker, type PlaceSuggestion } from "@/components/form/place-picker";
 import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import type { DatePrecision } from "@/lib/date-precision";
@@ -155,9 +156,19 @@ export interface LifeEventValue {
   endDate: PlainDate | null;
   endPrecision: DatePrecision | null;
   isMilestone: boolean;
+  location: string | null;
 }
 
-export function LifeEventFields({ formId, types, event, resetEndDateKey, endDateError }: { formId: string; types: TermOption[]; event?: LifeEventValue; resetEndDateKey?: number; endDateError?: string }) {
+/**
+ * One component for both the add and the edit form.
+ *
+ * That is load-bearing rather than tidy: `updateLifeEvent` writes every field
+ * it is given, so a box present on one form and absent from the other is a box
+ * that gets cleared every time the other one saves — the bug this file already
+ * records for the end date and the milestone flag.
+ */
+export function LifeEventFields({ formId, types, event, resetEndDateKey, endDateError, places = [], placesTruncated = false }: { formId: string; types: TermOption[]; event?: LifeEventValue; resetEndDateKey?: number; endDateError?: string; places?: PlaceSuggestion[]; placesTruncated?: boolean }) {
+  const locationRef = React.useRef<HTMLInputElement>(null);
   return (
     <>
       <Field label="What happened?" htmlFor={`${formId}-title`}>
@@ -166,6 +177,16 @@ export function LifeEventFields({ formId, types, event, resetEndDateKey, endDate
       <DateField name="date" idPrefix={`${formId}-date`} label="When" required presets={["lastYear"]} defaultValue={event ? plainDateKey(event.date) : undefined} defaultPrecision={event?.precision} hint="Only know the year? Set the precision to 'Year only'." />
       <DateField key={resetEndDateKey} name="endDate" idPrefix={`${formId}-endDate`} label="Until" presets={[]} defaultValue={event?.endDate ? plainDateKey(event.endDate) : undefined} defaultPrecision={event?.endPrecision ?? "DAY"} hint="Only for things that ran for a while — a job, a course, a city." error={endDateError} />
       <TermSelect name="typeId" id={`${formId}-typeId`} label="Type" terms={types} defaultValue={event?.typeId} />
+      <Field label="Where" htmlFor={`${formId}-location`}>
+        <Input id={`${formId}-location`} name="location" ref={locationRef} maxLength={191} defaultValue={event?.location ?? ""} placeholder="Austin, TX" />
+        <PlacePicker
+          places={places}
+          truncated={placesTruncated}
+          onPick={(place) => {
+            if (locationRef.current) locationRef.current.value = place.name;
+          }}
+        />
+      </Field>
       <Field label="Anything more?" htmlFor={`${formId}-description`}>
         <Textarea id={`${formId}-description`} name="description" rows={2} defaultValue={event?.description ?? ""} />
       </Field>

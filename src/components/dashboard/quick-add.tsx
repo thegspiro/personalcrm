@@ -8,6 +8,7 @@ import { QuickAddBox } from "@/components/quick-add/quick-add-box";
 import { LogInteractionSheet } from "@/components/contacts/log-interaction";
 import type { TermOption } from "@/components/form/term-select";
 import type { PickerContact } from "@/components/form/contact-picker";
+import type { PlaceSuggestion } from "@/components/form/place-picker";
 import type { RenderableField } from "@/components/custom-fields/field-renderer";
 
 /**
@@ -18,10 +19,14 @@ export function QuickAddWidget({
   contacts,
   types,
   customFields = [],
+  places = [],
+  placesTruncated = false,
 }: {
   contacts: PickerContact[];
   types: TermOption[];
   customFields?: RenderableField[];
+  places?: PlaceSuggestion[];
+  placesTruncated?: boolean;
 }) {
   const [logging, setLogging] = React.useState(false);
 
@@ -30,7 +35,7 @@ export function QuickAddWidget({
       <CardContent className="grid grid-cols-[minmax(0,1fr)] gap-3 pt-4">
         {/* One line, then confirm. Parsed on this machine — see Settings for
             the optional assisted reading. */}
-        <QuickAddBox types={types} />
+        <QuickAddBox types={types} places={places} placesTruncated={placesTruncated} />
 
         <div className="flex flex-wrap gap-2">
         <button
@@ -57,6 +62,8 @@ export function QuickAddWidget({
         contacts={contacts}
         types={types}
         customFields={customFields}
+        places={places}
+        placesTruncated={placesTruncated}
       />
     </Card>
   );

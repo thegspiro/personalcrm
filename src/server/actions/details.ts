@@ -315,20 +315,33 @@ export async function createLifeEvent(form: FormData): Promise<ActionResult<{ id
   const type = await termFromForm(ownerId, form, "typeId", "LIFE_EVENT_TYPE");
   if (!type.ok) return fail(UNKNOWN_TERM);
 
-  const created = await prisma.lifeEvent.create({
-    data: {
-      ownerId,
-      contactId,
-      title,
-      typeId: type.id,
-      description: str(form, "description") ?? null,
-      date: when.date,
-      precision: when.precision,
-      endDate: end?.date ?? null,
-      endPrecision: end?.precision ?? null,
-      isMilestone: bool(form, "isMilestone"),
-      participants: { create: requestedContactIds.map((participantId) => ({ contactId: participantId })) },
-    },
+  // `transact` rather than a bare create, because resolving the place writes
+  // the schema's most contended row: from MariaDB 11.6.2 a write to a row that
+  // moved since the snapshot rolls the whole transaction back, and carrying on
+  // would autocommit the rest a statement at a time.
+  const created = await transact(async (tx) => {
+    // No `LocationDetails`: a life event carries no city or address, so it has
+    // nothing to fill and cannot overwrite what a place already knows.
+    const place = await resolveLocation(tx, ownerId, str(form, "location"));
+    return tx.lifeEvent.create({
+      data: {
+        ownerId,
+        contactId,
+        title,
+        typeId: type.id,
+        description: str(form, "description") ?? null,
+        date: when.date,
+        precision: when.precision,
+        endDate: end?.date ?? null,
+        endPrecision: end?.precision ?? null,
+        isMilestone: bool(form, "isMilestone"),
+        // Both columns, like every other path: the verbatim label beside the
+        // resolved row, so the words entered at the time survive a rename.
+        location: str(form, "location") ?? null,
+        locationId: place?.id ?? null,
+        participants: { create: requestedContactIds.map((participantId) => ({ contactId: participantId })) },
+      },
+    });
   });
 
   requestedContactIds.forEach(touch);
@@ -373,7 +386,11 @@ export async function updateLifeEvent(form: FormData): Promise<ActionResult> {
   });
   if (ownedContacts.length !== requestedContactIds.length) return fail("Contact not found.");
 
-  await prisma.$transaction(async (tx) => {
+  // `transact`, not a bare `prisma.$transaction`: this now resolves a place,
+  // and a `Location` write that hits a moved row rolls the whole transaction
+  // back from MariaDB 11.6.2 onward. Starting again is the only answer.
+  await transact(async (tx) => {
+    const place = await resolveLocation(tx, ownerId, str(form, "location"));
     await tx.lifeEvent.update({ where: { id }, data: {
       title,
       typeId: type.id,
@@ -383,6 +400,8 @@ export async function updateLifeEvent(form: FormData): Promise<ActionResult> {
       endDate: end?.date ?? null,
       endPrecision: end?.precision ?? null,
       isMilestone: bool(form, "isMilestone"),
+      location: str(form, "location") ?? null,
+      locationId: place?.id ?? null,
     } });
     await tx.lifeEventParticipant.deleteMany({ where: { lifeEventId: id } });
     await tx.lifeEventParticipant.createMany({

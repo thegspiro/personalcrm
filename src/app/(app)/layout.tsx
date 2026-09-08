@@ -5,6 +5,11 @@ import { Sidebar } from "@/components/nav/sidebar";
 import { TopBar } from "@/components/nav/top-bar";
 import { getUserContext } from "@/server/user/context";
 import { listContactOptions } from "@/server/queries/contacts";
+import {
+  listLocalitySuggestions,
+  listPlaceSuggestions,
+} from "@/server/queries/locations";
+import { LocalityOptions } from "@/components/form/locality-options";
 import { listTerms } from "@/server/taxonomy/queries";
 import { fieldsFor } from "@/server/queries/custom-fields";
 import { QuickLogFab } from "@/components/nav/quick-log-fab";
@@ -25,7 +30,7 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user, prefs } = await getUserContext();
+  const { user, prefs, timezone } = await getUserContext();
 
   // Setup is not finished until the wizard says so. Existing accounts were
   // backfilled by the migration that added the column, so an upgrade never
@@ -35,11 +40,14 @@ export default async function AppLayout({
   // Loaded once for the whole shell so the floating log button works from any
   // screen without each page having to supply it.
   const privacy = await getPrivacyState();
-  const [contacts, interactionTypes, interactionFields] = await Promise.all([
-    listContactOptions(user.id),
-    listTerms(user.id, "INTERACTION_TYPE"),
-    fieldsFor(user.id, "INTERACTION", null),
-  ]);
+  const [contacts, interactionTypes, interactionFields, places, localities] =
+    await Promise.all([
+      listContactOptions(user.id),
+      listTerms(user.id, "INTERACTION_TYPE"),
+      fieldsFor(user.id, "INTERACTION", null),
+      listPlaceSuggestions(user.id, timezone),
+      listLocalitySuggestions(user.id),
+    ]);
   const activity =
     privacy.enabled && privacy.unlocked
       ? await recordProtectedReadActivity()
@@ -77,8 +85,13 @@ export default async function AppLayout({
           contacts={contacts}
           types={interactionTypes}
           customFields={interactionFields}
+          places={places.items}
+          placesTruncated={places.truncated}
         />
         <BottomNav hideDating={prefs.hideDating} />
+        {/* One set for the whole shell: every city, state and country box in
+            the app points its `list` at these ids. */}
+        <LocalityOptions localities={localities} />
       </div>
     </PrivacyActivityController>
   );

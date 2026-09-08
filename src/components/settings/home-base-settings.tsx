@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { useAddAction } from "@/components/form/use-action";
+import { LOCALITY_LIST_IDS } from "@/components/form/locality-options";
 import { PlaceLookup } from "@/components/locations/place-lookup";
 import { lookupHomeBase, updateHomeBase } from "@/server/actions/settings";
 import type { GeoCandidateView } from "@/server/geo/providers";
@@ -91,7 +92,7 @@ export function HomeBaseSettings({
             maxLength={500}
             value={address}
             onChange={(event) => setAddress(event.target.value)}
-            placeholder="14 Ashfield Road"
+            placeholder="120 Maple Street"
           />
         </Field>
 
@@ -100,15 +101,17 @@ export function HomeBaseSettings({
             <Input
               id="home-city"
               name="homeCity"
+              list={LOCALITY_LIST_IDS.city}
               maxLength={120}
               value={city}
               onChange={(event) => setCity(event.target.value)}
             />
           </Field>
-          <Field label="Region" htmlFor="home-region">
+          <Field label="State" htmlFor="home-region">
             <Input
               id="home-region"
               name="homeRegion"
+              list={LOCALITY_LIST_IDS.region}
               maxLength={120}
               value={region}
               onChange={(event) => setRegion(event.target.value)}
@@ -118,6 +121,7 @@ export function HomeBaseSettings({
             <Input
               id="home-country"
               name="homeCountry"
+              list={LOCALITY_LIST_IDS.country}
               maxLength={120}
               value={country}
               onChange={(event) => setCountry(event.target.value)}

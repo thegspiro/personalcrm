@@ -244,6 +244,7 @@ export function TimelineList({
                       typeId: entry.editable.typeId, date: entry.date, precision: entry.precision,
                       endDate: entry.editable.endDate, endPrecision: entry.editable.endPrecision,
                       isMilestone: entry.editable.isMilestone,
+                      location: entry.editable.location,
                     } satisfies LifeEventValue} />
                     <SubmitButton size="sm">Save</SubmitButton>
                   </form>

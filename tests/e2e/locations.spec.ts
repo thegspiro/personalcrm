@@ -64,6 +64,46 @@ test("a visit's place lists everyone who was there", async ({ page }) => {
   await expect(page.getByText(title())).toBeVisible();
 });
 
+test("a second visit picks the place it already has, rather than retyping it", async ({
+  page,
+}) => {
+  await ensureSignedIn(page);
+
+  // The point of the whole change. Typing a near-miss — "Corner Coffee" for
+  // "Corner Cafe" — silently created a second place, splitting one history
+  // across two rows and two map pins. Picking cannot miss.
+  await page.goto("/people");
+  await page.getByRole("link", { name: new RegExp(second()) }).first().click();
+  await page.getByRole("button", { name: "Log interaction" }).click();
+
+  const sheet = page.getByRole("dialog");
+  await sheet.getByRole("button", { name: "Coffee", exact: true }).click();
+  const secondTitle = `Second visit ${test.info().project.name} ${STAMP}`;
+  await sheet.getByLabel("Title").fill(secondTitle);
+
+  // The picker is a closed disclosure: a form with thirty rows must not draw
+  // thirty open lists. It carries no aria-label of its own, deliberately —
+  // getByLabel matches one on any element, so a labelled wrapper here would
+  // make getByLabel("Where") ambiguous and break every existing locator.
+  await sheet.getByText("Pick from your places").click();
+  await sheet.getByLabel("Search places").fill(place());
+  await sheet.getByRole("button", { name: new RegExp(place()) }).click();
+
+  // Picking fills the box the person would have typed into — that is the whole
+  // mechanism, and it is why no locationId crosses the wire.
+  await expect(sheet.getByLabel("Where")).toHaveValue(place());
+  await sheet.getByRole("button", { name: "Log it" }).click();
+  await expect(sheet).toBeHidden();
+
+  // One place, both visits. A second row here would mean the pick did not
+  // resolve to the place that already existed.
+  await page.goto(`/locations?search=${encodeURIComponent(place())}`);
+  await expect(page.getByRole("link", { name: new RegExp(place()) })).toHaveCount(1);
+  await page.getByRole("link", { name: new RegExp(place()) }).click();
+  await expect(page.getByText(title())).toBeVisible();
+  await expect(page.getByText(secondTitle)).toBeVisible();
+});
+
 test("an alias can be edited and used to find its place", async ({ page }) => {
   await ensureSignedIn(page);
   await page.goto("/locations");

@@ -68,7 +68,7 @@ export function TaxonomySettings({ groups }: { groups: TaxonomyGroupView[] }) {
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
       <div className="flex flex-wrap items-center gap-2">
         <p className="min-w-0 flex-1 text-xs text-muted-foreground">
-          Every &ldquo;type&rdquo; in the app is one of these — rename them, recolour them, or add
+          Every &ldquo;type&rdquo; in the app is one of these — rename them, recolor them, or add
           your own.
         </p>
         <Button
@@ -280,14 +280,14 @@ function ColorPicker({ name, defaultValue }: { name: string; defaultValue?: stri
 
   return (
     <div className="grid gap-1.5">
-      <span className="text-xs font-medium text-muted-foreground">Colour</span>
+      <span className="text-xs font-medium text-muted-foreground">Color</span>
       <input type="hidden" name={name} value={value} />
       <div className="flex flex-wrap gap-1.5">
         <button
           type="button"
           onClick={() => setValue("")}
           aria-pressed={value === ""}
-          aria-label="No colour"
+          aria-label="No color"
           className={cn(
             "size-7 rounded-full border border-border text-[10px] text-muted-foreground",
             value === "" && "ring-2 ring-accent-8 ring-offset-1 ring-offset-card",
