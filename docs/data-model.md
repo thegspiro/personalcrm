@@ -722,7 +722,7 @@ you _do_ it.
 | `estimatedCostCents` | `int?` | With `currency`, default `USD` |
 | `notes` | `text?` | Free-form preparation context, including personal accessibility or dietary needs without reducing them to enums |
 | `checklist` | `json` | A validated list of up to 25 `{ id, text, completed }` items. Suggestions begin only in the editor and are never completed automatically. Shown on the plan's own row with a `done of total` count, and ticked from there through `setPlanChecklistItem` — addressed by item id, never by index, because two tabs can hold lists of different lengths |
-| `status` | `PlanStatus` | `OPEN` \| `PLANNED` \| `DONE` \| `ARCHIVED` |
+| `status` | `PlanStatus` | `OPEN` \| `PLANNED` \| `DONE` \| `ARCHIVED`. `listPlans` reads open rows by default and closed ones through `closedOnly`, which is a separate view rather than a widened list: the enum sorts open-first and the query is capped, so an account whose open plans fill the page would never reach a closed one |
 | `plannedFor` | `date?` | Pencilled in, before there is anything logged to point at |
 | `plannedStartMinute` | `int?` | Local wall-clock minutes past midnight on `plannedFor`, 0–1439. Cleared when there is no day — a time on nothing is not a time |
 | `plannedDurationMinutes` | `int?` | How long to set aside, in minutes. Null = open-ended |

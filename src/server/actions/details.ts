@@ -1268,6 +1268,15 @@ export async function setPlanChecklistItem(
   completed: boolean,
 ): Promise<ActionResult> {
   const { ownerId } = await owner();
+  // The signature is a promise to other TypeScript, not a runtime check: this
+  // is a public POST endpoint and every argument arrives as whatever the caller
+  // serialised. `completed` matters most — anything but a boolean lands in the
+  // JSON column, and `readPlanChecklist` then rejects the *whole* array on the
+  // next read, so one crafted call empties a checklist everywhere it appears.
+  if (typeof planId !== "string" || typeof itemId !== "string") {
+    return fail("Missing checklist item.");
+  }
+  if (typeof completed !== "boolean") return fail("Missing checklist item.");
   if (!planId || !itemId) return fail("Missing checklist item.");
 
   // Visibility first, and by the same fragment every other plan write uses: a
@@ -1318,19 +1327,23 @@ export async function setPlanChecklistItem(
     if (!item) return "gone" as const;
     if (item.completed === completed) return "unchanged" as const;
 
-    await tx.plan.update({
-      where: { id: planId },
-      data: {
-        checklist: items.map((candidate) =>
-          candidate.id === itemId ? { ...candidate, completed } : candidate,
-        ),
-      },
-    });
+    const next = items.map((candidate) =>
+      candidate.id === itemId ? { ...candidate, completed } : candidate,
+    );
+    // Parsed once more on the way in. Everything here came back through
+    // `readPlanChecklist` so it should already hold, and that is the point of
+    // asserting it: what reaches the column is only ever a list the reader will
+    // accept, so no write from here can be the one that empties a checklist.
+    const validated = planChecklistSchema.safeParse(next);
+    if (!validated.success) return "invalid" as const;
+
+    await tx.plan.update({ where: { id: planId }, data: { checklist: validated.data } });
     return "written" as const;
   });
 
   if (outcome === "missing") return fail("Not found.");
   if (outcome === "gone") return fail("That checklist item is gone.");
+  if (outcome === "invalid") return fail("That checklist could not be saved.");
   if (outcome === "written") touchPlans(existing.contactId);
   return ok();
 }

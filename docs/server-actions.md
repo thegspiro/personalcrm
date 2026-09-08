@@ -318,8 +318,16 @@ The item is addressed by id, never by index — two tabs can hold lists of
 different lengths, and an index would tick whatever had moved into that
 position. An id that is no longer there is refused rather than written back from
 the caller's stale copy. Closed plans are refused outright, by the same
-`PLAN_STILL_OPEN` predicate `completePlan` uses, because the "Including done"
-view now puts those rows on screen.
+`PLAN_STILL_OPEN` predicate `completePlan` uses, because the Done view now puts
+those rows on screen.
+
+All three arguments are type-checked at runtime rather than trusted from the
+signature. `completed` is the one that matters: a non-boolean written into the
+JSON column makes `readPlanChecklist` reject the *whole* array on the next read,
+so a single crafted call would empty a checklist everywhere it is shown. The
+rewritten list is parsed back through `planChecklistSchema` before it is
+written, so no write from here can be the one that produces a list the reader
+will not accept.
 
 `completePlan` records what a plan became. `setPlanStatus(id, "DONE")` closes a
 plan and *clears* `usedInInteractionId` — right for undoing a mistake, wrong for

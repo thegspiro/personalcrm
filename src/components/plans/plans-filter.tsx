@@ -2,11 +2,17 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 /**
- * The two views of a plans list: still open, or everything.
+ * The two views of a plans list: still open, or finished with.
  *
  * Closing a plan out used to make it disappear with nothing anywhere to look it
- * back up — `listPlans` has always been able to include the closed ones, and
+ * back up — `listPlans` has always been able to fetch the closed ones, and
  * nothing ever asked it to. This is what asks.
+ *
+ * Two exclusive views rather than one widened list, and that is a correctness
+ * point rather than a preference: statuses sort open-first and the list is
+ * capped, so "open plans plus the closed ones" on a busy account is just the
+ * open plans, with the history pushed off the end. Asking for the closed ones
+ * by themselves is what makes them reachable.
  *
  * Links rather than a client-side toggle, for the reason `PeopleTabs` gives:
  * both pages are already `force-dynamic` server components, so the query string
@@ -16,15 +22,15 @@ import { cn } from "@/lib/utils";
  */
 export function PlansFilter({
   basePath,
-  includeDone,
+  closedOnly,
 }: {
   /** The page this filter sits on, e.g. `/ideas`. */
   basePath: string;
-  includeDone: boolean;
+  closedOnly: boolean;
 }) {
   const views = [
-    { href: basePath, label: "Open", current: !includeDone },
-    { href: `${basePath}?done=1`, label: "Including done", current: includeDone },
+    { href: basePath, label: "Open", current: !closedOnly },
+    { href: `${basePath}?done=1`, label: "Done", current: closedOnly },
   ];
 
   return (

@@ -151,7 +151,7 @@ test("the checklist is on the row, tickable there, and closed plans can be looke
   await reloaded.getByLabel("Mark as done").click();
   await expect(plans.getByText(title)).toHaveCount(0);
 
-  await page.getByRole("link", { name: "Including done" }).click();
+  await page.getByRole("link", { name: "Done", exact: true }).click();
   const closed = page
     .locator("section")
     .filter({ has: page.getByRole("button", { name: "Add something to do" }) })

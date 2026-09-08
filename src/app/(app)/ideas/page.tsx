@@ -41,7 +41,7 @@ export default async function IdeasPage({
   const { user, timezone } = await getUserContext();
   const scope = await privacyScope();
   const { done } = await searchParams;
-  const includeDone = done === "1";
+  const closedOnly = done === "1";
 
   const [ideaRows, planRows, planCategories, contacts, cacheable, placeSuggestions] = await Promise.all([
     prisma.idea.findMany({
@@ -54,7 +54,7 @@ export default async function IdeasPage({
       orderBy: { createdAt: "desc" },
       take: IDEA_CAP + 1,
     }),
-    listPlans(user.id, { take: PLAN_CAP + 1, includeDone }),
+    listPlans(user.id, { take: PLAN_CAP + 1, closedOnly }),
     listTerms(user.id, "PLAN_CATEGORY"),
     listContactOptions(user.id),
     offlineCacheable(user.id),
@@ -73,7 +73,7 @@ export default async function IdeasPage({
         </p>
       </div>
 
-      <PlansFilter basePath="/ideas" includeDone={includeDone} />
+      <PlansFilter basePath="/ideas" closedOnly={closedOnly} />
 
       <PlansSection
         plans={plans.map((plan) => ({
@@ -116,8 +116,8 @@ export default async function IdeasPage({
           shown={plans.length}
           noun="plans"
           hint={
-            includeDone
-              ? "Switch back to Open to see the ones still outstanding."
+            closedOnly
+              ? "Only the most recent are shown."
               : "Mark some done or archived to see the rest."
           }
         />

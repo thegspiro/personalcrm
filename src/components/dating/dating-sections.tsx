@@ -23,6 +23,7 @@ import { LOCALITY_LIST_IDS } from "@/components/form/locality-options";
 import { SectionCard, SectionEmpty, SectionRow } from "@/components/contacts/section-card";
 import { PrivateText } from "./private-text";
 import { EndRelationshipSheet } from "./end-relationship-sheet";
+import { clientRowId } from "@/lib/client-ids";
 import { formatMoney } from "@/lib/format";
 import { LOVE_LANGUAGES, type LoveLanguage } from "@/lib/love-languages";
 import type { ProfileLink } from "@/lib/profile-links";
@@ -89,7 +90,7 @@ export interface RomanticProfileValues {
  */
 function ProfileLinksField({ links }: { links: ProfileLink[] }) {
   const [rows, setRows] = React.useState<Array<ProfileLink & { key: string }>>(() =>
-    links.map((link) => ({ ...link, key: crypto.randomUUID() })),
+    links.map((link) => ({ ...link, key: clientRowId() })),
   );
 
   function update(key: string, patch: Partial<ProfileLink>) {
@@ -119,7 +120,7 @@ function ProfileLinksField({ links }: { links: ProfileLink[] }) {
             setRows((current) =>
               current.length >= 20
                 ? current
-                : [...current, { key: crypto.randomUUID(), label: "", url: "" }],
+                : [...current, { key: clientRowId(), label: "", url: "" }],
             )
           }
           disabled={rows.length >= 20}
@@ -235,8 +236,15 @@ export function RomanticSection({
 
   async function save(form: FormData) {
     form.set("contactId", contactId);
-    const okResult = await run(() => upsertRomanticProfile(form), "Saved");
-    if (okResult) setEditing(false);
+    // Closed once the refreshed tree has rendered, not as soon as the action
+    // returns — the third argument to `run`, which is what `useEditAction` uses
+    // for every other editor here. The window matters now that this form has
+    // controls seeded at mount: the links copy their props into state once, and
+    // the language boxes are `defaultChecked`, so an editor reopened before the
+    // refresh landed would mount from the old profile and neither control would
+    // catch up. The next unrelated save would then post those stale arrays back
+    // over the change just made.
+    await run(() => upsertRomanticProfile(form), "Saved", () => setEditing(false));
   }
 
   const stageLabel = stages.find((s) => s.id === profile?.stageId)?.label;

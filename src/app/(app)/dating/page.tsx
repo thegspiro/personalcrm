@@ -41,7 +41,7 @@ export default async function DatingPage({
   }
 
   const { done } = await searchParams;
-  const includeDone = done === "1";
+  const closedOnly = done === "1";
   const origins = await originsFor(user.id);
 
   const [pipeline, planRows, planCategories, placeSuggestions] = await Promise.all([
@@ -53,7 +53,7 @@ export default async function DatingPage({
     // status-then-newest order it has always been in.
     listPlans(user.id, {
       romanticOnly: true,
-      includeDone,
+      closedOnly,
       take: PLAN_CAP + 1,
       origin: origins.home,
       unit: origins.unit,
@@ -63,9 +63,9 @@ export default async function DatingPage({
     listPlaceSuggestions(user.id, timezone),
   ]);
   // Capped here as it already is on /ideas. The list had no cap notice at all,
-  // which was survivable while it held only what was still open; asking for the
-  // closed ones too makes hitting the query's own limit likely enough that a
-  // silent cut would be the wrong answer.
+  // which was survivable while it held only what was still open; now that a
+  // second view can fill the same page with finished ones, a silent cut would
+  // be the wrong answer on either.
   const { items: plans, truncated: plansTruncated } = applyCap(planRows, PLAN_CAP);
   const today = calendarDateInTz(new Date(), timezone);
 
@@ -113,7 +113,7 @@ export default async function DatingPage({
         today={today}
       />
 
-      <PlansFilter basePath="/dating" includeDone={includeDone} />
+      <PlansFilter basePath="/dating" closedOnly={closedOnly} />
 
       <PlansSection
         title="Date ideas"
@@ -155,8 +155,8 @@ export default async function DatingPage({
           shown={plans.length}
           noun="date ideas"
           hint={
-            includeDone
-              ? "Switch back to Open to see the ones still outstanding."
+            closedOnly
+              ? "Only the most recent are shown."
               : "Mark some done or archived to see the rest."
           }
         />

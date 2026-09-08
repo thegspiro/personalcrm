@@ -30,6 +30,17 @@ export async function listPlans(
     contactId?: string;
     romanticOnly?: boolean;
     includeDone?: boolean;
+    /**
+     * Only the closed ones — the view that looks back at what was done.
+     *
+     * A separate view rather than `includeDone`'s wider list, because the cap
+     * makes "wider" a lie: statuses sort OPEN, PLANNED, DONE, ARCHIVED, so an
+     * account with 200 open plans fills the whole page before a single closed
+     * one is reached, and the history it was asked for is exactly what falls
+     * off the end. Filtering to closed rows is what makes them reachable at
+     * all. Takes precedence over `includeDone`.
+     */
+    closedOnly?: boolean;
     /** Row cap. Callers that want to detect truncation ask for one more. */
     take?: number;
     /**
@@ -65,7 +76,11 @@ export async function listPlans(
     where: {
       ownerId,
       ...(clauses.length > 0 ? { AND: clauses } : {}),
-      ...(options.includeDone ? {} : { status: { in: ["OPEN", "PLANNED"] } }),
+      ...(options.closedOnly
+        ? { status: { in: ["DONE", "ARCHIVED"] } }
+        : options.includeDone
+          ? {}
+          : { status: { in: ["OPEN", "PLANNED"] } }),
     },
     include: {
       category: true,
@@ -78,6 +93,11 @@ export async function listPlans(
       place: {
         select: {
           id: true,
+          // Not for display. `Plan.place` is keyed on the target id alone —
+          // `SET NULL` needs every column of the key nullable and `ownerId` is
+          // not — so a restored or imported plan can point at another account's
+          // `Location`, which is why `ownedPlanRefs` exists on the write side.
+          ownerId: true,
           name: true,
           address: true,
           city: true,
@@ -94,12 +114,24 @@ export async function listPlans(
     take: options.take ?? 200,
   });
 
+  // A place belonging to someone else is dropped before anything is derived
+  // from it. The relation cannot carry an owner predicate — Prisma has no
+  // `where` on a to-one include — so the check is here, and it has to come
+  // first: the name, the map link and the distance are each built from these
+  // columns, so filtering afterwards would mean deciding what to disclose after
+  // already computing it. The plan keeps its typed `location` text either way;
+  // what is dropped is a pointer that should never have been stored.
+  const owned = rows.map(({ place, ...plan }) => ({
+    ...plan,
+    place: place && place.ownerId === ownerId ? place : null,
+  }));
+
   // Annotated in process — see the note on `listLocationsNear` for why this is
   // not `ST_Distance_Sphere`. Status still leads the ordering when sorting by
   // distance is not asked for, because OPEN before ARCHIVED is what a list of
   // plans wants first.
   const measured = withDistance(
-    rows,
+    owned,
     options.origin,
     options.unit ?? "mi",
     (plan) => pointOf(plan.place),

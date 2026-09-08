@@ -23,6 +23,7 @@ import { formatPartialDate } from "@/lib/date-precision";
 import { formatDistance, type Distance } from "@/lib/geo";
 import { formatMoney, termColorClasses } from "@/lib/format";
 import { plainDateKey, type PlainDate } from "@/lib/dates";
+import { clientRowId } from "@/lib/client-ids";
 import {
   readPlanChecklist,
   STARTER_PLAN_CHECKLIST,
@@ -247,7 +248,7 @@ function PlanFields({
     if (checklist.length >= 25) return;
     setChecklist((items) => [
       ...items,
-      { id: crypto.randomUUID(), text: "", completed: false },
+      { id: clientRowId(), text: "", completed: false },
     ]);
   }
 

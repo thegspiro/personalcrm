@@ -18,11 +18,11 @@
   unchanged.
 - **Plans you have finished can be looked back up.** Ticking something off took
   it off the list with nowhere to find it again — not on the page, not by any
-  address you could type. "Including done" on both Things to do and Date ideas
-  shows the closed ones, marked as done or archived, with "Back on the list" to
-  reopen one. Reopening drops the plan's pointer at the outing it recorded; the
-  outing itself stays in your timeline, so nothing that happened is undone by
-  changing your mind about the plan.
+  address you could type. Things to do and Date ideas now have two views, Open
+  and Done; the Done one lists what you finished or shelved, with "Back on the
+  list" to reopen something. Reopening drops the plan's pointer at the outing it
+  recorded; the outing itself stays in your timeline, so nothing that happened
+  is undone by changing your mind about the plan.
 - **Their profile links, and love languages.** Both have been columns in the
   database since the beginning with nothing anywhere that could write them.
   Dating profiles now take up to twenty labelled links — the app you met on, the
@@ -31,6 +31,11 @@
   refused rather than quietly dropped.
 
 #### Fixed
+- **A venue belonging to another account is no longer described on your plan.**
+  A plan restored from a backup could point at a place that is not yours, and
+  the list showed its name, linked to it on a map and measured your distance
+  from it. The plan keeps the venue you typed; the stray pointer is dropped, as
+  it already was when finishing a plan copied one onward.
 - **A love language, once given, can now be taken back.** Saving with none
   selected left whatever was stored exactly as it was, so the answer could be
   changed but never cleared. It clears now — and a save from anywhere that does
