@@ -49,6 +49,7 @@ const TABLES = [
   "HouseholdMember",
   "Household",
   "FamilySuggestionDismissal",
+  "DuplicateDismissal",
   "ContactTag",
   "ContactMethod",
   "Address",
