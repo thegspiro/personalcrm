@@ -55,6 +55,8 @@ import { originsFor } from "@/server/queries/origins";
 import { getGeoStatus } from "@/server/geo/config";
 import { distanceBetween, formatDistance, pointOf, withDistance } from "@/lib/geo";
 import { mapLinkFor } from "@/lib/locations";
+import { readLoveLanguages } from "@/lib/love-languages";
+import { readProfileLinks } from "@/lib/profile-links";
 import { NearbyPlaces } from "@/components/locations/nearby-places";
 import { listContactHappenings } from "@/server/queries/happenings";
 import Link from "next/link";
@@ -346,6 +348,12 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
                       overallRating: contact.romanticProfile.overallRating,
                       chemistryScore: contact.romanticProfile.chemistryScore,
                       privateNotes: contact.romanticProfile.privateNotes,
+                      // Both are JSON columns that predate any control that
+                      // writes them, so what is in there was never validated.
+                      // The readers are what keep a malformed row — or a
+                      // `javascript:` URL — out of the anchors below.
+                      profileLinks: readProfileLinks(contact.romanticProfile.profileLinks),
+                      loveLanguages: readLoveLanguages(contact.romanticProfile.loveLanguages),
                     }
                   : null
               }
@@ -549,6 +557,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             title: plan.title,
             status: plan.status,
             distance: plan.distance,
+            place: plan.place ? { name: plan.place.name, mapHref: plan.place.mapHref } : null,
             location: plan.location,
             address: plan.address,
             url: plan.url,

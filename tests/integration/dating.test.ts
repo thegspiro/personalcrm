@@ -16,7 +16,9 @@ vi.mock("@/server/privacy/lock", () => ({
   requireUnlocked: async () => actionState.locked ? { ok: false, error: "Unlock to continue." } : { ok: true },
 }));
 
-const { createDateEntry, markAsRomantic, updateDateEntry } = await import("@/server/actions/dating");
+const { createDateEntry, markAsRomantic, updateDateEntry, upsertRomanticProfile } = await import(
+  "@/server/actions/dating"
+);
 const { listDateEntries } = await import("@/server/queries/dating");
 
 function actionForm(values: Record<string, string>) {
@@ -516,5 +518,113 @@ describe.skipIf(!hasTestDatabase)("dating", () => {
     expect(profile.endedReason).toBe("She moved to Chicago.");
     expect(profile.retrospective).toBe("I waited too long to say what I wanted.");
     expect(profile.endedOn).not.toBeNull();
+  });
+
+  // --- the two columns that had no control -----------------------------------
+
+  async function storedProfile(contactId: string) {
+    return prisma.romanticProfile.findUniqueOrThrow({ where: { contactId } });
+  }
+
+  it("stores profile links and love languages from the form", async () => {
+    const contact = await makeRomantic();
+
+    expect(
+      await upsertRomanticProfile(
+        (() => {
+          const form = actionForm({
+            contactId: contact.id,
+            profileLinksPresent: "1",
+            profileLinks: JSON.stringify([{ label: "Hinge", url: "https://hinge.co/robin" }]),
+            loveLanguagesPresent: "1",
+          });
+          form.append("loveLanguages", "Quality time");
+          form.append("loveLanguages", "Acts of service");
+          return form;
+        })(),
+      ),
+    ).toMatchObject({ ok: true });
+
+    const profile = await storedProfile(contact.id);
+    expect(profile.profileLinks).toEqual([{ label: "Hinge", url: "https://hinge.co/robin" }]);
+    expect(profile.loveLanguages).toEqual(["Quality time", "Acts of service"]);
+  });
+
+  it("clears both when the form asks and sends nothing", async () => {
+    // The bug this covers: an empty list used to be written as `undefined`,
+    // which is Prisma for "leave the column alone" — so once a value was given
+    // it could never be taken back.
+    const contact = await makeRomantic();
+    await prisma.romanticProfile.update({
+      where: { contactId: contact.id },
+      data: {
+        profileLinks: [{ label: "Hinge", url: "https://hinge.co/robin" }],
+        loveLanguages: ["Quality time"],
+      },
+    });
+
+    expect(
+      await upsertRomanticProfile(
+        actionForm({
+          contactId: contact.id,
+          profileLinksPresent: "1",
+          profileLinks: "[]",
+          loveLanguagesPresent: "1",
+        }),
+      ),
+    ).toMatchObject({ ok: true });
+
+    const profile = await storedProfile(contact.id);
+    expect(profile.profileLinks).toEqual([]);
+    expect(profile.loveLanguages).toEqual([]);
+  });
+
+  it("leaves both alone when the form does not carry the controls", async () => {
+    // Presence, not value: a submission from a form that never asked about
+    // these must not read as "none given".
+    const contact = await makeRomantic();
+    await prisma.romanticProfile.update({
+      where: { contactId: contact.id },
+      data: {
+        profileLinks: [{ label: "Hinge", url: "https://hinge.co/robin" }],
+        loveLanguages: ["Quality time"],
+      },
+    });
+
+    expect(
+      await upsertRomanticProfile(actionForm({ contactId: contact.id, religion: "None" })),
+    ).toMatchObject({ ok: true });
+
+    const profile = await storedProfile(contact.id);
+    expect(profile.profileLinks).toEqual([{ label: "Hinge", url: "https://hinge.co/robin" }]);
+    expect(profile.loveLanguages).toEqual(["Quality time"]);
+  });
+
+  it("refuses a link that is not http or https, and stores nothing", async () => {
+    // These render as anchors, so a stored `javascript:` URL would be a
+    // self-XSS that survives every reload.
+    const contact = await makeRomantic();
+
+    const result = await upsertRomanticProfile(
+      actionForm({
+        contactId: contact.id,
+        profileLinksPresent: "1",
+        profileLinks: JSON.stringify([{ label: "Bad", url: "javascript:alert(1)" }]),
+      }),
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    expect(result.fieldErrors).toHaveProperty("profileLinks");
+    expect((await storedProfile(contact.id)).profileLinks).toBeNull();
+  });
+
+  it("drops a love language nobody offered", async () => {
+    const contact = await makeRomantic();
+    const form = actionForm({ contactId: contact.id, loveLanguagesPresent: "1" });
+    form.append("loveLanguages", "Quality time");
+    form.append("loveLanguages", "Interpretive dance");
+
+    expect(await upsertRomanticProfile(form)).toMatchObject({ ok: true });
+    expect((await storedProfile(contact.id)).loveLanguages).toEqual(["Quality time"]);
   });
 });

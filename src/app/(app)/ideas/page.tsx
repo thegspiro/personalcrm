@@ -7,6 +7,7 @@ import { listPlans } from "@/server/queries/plans";
 import { listTerms } from "@/server/taxonomy/queries";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/nav/icon";
+import { PlansFilter } from "@/components/plans/plans-filter";
 import { PlansSection } from "@/components/plans/plans-section";
 import { IdeaList } from "@/components/lists/idea-list";
 import { ListCapNotice } from "@/components/ui/list-cap-notice";
@@ -32,9 +33,15 @@ const PLAN_CAP = 200;
  * you say it, a plan when you do it — but they arrive in the same moment and
  * belong on the same page.
  */
-export default async function IdeasPage() {
+export default async function IdeasPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ done?: string }>;
+}) {
   const { user, timezone } = await getUserContext();
   const scope = await privacyScope();
+  const { done } = await searchParams;
+  const closedOnly = done === "1";
 
   const [ideaRows, planRows, planCategories, contacts, cacheable, placeSuggestions] = await Promise.all([
     prisma.idea.findMany({
@@ -47,7 +54,7 @@ export default async function IdeasPage() {
       orderBy: { createdAt: "desc" },
       take: IDEA_CAP + 1,
     }),
-    listPlans(user.id, { take: PLAN_CAP + 1 }),
+    listPlans(user.id, { take: PLAN_CAP + 1, closedOnly }),
     listTerms(user.id, "PLAN_CATEGORY"),
     listContactOptions(user.id),
     offlineCacheable(user.id),
@@ -66,8 +73,11 @@ export default async function IdeasPage() {
         </p>
       </div>
 
+      <PlansFilter basePath="/ideas" closedOnly={closedOnly} />
+
       <PlansSection
         plans={plans.map((plan) => ({
+          place: plan.place ? { name: plan.place.name, mapHref: plan.place.mapHref } : null,
           id: plan.id,
           title: plan.title,
           status: plan.status,
@@ -105,7 +115,11 @@ export default async function IdeasPage() {
         <ListCapNotice
           shown={plans.length}
           noun="plans"
-          hint="Mark some done or archived to see the rest."
+          hint={
+            closedOnly
+              ? "Only the most recent are shown."
+              : "Mark some done or archived to see the rest."
+          }
         />
       ) : null}
 

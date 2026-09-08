@@ -721,8 +721,8 @@ you _do_ it.
 | `url` | `varchar(500)?` | The listing, the menu, the trailer, the ticket page |
 | `estimatedCostCents` | `int?` | With `currency`, default `USD` |
 | `notes` | `text?` | Free-form preparation context, including personal accessibility or dietary needs without reducing them to enums |
-| `checklist` | `json` | A validated list of up to 25 `{ id, text, completed }` items. Suggestions begin only in the editor and are never completed automatically |
-| `status` | `PlanStatus` | `OPEN` \| `PLANNED` \| `DONE` \| `ARCHIVED` |
+| `checklist` | `json` | A validated list of up to 25 `{ id, text, completed }` items. Suggestions begin only in the editor and are never completed automatically. Shown on the plan's own row with a `done of total` count, and ticked from there through `setPlanChecklistItem` — addressed by item id, never by index, because two tabs can hold lists of different lengths |
+| `status` | `PlanStatus` | `OPEN` \| `PLANNED` \| `DONE` \| `ARCHIVED`. `listPlans` reads open rows by default and closed ones through `closedOnly`, which is a separate view rather than a widened list: the enum sorts open-first and the query is capped, so an account whose open plans fill the page would never reach a closed one |
 | `plannedFor` | `date?` | Pencilled in, before there is anything logged to point at |
 | `plannedStartMinute` | `int?` | Local wall-clock minutes past midnight on `plannedFor`, 0–1439. Cleared when there is no day — a time on nothing is not a time |
 | `plannedDurationMinutes` | `int?` | How long to set aside, in minutes. Null = open-ended |
@@ -811,6 +811,23 @@ worse; compatibility fields (`birthYear`, `heightCm`, `distanceKm`,
 `hasKids`, `religion`, `politics`, `smoking`, `drinking`, `loveLanguages` JSON,
 `mbti`, `enneagram`); `exclusive`; `overallRating` and `chemistryScore` (1–5);
 `profileLinks` JSON (`{ label, url }`); and `privateNotes`.
+
+The two JSON columns are validated on the way **out** as well as in, by
+`readProfileLinks` (`src/lib/profile-links.ts`) and `readLoveLanguages`
+(`src/lib/love-languages.ts`). Both columns shipped with the first migration and
+went years without a control that wrote them, so whatever they hold arrived
+without ever passing a check — and `profileLinks` renders as an anchor's `href`,
+where a stored `javascript:` URL would be a self-XSS. Only `http:` and `https:`
+are accepted. `loveLanguages` is a closed five-item list rather than a
+`TaxonomyKind`: the taxonomy rule is for types an account extends and renames,
+and a new enum member is a migration to gain an extensibility nobody wants.
+
+Both are written by presence rather than by value — the editor emits
+`profileLinksPresent` / `loveLanguagesPresent` alongside them, the same rule
+`planReminderPatch` applies to a plan's reminder policy. Without that marker an
+empty list means "this form did not ask", not "the answer is none"; writing
+`undefined` unconditionally for an empty list, as `upsertRomanticProfile` used
+to, made a stored value impossible to clear once given.
 
 `distanceKm` is what somebody told you — "about twenty minutes away" — rather
 than a measurement, which is why it survives alongside the coordinates on their

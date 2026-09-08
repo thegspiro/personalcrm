@@ -23,7 +23,10 @@ import { LOCALITY_LIST_IDS } from "@/components/form/locality-options";
 import { SectionCard, SectionEmpty, SectionRow } from "@/components/contacts/section-card";
 import { PrivateText } from "./private-text";
 import { EndRelationshipSheet } from "./end-relationship-sheet";
+import { clientRowId } from "@/lib/client-ids";
 import { formatMoney } from "@/lib/format";
+import { LOVE_LANGUAGES, type LoveLanguage } from "@/lib/love-languages";
+import type { ProfileLink } from "@/lib/profile-links";
 import { formatPartialDate } from "@/lib/date-precision";
 import { plainDateFromDb, plainDateKey, type PlainDate } from "@/lib/dates";
 import {
@@ -67,6 +70,127 @@ export interface RomanticProfileValues {
   overallRating: number | null;
   chemistryScore: number | null;
   privateNotes: string | null;
+  /** Already through `readProfileLinks` / `readLoveLanguages` on the page. */
+  profileLinks: ProfileLink[];
+  loveLanguages: LoveLanguage[];
+}
+
+/**
+ * Where they are, elsewhere — the dating app, the profile you were sent.
+ *
+ * The column has been in the schema since the beginning and nothing ever wrote
+ * to it, so this is the first control it has had. It posts one JSON string, the
+ * same shape the plan checklist editor uses, rather than indexed field names:
+ * a row deleted from the middle would otherwise renumber every field after it.
+ *
+ * The hidden `profileLinksPresent` marker is what tells the action this form
+ * asked the question at all. Without it, clearing every link would be
+ * indistinguishable from a form that has no link control, and the action would
+ * be right to leave the stored value alone.
+ */
+function ProfileLinksField({ links }: { links: ProfileLink[] }) {
+  const [rows, setRows] = React.useState<Array<ProfileLink & { key: string }>>(() =>
+    links.map((link) => ({ ...link, key: clientRowId() })),
+  );
+
+  function update(key: string, patch: Partial<ProfileLink>) {
+    setRows((current) =>
+      current.map((row) => (row.key === key ? { ...row, ...patch } : row)),
+    );
+  }
+
+  // Only complete rows are submitted, so a row somebody started and abandoned
+  // is dropped rather than failing the save on a blank URL.
+  const payload = rows
+    .filter((row) => row.label.trim() !== "" && row.url.trim() !== "")
+    .map((row) => ({ label: row.label.trim(), url: row.url.trim() }));
+
+  return (
+    <div className="min-w-0 space-y-2" aria-label="Profile links">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium">Profile links</p>
+          <p className="text-xs text-muted-foreground">
+            Their dating app or social profile. http:// or https:// only.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() =>
+            setRows((current) =>
+              current.length >= 20
+                ? current
+                : [...current, { key: clientRowId(), label: "", url: "" }],
+            )
+          }
+          disabled={rows.length >= 20}
+          className="shrink-0 text-xs font-medium text-accent-11 disabled:opacity-50"
+        >
+          Add link
+        </button>
+      </div>
+      <input type="hidden" name="profileLinksPresent" value="1" />
+      <input type="hidden" name="profileLinks" value={JSON.stringify(payload)} />
+      {rows.map((row, index) => (
+        <div key={row.key} className="grid min-w-0 gap-2 sm:grid-cols-[1fr_2fr_auto]">
+          <Input
+            aria-label={`Link ${index + 1} label`}
+            value={row.label}
+            maxLength={80}
+            placeholder="Hinge"
+            onChange={(event) => update(row.key, { label: event.target.value })}
+          />
+          <Input
+            aria-label={`Link ${index + 1} address`}
+            type="url"
+            value={row.url}
+            maxLength={500}
+            placeholder="https://"
+            onChange={(event) => update(row.key, { url: event.target.value })}
+          />
+          <button
+            type="button"
+            onClick={() => setRows((current) => current.filter((r) => r.key !== row.key))}
+            aria-label={`Delete link ${index + 1}`}
+            className="shrink-0 justify-self-start text-xs text-muted-foreground hover:text-destructive"
+          >
+            Delete
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The five love languages, as checkboxes.
+ *
+ * `upsertRomanticProfile` has read `loveLanguages` from the form since the
+ * dating layer shipped; no form ever sent it, so the column was written only by
+ * a direct POST and displayed nowhere. The names here are exactly what that
+ * reader already expects.
+ */
+function LoveLanguagesField({ chosen }: { chosen: LoveLanguage[] }) {
+  return (
+    <fieldset className="min-w-0">
+      <legend className="text-sm font-medium">Love languages</legend>
+      <input type="hidden" name="loveLanguagesPresent" value="1" />
+      <div className="mt-1 grid gap-1 sm:grid-cols-2">
+        {LOVE_LANGUAGES.map((language) => (
+          <label key={language} className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="loveLanguages"
+              value={language}
+              defaultChecked={chosen.includes(language)}
+              className="size-4"
+            />
+            {language}
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
 }
 
 const KIDS_OPTIONS = [
@@ -112,8 +236,15 @@ export function RomanticSection({
 
   async function save(form: FormData) {
     form.set("contactId", contactId);
-    const okResult = await run(() => upsertRomanticProfile(form), "Saved");
-    if (okResult) setEditing(false);
+    // Closed once the refreshed tree has rendered, not as soon as the action
+    // returns — the third argument to `run`, which is what `useEditAction` uses
+    // for every other editor here. The window matters now that this form has
+    // controls seeded at mount: the links copy their props into state once, and
+    // the language boxes are `defaultChecked`, so an editor reopened before the
+    // refresh landed would mount from the old profile and neither control would
+    // catch up. The next unrelated save would then post those stale arrays back
+    // over the change just made.
+    await run(() => upsertRomanticProfile(form), "Saved", () => setEditing(false));
   }
 
   const stageLabel = stages.find((s) => s.id === profile?.stageId)?.label;
@@ -188,6 +319,10 @@ export function RomanticSection({
             </Field>
           </div>
 
+          <LoveLanguagesField chosen={profile?.loveLanguages ?? []} />
+
+          <ProfileLinksField links={profile?.profileLinks ?? []} />
+
           <Field label="Private notes" htmlFor="privateNotes" hint="Only you ever see this.">
             <Textarea id="privateNotes" name="privateNotes" rows={3} defaultValue={profile?.privateNotes ?? ""} />
           </Field>
@@ -245,7 +380,31 @@ export function RomanticSection({
             <Detail label="Smoking" value={profile?.smoking} />
             <Detail label="MBTI" value={profile?.mbti} />
             <Detail label="Born" value={profile?.birthYear ? String(profile.birthYear) : null} />
+            <Detail
+              label="Love languages"
+              value={profile?.loveLanguages.length ? profile.loveLanguages.join(", ") : null}
+            />
           </dl>
+
+          {/* Not blurred by `PrivateText`: that is for what you wrote down about
+              someone, and these are addresses of pages they publish. Everything
+              here is already behind the dating gate and the lock. */}
+          {profile?.profileLinks.length ? (
+            <ul className="grid gap-1">
+              {profile.profileLinks.map((link) => (
+                <li key={`${link.label}:${link.url}`} className="min-w-0">
+                  <a
+                    href={link.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="block min-w-0 break-words text-xs text-accent-11 hover:underline [overflow-wrap:anywhere]"
+                  >
+                    {link.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          ) : null}
 
           {profile?.privateNotes ? (
             <div className="rounded-lg border border-border/70 p-2.5">

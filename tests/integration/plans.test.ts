@@ -60,9 +60,10 @@ vi.mock("@/server/privacy/lock", () => ({
     actionState.locked ? { ok: false, error: "Unlock to continue." } : { ok: true },
 }));
 
-const { completePlan, createPlan, schedulePlan, updatePlan } = await import(
+const { completePlan, createPlan, schedulePlan, setPlanChecklistItem, updatePlan } = await import(
   "@/server/actions/details"
 );
+const { listPlans } = await import("@/server/queries/plans");
 
 function actionForm(values: Record<string, string>) {
   const form = new FormData();
@@ -1212,6 +1213,208 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
     expect(after.status).toBe("DONE");
     expect(after.usedInInteractionId).not.toBeNull();
+  });
+
+  // --- the checklist on the row, and looking closed plans back up -----------
+
+  it("ticks one checklist item without touching the others", async () => {
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id, {
+      checklist: [
+        { id: "tickets", text: "Reserve or buy tickets", completed: false },
+        { id: "travel", text: "Check travel time", completed: false },
+      ],
+    });
+
+    expect(await setPlanChecklistItem(plan.id, "travel", true)).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.checklist).toEqual([
+      { id: "tickets", text: "Reserve or buy tickets", completed: false },
+      { id: "travel", text: "Check travel time", completed: true },
+    ]);
+  });
+
+  it("unticks an item that was already done", async () => {
+    const plan = await planFor(null);
+    expect(await setPlanChecklistItem(plan.id, "tickets", false)).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.checklist).toEqual([
+      { id: "tickets", text: "Reserve or buy tickets", completed: false },
+    ]);
+  });
+
+  it("refuses a plan belonging to another account", async () => {
+    // A server action is a public POST endpoint: the id is whatever the caller
+    // typed, so ownership is re-established here rather than assumed from the
+    // page that rendered the tickbox.
+    const stranger = await createTestUser();
+    const theirs = await prisma.plan.create({
+      data: {
+        ownerId: stranger.id,
+        title: "Not yours",
+        checklist: [{ id: "tickets", text: "Reserve or buy tickets", completed: false }],
+      },
+    });
+
+    expect(await setPlanChecklistItem(theirs.id, "tickets", true)).toMatchObject({ ok: false });
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: theirs.id } });
+    expect(after.checklist).toEqual([
+      { id: "tickets", text: "Reserve or buy tickets", completed: false },
+    ]);
+  });
+
+  it("refuses a plan whose person is private while the lock is closed", async () => {
+    const hidden = await prisma.contact.create({
+      data: { ownerId, firstName: "Robin", isPrivate: true },
+    });
+    const plan = await planFor(hidden.id);
+    actionState.locked = true;
+
+    expect(await setPlanChecklistItem(plan.id, "tickets", false)).toMatchObject({ ok: false });
+
+    actionState.locked = false;
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.checklist).toEqual([
+      { id: "tickets", text: "Reserve or buy tickets", completed: true },
+    ]);
+  });
+
+  it("refuses a plan that is already closed", async () => {
+    // The done view puts these rows on screen, so the refusal is what stops a
+    // stray tap rewriting the preparation for something already finished.
+    const plan = await planFor(null, { status: "DONE" });
+    expect(await setPlanChecklistItem(plan.id, "tickets", false)).toMatchObject({ ok: false });
+  });
+
+  it("says so when the item was deleted in another tab", async () => {
+    const plan = await planFor(null);
+    const result = await setPlanChecklistItem(plan.id, "no-such-item", true);
+
+    expect(result).toMatchObject({ ok: false });
+    // Not written back from the stale list the caller was looking at.
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.checklist).toEqual([
+      { id: "tickets", text: "Reserve or buy tickets", completed: true },
+    ]);
+  });
+
+  it("leaves closed plans out of the list unless they are asked for", async () => {
+    const friend = await makeContact("Marcus");
+    await planFor(friend.id, { title: "Still open" });
+    await planFor(friend.id, { title: "Finished", status: "DONE" });
+    await planFor(friend.id, { title: "Shelved", status: "ARCHIVED" });
+
+    const open = await listPlans(ownerId);
+    expect(open.map((plan) => plan.title)).toEqual(["Still open"]);
+
+    const all = await listPlans(ownerId, { includeDone: true });
+    expect(all.map((plan) => plan.title).sort()).toEqual(["Finished", "Shelved", "Still open"]);
+
+    const closed = await listPlans(ownerId, { closedOnly: true });
+    expect(closed.map((plan) => plan.title).sort()).toEqual(["Finished", "Shelved"]);
+  });
+
+  it("reaches closed plans on an account whose open ones already fill the page", async () => {
+    // Why the done view asks for closed rows *only* rather than a wider list.
+    // Statuses sort OPEN, PLANNED, DONE, ARCHIVED, so with the cap full of open
+    // plans a widened query returns not one closed row — the history the view
+    // exists to show is exactly what falls off the end.
+    const friend = await makeContact("Marcus");
+    await prisma.plan.createMany({
+      data: Array.from({ length: 12 }, (_, i) => ({
+        ownerId,
+        contactId: friend.id,
+        title: `Open ${i}`,
+      })),
+    });
+    await planFor(friend.id, { title: "Finished", status: "DONE" });
+
+    const widened = await listPlans(ownerId, { includeDone: true, take: 10 });
+    expect(widened.map((plan) => plan.title)).not.toContain("Finished");
+
+    const closed = await listPlans(ownerId, { closedOnly: true, take: 10 });
+    expect(closed.map((plan) => plan.title)).toEqual(["Finished"]);
+  });
+
+  it("drops a place belonging to another account rather than describing it", async () => {
+    // `Plan.place` is keyed on the target id alone, so a restored or imported
+    // plan can point at someone else's Location. Carrying it onward would put
+    // their venue's name, its OSM permalink and its coordinates into this
+    // account's payload — and the distance chip would be measured from them.
+    const stranger = await createTestUser();
+    const theirs = await prisma.location.create({
+      data: {
+        ownerId: stranger.id,
+        name: "Their local",
+        normalizedName: "their local",
+        osmType: "W",
+        osmId: 99999n,
+        latitude: "38.8951",
+        longitude: "-77.0364",
+      },
+    });
+    await prisma.plan.update({
+      where: { id: (await planFor(null, { title: "Stray pointer" })).id },
+      data: { locationId: theirs.id },
+    });
+
+    const [plan] = await listPlans(ownerId);
+    expect(plan.title).toBe("Stray pointer");
+    expect(plan.place).toBeNull();
+    expect(plan.distance).toBeNull();
+  });
+
+  it("refuses a completion value that is not a boolean", async () => {
+    // A public POST endpoint: the signature is a promise to TypeScript, not a
+    // runtime check. A non-boolean in the JSON makes `readPlanChecklist` reject
+    // the whole array on the next read, emptying the checklist everywhere.
+    const plan = await planFor(null);
+    const call = setPlanChecklistItem as unknown as (
+      a: string,
+      b: string,
+      c: unknown,
+    ) => Promise<{ ok: boolean }>;
+
+    for (const value of ["true", 1, null, {}, []]) {
+      expect(await call(plan.id, "tickets", value)).toMatchObject({ ok: false });
+    }
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.checklist).toEqual([
+      { id: "tickets", text: "Reserve or buy tickets", completed: true },
+    ]);
+  });
+
+  it("offers a map link for a plan whose venue resolved to a place", async () => {
+    const place = await prisma.location.create({
+      data: {
+        ownerId,
+        name: "The Brudenell",
+        normalizedName: "the brudenell",
+        osmType: "W",
+        osmId: 12345n,
+      },
+    });
+    await planFor(null, { title: "Gig", locationId: place.id });
+    await planFor(null, { title: "Somewhere only typed", location: "The other one" });
+
+    const plans = await listPlans(ownerId);
+    const placed = plans.find((plan) => plan.title === "Gig");
+    const typed = plans.find((plan) => plan.title === "Somewhere only typed");
+
+    expect(placed?.place).toEqual({
+      id: place.id,
+      name: "The Brudenell",
+      mapHref: "https://www.openstreetmap.org/way/12345",
+      latitude: null,
+      longitude: null,
+    });
+    // A BigInt reaching a client component throws on serialisation, so the
+    // column that carries one must not survive the query.
+    expect(placed?.place).not.toHaveProperty("osmId");
+    expect(typed?.place).toBeNull();
   });
 
   it("a repeated date's city reaches the place as locality, never as its address", async () => {

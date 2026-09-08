@@ -12,14 +12,24 @@ import { listTerms } from "@/server/taxonomy/queries";
 import { canSeeDating } from "@/server/privacy/filter";
 import { getPrivacyState } from "@/server/privacy/lock";
 import { PipelineList } from "@/components/dating/pipeline-list";
+import { PlansFilter } from "@/components/plans/plans-filter";
 import { PlansSection } from "@/components/plans/plans-section";
+import { ListCapNotice } from "@/components/ui/list-cap-notice";
+import { applyCap } from "@/lib/list-cap";
 import { calendarDateInTz, plainDateFromDb } from "@/lib/dates";
 import { readReminderPolicy } from "@/lib/reminders";
 
 export const metadata: Metadata = { title: "Dating" };
 export const dynamic = "force-dynamic";
 
-export default async function DatingPage() {
+/** One more than this is fetched, so the page can tell a full list from a cut one. */
+const PLAN_CAP = 200;
+
+export default async function DatingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ done?: string }>;
+}) {
   const { user, prefs, timezone } = await getUserContext();
 
   // Gate before any dating data is fetched — a redirect after loading would
@@ -30,9 +40,11 @@ export default async function DatingPage() {
     redirect(enabled ? "/unlock?next=/dating" : "/");
   }
 
+  const { done } = await searchParams;
+  const closedOnly = done === "1";
   const origins = await originsFor(user.id);
 
-  const [pipeline, plans, planCategories, placeSuggestions] = await Promise.all([
+  const [pipeline, planRows, planCategories, placeSuggestions] = await Promise.all([
     listPipeline(user.id),
     // The same plans the rest of the app holds, filtered to the people this
     // page is about — plus the ones saved against nobody.
@@ -41,6 +53,8 @@ export default async function DatingPage() {
     // status-then-newest order it has always been in.
     listPlans(user.id, {
       romanticOnly: true,
+      closedOnly,
+      take: PLAN_CAP + 1,
       origin: origins.home,
       unit: origins.unit,
       sortByDistance: Boolean(origins.home),
@@ -48,6 +62,11 @@ export default async function DatingPage() {
     listTerms(user.id, "PLAN_CATEGORY"),
     listPlaceSuggestions(user.id, timezone),
   ]);
+  // Capped here as it already is on /ideas. The list had no cap notice at all,
+  // which was survivable while it held only what was still open; now that a
+  // second view can fill the same page with finished ones, a silent cut would
+  // be the wrong answer on either.
+  const { items: plans, truncated: plansTruncated } = applyCap(planRows, PLAN_CAP);
   const today = calendarDateInTz(new Date(), timezone);
 
   // Everyone still in the pipeline, for the "who with?" picker.
@@ -94,10 +113,13 @@ export default async function DatingPage() {
         today={today}
       />
 
+      <PlansFilter basePath="/dating" closedOnly={closedOnly} />
+
       <PlansSection
         title="Date ideas"
         plans={plans.map((plan) => ({
           distance: plan.distance,
+          place: plan.place ? { name: plan.place.name, mapHref: plan.place.mapHref } : null,
           id: plan.id,
           title: plan.title,
           status: plan.status,
@@ -128,6 +150,17 @@ export default async function DatingPage() {
         placesTruncated={placeSuggestions.truncated}
         defaultOpen={plans.length > 0}
       />
+      {plansTruncated ? (
+        <ListCapNotice
+          shown={plans.length}
+          noun="date ideas"
+          hint={
+            closedOnly
+              ? "Only the most recent are shown."
+              : "Mark some done or archived to see the rest."
+          }
+        />
+      ) : null}
     </div>
   );
 }
