@@ -206,6 +206,40 @@ runs two idempotent tasks: re-provisioning taxonomy defaults for every account
 sessions. Both log and swallow failures — a container that refuses to start is
 worse than one that missed a housekeeping pass.
 
+## Paging a list
+
+`src/lib/pagination.ts` is the whole mechanism, driven by a `?page=` parameter
+so a position in a list is part of the URL and can be bookmarked or shared.
+Offsets rather than cursors: a personal address book is neither large nor being
+appended to while you read it, and an offset can say "page 3 of 7" where a
+cursor can only say "there is more".
+
+Two shapes, because two kinds of list:
+
+| | People | Timeline |
+| --- | --- | --- |
+| Rows come from | one query, with `skip`/`take` | five sources merged and projected in memory |
+| Total | `count` on the same `where` as the rows | not computed |
+| Pager says | "Page 3 of 7" | "Page 3" |
+| Built by | `describePage` | `describeFeedPage` |
+
+The timeline's total is absent rather than estimated. Counting it would mean
+building the whole feed, and a pager that guesses is worse than one that admits
+it does not know. Its offset also costs the pages before it — page five builds
+five and discards four — which is bounded by how deep anyone actually goes.
+
+Two rules that are easy to miss and produce the same symptom:
+
+- **A page past the end redirects to one that exists**, rather than rendering
+  an empty list under a pager claiming otherwise. That is what a bookmarked
+  `?page=6` does once the rows behind it are archived.
+- **Every filter control drops `page`.** Narrowing a search from six pages to
+  one otherwise lands on page four of one page — an empty list that reads as
+  "no matches" when there were plenty.
+
+`list-cap.ts` and `ListCapNotice` remain for the lists that still draw a
+bounded window, and for pickers, where paging would be the wrong answer.
+
 ## Failure states
 
 Every page is `force-dynamic` and queries Prisma before its first byte, so a

@@ -342,5 +342,6 @@ has to be an explicit disable rather than a tolerated warning.
 | An `isPrivate` column | A line in `countPrivateRows`, plus privacy coverage |
 | A new write path | Integration coverage that the denormalised activity fields survive backdating and deletion |
 | A new page or widget | It must appear in `layout.spec.ts`'s route sweep, and in `a11y.spec.ts`'s |
+| A paged list | A filter control that does not drop `page`, and a `?page=` past the end, are the two bugs — cover both |
 | Anything user-visible | An entry in [`CHANGELOG.d/`](../CHANGELOG.d/README.md) |
 | A merge of `main` into the branch | The whole set again, on the merged tree — see [CONTRIBUTING.md](../CONTRIBUTING.md#merging-main-into-a-long-lived-branch) |

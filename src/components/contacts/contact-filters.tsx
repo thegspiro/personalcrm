@@ -57,6 +57,11 @@ export function ContactFilters({
     const next = new URLSearchParams(paramsRef.current.toString());
     if (value === null || value === "") next.delete(key);
     else next.set(key, value);
+    // Any change to what is being listed invalidates where you were in it.
+    // Keeping `page` here is how narrowing a search from six pages to one
+    // lands somebody on page four of one page — an empty list that reads as
+    // "no matches" when there were matches all along.
+    next.delete("page");
     paramsRef.current = next;
     router.replace(`${pathname}?${next.toString()}`, { scroll: false });
   }
