@@ -7,9 +7,10 @@
   tickets, check travel time, agree on budget" while saving something to do, and
   then the row said nothing about any of it — the one question the list exists to
   answer, *is this booked yet*, needed the edit form opened to read. Each row now
-  carries a `Checklist · 2 of 5` line, and the items tick straight from there.
-  Something you have arranged shows its preparation open; an idea nobody has
-  picked a day for keeps it folded away.
+  carries a `Checklist · 2 of 5` line, and the items tick straight from there —
+  and the list stays open while you work down it. Something you have arranged
+  shows its preparation open to begin with; an idea nobody has picked a day for
+  keeps it folded away until you ask.
 - **A plan's venue opens on a map.** A plan whose venue matched a place you have
   been drew a map pin beside the distance — an icon that looked like a link and
   was not. It is a link now, the same one a logged date has had, and it works

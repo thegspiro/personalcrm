@@ -420,6 +420,15 @@ function isClosed(plan: PlanItem): boolean {
  * up to 200 of these. `<details>` is presentation only here — unlike
  * `ScheduleSheet`, the items are already in the payload, so hiding them saves
  * nothing and there is nothing to build lazily.
+ *
+ * Whether it is open is React state rather than a value derived from the plan,
+ * and that is not a style choice. React 19 writes `open` back to the prop on
+ * every commit, so a derived `open={status === "PLANNED"}` reopened the argument
+ * after each render — and ticking an item refreshes the tree, so working down a
+ * checklist closed it under your cursor on the first tick. Sourcing the prop
+ * from state that `onToggle` keeps in step means the value React writes back is
+ * the one you last chose. The e2e spec fails on this: Playwright clicks, the
+ * disclosure shuts, and the checkbox it was verifying is gone.
  */
 function PlanChecklist({
   plan,
@@ -431,6 +440,7 @@ function PlanChecklist({
   onTick: (itemId: string, completed: boolean) => void;
 }) {
   const items = React.useMemo(() => readPlanChecklist(plan.checklist), [plan.checklist]);
+  const [open, setOpen] = React.useState(plan.status === "PLANNED");
   if (items.length === 0) return null;
 
   const done = items.filter((item) => item.completed).length;
@@ -439,7 +449,11 @@ function PlanChecklist({
   const closed = isClosed(plan);
 
   return (
-    <details className="mt-1" open={plan.status === "PLANNED"}>
+    <details
+      className="mt-1"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary className="cursor-pointer text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
         Checklist · {done} of {items.length}
       </summary>
