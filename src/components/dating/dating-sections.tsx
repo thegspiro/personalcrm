@@ -19,6 +19,7 @@ import { DateField, DateTimeField } from "@/components/form/date-field";
 import { RatingInput, RatingDisplay } from "@/components/form/rating-input";
 import { TermChips, TermSelect, type TermOption } from "@/components/form/term-select";
 import { PlacePicker, type PlaceSuggestion } from "@/components/form/place-picker";
+import { LOCALITY_LIST_IDS } from "@/components/form/locality-options";
 import { SectionCard, SectionEmpty, SectionRow } from "@/components/contacts/section-card";
 import { PrivateText } from "./private-text";
 import { EndRelationshipSheet } from "./end-relationship-sheet";
@@ -468,7 +469,13 @@ function DateEntryFields({
           />
         </Field>
         <Field label="City" htmlFor={`${formId}-city`}>
-          <Input id={`${formId}-city`} name="city" defaultValue={entry?.city ?? ""} />
+          <Input
+            id={`${formId}-city`}
+            name="city"
+            list={LOCALITY_LIST_IDS.city}
+            maxLength={120}
+            defaultValue={entry?.city ?? ""}
+          />
         </Field>
       </div>
       <div className="grid gap-2.5 sm:grid-cols-2">

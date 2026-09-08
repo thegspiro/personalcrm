@@ -33,8 +33,12 @@ vi.mock("@/server/privacy/lock", () => ({
   recordProtectedReadActivity: async () => ({ ok: false }) as const,
 }));
 
-const { PLACE_SUGGESTIONS_CAP, listLocationOptions, listPlaceSuggestions } =
-  await import("@/server/queries/locations");
+const {
+  PLACE_SUGGESTIONS_CAP,
+  listLocalitySuggestions,
+  listLocationOptions,
+  listPlaceSuggestions,
+} = await import("@/server/queries/locations");
 const { normalizeLocationName } = await import("@/server/services/locations");
 
 const TZ = "America/New_York";
@@ -201,6 +205,59 @@ describe.skipIf(!hasTestDatabase)("place suggestions", () => {
     // cap a known venue stops being recognised and part of its name gets
     // offered as a person instead.
     expect(await listLocationOptions(state.ownerId)).toHaveLength(total);
+  });
+
+  it("withholds a locality known only through something hidden", async () => {
+    const [ada, secret] = await Promise.all([
+      prisma.contact.create({
+        data: { ownerId: state.ownerId, firstName: "Ada", city: "Ignored" },
+      }),
+      prisma.contact.create({
+        data: { ownerId: state.ownerId, firstName: "Secret", isPrivate: true },
+      }),
+    ]);
+
+    const shown = await place("Corner Cafe", { city: "Arlington", region: "VA" });
+    await visit(shown.id, [ada.id]);
+    // Reachable only through a visit with a private person on it.
+    const hidden = await place("The Hideaway", { city: "Reston", region: "VA" });
+    await visit(hidden.id, [secret.id]);
+
+    await prisma.address.create({
+      data: { contactId: ada.id, city: "Falls Church", region: "VA" },
+    });
+    // A private contact's address is a disclosure by the same argument.
+    await prisma.address.create({
+      data: { contactId: secret.id, city: "Vienna", region: "VA" },
+    });
+
+    const locked = await listLocalitySuggestions(state.ownerId);
+    expect(locked.cities).toEqual(["Arlington", "Falls Church"]);
+    expect(locked.regions).toEqual(["VA"]);
+
+    state.unlocked = true;
+    const unlocked = await listLocalitySuggestions(state.ownerId);
+    expect(unlocked.cities).toEqual([
+      "Arlington",
+      "Falls Church",
+      "Reston",
+      "Vienna",
+    ]);
+  });
+
+  it("folds together spellings that differ only by case", async () => {
+    const ada = await prisma.contact.create({
+      data: { ownerId: state.ownerId, firstName: "Ada" },
+    });
+    const one = await place("Corner Cafe", { city: "Arlington" });
+    const two = await place("Second Cafe", { city: "arlington" });
+    await visit(one.id, [ada.id]);
+    await visit(two.id, [ada.id]);
+
+    // One entry, keeping the first spelling seen rather than offering the same
+    // city twice in a dropdown.
+    const { cities } = await listLocalitySuggestions(state.ownerId);
+    expect(cities).toEqual(["Arlington"]);
   });
 
   it("hands the client strings, never Decimal or BigInt", async () => {

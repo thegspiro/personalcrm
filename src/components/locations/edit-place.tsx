@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/sheet";
 import { SubmitButton } from "@/components/form/submit-button";
 import { useAction } from "@/components/form/use-action";
+import { LOCALITY_LIST_IDS } from "@/components/form/locality-options";
 import {
   lookupLocationAddress,
   setLocationArchived,
@@ -204,6 +205,7 @@ export function EditPlaceSheet({
                   <Input
                     id="place-city"
                     name="city"
+                    list={LOCALITY_LIST_IDS.city}
                     value={city}
                     onChange={(event) => setCity(event.target.value)}
                     maxLength={120}
@@ -213,6 +215,7 @@ export function EditPlaceSheet({
                   <Input
                     id="place-region"
                     name="region"
+                    list={LOCALITY_LIST_IDS.region}
                     value={region}
                     onChange={(event) => setRegion(event.target.value)}
                     maxLength={120}
@@ -222,6 +225,7 @@ export function EditPlaceSheet({
                   <Input
                     id="place-country"
                     name="country"
+                    list={LOCALITY_LIST_IDS.country}
                     value={country}
                     onChange={(event) => setCountry(event.target.value)}
                     maxLength={120}

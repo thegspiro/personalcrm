@@ -14,6 +14,7 @@ import {
   updateAddress,
 } from "@/server/actions/details";
 import { PlaceLookup } from "@/components/locations/place-lookup";
+import { LOCALITY_LIST_IDS } from "@/components/form/locality-options";
 import type { GeoCandidateView } from "@/server/geo/providers";
 import { mapLinkFor } from "@/lib/locations";
 
@@ -166,6 +167,7 @@ function AddressFields({
           <Input
             id={`${formId}-city`}
             name="city"
+            list={LOCALITY_LIST_IDS.city}
             maxLength={120}
             value={city}
             onChange={(event) => setCity(event.target.value)}
@@ -175,6 +177,7 @@ function AddressFields({
           <Input
             id={`${formId}-region`}
             name="region"
+            list={LOCALITY_LIST_IDS.region}
             maxLength={120}
             value={region}
             onChange={(event) => setRegion(event.target.value)}
@@ -192,6 +195,7 @@ function AddressFields({
           <Input
             id={`${formId}-country`}
             name="country"
+            list={LOCALITY_LIST_IDS.country}
             maxLength={120}
             value={country}
             onChange={(event) => setCountry(event.target.value)}

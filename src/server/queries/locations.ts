@@ -5,6 +5,7 @@ import { pointOf, withDistance, type Point, type Unit } from "@/lib/geo";
 import { applyCap, type CappedList } from "@/lib/list-cap";
 import { mapLinkFor } from "@/lib/locations";
 import {
+  contactPrivacyWhere,
   interactionPrivacyWhere,
   privacyScope,
   viaOptionalContactPrivacyWhere,
@@ -323,6 +324,72 @@ export async function listPlaceSuggestions(
       osmType: row.osmType,
       osmId: row.osmId === null ? null : String(row.osmId),
     })),
+  };
+}
+
+/** How many distinct values a locality datalist offers. */
+const LOCALITY_SUGGESTIONS_CAP = 100;
+
+export interface LocalitySuggestions {
+  cities: string[];
+  regions: string[];
+  countries: string[];
+}
+
+/** Case-insensitive dedupe keeping the first spelling seen, then sorted. */
+function distinct(values: ReadonlyArray<string | null>): string[] {
+  const seen = new Map<string, string>();
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLocaleLowerCase("en-US");
+    if (!seen.has(key)) seen.set(key, trimmed);
+  }
+  return [...seen.values()]
+    .sort((a, b) => a.localeCompare(b))
+    .slice(0, LOCALITY_SUGGESTIONS_CAP);
+}
+
+/**
+ * Cities, states and countries this account has already written down.
+ *
+ * Suggestions for the free-text locality boxes, which have no identity to pick
+ * — there is no row behind "Arlington", only the same word typed again. So
+ * these feed a `<datalist>` rather than a picker, the way the address label
+ * field already offers its four.
+ *
+ * Two sources, each with its own predicate, because they are reached two
+ * different ways: a place through the interactions and plans that name it, an
+ * address through the contact it hangs off. Two small correct queries rather
+ * than one clever one.
+ *
+ * A city is less identifying than a venue, but one that appears *only* because
+ * of a hidden interaction is still a disclosure — the same reason the places
+ * list is filtered — so the predicate is not optional here either.
+ *
+ * Capping is safe: the box stays free text, so a value past the cap is still
+ * typeable and still saves.
+ */
+export async function listLocalitySuggestions(
+  ownerId: string,
+): Promise<LocalitySuggestions> {
+  const scope = await privacyScope();
+  const [places, addresses] = await Promise.all([
+    prisma.location.findMany({
+      where: { ...locationVisibleWhere(ownerId, scope), isArchived: false },
+      select: { city: true, region: true, country: true },
+    }),
+    prisma.address.findMany({
+      where: { contact: { ownerId, ...contactPrivacyWhere(scope) } },
+      select: { city: true, region: true, country: true },
+    }),
+  ]);
+
+  const rows = [...places, ...addresses];
+  return {
+    cities: distinct(rows.map((row) => row.city)),
+    regions: distinct(rows.map((row) => row.region)),
+    countries: distinct(rows.map((row) => row.country)),
   };
 }
 

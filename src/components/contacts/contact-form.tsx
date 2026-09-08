@@ -15,6 +15,7 @@ import {
   type RenderableField,
 } from "@/components/custom-fields/field-renderer";
 import { DateField } from "@/components/form/date-field";
+import { LOCALITY_LIST_IDS } from "@/components/form/locality-options";
 import {
   TermChips,
   TermSelect,
@@ -245,6 +246,7 @@ export function ContactForm({
               <Input
                 id="city"
                 name="city"
+                list={LOCALITY_LIST_IDS.city}
                 defaultValue={contact?.city ?? ""}
                 maxLength={120}
               />
@@ -253,6 +255,7 @@ export function ContactForm({
               <Input
                 id="region"
                 name="region"
+                list={LOCALITY_LIST_IDS.region}
                 defaultValue={contact?.region ?? ""}
                 maxLength={120}
               />
@@ -261,6 +264,7 @@ export function ContactForm({
               <Input
                 id="country"
                 name="country"
+                list={LOCALITY_LIST_IDS.country}
                 defaultValue={contact?.country ?? ""}
                 maxLength={120}
               />
