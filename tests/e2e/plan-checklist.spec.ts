@@ -125,8 +125,10 @@ test("the checklist is on the row, tickable there, and closed plans can be looke
   await expect(summary).toHaveText("Checklist · 1 of 5");
   await summary.click();
 
-  // Ticked from the row itself, with no editor opened.
-  await row.getByLabel("Mark Check travel time done").check();
+  // Ticked from the row itself, with no editor opened. The row's checkboxes are
+  // named for the item alone — the editor's say "Mark … complete" — so the two
+  // never collide while an add panel is open over a list of existing rows.
+  await row.getByRole("checkbox", { name: "Check travel time" }).check();
   await expect(summary).toHaveText("Checklist · 2 of 5");
 
   await page.reload();

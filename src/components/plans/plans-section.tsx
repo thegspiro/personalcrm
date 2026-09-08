@@ -421,14 +421,13 @@ function isClosed(plan: PlanItem): boolean {
  * `ScheduleSheet`, the items are already in the payload, so hiding them saves
  * nothing and there is nothing to build lazily.
  *
- * Whether it is open is React state rather than a value derived from the plan,
- * and that is not a style choice. React 19 writes `open` back to the prop on
- * every commit, so a derived `open={status === "PLANNED"}` reopened the argument
- * after each render — and ticking an item refreshes the tree, so working down a
- * checklist closed it under your cursor on the first tick. Sourcing the prop
- * from state that `onToggle` keeps in step means the value React writes back is
- * the one you last chose. The e2e spec fails on this: Playwright clicks, the
- * disclosure shuts, and the checkbox it was verifying is gone.
+ * Whether it is open is React state rather than a value derived from the plan's
+ * status, and the difference matters because ticking an item refreshes the
+ * tree. A derived `open` is recomputed on every one of those renders and can
+ * only ever say what the status says — so any disagreement with what the reader
+ * actually opened is resolved against the reader, on a control they are in the
+ * middle of using. State seeded from the status and kept in step by `onToggle`
+ * says the same thing on first render and the reader's thing thereafter.
  */
 function PlanChecklist({
   plan,
@@ -460,11 +459,16 @@ function PlanChecklist({
       <ul className="mt-1 grid gap-1">
         {items.map((item) => (
           <li key={item.id} className="flex min-w-0 items-start gap-2">
+            {/* The item's own words are its accessible name, with nothing
+                about the state in them: a checkbox already announces itself as
+                checked or unchecked, so "Mark X done" both duplicates that and
+                goes stale the moment it is ticked — which is also what a
+                Playwright `check()` reads as a click that changed nothing. */}
             <Checkbox
               checked={item.completed}
               disabled={closed || ticking.has(`${plan.id}:${item.id}`)}
               onCheckedChange={(checked) => onTick(item.id, checked === true)}
-              aria-label={`Mark ${item.text} ${item.completed ? "not done" : "done"}`}
+              aria-label={item.text}
               className="mt-0.5 shrink-0"
             />
             <span
