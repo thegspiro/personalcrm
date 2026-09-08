@@ -819,9 +819,14 @@ Rotating `AUTH_SECRET` makes the stored secret undecryptable, and verification
 fails closed. The recovery codes are the way back, which is one more reason they
 are worth keeping somewhere that is not the phone.
 
-**No QR code.** The key is shown for manual entry and as an `otpauth://` link,
-which every authenticator accepts. Rendering a QR would mean adding a
-dependency, and this is not a decision to take on somebody's behalf.
+The code is drawn on the server and delivered as a `data:` URI in an `<img>`,
+so the page needs no client-side library and the content security policy needs
+no relaxing — `img-src` already allows `data:`. The generated SVG carries only
+path data; the URI is encoded into the modules and never echoed into the
+markup, so there is nothing to escape. It stays white in both themes, because a
+scanner wants the contrast a code is specified with. The typed key and the
+`otpauth://` link sit beside it, and are what enrolment falls back to if the
+code cannot be drawn.
 
 ## Sign-in throttling
 

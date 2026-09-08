@@ -9,6 +9,7 @@ import {
   regenerateRecoveryCodes,
 } from "@/server/auth/two-factor";
 import { formatSecretForDisplay, otpauthUri } from "@/server/crypto/totp";
+import { qrDataUri } from "@/server/auth/enrolment-qr";
 import { revokeAllOtherSessions } from "@/server/auth/session";
 import { fail, ok, owner, type ActionResult } from "./helpers";
 import { confirmPasswordForOwner } from "@/server/auth/reauth";
@@ -28,6 +29,15 @@ export interface EnrolmentStart {
   secret: string;
   /** Shown as text for manual entry, and usable as a link on a phone. */
   uri: string;
+  /**
+   * The same URI as a scannable code, already encoded as a data URI.
+   *
+   * Null when it could not be produced, which the panel handles by showing the
+   * key alone — the way enrolment worked before there was a code at all. A
+   * failure to draw a picture must not stand between somebody and a second
+   * factor.
+   */
+  qr: string | null;
 }
 
 export async function startTwoFactorEnrolment(
@@ -45,9 +55,11 @@ export async function startTwoFactorEnrolment(
     select: { email: true },
   });
 
+  const uri = otpauthUri(secret, user.email);
   return ok({
     secret: formatSecretForDisplay(secret),
-    uri: otpauthUri(secret, user.email),
+    uri,
+    qr: await qrDataUri(uri),
   });
 }
 

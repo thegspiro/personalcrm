@@ -55,7 +55,10 @@ test("enrolling shows a key and then the recovery codes", async ({ page }) => {
   await page.getByLabel("Confirm your password to begin").fill(ACCOUNT.password);
   await page.getByRole("button", { name: "Set up" }).click();
 
-  // The key is shown for manual entry — there is no QR code, deliberately.
+  // A scannable code, and the key beside it for typing in. Located by source
+  // rather than by role: `alt=""` marks it decorative, so it is deliberately
+  // absent from the accessibility tree — the key beside it carries the meaning.
+  await expect(page.locator('img[src^="data:image/svg+xml"]')).toBeVisible();
   const shown = page.locator("p.font-mono").first();
   await expect(shown).toBeVisible();
   secret = (await shown.innerText()).replace(/\s/g, "");

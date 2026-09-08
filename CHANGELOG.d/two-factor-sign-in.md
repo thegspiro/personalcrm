@@ -23,9 +23,9 @@
   it off each ask for your password again.
 
 #### Notes
-- The key is shown for typing in, and as a link that opens an authenticator on a
-  phone. There is no QR code: drawing one would mean adding a dependency, which
-  is not a decision to make on your behalf.
+- Setting up shows a scannable code, the key for typing in, and a link that
+  opens an authenticator directly on a phone — whichever suits the device you
+  have. If the code cannot be drawn for any reason, the key alone still works.
 - Rotating `AUTH_SECRET` makes the stored key unreadable and sign-in will refuse
   the codes from your app. Your recovery codes are the way back — one more
   reason to keep them somewhere other than the phone.

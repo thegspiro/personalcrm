@@ -314,20 +314,24 @@ migration, and a restart that reuses both rather than starting over.
 
 ### Lint findings that are warnings, not errors
 
-`eslint-config-next` 16 ships the React Compiler rule set, and three of its
-rules flag patterns this codebase uses on purpose. They are set to `warn` in
-[`eslint.config.mjs`](../eslint.config.mjs), with the reasoning next to them, so
-that lint is a gate that can actually be enforced rather than one permanently
-red:
+`eslint-config-next` 16 ships the React Compiler rule set. Three of its rules
+were once downgraded to `warn` repository-wide, which let new violations
+accumulate while CI stayed green;
+[`eslint.config.mjs`](../eslint.config.mjs) now sets all three back to `error`:
 
-- `react-hooks/set-state-in-effect` — the `mounted` pattern behind theme-aware
-  controls. The theme is only known after hydration.
-- `react-hooks/purity` — `Date.now()` in a client component rendering a
-  relative day count.
-- `react-hooks/immutability` — writing `document.documentElement.dataset` so an
-  accent change shows before the action returns.
+- `react-hooks/set-state-in-effect`
+- `react-hooks/purity`
+- `react-hooks/immutability`
 
-Everything else, `react-hooks/rules-of-hooks` included, fails the build.
+So **everything fails the build**, and a genuine exception is a single
+`eslint-disable-next-line` carrying the reason it is one — the plain `<a>` on
+the crash screen, which must reload rather than client-navigate, and the plain
+`<img>` holding the two-factor code, which is a data URI with nothing to
+optimise. A rule turned off for one line is reviewable; a rule turned down for
+the whole repository is not.
+
+`npm run lint` does not currently fail on warnings, which is why an exception
+has to be an explicit disable rather than a tolerated warning.
 
 ## What a change is expected to bring with it
 

@@ -27,9 +27,10 @@ export interface TwoFactorView {
  * on the first screen is how a mistyped key locks somebody out of an app with
  * no password recovery.
  *
- * The key is shown for manual entry rather than as a QR code, which would mean
- * adding a dependency to render one. Every authenticator app accepts a typed
- * key, and on a phone the `otpauth://` link opens one directly.
+ * The code is drawn server-side and delivered as a data URI, so the page needs
+ * no client-side library and the content security policy needs no relaxing.
+ * The typed key stays beside it: a camera is the fast path, not the only one,
+ * and it is what enrolment falls back to if the code cannot be drawn.
  */
 export function TwoFactorSettings({ state }: { state: TwoFactorView }) {
   const [busy, setBusy] = React.useState(false);
@@ -136,16 +137,40 @@ export function TwoFactorSettings({ state }: { state: TwoFactorView }) {
 
       {enrolment ? (
         <div className="grid gap-3 rounded-lg border border-border p-3">
-          <div className="grid gap-1">
-            <p className="text-xs font-medium">1. Add this key to your authenticator</p>
-            <p className="font-mono text-sm tracking-wide">{enrolment.secret}</p>
-            <p className="break-all text-xs text-muted-foreground">
-              Or open{" "}
-              <a href={enrolment.uri} className="underline">
-                this link
-              </a>{" "}
-              on the phone that has the app.
-            </p>
+          <div className="grid gap-3 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-start">
+            {enrolment.qr ? (
+              /*
+                A plain img, not next/image. The source is a data URI holding an
+                SVG this server just drew: there is nothing to fetch, resize or
+                cache, so the optimiser has no work to do and would only add a
+                loader in front of bytes that are already here.
+              */
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                // Decorative: the same key is beside it as selectable text, so
+                // describing the picture would only repeat what is already read
+                // out. White background in both themes — a scanner wants the
+                // contrast a code is specified with.
+                alt=""
+                src={enrolment.qr}
+                width={140}
+                height={140}
+                className="rounded-md border border-border bg-white p-1.5"
+              />
+            ) : null}
+            <div className="grid min-w-0 gap-1">
+              <p className="text-xs font-medium">
+                1. Scan this with your authenticator, or type the key
+              </p>
+              <p className="font-mono text-sm tracking-wide">{enrolment.secret}</p>
+              <p className="break-all text-xs text-muted-foreground">
+                Or open{" "}
+                <a href={enrolment.uri} className="underline">
+                  this link
+                </a>{" "}
+                on the phone that has the app.
+              </p>
+            </div>
           </div>
           <form action={onConfirm} className="grid gap-2">
             <Field label="2. Enter the code it shows" htmlFor="tf-code">
