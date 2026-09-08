@@ -425,6 +425,23 @@ from a posted id: `resolveLocation` get-or-creates on `(ownerId,
 normalizedName)`, which is owner-scoped by construction, so neither a forged form
 nor an assisted reading can point an interaction at somebody else's row.
 
+The place picker beside every "Where" box follows the same rule, and for the
+same reason. It writes the chosen place's **name** into the box and posts
+nothing of its own — no hidden `locationId`. Since `normalizedName` is unique
+per owner, the name already identifies the row, so an id would buy no precision
+while giving a forged form something to smuggle in. Picking a place and typing
+its name are therefore the same write, which is why none of the six
+`resolveLocation` call sites changed when the picker was added. Its feed,
+`listPlaceSuggestions`, is a sibling of `listLocationOptions` rather than a
+replacement: the latter is the parser's vocabulary and is deliberately uncapped,
+because past a cap a known venue silently stops being recognised and part of its
+name gets offered as a person instead.
+
+`createLifeEvent` and `updateLifeEvent` resolve a place the same way, and both
+run through `transact` for it. They pass no `LocationDetails` — a significant
+moment carries no city or address, so it cannot overwrite what a place already
+knows.
+
 ### Places — `actions/locations.ts`
 
 | Action | Notes |
