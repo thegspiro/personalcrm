@@ -779,6 +779,33 @@ never sees the request and could not be given one. It carries its own
 stylesheet and picks light or dark from `prefers-color-scheme` instead, which
 needs no script at all.
 
+## Merging duplicates
+
+The scan matches on a shared email address or phone number and **never on a
+name**: merging cannot be undone, and two people who share an address are
+almost always one person where two people who share a name very often are not.
+
+Privacy-filtered like every other read, and the reason is easy to miss — a
+suggestion *names* both people, so offering a private contact as the duplicate
+of a public one would put a hidden name on a screen the lock exists to keep it
+off. Both the scan and the merge run through `contactPrivacyWhere`, and both
+merge actions are lock-gated: merging can move private rows, and it is not
+something to do on behalf of somebody who cannot see what they are merging.
+
+**The survivor is private if either side was.** Never a choice, and the one
+field the review screen does not offer: folding a private person into a public
+record would publish everything they carried, and the safe direction is the
+only one.
+
+The merge itself is in `src/server/services/contact-merge.ts`, which moves every
+one of the twenty-three tables carrying a contact key plus `CustomFieldValue`,
+whose `entityId` is deliberately not a foreign key. Seven of those carry a
+unique constraint a straight repoint would violate, and two can become
+self-referential. A test enumerates the schema and fails when a table is added
+that the merge does not name — the alternative being that a new relation goes
+over the cascade with the losing record and nobody finds out until they look
+for a birthday that is no longer there.
+
 ## Two-factor sign-in
 
 Optional, per account, and off until somebody turns it on. A time-based code

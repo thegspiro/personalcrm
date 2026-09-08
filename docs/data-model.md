@@ -147,6 +147,24 @@ token; only its SHA-256 hash is stored.
 
 Indexes: `userId`, `expiresAt` (the expiry sweep at boot).
 
+### `DuplicateDismissal`
+
+A pair the owner has said is **not** the same person, so the duplicate scan
+stops offering it. Same shape and same ordering convention as
+`FamilySuggestionDismissal`: the pair is stored with the lower id first, so A/B
+and B/A are one row.
+
+| Column | Type | Notes |
+| ------------- | ---------- | ------------------------------------------------- |
+| `ownerId` | `cuid` | → `User`, cascade. Part of the primary key |
+| `aContactId` | `cuid` | → `Contact` on the same-owner composite key |
+| `bContactId` | `cuid` | → `Contact` on the same-owner composite key |
+| `dismissedAt` | `datetime` | |
+
+Needed because the scan matches on a shared phone number, and in a *personal*
+address book a couple share one landline. Migration:
+`20260908120000_add_duplicate_dismissal`.
+
 ### `TwoFactor` / `RecoveryCode`
 
 An optional second factor at sign-in: a time-based code (RFC 6238) from an

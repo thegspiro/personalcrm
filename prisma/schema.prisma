@@ -79,6 +79,7 @@ model User {
   dietaryNeeds         DietaryNeed[]
   households           Household[]
   familyDismissals     FamilySuggestionDismissal[]
+  duplicateDismissals  DuplicateDismissal[]
   happenings           Happening[]
 }
 
@@ -384,6 +385,8 @@ model Contact {
   households              HouseholdMember[]
   dismissalsA             FamilySuggestionDismissal[] @relation("DismissalA")
   dismissalsB             FamilySuggestionDismissal[] @relation("DismissalB")
+  duplicateDismissalsA    DuplicateDismissal[]        @relation("DuplicateDismissalA")
+  duplicateDismissalsB    DuplicateDismissal[]        @relation("DuplicateDismissalB")
   relationsFrom           Relationship[]              @relation("RelationshipFrom")
   relationsTo             Relationship[]              @relation("RelationshipTo")
   associates              Associate[]                 @relation("AssociateOf")
@@ -856,6 +859,32 @@ model HouseholdMember {
 /// time you open the page is worse than no dismissal at all. Held as an
 /// unordered pair (smaller id first) so it survives whichever way round the
 /// suggestion is phrased.
+/// A pair the owner has said is *not* the same person.
+///
+/// The duplicate scan matches on a shared email address or phone number, which
+/// is deliberately narrow — but not infallible in a *personal* address book,
+/// where a couple share one landline and a family shares one address. Without
+/// somewhere to record "these two are different people" the scan would suggest
+/// the same pair forever, and a suggestion that cannot be refused trains people
+/// to stop reading it.
+///
+/// The pair is stored in a fixed order (see `orderedPair`) so that A/B and B/A
+/// are the same row rather than two.
+model DuplicateDismissal {
+  ownerId     String
+  aContactId  String
+  bContactId  String
+  dismissedAt DateTime @default(now())
+
+  owner    User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  aContact Contact @relation("DuplicateDismissalA", fields: [ownerId, aContactId], references: [ownerId, id], onDelete: Cascade)
+  bContact Contact @relation("DuplicateDismissalB", fields: [ownerId, bContactId], references: [ownerId, id], onDelete: Cascade)
+
+  @@id([ownerId, aContactId, bContactId])
+  @@index([aContactId])
+  @@index([bContactId])
+}
+
 model FamilySuggestionDismissal {
   ownerId     String
   aContactId  String

@@ -22,6 +22,7 @@ import { TaxonomySettings } from "@/components/settings/taxonomy-settings";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { TwoFactorSettings } from "@/components/settings/two-factor-settings";
+import { DuplicateSettings } from "@/components/settings/duplicate-settings";
 import { AiSettings } from "@/components/settings/ai-settings";
 import { NotificationSettings } from "@/components/settings/notification-settings";
 import { listChannelsForSettings } from "@/server/queries/notifications";
@@ -39,6 +40,7 @@ import { GEO_PROVIDERS } from "@/server/geo/providers";
 import { listTags } from "@/server/queries/tags";
 import { getFeedStatus } from "@/server/services/calendar-feed";
 import { getTwoFactorStatus } from "@/server/auth/two-factor";
+import { scanForDuplicates } from "@/server/queries/duplicates";
 import { TagSettings } from "@/components/settings/tag-settings";
 import { AccountSettings } from "@/components/settings/account-settings";
 import { listSessions } from "@/server/auth/session";
@@ -73,6 +75,7 @@ export default async function SettingsPage() {
     tags,
     calendarFeed,
     twoFactor,
+    duplicates,
     sessions,
   ] = await Promise.all([
     listTaxonomyAdmin(user.id),
@@ -87,6 +90,7 @@ export default async function SettingsPage() {
     listTags(user.id),
     getFeedStatus(user.id),
     getTwoFactorStatus(user.id),
+    scanForDuplicates(user.id),
     listSessions(user.id),
   ]);
 
@@ -260,6 +264,24 @@ export default async function SettingsPage() {
         }
         data={
           <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
+            <DuplicateSettings
+              locked={dataLocked}
+              truncated={duplicates.truncated}
+              suggestions={duplicates.suggestions.map((suggestion) => ({
+                key: suggestion.key,
+                reason: describeMatches(suggestion.matches),
+                a: {
+                  id: suggestion.a.id,
+                  name: contactName(suggestion.a),
+                  detail: `${suggestion.a.interactionCount} interactions`,
+                },
+                b: {
+                  id: suggestion.b.id,
+                  name: contactName(suggestion.b),
+                  detail: `${suggestion.b.interactionCount} interactions`,
+                },
+              }))}
+            />
             <CalendarFeedSettings
               feed={
                 calendarFeed
@@ -285,4 +307,16 @@ export default async function SettingsPage() {
       />
     </div>
   );
+}
+
+function contactName(contact: { firstName: string; lastName: string | null }): string {
+  return [contact.firstName, contact.lastName].filter(Boolean).join(" ");
+}
+
+/** Say which detail brought a pair here, so the suggestion can be judged. */
+function describeMatches(matches: Array<{ kind: "email" | "phone"; value: string }>): string {
+  const unique = [...new Map(matches.map((match) => [match.value, match])).values()];
+  return unique
+    .map((match) => `${match.kind === "email" ? "Both use" : "Both list"} ${match.value}`)
+    .join(" · ");
 }
