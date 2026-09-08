@@ -164,7 +164,7 @@ export function HappeningsSection({
                 <p className="mt-0.5 text-xs text-muted-foreground">{happening.notes}</p>
               ) : null}
               {happening.source ? (
-                <p className="mt-0.5 text-[11px] text-muted-foreground/70">
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
                   Heard: {happening.source}
                 </p>
               ) : null}

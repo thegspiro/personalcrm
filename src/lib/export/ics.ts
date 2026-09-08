@@ -19,6 +19,30 @@ export interface IcsEvent {
   date: PlainDate;
   precision: DatePrecision;
   recurrence: IcsRecurrence;
+  /**
+   * The last day an all-day event covers, inclusive. Omitted for a single day.
+   *
+   * A trip is one entry that spans a fortnight, not fourteen entries. The
+   * calendar page draws it as a chip per day because a grid has squares; a
+   * calendar client understands a span, so it is given one.
+   */
+  lastDate?: PlainDate;
+  /**
+   * Present when the event happens at a time rather than on a day, which
+   * supersedes the all-day rendering entirely.
+   *
+   * Instants, already resolved against the account's timezone by the caller.
+   * Resolved rather than carried as a local time plus a zone because emitting
+   * `TZID` obliges the file to carry a matching `VTIMEZONE` with the zone's
+   * full daylight-saving history, and getting that subtly wrong moves an
+   * appointment by an hour twice a year. A UTC instant cannot be misread.
+   *
+   * `end` is omitted when the source records no length. RFC 5545 reads a timed
+   * event with no `DTEND` as ending when it starts, which is the honest answer
+   * to "dinner at seven, for who knows how long" — padding it to an hour would
+   * put a made-up finish time in somebody's calendar.
+   */
+  timed?: { start: Date; end?: Date };
 }
 
 function pad(value: number, width: number): string {
@@ -27,6 +51,11 @@ function pad(value: number, width: number): string {
 
 function dateValue(date: PlainDate): string {
   return `${pad(date.year, 4)}${pad(date.month, 2)}${pad(date.day, 2)}`;
+}
+
+/** An instant as a UTC DATE-TIME, e.g. `20260906T230000Z`. */
+function utcValue(instant: Date): string {
+  return `${instant.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "")}`;
 }
 
 /** The day after, which is what an all-day event uses as its exclusive end. */
@@ -104,13 +133,23 @@ export function icsEvent(event: IcsEvent, anchorYear: number, stamp: Date): stri
   const lines = [
     "BEGIN:VEVENT",
     `UID:${escapeValue(event.uid)}`,
-    `DTSTAMP:${stamp.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "")}`,
-    // All-day: a DATE value rather than a DATE-TIME, so no timezone is implied
-    // and the day does not drift for whoever opens it.
-    `DTSTART;VALUE=DATE:${dateValue(start)}`,
-    // The end of an all-day event is exclusive, so it is the following day.
-    // Omitting it leaves the duration to the reader, and readers disagree.
-    `DTEND;VALUE=DATE:${dateValue(nextDay(start))}`,
+    `DTSTAMP:${utcValue(stamp)}`,
+    ...(event.timed
+      ? [
+          // Already resolved to instants against the account's timezone, so
+          // this needs no VTIMEZONE and cannot be misread.
+          `DTSTART:${utcValue(event.timed.start)}`,
+          ...(event.timed.end ? [`DTEND:${utcValue(event.timed.end)}`] : []),
+        ]
+      : [
+          // All-day: a DATE value rather than a DATE-TIME, so no timezone is
+          // implied and the day does not drift for whoever opens it.
+          `DTSTART;VALUE=DATE:${dateValue(start)}`,
+          // The end of an all-day event is exclusive, so it is the day after
+          // the last one it covers. Omitting it leaves the duration to the
+          // reader, and readers disagree.
+          `DTEND;VALUE=DATE:${dateValue(nextDay(event.lastDate ?? start))}`,
+        ]),
     `SUMMARY:${escapeValue(event.summary)}`,
   ];
 
@@ -127,6 +166,7 @@ export function icsDocument(
   events: readonly IcsEvent[],
   anchorYear: number,
   stamp: Date,
+  options: { name?: string } = {},
 ): string {
   const body = events.flatMap((event) => icsEvent(event, anchorYear, stamp) ?? []);
   return joinLines([
@@ -136,6 +176,12 @@ export function icsDocument(
     "CALSCALE:GREGORIAN",
     // Published rather than requested: nobody is being invited to anything.
     "METHOD:PUBLISH",
+    // Not part of RFC 5545, but it is what every calendar client actually
+    // reads to label a subscription. Without it the calendar is named after
+    // its URL, which for a feed is an opaque token.
+    ...(options.name
+      ? [`X-WR-CALNAME:${escapeValue(options.name)}`, `NAME:${escapeValue(options.name)}`]
+      : []),
     ...body,
     "END:VCALENDAR",
   ]);

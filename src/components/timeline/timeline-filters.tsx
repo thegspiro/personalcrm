@@ -25,6 +25,11 @@ export function TimelineFilters() {
   const activeKinds = new Set((params.get("kinds") ?? "").split(",").filter(Boolean));
 
   function update(next: URLSearchParams) {
+    // Every control here funnels through this, so dropping the page once is
+    // enough. Keeping it is how narrowing a filter from six pages to one lands
+    // somebody on page four of one — an empty feed that reads as "nothing
+    // matches" when plenty did.
+    next.delete("page");
     router.replace(`${pathname}?${next.toString()}`, { scroll: false });
   }
 

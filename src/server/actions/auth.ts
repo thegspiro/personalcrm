@@ -6,8 +6,18 @@ import { z } from "zod";
 import { prisma } from "@/server/db/client";
 import { createAccount, needsFirstRunSetup, signupsAllowed } from "@/server/auth/provision";
 import { checkPasswordStrength, verifyPassword } from "@/server/auth/password";
+import {
+  clientAddressForRecord,
+  clientAddressForThrottle,
+} from "@/server/auth/client-address";
 import { createSession, destroySession } from "@/server/auth/session";
 import { clearLoginAttempts, reserveLoginAttempt } from "@/server/auth/login-throttle";
+import { requiresTwoFactor, verifySecondFactor } from "@/server/auth/two-factor";
+import {
+  clearPendingTwoFactor,
+  readPendingTwoFactor,
+  startPendingTwoFactor,
+} from "@/server/auth/pending-two-factor";
 
 export interface FormState {
   error?: string;
@@ -41,7 +51,10 @@ async function requestMeta() {
   const h = await headers();
   return {
     userAgent: h.get("user-agent"),
-    ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? h.get("x-real-ip"),
+    // Never the leftmost `X-Forwarded-For` entry, which is whatever the caller
+    // wrote. See `@/lib/client-address`.
+    ip: await clientAddressForRecord(),
+    throttleKey: await clientAddressForThrottle(),
   };
 }
 
@@ -60,7 +73,7 @@ export async function loginAction(_prev: FormState, formData: FormData): Promise
   // turn. Attempts against an address with no account are counted on the same
   // terms, because a throttle that fired only for real accounts would answer
   // the question the error message below carefully refuses to.
-  const throttle = reserveLoginAttempt(email, meta.ip);
+  const throttle = reserveLoginAttempt(email, meta.throttleKey);
   if (throttle.blocked) {
     return {
       error: throttle.message ?? "Too many sign-in attempts. Try again shortly.",
@@ -82,8 +95,74 @@ export async function loginAction(_prev: FormState, formData: FormData): Promise
     return { error: "This account has been disabled." };
   }
 
-  clearLoginAttempts(email, meta.ip);
-  await createSession(user.id, meta);
+  clearLoginAttempts(email, meta.throttleKey);
+
+  // The password was right, so the guess budget is spent and reset either way.
+  // What happens next depends on whether a second factor stands in front of the
+  // session: nothing is created here if one does, because a Session row is the
+  // app's statement that every factor has been cleared, and weakening that into
+  // "created but not yet allowed to do anything" would put the check on every
+  // page and action instead of on this one path.
+  if (await requiresTwoFactor(user.id)) {
+    await startPendingTwoFactor({
+      userId: user.id,
+      userAgent: meta.userAgent,
+      ip: meta.ip,
+    });
+    redirect("/login/verify");
+  }
+
+  await createSession(user.id, { userAgent: meta.userAgent, ip: meta.ip });
+  redirect("/");
+}
+
+/**
+ * The second step: an authenticator code, or a recovery code.
+ *
+ * Throttled on the same counter as the password, because this is the other
+ * half of the same sign-in and a six-digit code is worth far less than a
+ * password to guess at unlimited speed. The pending cookie is the only thing
+ * that says who is being signed in — the form cannot name an account, or this
+ * would be a way to spend somebody else's attempts.
+ */
+export async function verifyTwoFactorAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const pending = await readPendingTwoFactor();
+  if (!pending) {
+    return { error: "That took too long. Sign in again." };
+  }
+
+  const submitted = String(formData.get("code") ?? "").trim();
+  if (!submitted) return { fieldErrors: { code: "Enter the code from your authenticator." } };
+
+  const user = await prisma.user.findUnique({
+    where: { id: pending.userId },
+    select: { id: true, email: true, isActive: true },
+  });
+  if (!user || !user.isActive) {
+    await clearPendingTwoFactor();
+    return { error: "Sign in again." };
+  }
+
+  const address = await clientAddressForThrottle();
+  const throttle = reserveLoginAttempt(user.email, address);
+  if (throttle.blocked) {
+    return {
+      error: throttle.message ?? "Too many attempts. Try again shortly.",
+      retryAfterSeconds: throttle.retryAfterSeconds,
+    };
+  }
+
+  const outcome = await verifySecondFactor(user.id, submitted);
+  if (outcome !== "ok") {
+    return { fieldErrors: { code: "That code is not right." } };
+  }
+
+  clearLoginAttempts(user.email, address);
+  await clearPendingTwoFactor();
+  await createSession(user.id, { userAgent: pending.userAgent, ip: pending.ip });
   redirect("/");
 }
 

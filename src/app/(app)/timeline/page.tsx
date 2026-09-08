@@ -5,8 +5,8 @@ import { CacheThisPage } from "@/components/offline/offline";
 import { buildTimeline, type TimelineKind } from "@/server/queries/timeline";
 import { TimelineList } from "@/components/timeline/timeline-list";
 import { TimelineFilters } from "@/components/timeline/timeline-filters";
-import { ListCapNotice } from "@/components/ui/list-cap-notice";
-import { applyCap } from "@/lib/list-cap";
+import { Pager } from "@/components/ui/pager";
+import { describeFeedPage, pageWindow, parsePage } from "@/lib/pagination";
 import { calendarDateInTz, parsePlainDate, plainDateToDb } from "@/lib/dates";
 import { getUpcomingDates } from "@/server/queries/dashboard";
 import { UpcomingDatesWidget } from "@/components/dashboard/widgets";
@@ -16,7 +16,14 @@ export const metadata: Metadata = { title: "Timeline" };
 export const dynamic = "force-dynamic";
 
 /** One more than this is fetched, so the page can tell a full list from a cut one. */
-const CAP = 100;
+/**
+ * How many entries a page of the timeline holds.
+ *
+ * The window the feed already drew. Paging it is an offset over a merged,
+ * projected result rather than a SQL one, so each page costs the pages before
+ * it — see `describeFeedPage`.
+ */
+const PAGE_SIZE = 100;
 
 const VALID_KINDS = new Set<TimelineKind>([
   "interaction",
@@ -46,6 +53,9 @@ export default async function TimelinePage({
   const fromPlain = first("from") ? parsePlainDate(first("from")!) : null;
   const toPlain = first("to") ? parsePlainDate(first("to")!) : null;
 
+  const requested = parsePage(params.page);
+  const window = pageWindow(requested, PAGE_SIZE);
+
   const [entryRows, upcomingDates, terms] = await Promise.all([
     buildTimeline(user.id, timezone, {
       kinds,
@@ -54,13 +64,18 @@ export default async function TimelinePage({
       locationId: first("locationId"),
       from: fromPlain ? plainDateToDb(fromPlain) : undefined,
       to: toPlain ? plainDateToDb(toPlain) : undefined,
-      take: CAP + 1,
+      // Everything up to and including the page being asked for, plus the one
+      // row that says whether another page follows. The merge and the
+      // projections happen in memory, so there is no offset to push down into
+      // the query.
+      take: window.skip + window.take + 1,
     }),
     getUpcomingDates(user.id, timezone, 366, 100),
     listTermsByKind(user.id, ["DATE_TYPE", "LIFE_EVENT_TYPE"]),
   ]);
 
-  const { items: entries, truncated } = applyCap(entryRows, CAP);
+  const page = describeFeedPage(entryRows.length, requested, PAGE_SIZE);
+  const entries = entryRows.slice(page.skip, page.skip + page.take);
   const today = calendarDateInTz(new Date(), timezone);
 
   return (
@@ -86,13 +101,7 @@ export default async function TimelinePage({
         emptyDescription="Log an interaction, or widen the filters."
       />
 
-      {truncated ? (
-        <ListCapNotice
-          shown={entries.length}
-          noun="entries"
-          hint="Narrow the dates or the kinds to reach further back."
-        />
-      ) : null}
+      <Pager info={page} pathname="/timeline" params={params} label="entries" />
 
       <UpcomingDatesWidget dates={upcomingDates} />
     </div>

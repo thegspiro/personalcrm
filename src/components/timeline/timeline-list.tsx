@@ -155,7 +155,7 @@ export function TimelineList({
                           type="button"
                           onClick={() => void remove(entry)}
                           aria-label={`Delete ${entry.title}`}
-                          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive-11"
                         >
                           <Icon name="X" className="size-3.5" />
                         </button>

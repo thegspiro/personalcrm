@@ -174,6 +174,30 @@ container. Horizontal overflow on a phone pushes buttons off-screen where they
 look tappable and are not, and it has recurred often enough to earn a permanent
 test.
 
+`a11y.spec.ts` runs axe over every main route, the sign-in page, the person
+form and the two-factor screens, against WCAG 2.1 A and AA.
+
+It measures **what renders**, which is both its value and its limit. It caught
+a calendar cell failing against a background no token predicts — a translucent
+tint blending with the grid lines behind it — which no amount of reading the
+palette would have found. It equally cannot see a colour no spec happens to
+put on screen, and the eighteen-colour term palette is mostly that.
+`tests/unit/contrast.test.ts` closes the other half: every palette entry in
+both themes, and the semantic tokens on tints of themselves, computed rather
+than rendered. The two are complementary and neither replaces the other.
+
+**Serious and critical fail the run; moderate and minor are printed.** Those two
+tiers are what stops somebody using the app at all. The lower ones are often
+arguable, and a suite that fails on an arguable finding is one people learn to
+skip — so they are reported rather than hidden, and acting on them stays a
+decision somebody makes.
+
+A contrast failure cannot be fixed from a selector, so the assertion carries
+axe's own measurement — the two colours, the ratio and the font size. That is
+what turned "the calendar is wrong somewhere" into "4.36 against `#e8eaec`, a
+background no token predicts", which was a translucent cell blending with the
+grid lines behind it rather than anything in the palette.
+
 `edit-interaction.spec.ts` walks the loop quick add opens: type a line with a
 possessive in it, check the person survives into the title, then correct that
 title from the timeline. It is the only spec that exercises `updateInteraction`
@@ -290,20 +314,24 @@ migration, and a restart that reuses both rather than starting over.
 
 ### Lint findings that are warnings, not errors
 
-`eslint-config-next` 16 ships the React Compiler rule set, and three of its
-rules flag patterns this codebase uses on purpose. They are set to `warn` in
-[`eslint.config.mjs`](../eslint.config.mjs), with the reasoning next to them, so
-that lint is a gate that can actually be enforced rather than one permanently
-red:
+`eslint-config-next` 16 ships the React Compiler rule set. Three of its rules
+were once downgraded to `warn` repository-wide, which let new violations
+accumulate while CI stayed green;
+[`eslint.config.mjs`](../eslint.config.mjs) now sets all three back to `error`:
 
-- `react-hooks/set-state-in-effect` — the `mounted` pattern behind theme-aware
-  controls. The theme is only known after hydration.
-- `react-hooks/purity` — `Date.now()` in a client component rendering a
-  relative day count.
-- `react-hooks/immutability` — writing `document.documentElement.dataset` so an
-  accent change shows before the action returns.
+- `react-hooks/set-state-in-effect`
+- `react-hooks/purity`
+- `react-hooks/immutability`
 
-Everything else, `react-hooks/rules-of-hooks` included, fails the build.
+So **everything fails the build**, and a genuine exception is a single
+`eslint-disable-next-line` carrying the reason it is one — the plain `<a>` on
+the crash screen, which must reload rather than client-navigate, and the plain
+`<img>` holding the two-factor code, which is a data URI with nothing to
+optimise. A rule turned off for one line is reviewable; a rule turned down for
+the whole repository is not.
+
+`npm run lint` does not currently fail on warnings, which is why an exception
+has to be an explicit disable rather than a tolerated warning.
 
 ## What a change is expected to bring with it
 
@@ -313,6 +341,7 @@ Everything else, `react-hooks/rules-of-hooks` included, fails the build.
 | A new table | An entry in the integration `TABLES` list |
 | An `isPrivate` column | A line in `countPrivateRows`, plus privacy coverage |
 | A new write path | Integration coverage that the denormalised activity fields survive backdating and deletion |
-| A new page or widget | It must appear in `layout.spec.ts`'s route sweep |
+| A new page or widget | It must appear in `layout.spec.ts`'s route sweep, and in `a11y.spec.ts`'s |
+| A paged list | A filter control that does not drop `page`, and a `?page=` past the end, are the two bugs — cover both |
 | Anything user-visible | An entry in [`CHANGELOG.d/`](../CHANGELOG.d/README.md) |
 | A merge of `main` into the branch | The whole set again, on the merged tree — see [CONTRIBUTING.md](../CONTRIBUTING.md#merging-main-into-a-long-lived-branch) |

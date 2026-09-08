@@ -48,6 +48,9 @@ model User {
   updatedAt             DateTime  @updatedAt
 
   sessions             Session[]
+  calendarFeed         CalendarFeed?
+  twoFactor            TwoFactor?
+  recoveryCodes        RecoveryCode[]
   preference           UserPreference?
   dashboardLayout      DashboardLayout?
   taxonomyTerms        TaxonomyTerm[]
@@ -97,6 +100,97 @@ model Session {
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+/// A read-only iCalendar subscription URL for one account.
+///
+/// One per account. Regenerating replaces the token and breaks every existing
+/// subscription at once, which is the entire revocation story — deliberately,
+/// because a per-device list nobody prunes is a list of credentials nobody
+/// revokes.
+///
+/// The token is stored as a sha256 hash exactly like `Session.tokenHash`. The
+/// URL is handed to Google or Apple and kept on their servers indefinitely, so
+/// a database dump must not also hand over working feed URLs. Unlike a session
+/// it does not expire: a subscription that silently stopped updating is worse
+/// than no subscription, and this credential reads a strict subset of what a
+/// locked browser session can already see.
+/// A second factor for signing in: a time-based code from an authenticator app.
+///
+/// Optional, per account, and off until somebody turns it on. Nothing else in
+/// the app changes shape when it is on — it stands in front of session
+/// creation, so a session that exists is one that cleared every factor.
+model TwoFactor {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  /// The base32 shared secret, encrypted at rest under an `AUTH_SECRET`-derived
+  /// key. Anyone holding both this and the password holds the account, so a
+  /// database dump alone must not carry it in the clear.
+  secret String @db.Text
+
+  /// Null between "show me the key" and the first correct code. An unconfirmed
+  /// row never gates a sign-in: enrolling is not finished until the app has
+  /// proved it holds the same secret, or a typo would lock the account out.
+  confirmedAt DateTime?
+
+  /// The most recent time step accepted, so a code cannot be used twice inside
+  /// its own window. A code is valid for the whole step; without this, one
+  /// observed over a shoulder stays usable until it rolls over.
+  lastUsedStep Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// A single-use way back in when the authenticator is gone.
+///
+/// Ten are issued at once and shown once. Stored as a sha256 hash: they are
+/// high-entropy and random, so there is nothing to slow down a guess of, and
+/// the lookup happens on every recovery attempt.
+model RecoveryCode {
+  id       String @id @default(cuid())
+  ownerId  String
+  codeHash String @db.VarChar(191)
+
+  /// Set the moment it is accepted. Spent codes are kept rather than deleted so
+  /// "you have three left" is answerable and a reused one is refused knowingly.
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, codeHash])
+  @@index([ownerId, usedAt])
+}
+
+model CalendarFeed {
+  id        String @id @default(cuid())
+  ownerId   String @unique
+  tokenHash String @unique @db.VarChar(191)
+
+  /// The same token, encrypted at rest under an `AUTH_SECRET`-derived key.
+  ///
+  /// The hash answers "is this URL valid" in one indexed lookup; this answers
+  /// "show me my URL again", which a subscription URL genuinely needs — it has
+  /// to be copied to a phone, a laptop and a web calendar, and a show-once
+  /// secret would have people regenerating it and breaking the subscriptions
+  /// they already made. Encrypted rather than stored plainly so a database
+  /// dump on its own still does not hand over working feed URLs; rotating
+  /// `AUTH_SECRET` costs the ability to redisplay it, never the feed itself,
+  /// because the hash is what the route resolves against.
+  token     String   @db.Text
+  createdAt DateTime @default(now())
+
+  /// When a calendar client last fetched it, so Settings can say whether the
+  /// subscription is actually live rather than only that a URL exists. Null
+  /// until the first fetch, and written at most hourly so a client polling
+  /// every few minutes cannot turn a read into a write per request.
+  lastAccessedAt DateTime?
+
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 }
 
 model UserPreference {
@@ -1279,11 +1373,11 @@ model Plan {
   category          TaxonomyTerm? @relation("PlanCategory", fields: [categoryId], references: [id], onDelete: SetNull)
   usedInInteraction Interaction?  @relation("PlanCarriedOut", fields: [usedInInteractionId], references: [id], onDelete: SetNull)
 
+  @@unique([ownerId, completionKey])
   @@index([ownerId, status])
   @@index([contactId, status])
   @@index([categoryId])
   @@index([usedInInteractionId])
-  @@unique([ownerId, completionKey])
   @@index([ownerId, contactId])
   @@index([locationId])
 }

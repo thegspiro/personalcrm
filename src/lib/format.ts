@@ -113,27 +113,41 @@ export function cadenceMessage(days: number | null): string | null {
   return days === 1 ? "Due tomorrow" : `In ${days} days`;
 }
 
-/** Tailwind classes for a taxonomy term's colour, in both themes. */
-export function termColorClasses(color: string | null | undefined): string {
-  const palette: Record<string, string> = {
-    slate: "bg-slate-500/12 text-slate-600 dark:text-slate-300",
-    red: "bg-red-500/12 text-red-600 dark:text-red-400",
-    orange: "bg-orange-500/12 text-orange-600 dark:text-orange-400",
+/**
+ * A taxonomy term's colour, as the classes that render it in both themes.
+ *
+ * Exported so `tests/unit/contrast.test.ts` can check every entry rather than
+ * only the handful that happen to be on screen during the end-to-end sweep.
+ * That sweep measures what renders; this table is the whole palette, and a
+ * colour nobody has used yet is exactly the one nobody has looked at.
+ *
+ * The light text is `-700` (and `-800` for green, which needs the extra step)
+ * rather than `-600`: on a 12% tint of the same hue, `-600` does not clear
+ * 4.5:1 for text this small.
+ */
+export const TERM_COLOR_CLASSES: Record<string, string> = {
+    slate: "bg-slate-500/12 text-slate-700 dark:text-slate-300",
+    red: "bg-red-500/12 text-red-700 dark:text-red-400",
+    orange: "bg-orange-500/12 text-orange-700 dark:text-orange-400",
     amber: "bg-amber-500/12 text-amber-700 dark:text-amber-400",
     yellow: "bg-yellow-500/12 text-yellow-700 dark:text-yellow-400",
     lime: "bg-lime-500/12 text-lime-700 dark:text-lime-400",
-    green: "bg-green-500/12 text-green-700 dark:text-green-400",
+    green: "bg-green-500/12 text-green-800 dark:text-green-400",
     emerald: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400",
     teal: "bg-teal-500/12 text-teal-700 dark:text-teal-400",
     cyan: "bg-cyan-500/12 text-cyan-700 dark:text-cyan-400",
     sky: "bg-sky-500/12 text-sky-700 dark:text-sky-400",
-    blue: "bg-blue-500/12 text-blue-600 dark:text-blue-400",
-    indigo: "bg-indigo-500/12 text-indigo-600 dark:text-indigo-400",
-    violet: "bg-violet-500/12 text-violet-600 dark:text-violet-400",
-    purple: "bg-purple-500/12 text-purple-600 dark:text-purple-400",
-    fuchsia: "bg-fuchsia-500/12 text-fuchsia-600 dark:text-fuchsia-400",
-    pink: "bg-pink-500/12 text-pink-600 dark:text-pink-400",
-    rose: "bg-rose-500/12 text-rose-600 dark:text-rose-400",
+    blue: "bg-blue-500/12 text-blue-700 dark:text-blue-400",
+    indigo: "bg-indigo-500/12 text-indigo-700 dark:text-indigo-400",
+    violet: "bg-violet-500/12 text-violet-700 dark:text-violet-400",
+    purple: "bg-purple-500/12 text-purple-700 dark:text-purple-400",
+    fuchsia: "bg-fuchsia-500/12 text-fuchsia-700 dark:text-fuchsia-400",
+    pink: "bg-pink-500/12 text-pink-700 dark:text-pink-400",
+    rose: "bg-rose-500/12 text-rose-700 dark:text-rose-400",
   };
-  return palette[color ?? ""] ?? "bg-muted text-muted-foreground";
+
+/** Tailwind classes for a taxonomy term's colour, in both themes. */
+export function termColorClasses(color: string | null | undefined): string {
+  return TERM_COLOR_CLASSES[color ?? ""] ?? "bg-muted text-muted-foreground";
 }
+

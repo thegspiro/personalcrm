@@ -82,7 +82,13 @@ export function MonthGrid({
               // the same height whether or not anything is on those days.
               className={cn(
                 "grid min-h-24 min-w-0 content-start gap-0.5 p-1",
-                outside ? "bg-muted/40" : "bg-card",
+                // Opaque, not `bg-muted/40`. A translucent cell blends with
+                // the grid lines behind it, which took the day number's
+                // contrast to 4.36 against a background no token predicts —
+                // and made it unfixable by looking at the tokens alone. Solid
+                // keeps the neighbouring-month cells just as distinct and puts
+                // the contrast back at a value the palette actually states.
+                outside ? "bg-muted" : "bg-card",
               )}
             >
               <div className="flex min-w-0 items-baseline justify-between gap-1">
@@ -98,9 +104,12 @@ export function MonthGrid({
                       ? "bg-primary font-semibold text-primary-foreground"
                       : key === selectedKey
                         ? "bg-accent-3 font-semibold text-accent-11"
-                        : outside
-                          ? "text-muted-foreground/60"
-                          : "text-muted-foreground",
+                        : // A day from the neighbouring month is already set
+                          // apart by the cell's own background, so the number
+                          // does not also need fading — at 60% of an already
+                          // muted token it stopped clearing 4.5:1, which is
+                          // the one thing a date has to do.
+                          "text-muted-foreground",
                   )}
                 >
                   {day.day}

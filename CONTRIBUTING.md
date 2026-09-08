@@ -184,6 +184,27 @@ example.
 
 Never edit a migration that has shipped. Add another one.
 
+## Dependency overrides
+
+`package.json` carries an `overrides` block. It is not decoration, and removing
+an entry silently reintroduces a published vulnerability:
+
+| Override | Why |
+| --- | --- |
+| `postcss` | Next pins a nested `8.4.31` carrying four advisories, one of them a path traversal that reads arbitrary `.map` files. The direct dependency was already patched; this collapses every copy onto the one version, which is also what Tailwind builds against |
+| `deepmerge-ts` | `@prisma/config` pins `7.1.5`, which exhausts the stack on a recursive object graph. The Prisma CLI **ships in the container** and runs `migrate deploy` at boot, so this is not dev-only |
+
+Both force a version the vendor did not test against, so both are checked
+rather than assumed: `prisma validate`, `prisma migrate status` and
+`prisma generate` exercise the first, and `npm run build` exercises the second.
+Run those before changing either.
+
+`npm audit` should report zero. When it does not, find out whether the fix is
+reachable inside the declared ranges before reaching for `--force`: the
+remaining advisories at the time of writing were cleared by a Next *patch*
+bump plus these two overrides, where `npm audit fix --force` would have pulled
+in Next 16 and Prisma 8 as major upgrades nobody asked for.
+
 ## Adding a default taxonomy term
 
 Add it to `TAXONOMY_SEEDS` in

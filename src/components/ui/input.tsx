@@ -8,7 +8,7 @@ export function Input({ className, type, ...props }: React.ComponentProps<"input
       data-slot="input"
       className={cn(
         "flex h-10 w-full rounded-lg border border-input bg-card px-3 py-2 text-sm shadow-xs transition-colors",
-        "placeholder:text-muted-foreground/70",
+        "placeholder:text-muted-foreground",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-accent-8",
         "disabled:cursor-not-allowed disabled:opacity-50",
         "aria-invalid:border-destructive aria-invalid:ring-destructive/30",
@@ -25,7 +25,7 @@ export function Textarea({ className, ...props }: React.ComponentProps<"textarea
       data-slot="textarea"
       className={cn(
         "flex min-h-20 w-full rounded-lg border border-input bg-card px-3 py-2 text-sm shadow-xs transition-colors",
-        "placeholder:text-muted-foreground/70 resize-y",
+        "placeholder:text-muted-foreground resize-y",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-accent-8",
         "disabled:cursor-not-allowed disabled:opacity-50",
         className,

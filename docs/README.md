@@ -36,8 +36,10 @@ packaged as one container with the database built in.
   bundled
   server never starts. Everything persistent is in `/config`.
 - **No API layer.** Pages are server components querying Prisma directly;
-  mutations are server actions. The only route handlers are `GET /api/health`
-  and the authenticated avatar read at `GET /api/avatars/[filename]`.
+  mutations are server actions. The only route handlers are `GET /api/health`,
+  the authenticated avatar read at `GET /api/avatars/[filename]`, and the
+  calendar subscription at `GET /api/calendar/[token].ics`, which is addressed
+  by a token because the fetch comes from a calendar client with no session.
 - **Every "type" is data.** Interaction types, fact categories, relationship
   types, dating stages, plan categories — all `TaxonomyTerm` rows you can
   rename, recolour, reorder or add to. Enums are reserved for states the code
@@ -62,7 +64,7 @@ packaged as one container with the database built in.
 | Follow-ups | `/tasks` | Due contact cadences and manual tasks in separate sections |
 | Gifts | `/gifts` | Both directions |
 | Places | `/locations` | Venues shared by interactions and plans; who you saw there, what is planned, and an optional address lookup |
-| Settings | `/settings` | Account, Look, Fields, Types, Tags, Home, Reminders, Quick add, Places, Privacy, Data, App |
+| Settings | `/settings` | Account, Look, Fields, Types, Tags, Home, Reminders, Quick add, Places, Privacy, Data (export, import, calendar subscription), App |
 | Welcome | `/welcome` | First-run onboarding, once per account |
 | Unlock | `/unlock` | The privacy PIN |
 | Offline | `/offline` | What the service worker serves for an uncached page |
@@ -75,10 +77,12 @@ Documented so nobody assumes a feature works:
 | --- | --- |
 | **Password recovery delivery** | Account details, passwords, and sessions are manageable in Settings. Password recovery is intentionally not exposed until an operator configures a trusted delivery channel or an explicit administrator-assisted recovery mechanism; reset secrets must never be logged |
 | **Sign-in throttling degrades at capacity** | The limiter holds a fixed number of counters, so at capacity admitting one means discarding another, and a determined flood can aim that at a particular counter to reset it. It costs tens of thousands of requests to buy back a handful of guesses — far more than the forwarded-address bypass below, which costs one — and tightening the eviction rule instead starts refusing pairs nobody has seen. Written up in [privacy.md](privacy.md#sign-in-throttling) |
-| **Sign-in throttling trusts the forwarded address, and is per process** | Repeated wrong passwords back off per address-and-client pair, but the client half is whatever the request presents as `X-Forwarded-For` and nothing verifies it. Counters live in the process, so they reset when the container restarts and each replica keeps its own. It stops one client grinding a password list; it does not stop one that varies the header, and volumetric defence belongs at the proxy. See [privacy.md](privacy.md#sign-in-throttling) |
-| **Lists are windows, not pages** | Every list draws a bounded window — 200 people, 100 timeline entries, 200 tasks, gifts, ideas and plans — and there is no paging past it. Reaching the cap is now stated on the page rather than left to look like the end of the data, but the only way to the rest is to narrow the filters |
+| **Sign-in throttling is per process** | Repeated wrong passwords back off per address-and-client pair, and the client half is now taken from the entry your reverse proxy appended rather than the one the caller sent — set `TRUSTED_PROXY_HOPS` to enable it. Counters still live in the process, so they reset when the container restarts and each replica keeps its own. With no trusted proxy the throttle counts per email address, which stops grinding but lets someone hold one account in backoff. See [privacy.md](privacy.md#which-client-an-attempt-is-counted-against) |
+| **Some lists are windows, not pages** | People and the timeline now page: the window is the same size, with a way past it, and `?page=` is part of the URL so a position can be shared. Follow-ups, gifts, ideas and plans still draw a bounded window — 200 rows — and say so rather than paging. Reaching that cap takes real effort, and narrowing the filters is still the way past it |
 | **The calendar draws a bounded month** | Each of the calendar's five sources is capped independently at 400 entries for the window it draws, so an account with an extraordinary month could have entries of one kind go unshown. The cap is per source precisely so one busy kind cannot crowd the others out, and a month is small enough that reaching it takes real effort. Tapping an entry opens the page that holds it, which draws its own bounded window — so an old interaction on `/timeline`, or a completed follow-up behind 200 open ones on `/tasks`, can be below the fold of its destination for the same reason listed above |
 | **Finding a number by a different format** | Contact search matches the stored string, so someone filed as `+1 (555) 010-4477` is not found by typing `5550104477`. Deliberate: normalising would mean guessing a country nobody supplied |
+| **The calendar feed is a rolling window** | The subscription carries one month back and thirteen months forward, re-fetched on your calendar app's schedule, rather than an endless recurring rule. Every annual date therefore appears, but looking years ahead in your calendar will not show them. Interactions are left out entirely — a subscription is for what is coming |
+| **The calendar feed omits what is private** | Whoever fetches it is not signed in and cannot unlock, so it is built as though the lock were closed. For an account that uses the privacy marker the feed is deliberately incomplete; see [privacy.md](privacy.md#the-calendar-subscription) |
 | **Offline writes** | Deliberately absent. Non-GET requests go straight to the network and fail honestly rather than pretending something was saved |
 
 The project is under active development and nothing has been tagged as a

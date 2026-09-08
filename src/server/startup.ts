@@ -4,6 +4,9 @@ import { provisionTaxonomies } from "@/server/taxonomy/provision";
 import { purgeExpiredSessions } from "@/server/auth/session";
 
 import { startReminderScheduler } from "@/server/reminder-scheduler";
+import { createLogger } from "@/server/log";
+
+const log = createLogger("startup");
 
 let started = false;
 
@@ -25,17 +28,17 @@ export async function runStartupTasks(): Promise<void> {
       await prisma.$transaction((tx) => provisionTaxonomies(tx, user.id));
     }
     if (users.length > 0) {
-      console.log(`[startup] taxonomies verified for ${users.length} account(s)`);
+      log.info("taxonomies verified", { accounts: users.length });
     }
   } catch (error) {
-    console.error("[startup] taxonomy backfill failed:", error);
+    log.error("taxonomy backfill failed", error);
   }
 
   try {
     const removed = await purgeExpiredSessions();
-    if (removed > 0) console.log(`[startup] cleared ${removed} expired session(s)`);
+    if (removed > 0) log.info("cleared expired sessions", { removed });
   } catch (error) {
-    console.error("[startup] session cleanup failed:", error);
+    log.error("session cleanup failed", error);
   }
 
   await reportSchemaRepairs();
@@ -86,10 +89,12 @@ async function reportRepair(
   try {
     const record = await prisma.appSetting.findUnique({ where: { key } });
     if (!record) return;
-    console.warn(phrase(asCounts(record.value)));
+    log.warn(phrase(asCounts(record.value)));
     await prisma.appSetting.delete({ where: { key } });
   } catch (error) {
-    console.error(`[startup] could not report ${key}:`, error);
+    // `setting`, not `key`: the logger masks any field whose name looks like a
+    // secret, and `key` is one of those names.
+    log.error("could not report a schema repair", error, { setting: key });
   }
 }
 
@@ -97,7 +102,7 @@ async function reportSchemaRepairs(): Promise<void> {
   await reportRepair(
     JOIN_KEY_REPAIR,
     (counts) =>
-      `[startup] the same-owner key migration removed ${counts.contactTags ?? 0} tag ` +
+      `the same-owner key migration removed ${counts.contactTags ?? 0} tag ` +
       `assignment(s) and ${counts.locationAliases ?? 0} place alias(es) that joined ` +
       "records belonging to different accounts. The application cannot create such a " +
       "row; they came from an import or a restore, and nothing could see them. See " +
@@ -106,7 +111,7 @@ async function reportSchemaRepairs(): Promise<void> {
   await reportRepair(
     CONTACT_KEY_REPAIR,
     (counts) =>
-      `[startup] the same-owner key migration removed ${counts.deleted ?? 0} record(s) ` +
+      `the same-owner key migration removed ${counts.deleted ?? 0} record(s) ` +
       `and cleared ${counts.detached ?? 0} link(s) that joined records belonging to ` +
       "different accounts. The application cannot create such a row; they came from an " +
       "import or a restore, and nothing could see them. Where the link was optional — an " +

@@ -204,8 +204,8 @@ export function CompareView({
                     : "—"}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-xs">
-                  {row.greenFlags > 0 ? <span className="text-[var(--success)]">{row.greenFlags}↑ </span> : null}
-                  {row.redFlags > 0 ? <span className="text-[var(--warning)]">{row.redFlags}↓ </span> : null}
+                  {row.greenFlags > 0 ? <span className="text-[var(--success-11)]">{row.greenFlags}↑ </span> : null}
+                  {row.redFlags > 0 ? <span className="text-[var(--warning-11)]">{row.redFlags}↓ </span> : null}
                   {row.dealbreakers > 0 ? <span className="text-destructive">{row.dealbreakers}✕</span> : null}
                 </td>
               </tr>

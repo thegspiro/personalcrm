@@ -8,11 +8,15 @@ Everything the app reads from its environment, and everything it keeps on disk.
 
 | Variable | Default | Required | Notes |
 | --- | --- | --- | --- |
-| `APP_URL` | — | Behind HTTPS | Your external URL, e.g. `https://crm.example.com`. Session cookies are marked `secure` only when this starts with `https://`, so sign-in fails silently behind a TLS proxy if it is unset |
+| `APP_URL` | — | Behind HTTPS | Your external URL, e.g. `https://crm.example.com`. Session cookies are marked `secure` only when this starts with `https://`, so sign-in fails silently behind a TLS proxy if it is unset. It is also the address the calendar subscription URL is built on — without it the URL is built from the request's own host, which is the wrong answer if you administer the app on `localhost` and subscribe from elsewhere |
 | `DATABASE_URL` | generated | No | Set it and the bundled MariaDB never starts. Format: `mysql://user:password@host:3306/personalcrm` |
 | `AUTH_SECRET` | generated | No (container) / Yes (bare) | 32+ random bytes. Signs sessions **and** derives the keys that encrypt a stored AI key and every notification channel credential. Generated into `/config/secrets.json` on first boot. Rotating it signs everyone out, makes a stored AI key undecryptable — treated as no key — and **stops reminder delivery** on any channel with a saved password or token until it is re-entered |
+| `CSP_REPORT_ONLY` | `false` | No | Send the Content-Security-Policy as `Content-Security-Policy-Report-Only` instead of enforcing it. The escape hatch for a deployment the policy trips: violations are reported to the browser console and nothing is blocked. Enforcing is the default because a report-only policy mitigates nothing |
+| `TRUSTED_PROXY_HOPS` | `0` | Behind a proxy | How many reverse proxies sit in front of the app. `0` ignores `X-Forwarded-For` entirely, which is correct for a directly-reached install and means sign-in throttling counts per email address rather than per client. Set `1` behind a single proxy so the throttle can tell clients apart — see [privacy.md](privacy.md#which-client-an-attempt-is-counted-against). Anything that is not a whole number is read as `0` |
 | `DISABLE_SIGNUP` | `false` | No | Set `true` once your accounts exist. The first-run wizard still works on an empty instance |
 | `TZ` | `Etc/UTC` (image) | No | Container clock. Note the account's own `UserPreference.timezone` is what every reminder and "overdue" calculation actually uses — this only affects logs and the default for a brand-new account |
+| `LOG_LEVEL` | `info` (production) / `debug` | No | `debug`, `info`, `warn`, `error` or `silent`. A value that is none of these falls back to the default rather than refusing to boot |
+| `LOG_FORMAT` | `text` | No | `text` or `json`. `text` keeps the `[scope]` prefix the log has always carried, with a timestamp and level in front of it; `json` writes one object per line for a log shipper. Either way, a password inside a connection string and any field named after a secret are masked before the line is written |
 | `PUID` / `PGID` | `99` / `100` | No | Unraid's `nobody:users`. `/config` is chowned to this |
 | `PORT` / `HOSTNAME` | `3000` / `0.0.0.0` | No | Set in the image |
 | `APP_VERSION` | `dev` | No | Reported by `/api/health` |

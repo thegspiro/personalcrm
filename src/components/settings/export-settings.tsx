@@ -43,9 +43,11 @@ const FORMATS: FormatOption[] = [
  * Getting your data out.
  *
  * The file is built by the server action and saved here rather than fetched
- * from a URL: this app has exactly one route handler and it is the
- * healthcheck. Assembling the download in the browser keeps it that way, and
- * keeps the export out of the service worker's fetch handling entirely.
+ * from a URL. Route handlers are kept to the few that genuinely cannot be
+ * server actions — the healthcheck, the authenticated avatar read, and the
+ * calendar subscription, which is fetched by a calendar client rather than by
+ * this app. Assembling the download in the browser adds none, and keeps the
+ * export out of the service worker's fetch handling entirely.
  */
 export function ExportSettings({ locked }: { locked: boolean }) {
   const [busy, setBusy] = React.useState<ExportFormat | null>(null);

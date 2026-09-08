@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { Plus, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -6,18 +7,28 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ContactCard } from "@/components/contacts/contact-card";
 import { ContactFilters } from "@/components/contacts/contact-filters";
 import { PeopleTabs } from "@/components/contacts/people-tabs";
-import { ListCapNotice } from "@/components/ui/list-cap-notice";
+import { Pager } from "@/components/ui/pager";
 import { getUserContext } from "@/server/user/context";
 import { offlineCacheable } from "@/server/privacy/offline";
 import { CacheThisPage } from "@/components/offline/offline";
 import { listContacts, type ContactDueStatus, type ContactSort } from "@/server/queries/contacts";
 import { listTerms } from "@/server/taxonomy/queries";
 import { listTags } from "@/server/queries/tags";
+import { describePage, pageHref, pageWindow, parsePage } from "@/lib/pagination";
 
 export const metadata: Metadata = { title: "People" };
 export const dynamic = "force-dynamic";
 
 const SORTS = new Set<ContactSort>(["name", "recent", "overdue", "added"]);
+
+/**
+ * How many people a page holds.
+ *
+ * The window the list already drew, now with a way past it rather than a
+ * different size. Changing both at once would be a redesign of the list on top
+ * of a fix for not being able to leave it.
+ */
+const PAGE_SIZE = 200;
 const DUE_STATUSES = new Set<ContactDueStatus>(["actionable", "soon"]);
 
 export default async function PeoplePage({
@@ -42,6 +53,9 @@ export default async function PeoplePage({
       ? (dueParam as ContactDueStatus)
       : undefined;
 
+  const requested = parsePage(params.page);
+  const window = pageWindow(requested, PAGE_SIZE);
+
   const [categories, tags, { items, total }] = await Promise.all([
     listTerms(user.id, "CONTACT_CATEGORY"),
     listTags(user.id),
@@ -53,8 +67,28 @@ export default async function PeoplePage({
       favoritesOnly: first("favorites") === "1",
       dueStatus,
       sort,
+      skip: window.skip,
+      take: window.take,
     }, timezone),
   ]);
+
+  // `total` is the count behind the same where-clause the rows came from, so
+  // it is privacy-filtered and owner-scoped like everything else — invariant 3.
+  const page = describePage(total, requested, PAGE_SIZE);
+
+  // A page past the end was fetched at an offset with nothing behind it, so
+  // clamping only the label would leave the reader on an empty list under a
+  // pager claiming there is something there. Send them to the page that
+  // exists instead — which is also what makes a bookmarked `?page=6` still
+  // mean something after the rows behind it are archived.
+  //
+  // Unconditional, including for an empty list: `?page=99` on an account with
+  // nobody in it is still a URL that does not describe anything, and guarding
+  // this on `total > 0` left exactly that case sitting at the wrong address.
+  // It cannot loop — the clamped page always resolves to itself.
+  if (page.page !== requested) {
+    redirect(pageHref("/people", params, page.page));
+  }
 
   const isFiltered = Boolean(
     first("q") || first("category") || first("tag") || first("scope") || first("favorites") || dueStatus,
@@ -111,14 +145,7 @@ export default async function PeoplePage({
               </li>
             ))}
           </ul>
-          {items.length < total ? (
-            <ListCapNotice
-              shown={items.length}
-              total={total}
-              noun="people"
-              hint="Search or filter to reach the rest."
-            />
-          ) : null}
+          <Pager info={page} pathname="/people" params={params} label="people" />
         </>
       )}
     </div>
