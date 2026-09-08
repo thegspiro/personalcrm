@@ -15,6 +15,7 @@ import {
 } from "@/server/actions/details";
 import { PlaceLookup } from "@/components/locations/place-lookup";
 import { LOCALITY_LIST_IDS } from "@/components/form/locality-options";
+import { PlacePicker, type PlaceSuggestion } from "@/components/form/place-picker";
 import type { GeoCandidateView } from "@/server/geo/providers";
 import { mapLinkFor } from "@/lib/locations";
 
@@ -54,6 +55,8 @@ function AddressFields({
   address,
   lookupEnabled,
   isPrivate,
+  places,
+  placesTruncated,
 }: {
   formId: string;
   contactId: string;
@@ -61,8 +64,14 @@ function AddressFields({
   lookupEnabled: boolean;
   /** A private contact's address is never sent anywhere. See below. */
   isPrivate: boolean;
+  /** Places you have already been, to copy an address from. */
+  places: PlaceSuggestion[];
+  placesTruncated: boolean;
 }) {
   const [applied, setApplied] = React.useState<GeoCandidateView | null>(null);
+  // A place copied into this form, playing the same role a lookup match does:
+  // it fills the boxes visibly and nothing is written until Save.
+  const [pickedPlace, setPickedPlace] = React.useState<PlaceSuggestion | null>(null);
   const [city, setCity] = React.useState(address?.city ?? "");
   const [region, setRegion] = React.useState(address?.region ?? "");
   const [country, setCountry] = React.useState(address?.country ?? "");
@@ -113,18 +122,55 @@ function AddressFields({
   }
 
   /**
-   * The OSM object this address is still pointing at.
+   * Copy a place you have been into this address.
    *
-   * A fresh match brings its own. Otherwise the saved one is kept only while
-   * the coordinates are the ones it came with: edit them by hand and the
-   * reference no longer describes this spot, and `mapLinkFor` prefers it — so
-   * keeping it would open the venue the address used to be.
+   * Copied, never linked. An `Address` hangs off one contact and cascades with
+   * them, while a `Location` is owner-scoped and shared by everything that
+   * happened there — a relation between the two would let deleting a person
+   * take a place down with them. They also mean different things: an address is
+   * where somebody *is*, a place is somewhere you *went*.
+   *
+   * `Location.address` is one line and is copied to `line1` whole. It is not
+   * split on commas: the comma in "12 High Street, Flat 2" is not reliably a
+   * line break, and a wrong guess is worse than one long line. Nothing already
+   * typed is cleared — a place carries no label, no second line and no postal
+   * code, so those keep whatever they hold.
    */
-  const osmReference =
-    applied ??
-    (latitude === (address?.latitude ?? "") && longitude === (address?.longitude ?? "")
-      ? address ?? null
-      : null);
+  function copyPlace(place: PlaceSuggestion) {
+    setPickedPlace(place);
+    if (place.address && line1Ref.current) line1Ref.current.value = place.address;
+    if (place.city) setCity(place.city);
+    if (place.region) setRegion(place.region);
+    if (place.country) setCountry(place.country);
+    setLatitude(place.latitude ?? "");
+    setLongitude(place.longitude ?? "");
+  }
+
+  /**
+   * Whether a source's OSM reference still describes what is in the boxes.
+   *
+   * Edit the coordinates by hand and it does not: `mapLinkFor` prefers the id,
+   * so keeping it would open the venue this address used to be.
+   *
+   * Applied to the lookup match as well as the saved row and the copied place.
+   * It used to guard only the saved row, which left the same stale-id bug
+   * reachable by accepting a match and then correcting its coordinates — the
+   * one case where someone has just told you the match was wrong.
+   */
+  function stillDescribes(
+    source: { latitude: string | null; longitude: string | null } | null | undefined,
+  ) {
+    if (!source) return false;
+    return latitude === (source.latitude ?? "") && longitude === (source.longitude ?? "");
+  }
+
+  const osmReference = stillDescribes(applied)
+    ? applied
+    : stillDescribes(pickedPlace)
+      ? pickedPlace
+      : stillDescribes(address)
+        ? address ?? null
+        : null;
 
   return (
     <>
@@ -215,6 +261,24 @@ function AddressFields({
         <PlaceLookup buildQuery={buildQuery} search={runLookup} onAccept={accept} />
       ) : null}
 
+      {/*
+        Gated on having places rather than on `canLookUp`. The list is already
+        privacy-filtered and nothing leaves the machine, so unlike the lookup
+        this is safe for a private contact — who otherwise has no assisted way
+        to fill an address at all.
+      */}
+      <PlacePicker
+        places={places}
+        truncated={placesTruncated}
+        summary="Copy from a place you've been"
+        onPick={copyPlace}
+      />
+      {pickedPlace ? (
+        <p className="text-xs text-muted-foreground">
+          Copied from <strong>{pickedPlace.name}</strong>. Save to keep it.
+        </p>
+      ) : null}
+
       {osmReference?.osmType ? (
         <input type="hidden" name="osmType" value={osmReference.osmType} />
       ) : null}
@@ -289,11 +353,15 @@ function AddressRow({
   contactId,
   lookupEnabled,
   isPrivate,
+  places,
+  placesTruncated,
 }: {
   address: AddressItem;
   contactId: string;
   lookupEnabled: boolean;
   isPrivate: boolean;
+  places: PlaceSuggestion[];
+  placesTruncated: boolean;
 }) {
   const run = useAction();
   const edit = useEditAction();
@@ -328,6 +396,8 @@ function AddressRow({
             address={address}
             lookupEnabled={lookupEnabled}
             isPrivate={isPrivate}
+            places={places}
+            placesTruncated={placesTruncated}
           />
           <SubmitButton size="sm">Save</SubmitButton>
         </form>
@@ -366,12 +436,17 @@ export function AddressesSection({
   addresses,
   lookupEnabled,
   isPrivate,
+  places = [],
+  placesTruncated = false,
 }: {
   contactId: string;
   addresses: AddressItem[];
   /** Whether the installation has address lookup switched on at all. */
   lookupEnabled: boolean;
   isPrivate: boolean;
+  /** Places you have already been, to copy an address from. */
+  places?: PlaceSuggestion[];
+  placesTruncated?: boolean;
 }) {
   const add = useAddAction();
 
@@ -393,6 +468,8 @@ export function AddressesSection({
             contactId={contactId}
             lookupEnabled={lookupEnabled}
             isPrivate={isPrivate}
+            places={places}
+            placesTruncated={placesTruncated}
           />
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
@@ -408,6 +485,8 @@ export function AddressesSection({
             contactId={contactId}
             lookupEnabled={lookupEnabled}
             isPrivate={isPrivate}
+            places={places}
+            placesTruncated={placesTruncated}
           />
         ))
       )}

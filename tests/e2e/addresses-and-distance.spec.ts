@@ -119,6 +119,41 @@ test("a place can be put on the map by hand, and read back as a distance", async
   await expect(row.getByText(/^0\.\d km$/)).toBeVisible();
 });
 
+test("an address can be copied from a place you have been", async ({ page }) => {
+  await ensureSignedIn(page);
+
+  // Give the venue a full address first, so there is something worth copying.
+  await page.goto("/locations");
+  await page.getByRole("link", { name: new RegExp(venue()) }).click();
+  await page.getByRole("button", { name: "Edit" }).click();
+  const editing = page.getByRole("dialog");
+  await editing.getByLabel("Address", { exact: true }).fill("2 Boar Lane");
+  await editing.getByLabel("City").fill("Leeds");
+  await editing.getByLabel("State").fill("West Yorkshire");
+  await editing.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(editing).toBeHidden();
+
+  const name = `Copier ${test.info().project.name} ${STAMP}`;
+  await createContact(page, name);
+
+  const addresses = page.locator("section").filter({ hasText: "Where they are" });
+  await addresses.getByRole("button", { name: "Add an address" }).click();
+  await addresses.getByText("Copy from a place you've been").click();
+  await addresses.getByLabel("Search places").fill(venue());
+  await addresses.getByRole("button", { name: new RegExp(venue()) }).click();
+
+  // Copied, not linked, and visibly — so it is correctable before Save.
+  await expect(addresses.getByLabel("Address", { exact: true })).toHaveValue("2 Boar Lane");
+  await expect(addresses.getByLabel("City")).toHaveValue("Leeds");
+  await expect(addresses.getByLabel("State")).toHaveValue("West Yorkshire");
+  // The place is placed, so its coordinates come across as a pair.
+  await expect(addresses.getByLabel("Latitude")).toHaveValue(/^53\.7978/);
+  await expect(addresses.getByLabel("Longitude")).toHaveValue(/^-1\.545/);
+
+  await addresses.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(addresses.getByText("2 Boar Lane")).toBeVisible();
+});
+
 test("a logged date carries the place it happened at", async ({ page }) => {
   await ensureSignedIn(page);
 

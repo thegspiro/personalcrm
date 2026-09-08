@@ -440,6 +440,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
           contactId={contact.id}
           lookupEnabled={geoStatus.enabled && geoStatus.usable}
           isPrivate={contact.isPrivate}
+          places={placeSuggestions.items}
+          placesTruncated={placeSuggestions.truncated}
           addresses={contact.addresses.map((address) => ({
             id: address.id,
             label: address.label,
