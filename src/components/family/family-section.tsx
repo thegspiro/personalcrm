@@ -247,7 +247,7 @@ export function ContactHouseholdsSection({
                 </select>
               </Field>
               <Field label="Their role there (optional)" htmlFor="household-role">
-                <Input id="household-role" name="role" placeholder="Mum" />
+                <Input id="household-role" name="role" placeholder="Mom" />
               </Field>
               <SubmitButton size="sm">Add</SubmitButton>
             </>

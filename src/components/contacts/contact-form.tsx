@@ -249,7 +249,7 @@ export function ContactForm({
                 maxLength={120}
               />
             </Field>
-            <Field label="Region" htmlFor="region">
+            <Field label="State" htmlFor="region">
               <Input
                 id="region"
                 name="region"
@@ -366,7 +366,7 @@ export function ContactForm({
 
           <ToggleRow
             name="isFavorite"
-            label="Favourite"
+            label="Favorite"
             description="Pin them near the top of your lists."
             defaultChecked={contact?.isFavorite ?? false}
           />

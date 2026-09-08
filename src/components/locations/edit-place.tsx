@@ -209,7 +209,7 @@ export function EditPlaceSheet({
                     maxLength={120}
                   />
                 </Field>
-                <Field label="Region" htmlFor="place-region">
+                <Field label="State" htmlFor="place-region">
                   <Input
                     id="place-region"
                     name="region"

@@ -213,12 +213,12 @@ export function ContactHeader({
               onSelect={() =>
                 void run(
                   () => patchContact(contact.id, { isFavorite: !contact.isFavorite }),
-                  contact.isFavorite ? "Removed from favourites" : "Added to favourites",
+                  contact.isFavorite ? "Removed from favorites" : "Added to favorites",
                 )
               }
             >
               <Star />
-              {contact.isFavorite ? "Remove favourite" : "Make favourite"}
+              {contact.isFavorite ? "Remove favorite" : "Make favorite"}
             </DropdownMenuItem>
             {/* Only the way in. Leaving the pipeline is "Just a friend" in the
                 dating section itself, which is on screen whenever this person

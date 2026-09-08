@@ -45,7 +45,7 @@ export interface AddressItem {
  * defaults, a usage count and an admin group — to replace a free-text field
  * whose realistic values are the two below.
  */
-const LABEL_SUGGESTIONS = ["Home", "Work", "Parents", "Holiday"];
+const LABEL_SUGGESTIONS = ["Home", "Work", "Parents", "Vacation"];
 
 function AddressFields({
   formId,
@@ -149,7 +149,7 @@ function AddressFields({
           ref={line1Ref}
           maxLength={191}
           defaultValue={address?.line1 ?? ""}
-          placeholder="14 Ashfield Road"
+          placeholder="120 Maple Street"
         />
       </Field>
       <Field label="Line 2 (optional)" htmlFor={`${formId}-line2`}>
@@ -171,7 +171,7 @@ function AddressFields({
             onChange={(event) => setCity(event.target.value)}
           />
         </Field>
-        <Field label="Region" htmlFor={`${formId}-region`}>
+        <Field label="State" htmlFor={`${formId}-region`}>
           <Input
             id={`${formId}-region`}
             name="region"
@@ -293,8 +293,8 @@ function AddressRow({
 }) {
   const run = useAction();
   const edit = useEditAction();
-  // Built from every part we hold, not just the street: "14 Ashfield Road" on
-  // its own is a road in a hundred towns.
+  // Built from every part we hold, not just the street: "120 Maple Street" on
+  // its own is a street in a hundred towns.
   const mapHref = mapLinkFor({
     name: address.label ?? address.line1 ?? "Address",
     address: [address.line1, address.line2].filter(Boolean).join(", ") || null,

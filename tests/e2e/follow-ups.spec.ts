@@ -112,7 +112,7 @@ test("the follow-up hub connects cadence reminders and manual tasks", async ({
 
   // Every control edits the existing URLSearchParams. Exercise one of them to
   // guard the due filter against being dropped as other filters change.
-  await page.getByRole("button", { name: "Favourites" }).click();
+  await page.getByRole("button", { name: "Favorites" }).click();
   await expect(page).toHaveURL(/due=soon/);
   await expect(page).toHaveURL(/favorites=1/);
 });

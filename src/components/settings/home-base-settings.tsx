@@ -91,7 +91,7 @@ export function HomeBaseSettings({
             maxLength={500}
             value={address}
             onChange={(event) => setAddress(event.target.value)}
-            placeholder="14 Ashfield Road"
+            placeholder="120 Maple Street"
           />
         </Field>
 
@@ -105,7 +105,7 @@ export function HomeBaseSettings({
               onChange={(event) => setCity(event.target.value)}
             />
           </Field>
-          <Field label="Region" htmlFor="home-region">
+          <Field label="State" htmlFor="home-region">
             <Input
               id="home-region"
               name="homeRegion"

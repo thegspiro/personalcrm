@@ -233,7 +233,7 @@ function QuickAddPreviewForm({
             <p className="text-xs text-muted-foreground">
               {preview.ambiguous.length > 0
                 ? "Once you have picked above."
-                : "Nobody recognised in that line."}
+                : "Nobody recognized in that line."}
             </p>
           ) : null}
         </div>
