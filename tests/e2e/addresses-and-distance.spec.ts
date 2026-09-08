@@ -33,6 +33,14 @@ test("set a home base and choose a unit", async ({ page }) => {
   await home.getByLabel("Longitude").fill(HOME.lon);
   await home.getByLabel("Distances in").selectOption("km");
   await home.getByRole("button", { name: "Save" }).click();
+  // Wait for the save to be acknowledged before navigating. The click starts a
+  // server action and `goto` cancels whatever is still in flight, so on a
+  // runner slow enough to lose that race the reload below read a home base
+  // that was never written — which is how this failed in CI while passing
+  // locally every time. The toast is only shown for an `ok` result, so a save
+  // that genuinely fails still fails the test, here rather than four lines
+  // later and saying so.
+  await expect(page.getByText("Saved")).toBeVisible();
 
   await page.goto("/settings");
   await page.getByRole("tab", { name: "Places" }).click();
