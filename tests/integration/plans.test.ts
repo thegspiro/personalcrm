@@ -60,9 +60,10 @@ vi.mock("@/server/privacy/lock", () => ({
     actionState.locked ? { ok: false, error: "Unlock to continue." } : { ok: true },
 }));
 
-const { completePlan, createPlan, schedulePlan, updatePlan } = await import(
+const { completePlan, createPlan, schedulePlan, setPlanChecklistItem, updatePlan } = await import(
   "@/server/actions/details"
 );
+const { listPlans } = await import("@/server/queries/plans");
 
 function actionForm(values: Record<string, string>) {
   const form = new FormData();
@@ -1212,6 +1213,134 @@ describe.skipIf(!hasTestDatabase)("plans", () => {
     const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
     expect(after.status).toBe("DONE");
     expect(after.usedInInteractionId).not.toBeNull();
+  });
+
+  // --- the checklist on the row, and looking closed plans back up -----------
+
+  it("ticks one checklist item without touching the others", async () => {
+    const friend = await makeContact("Marcus");
+    const plan = await planFor(friend.id, {
+      checklist: [
+        { id: "tickets", text: "Reserve or buy tickets", completed: false },
+        { id: "travel", text: "Check travel time", completed: false },
+      ],
+    });
+
+    expect(await setPlanChecklistItem(plan.id, "travel", true)).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.checklist).toEqual([
+      { id: "tickets", text: "Reserve or buy tickets", completed: false },
+      { id: "travel", text: "Check travel time", completed: true },
+    ]);
+  });
+
+  it("unticks an item that was already done", async () => {
+    const plan = await planFor(null);
+    expect(await setPlanChecklistItem(plan.id, "tickets", false)).toMatchObject({ ok: true });
+
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.checklist).toEqual([
+      { id: "tickets", text: "Reserve or buy tickets", completed: false },
+    ]);
+  });
+
+  it("refuses a plan belonging to another account", async () => {
+    // A server action is a public POST endpoint: the id is whatever the caller
+    // typed, so ownership is re-established here rather than assumed from the
+    // page that rendered the tickbox.
+    const stranger = await createTestUser();
+    const theirs = await prisma.plan.create({
+      data: {
+        ownerId: stranger.id,
+        title: "Not yours",
+        checklist: [{ id: "tickets", text: "Reserve or buy tickets", completed: false }],
+      },
+    });
+
+    expect(await setPlanChecklistItem(theirs.id, "tickets", true)).toMatchObject({ ok: false });
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: theirs.id } });
+    expect(after.checklist).toEqual([
+      { id: "tickets", text: "Reserve or buy tickets", completed: false },
+    ]);
+  });
+
+  it("refuses a plan whose person is private while the lock is closed", async () => {
+    const hidden = await prisma.contact.create({
+      data: { ownerId, firstName: "Robin", isPrivate: true },
+    });
+    const plan = await planFor(hidden.id);
+    actionState.locked = true;
+
+    expect(await setPlanChecklistItem(plan.id, "tickets", false)).toMatchObject({ ok: false });
+
+    actionState.locked = false;
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.checklist).toEqual([
+      { id: "tickets", text: "Reserve or buy tickets", completed: true },
+    ]);
+  });
+
+  it("refuses a plan that is already closed", async () => {
+    // The done view puts these rows on screen, so the refusal is what stops a
+    // stray tap rewriting the preparation for something already finished.
+    const plan = await planFor(null, { status: "DONE" });
+    expect(await setPlanChecklistItem(plan.id, "tickets", false)).toMatchObject({ ok: false });
+  });
+
+  it("says so when the item was deleted in another tab", async () => {
+    const plan = await planFor(null);
+    const result = await setPlanChecklistItem(plan.id, "no-such-item", true);
+
+    expect(result).toMatchObject({ ok: false });
+    // Not written back from the stale list the caller was looking at.
+    const after = await prisma.plan.findUniqueOrThrow({ where: { id: plan.id } });
+    expect(after.checklist).toEqual([
+      { id: "tickets", text: "Reserve or buy tickets", completed: true },
+    ]);
+  });
+
+  it("leaves closed plans out of the list unless they are asked for", async () => {
+    const friend = await makeContact("Marcus");
+    await planFor(friend.id, { title: "Still open" });
+    await planFor(friend.id, { title: "Finished", status: "DONE" });
+    await planFor(friend.id, { title: "Shelved", status: "ARCHIVED" });
+
+    const open = await listPlans(ownerId);
+    expect(open.map((plan) => plan.title)).toEqual(["Still open"]);
+
+    const all = await listPlans(ownerId, { includeDone: true });
+    expect(all.map((plan) => plan.title).sort()).toEqual(["Finished", "Shelved", "Still open"]);
+  });
+
+  it("offers a map link for a plan whose venue resolved to a place", async () => {
+    const place = await prisma.location.create({
+      data: {
+        ownerId,
+        name: "The Brudenell",
+        normalizedName: "the brudenell",
+        osmType: "W",
+        osmId: 12345n,
+      },
+    });
+    await planFor(null, { title: "Gig", locationId: place.id });
+    await planFor(null, { title: "Somewhere only typed", location: "The other one" });
+
+    const plans = await listPlans(ownerId);
+    const placed = plans.find((plan) => plan.title === "Gig");
+    const typed = plans.find((plan) => plan.title === "Somewhere only typed");
+
+    expect(placed?.place).toEqual({
+      id: place.id,
+      name: "The Brudenell",
+      mapHref: "https://www.openstreetmap.org/way/12345",
+      latitude: null,
+      longitude: null,
+    });
+    // A BigInt reaching a client component throws on serialisation, so the
+    // column that carries one must not survive the query.
+    expect(placed?.place).not.toHaveProperty("osmId");
+    expect(typed?.place).toBeNull();
   });
 
   it("a repeated date's city reaches the place as locality, never as its address", async () => {

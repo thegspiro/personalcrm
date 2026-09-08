@@ -34,9 +34,28 @@ test("mark someone as dating and fill in their profile", async ({ page }) => {
   await dating.getByRole("button", { name: "Talking", exact: true }).click();
   await dating.getByLabel("Relationship style").fill("Monogamous");
   await dating.getByLabel("Private notes").fill("Funnier over text than in person.");
+
+  // Two columns that existed in the schema from the first migration with no
+  // control anywhere that wrote them, and nothing that displayed them.
+  await dating.getByLabel("Quality time").check();
+  await dating.getByRole("button", { name: "Add link" }).click();
+  await dating.getByLabel("Link 1 label").fill("Hinge");
+  await dating.getByLabel("Link 1 address").fill("https://hinge.co/example");
+
   await dating.getByRole("button", { name: "Save", exact: true }).click();
 
   await expect(dating.getByText("Monogamous")).toBeVisible();
+  await expect(dating.getByText("Quality time")).toBeVisible();
+  const link = dating.getByRole("link", { name: "Hinge" });
+  await expect(link).toHaveAttribute("href", "https://hinge.co/example");
+  await expect(link).toHaveAttribute("rel", /noopener/);
+
+  // Reopening re-offers what was stored, rather than starting empty and
+  // clearing it on the next unrelated save.
+  await dating.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(dating.getByLabel("Link 1 address")).toHaveValue("https://hinge.co/example");
+  await expect(dating.getByLabel("Quality time")).toBeChecked();
+  await dating.getByRole("button", { name: "Cancel" }).click();
 });
 
 test("log three dates, one of them backdated into the middle", async ({ page }) => {

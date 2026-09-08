@@ -138,7 +138,7 @@ list, because a person missing from the form would be silently dropped on save.
 | Going on in their life (`Happening`) | `createHappening`, `updateHappening`, `acknowledgeHappening`, `deleteHappening` |
 | Ideas | `createIdea`, `updateIdea`, `setIdeaStatus`, `deleteIdea` |
 | People in their life (`Associate`) | `createAssociate`, `updateAssociate`, `promoteAssociate`, `deleteAssociate` |
-| Plans | `createPlan`, `updatePlan`, `schedulePlan`, `completePlan`, `setPlanStatus`, `deletePlan` |
+| Plans | `createPlan`, `updatePlan`, `schedulePlan`, `completePlan`, `setPlanStatus`, `setPlanChecklistItem`, `deletePlan` |
 | Tasks | `createTask`, `updateTask`, `setTaskDone`, `deleteTask` |
 | Gifts | `createGift`, `updateGift`, `setGiftStatus`, `deleteGift` |
 | Debts | `createDebt`, `updateDebt`, `settleDebt`, `deleteDebt` |
@@ -298,6 +298,28 @@ one — the sheet has no duration control, so writing back what was read would
 undo an edit to the one field the claim does not watch. What each predicate expects lives in one `planAsRead` fragment rather
 than being restated at each site, because restating it is how four of these
 paths each ended up missing a different field.
+
+`setPlanChecklistItem` ticks one preparation item off from the plan's own row.
+It is positional rather than a `FormData` action because it is a checkbox and
+not a form, and `updatePlan` cannot stand in: that rewrites every field the form
+carries, so driving it from a tickbox would post a form nobody filled in.
+
+It locks before it reads. The checklist is one JSON column, so a tick is a read,
+an edit and a write — and a plain read inside a transaction is a non-locking
+snapshot read under MariaDB's default isolation, which is how two ticks landing
+together lose one of each other. `SELECT … FOR UPDATE` is a current read that
+waits for a tab still writing, the same tool `promoteAssociate` uses before it
+decides a privacy flag. The `checklist` value itself is then read back through
+the client rather than pulled out of that raw statement: a JSON column comes
+back from a raw query as whatever the driver decided, and a string reaching
+`readPlanChecklist` would parse as empty and take the whole list with it.
+
+The item is addressed by id, never by index — two tabs can hold lists of
+different lengths, and an index would tick whatever had moved into that
+position. An id that is no longer there is refused rather than written back from
+the caller's stale copy. Closed plans are refused outright, by the same
+`PLAN_STILL_OPEN` predicate `completePlan` uses, because the "Including done"
+view now puts those rows on screen.
 
 `completePlan` records what a plan became. `setPlanStatus(id, "DONE")` closes a
 plan and *clears* `usedInInteractionId` — right for undoing a mistake, wrong for

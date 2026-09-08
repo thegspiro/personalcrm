@@ -2,6 +2,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import { privacyScope } from "@/server/privacy/filter";
+import { mapLinkFor } from "@/lib/locations";
 import { pointOf, withDistance, type Point, type Unit } from "@/lib/geo";
 
 /**
@@ -70,8 +71,24 @@ export async function listPlans(
       category: true,
       contact: { select: { id: true, firstName: true, lastName: true } },
       // Where the plan actually is. A plan's own `location` is the words that
-      // were typed; the place is the thing that has coordinates.
-      place: { select: { id: true, latitude: true, longitude: true } },
+      // were typed; the place is the thing that has coordinates. Everything
+      // `mapLinkFor` reads is selected, not just the coordinates: the link
+      // prefers the OSM object, and falls back to a search built from the
+      // address and locality when there are no coordinates at all.
+      place: {
+        select: {
+          id: true,
+          name: true,
+          address: true,
+          city: true,
+          region: true,
+          country: true,
+          osmType: true,
+          osmId: true,
+          latitude: true,
+          longitude: true,
+        },
+      },
     },
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
     take: options.take ?? 200,
@@ -81,7 +98,31 @@ export async function listPlans(
   // not `ST_Distance_Sphere`. Status still leads the ordering when sorting by
   // distance is not asked for, because OPEN before ARCHIVED is what a list of
   // plans wants first.
-  return withDistance(rows, options.origin, options.unit ?? "mi", (plan) => pointOf(plan.place), {
-    sort: options.sortByDistance,
-  });
+  const measured = withDistance(
+    rows,
+    options.origin,
+    options.unit ?? "mi",
+    (plan) => pointOf(plan.place),
+    { sort: options.sortByDistance },
+  );
+
+  // The link is resolved here rather than in the pages, the way
+  // `listLocationsNear` already resolves it: `mapLinkFor` prefers the OSM
+  // object, and `Location.osmId` is a `BigInt` — passed to a client component it
+  // throws on serialisation rather than failing a typecheck, so it must not
+  // survive this function. The coordinates do survive, because the person page
+  // measures these same rows a second time from the contact rather than from
+  // home; they are dropped where each page builds its `PlanItem`.
+  return measured.map(({ place, ...plan }) => ({
+    ...plan,
+    place: place
+      ? {
+          id: place.id,
+          name: place.name,
+          mapHref: mapLinkFor(place),
+          latitude: place.latitude,
+          longitude: place.longitude,
+        }
+      : null,
+  }));
 }

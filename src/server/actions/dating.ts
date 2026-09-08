@@ -16,10 +16,13 @@ import { findTermBySlug } from "@/server/taxonomy/queries";
 import { requireUnlocked } from "@/server/privacy/lock";
 import { resolveLocation } from "@/server/services/locations";
 import { closePlanAsInteraction } from "@/server/services/plans";
+import { readLoveLanguages } from "@/lib/love-languages";
+import { profileLinksSchema, type ProfileLink } from "@/lib/profile-links";
 import {
   type ActionResult,
   bool,
   fail,
+  fieldError,
   instant,
   num,
   ok,
@@ -68,6 +71,38 @@ async function guard(): Promise<string | null> {
   return state.ok ? null : state.error;
 }
 
+/**
+ * The profile links field, which arrives as one JSON string from the editor.
+ *
+ * A bad URL is refused rather than dropped. The links render as anchors, so
+ * silently discarding a `javascript:` one would leave the user believing they
+ * had saved a link — and silently discarding a mistyped one would lose it.
+ */
+function parseProfileLinks(
+  raw: string | undefined,
+): { ok: true; links: ProfileLink[] } | { ok: false; failure: ActionResult } {
+  if (!raw) return { ok: true, links: [] };
+
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return { ok: false, failure: fail("Those links could not be read.") };
+  }
+
+  const parsed = profileLinksSchema.safeParse(value);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      failure: fieldError(
+        "profileLinks",
+        "Every link needs a label and an address starting http:// or https://.",
+      ),
+    };
+  }
+  return { ok: true, links: parsed.data };
+}
+
 // --- profile ---------------------------------------------------------------
 
 export async function upsertRomanticProfile(form: FormData): Promise<ActionResult> {
@@ -84,9 +119,23 @@ export async function upsertRomanticProfile(form: FormData): Promise<ActionResul
   const birthYear = num(form, "birthYear");
   const rating = num(form, "overallRating");
   const chemistry = num(form, "chemistryScore");
-  const loveLanguages = form
-    .getAll("loveLanguages")
-    .filter((v): v is string => typeof v === "string" && v.trim() !== "");
+  // Both of these are JSON columns whose control the form may or may not carry,
+  // so presence decides whether they are written at all — the same rule
+  // `planReminderPatch` applies for a plan's reminder policy, and for the same
+  // reason: read by value instead, any submission from a form without the
+  // control would land as "none" and quietly clear a stored answer.
+  const loveLanguagesPatch = form.has("loveLanguagesPresent")
+    ? readLoveLanguages(
+        form.getAll("loveLanguages").filter((v): v is string => typeof v === "string"),
+      )
+    : undefined;
+
+  let profileLinksPatch: ProfileLink[] | undefined;
+  if (form.has("profileLinksPresent")) {
+    const parsed = parseProfileLinks(str(form, "profileLinks"));
+    if (!parsed.ok) return parsed.failure;
+    profileLinksPatch = parsed.links;
+  }
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -116,7 +165,12 @@ export async function upsertRomanticProfile(form: FormData): Promise<ActionResul
         politics: str(form, "politics") ?? null,
         smoking: str(form, "smoking") ?? null,
         drinking: str(form, "drinking") ?? null,
-        loveLanguages: loveLanguages.length > 0 ? (loveLanguages as never) : undefined,
+        // `undefined` is Prisma for "leave the column alone", which is right
+        // when the form did not ask and wrong when it did: writing it for an
+        // empty list — as this used to, unconditionally — made a stored answer
+        // impossible to clear once given.
+        loveLanguages: loveLanguagesPatch,
+        profileLinks: profileLinksPatch,
         mbti: str(form, "mbti") ?? null,
         enneagram: str(form, "enneagram") ?? null,
         exclusive: bool(form, "exclusive"),

@@ -40,7 +40,7 @@ import {
   happeningDatesOf,
   syncFollowUpTask,
 } from "@/server/services/happenings";
-import { planChecklistSchema } from "@/lib/plan-checklist";
+import { planChecklistSchema, readPlanChecklist } from "@/lib/plan-checklist";
 import { PLAN_MINUTE_MAX, parsePlanDuration, parsePlanMinute, planInstant } from "@/lib/plan-time";
 import { closePlanAsInteraction } from "@/server/services/plans";
 import { recomputeContactActivity } from "@/server/services/contact-activity";
@@ -1247,6 +1247,91 @@ export async function setPlanStatus(id: string, status: PlanStatusValue): Promis
   });
 
   touchPlans(existing.contactId);
+  return ok();
+}
+
+/**
+ * Tick one preparation item off, from the plan's own row.
+ *
+ * Positional rather than a `FormData` action because it is a checkbox and not a
+ * form: there is no submit, and `updatePlan` cannot stand in — it rewrites every
+ * field the form carries, so driving it from a tickbox would post a form that
+ * was never filled in.
+ *
+ * The item is addressed by its id, never by its index. Two tabs looking at the
+ * same plan can hold lists of different lengths, and an index would tick
+ * whatever had moved into that position.
+ */
+export async function setPlanChecklistItem(
+  planId: string,
+  itemId: string,
+  completed: boolean,
+): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  if (!planId || !itemId) return fail("Missing checklist item.");
+
+  // Visibility first, and by the same fragment every other plan write uses: a
+  // plan belonging to a hidden contact must not be reachable while the lock is
+  // closed, whatever the page that posted this had on screen.
+  const existing = await prisma.plan.findFirst({
+    where: {
+      id: planId,
+      ownerId,
+      status: PLAN_STILL_OPEN,
+      ...viaOptionalContactPrivacyWhere(await privacyScope()),
+    },
+    select: { contactId: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  // The checklist is one JSON column, so ticking an item is a read, an edit and
+  // a write — and a plain read inside a transaction is a non-locking snapshot
+  // read under MariaDB's default isolation, which is how two ticks landing
+  // together lose one of each other. `FOR UPDATE` is a current read that waits
+  // for a tab still writing, the same reason `promoteAssociate` locks before it
+  // decides. The write is scoped by owner as well, so the lock and the update
+  // cannot disagree about which row this is.
+  const outcome = await prisma.$transaction(async (tx) => {
+    const [locked] = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM Plan
+       WHERE id = ${planId} AND ownerId = ${ownerId}
+         AND status NOT IN ('DONE', 'ARCHIVED')
+       FOR UPDATE`;
+    if (!locked) return "missing" as const;
+
+    // Read through the client rather than pulling `checklist` out of the raw
+    // statement above: a JSON column comes back from a raw query as whatever
+    // the driver decided, and a string reaching `readPlanChecklist` would parse
+    // as empty and take the whole list with it. The row is already locked, so
+    // this read sees the latest committed value and nothing can change it
+    // underneath.
+    const row = await tx.plan.findUnique({
+      where: { id: planId },
+      select: { checklist: true },
+    });
+    if (!row) return "missing" as const;
+
+    const items = readPlanChecklist(row.checklist);
+    const item = items.find((candidate) => candidate.id === itemId);
+    // Deleted in another tab between the page rendering and this tick. Saying
+    // so beats writing the item back from a stale copy of the list.
+    if (!item) return "gone" as const;
+    if (item.completed === completed) return "unchanged" as const;
+
+    await tx.plan.update({
+      where: { id: planId },
+      data: {
+        checklist: items.map((candidate) =>
+          candidate.id === itemId ? { ...candidate, completed } : candidate,
+        ),
+      },
+    });
+    return "written" as const;
+  });
+
+  if (outcome === "missing") return fail("Not found.");
+  if (outcome === "gone") return fail("That checklist item is gone.");
+  if (outcome === "written") touchPlans(existing.contactId);
   return ok();
 }
 

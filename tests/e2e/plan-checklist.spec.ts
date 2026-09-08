@@ -100,6 +100,63 @@ test("a plan checklist can be created, edited, checked and deleted without mobil
   await expect(plans.locator('input[value="Pack a picnic blanket"]')).toHaveCount(0);
 });
 
+test("the checklist is on the row, tickable there, and closed plans can be looked back up", async ({ page }) => {
+  // Everything here was already being stored and none of it was on screen: the
+  // checklist only existed inside the editor, and closing a plan out removed it
+  // from the only list that ever showed it.
+  await ensureSignedIn(page);
+  await page.goto("/ideas");
+
+  const title = `Row checklist ${Date.now()}`;
+  const plans = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Add something to do" }) })
+    .first();
+
+  await plans.getByRole("button", { name: "Add something to do" }).click();
+  await plans.getByLabel("What do you want to do?").fill(title);
+  // Five starter items, one of them ticked before saving.
+  await plans.getByLabel("Mark Confirm availability complete").check();
+  await plans.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(plans.getByText(title)).toBeVisible();
+
+  const row = plans.locator("[tabindex='-1']").filter({ hasText: title }).first();
+  const summary = row.locator("summary").filter({ hasText: "Checklist" });
+  await expect(summary).toHaveText("Checklist · 1 of 5");
+  await summary.click();
+
+  // Ticked from the row itself, with no editor opened.
+  await row.getByLabel("Mark Check travel time done").check();
+  await expect(summary).toHaveText("Checklist · 2 of 5");
+
+  await page.reload();
+  const reloaded = plans.locator("[tabindex='-1']").filter({ hasText: title }).first();
+  await expect(reloaded.locator("summary").filter({ hasText: "Checklist" })).toHaveText(
+    "Checklist · 2 of 5",
+  );
+
+  // Closing it out takes it off the open list, which is what made it look lost.
+  await reloaded.getByLabel("Mark as done").click();
+  await expect(plans.getByText(title)).toHaveCount(0);
+
+  await page.getByRole("link", { name: "Including done" }).click();
+  const closed = page
+    .locator("section")
+    .filter({ has: page.getByRole("button", { name: "Add something to do" }) })
+    .first()
+    .locator("[tabindex='-1']")
+    .filter({ hasText: title })
+    .first();
+  await expect(closed.getByText("done", { exact: true })).toBeVisible();
+  // The controls that would only ever error are not offered on a closed row.
+  await expect(closed.getByLabel("Mark as done")).toHaveCount(0);
+  await expect(closed.locator("summary").filter({ hasText: "Schedule it" })).toHaveCount(0);
+
+  await closed.getByRole("button", { name: "Back on the list" }).click();
+  await page.getByRole("link", { name: "Open", exact: true }).click();
+  await expect(page.getByText(title)).toBeVisible();
+});
+
 test("a duration with no day shows, and survives an edit that does not touch it", async ({ page }) => {
   // Two things at once, both of which this spec caught by failing. A duration
   // is kept when no day is set, so the row has to render it outside the day's

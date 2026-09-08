@@ -43,6 +43,7 @@ import {
   createPlan,
   deletePlan,
   schedulePlan,
+  setPlanChecklistItem,
   setPlanStatus,
   updatePlan,
 } from "@/server/actions/details";
@@ -82,6 +83,13 @@ export interface PlanItem {
    * zero.
    */
   distance?: Distance | null;
+  /**
+   * The saved place the venue resolved to, if it resolved to one. Present
+   * whenever the plan was given a venue that matched — `mapLinkFor` falls back
+   * to a search when the place has no coordinates, so the link is worth having
+   * either way. The distance is the part that needs both ends placed.
+   */
+  place?: { name: string; mapHref: string } | null;
 }
 
 export interface PlanPerson {
@@ -388,6 +396,79 @@ function PlanFields({
 }
 
 /**
+ * Finished with, one way or the other.
+ *
+ * These rows only reach the list at all under "Including done", and every
+ * server action that changes a plan's arrangements refuses them — so the row
+ * shows what it was and offers the one control that still applies.
+ */
+function isClosed(plan: PlanItem): boolean {
+  return plan.status === "DONE" || plan.status === "ARCHIVED";
+}
+
+/**
+ * The preparation checklist, on the row rather than only inside the editor.
+ *
+ * It was being written and then never shown: you ticked "Reserve or buy
+ * tickets" while filling the plan in, saved, and the row said nothing about it
+ * — so the one question the list exists to answer, *is this booked yet*, needed
+ * the edit form opened to read. The summary carries the count so that answer is
+ * there without opening anything.
+ *
+ * Closed by default, open once the plan is actually arranged: an idea nobody has
+ * picked a day for does not need its preparation on screen, and `/ideas` renders
+ * up to 200 of these. `<details>` is presentation only here — unlike
+ * `ScheduleSheet`, the items are already in the payload, so hiding them saves
+ * nothing and there is nothing to build lazily.
+ */
+function PlanChecklist({
+  plan,
+  ticking,
+  onTick,
+}: {
+  plan: PlanItem;
+  ticking: ReadonlySet<string>;
+  onTick: (itemId: string, completed: boolean) => void;
+}) {
+  const items = React.useMemo(() => readPlanChecklist(plan.checklist), [plan.checklist]);
+  if (items.length === 0) return null;
+
+  const done = items.filter((item) => item.completed).length;
+  // `setPlanChecklistItem` refuses a closed plan, so a row that reads as
+  // finished shows what was ticked and offers no control that could only error.
+  const closed = isClosed(plan);
+
+  return (
+    <details className="mt-1" open={plan.status === "PLANNED"}>
+      <summary className="cursor-pointer text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+        Checklist · {done} of {items.length}
+      </summary>
+      <ul className="mt-1 grid gap-1">
+        {items.map((item) => (
+          <li key={item.id} className="flex min-w-0 items-start gap-2">
+            <Checkbox
+              checked={item.completed}
+              disabled={closed || ticking.has(`${plan.id}:${item.id}`)}
+              onCheckedChange={(checked) => onTick(item.id, checked === true)}
+              aria-label={`Mark ${item.text} ${item.completed ? "not done" : "done"}`}
+              className="mt-0.5 shrink-0"
+            />
+            <span
+              className={cn(
+                "min-w-0 flex-1 break-words text-xs [overflow-wrap:anywhere]",
+                item.completed ? "text-muted-foreground line-through" : "text-foreground",
+              )}
+            >
+              {item.text}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+/**
  * The schedule sheet's disclosure, which builds its contents only once opened.
  *
  * `/ideas` renders up to 200 plans and offers up to 500 contacts, and every
@@ -447,8 +528,24 @@ export function PlansSection({
   // server refuses it — the in-place path by its atomic claim, the shared-idea
   // path by the unique key on the copy it writes.
   const [completing, setCompleting] = React.useState<ReadonlySet<string>>(new Set());
+  // Which individual checklist items are mid-flight, keyed plan-and-item: one
+  // row can have several ticks in the air at once, and each is its own request.
+  const [ticking, setTicking] = React.useState<ReadonlySet<string>>(new Set());
   const add = useAddAction();
   const edit = useEditAction();
+
+  function tick(planId: string, itemId: string, completed: boolean) {
+    const key = `${planId}:${itemId}`;
+    if (ticking.has(key)) return;
+    setTicking((keys) => new Set(keys).add(key));
+    void run(() => setPlanChecklistItem(planId, itemId, completed), "Saved").finally(() => {
+      setTicking((keys) => {
+        const next = new Set(keys);
+        next.delete(key);
+        return next;
+      });
+    });
+  }
 
   function create(form: FormData) {
     if (contactId) form.set("contactId", contactId);
@@ -512,7 +609,12 @@ export function PlansSection({
             <div className="flex items-start gap-2">
               {/* Records what the plan became, not just that it is over:
                   `completePlan` writes the interaction and points the plan at
-                  it, so the evening lands in the timeline. */}
+                  it, so the evening lands in the timeline.
+
+                  Not offered on a row that is already closed. `completePlan`
+                  refuses those outright, so on the "Including done" view this
+                  would be a control whose only outcome is a red toast. */}
+              {isClosed(plan) ? null : (
               <Checkbox
                 checked={false}
                 disabled={completing.has(plan.id)}
@@ -539,6 +641,7 @@ export function PlansSection({
                 aria-label="Mark as done"
                 className="mt-0.5"
               />
+              )}
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-sm font-medium">{plan.title}</span>
@@ -558,15 +661,31 @@ export function PlansSection({
                   {plan.status === "PLANNED" ? (
                     <Badge variant="success">planned</Badge>
                   ) : null}
+                  {isClosed(plan) ? (
+                    <Badge variant="muted">{plan.status === "DONE" ? "done" : "archived"}</Badge>
+                  ) : null}
                 </div>
 
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                   {plan.location ? <span>{plan.location}</span> : null}
-                  {plan.distance ? (
-                    <span className="inline-flex shrink-0 items-center gap-0.5">
+                  {/* The same control the date log has carried since places
+                      were mapped: a pin that opens the venue rather than a pin
+                      drawn beside text that does nothing. Labelled with the
+                      distance when both ends are placed, and "Map" when they
+                      are not — the link works either way, because `mapLinkFor`
+                      falls back to a search. A plan whose venue was only ever
+                      typed has no place and reads exactly as it did before. */}
+                  {plan.place ? (
+                    <a
+                      href={plan.place.mapHref}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      aria-label={`Open ${plan.place.name} on a map`}
+                      className="inline-flex shrink-0 items-center gap-0.5 text-accent-11 hover:underline"
+                    >
                       <MapPin className="size-3" />
-                      {formatDistance(plan.distance)}
-                    </span>
+                      {plan.distance ? formatDistance(plan.distance) : "Map"}
+                    </a>
                   ) : null}
                   {plan.address ? (
                     // Free text up to 500 characters, so a long unbroken one has to be
@@ -637,7 +756,28 @@ export function PlansSection({
                   </p>
                 ) : null}
 
-                {plan.status === "PLANNED" ? (
+                <PlanChecklist
+                  plan={plan}
+                  ticking={ticking}
+                  onTick={(itemId, completed) => tick(plan.id, itemId, completed)}
+                />
+
+                {/* Closed rows get the same control under a truer name. It puts
+                    the plan back on the list and drops its pointer at the
+                    interaction, which is what `setPlanStatus` has always done —
+                    the outing itself stays in the timeline, so nothing that
+                    happened is undone by changing your mind about the plan. */}
+                {isClosed(plan) ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void run(() => setPlanStatus(plan.id, "OPEN"), "Back on the list")
+                    }
+                    className="mt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    Back on the list
+                  </button>
+                ) : plan.status === "PLANNED" ? (
                   <button
                     type="button"
                     onClick={() =>
