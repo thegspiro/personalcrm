@@ -11,8 +11,8 @@ const badgeVariants = cva(
         outline: "border-border text-muted-foreground",
         solid: "border-transparent bg-primary text-primary-foreground",
         muted: "border-transparent bg-muted text-muted-foreground",
-        success: "border-transparent bg-[color-mix(in_oklab,var(--success)_18%,transparent)] text-[var(--success)]",
-        warning: "border-transparent bg-[color-mix(in_oklab,var(--warning)_20%,transparent)] text-[var(--warning)]",
+        success: "border-transparent bg-[color-mix(in_oklab,var(--success)_18%,transparent)] text-[var(--success-11)]",
+        warning: "border-transparent bg-[color-mix(in_oklab,var(--warning)_20%,transparent)] text-[var(--warning-11)]",
         destructive:
           "border-transparent bg-[color-mix(in_oklab,var(--destructive)_16%,transparent)] text-destructive",
       },

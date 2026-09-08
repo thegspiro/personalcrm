@@ -138,7 +138,7 @@ export async function secureSessionsAfterPasswordChange(
   };
 }
 
-function isSecureContext(): boolean {
+export function isSecureContext(): boolean {
   return (process.env.APP_URL ?? "").startsWith("https://");
 }
 

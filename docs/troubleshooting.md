@@ -15,7 +15,7 @@ curl -s http://127.0.0.1:3000/api/health
 
 | Field | Meaning |
 | --- | --- |
-| `status` | `ok`, or `error` with a message when the database can't be reached. |
+| `status` | `ok`, or `error` when the database can't be reached. The message is deliberately generic — the endpoint is unauthenticated and the driver's own message quotes the connection string. Look for `[health] database unreachable` in the container log for the real reason. |
 | `database` | `up` / `down`. |
 | `setup` | `pending` until the first account exists, then `complete`. |
 

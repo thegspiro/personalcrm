@@ -58,7 +58,7 @@ export function RatingInput({
           );
         })}
       </div>
-      {hint ? <p className="text-xs text-muted-foreground/80">{hint}</p> : null}
+      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }

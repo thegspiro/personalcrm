@@ -10,13 +10,19 @@ import { cn } from "@/lib/utils";
  * desktop — the two views differ in layout, not in what they say.
  */
 
-/** What each kind looks like. Colour alone never carries the meaning: the
- * agenda spells the kind out, and every chip has its title as its text. */
+/**
+ * What each kind looks like. Colour alone never carries the meaning: the agenda
+ * spells the kind out, and every chip has its title as its text.
+ *
+ * The text uses the `-11` step of each colour, not the colour itself.
+ * `--success` and `--warning` are chosen to be seen as a fill; as small text on
+ * a tint of themselves they managed 2.77 and 2.13 against a 4.5 threshold.
+ */
 const KIND_CLASS: Record<CalendarKind, string> = {
   plan: "bg-accent-3 text-accent-11",
-  date: "bg-[color-mix(in_oklab,var(--warning)_20%,transparent)] text-[var(--warning)]",
+  date: "bg-[color-mix(in_oklab,var(--warning)_20%,transparent)] text-[var(--warning-11)]",
   task: "bg-muted text-muted-foreground",
-  happening: "bg-[color-mix(in_oklab,var(--success)_18%,transparent)] text-[var(--success)]",
+  happening: "bg-[color-mix(in_oklab,var(--success)_18%,transparent)] text-[var(--success-11)]",
   interaction: "bg-secondary text-secondary-foreground",
 };
 

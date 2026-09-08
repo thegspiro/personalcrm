@@ -195,7 +195,7 @@ export function DateField({
             variant="outline"
             className={cn(
               "h-10 w-full justify-start gap-2 font-normal",
-              !anchor && "text-muted-foreground/70",
+              !anchor && "text-muted-foreground",
               error && "border-destructive",
             )}
           >
@@ -344,7 +344,7 @@ export function DateField({
       {error ? (
         <p className="text-xs text-destructive">{error}</p>
       ) : hint ? (
-        <p className="text-xs text-muted-foreground/80">{hint}</p>
+        <p className="text-xs text-muted-foreground">{hint}</p>
       ) : null}
     </div>
   );
@@ -447,7 +447,7 @@ export function DateTimeField({
         <PresetChip label="−1 week" onClick={() => shiftDays(-7)} />
         <PresetChip label="−1 month" onClick={() => shiftDays(-30)} />
       </div>
-      {hint ? <p className="text-xs text-muted-foreground/80">{hint}</p> : null}
+      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }

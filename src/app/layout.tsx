@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import { Toaster } from "sonner";
 import { ThemeProvider, appearanceBootScript } from "@/components/providers/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -25,14 +26,25 @@ export const viewport: Viewport = {
   ],
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Set by `src/middleware.ts`, and the same value Next puts on its own
+  // bootstrap scripts. Absent only if middleware did not run, in which case
+  // there is no policy to satisfy either.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: appearanceBootScript }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: appearanceBootScript }} />
       </head>
       <body className="min-h-dvh antialiased">
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+          nonce={nonce}
+        >
           <TooltipProvider delayDuration={300}>{children}</TooltipProvider>
           <ServiceWorkerRegistrar />
           <ServiceWorkerUpdateNotification />

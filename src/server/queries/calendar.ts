@@ -24,6 +24,7 @@ import {
   privacyScope,
   viaContactPrivacyWhere,
   viaOptionalContactPrivacyWhere,
+  type PrivacyScope,
 } from "@/server/privacy/filter";
 import {
   fetchContactBirthdays,
@@ -60,6 +61,13 @@ export interface CalendarEntry {
   contact: { id: string; firstName: string; lastName: string | null } | null;
   /** Local minutes past midnight, or null for something that has no time. */
   minute: number | null;
+  /**
+   * How long to set aside, in minutes, where the source records it. Only a
+   * plan does. The grid ignores it — a square has no length — but a calendar
+   * subscription needs it, and inventing an hour where the real answer is
+   * stored would put a made-up end time in somebody's calendar.
+   */
+  durationMinutes: number | null;
   /** A short qualifier — "done", "ongoing", "overdue" — or null. */
   note: string | null;
 }
@@ -103,12 +111,32 @@ function hasKnownDay(precision: DatePrecision): boolean {
   return precision === "DAY" || precision === "MONTH_DAY";
 }
 
+export interface CalendarEntryOptions {
+  /**
+   * Use this privacy scope instead of the request's own.
+   *
+   * For the calendar subscription feed, which is fetched by Google or Apple
+   * with no session and therefore no unlock, and so passes a permanently
+   * closed scope. Reusing this query rather than writing a second one is the
+   * point: every privacy condition, the birthday de-duplication and the
+   * happening span all stay in one place, so the feed cannot drift away from
+   * what the page shows.
+   */
+  scope?: PrivacyScope;
+  /** Raise the per-source cap for a caller drawing a wider window than a month. */
+  perSourceCap?: number;
+}
+
 export async function getCalendarEntries(
   ownerId: string,
   timezone: string,
   window: { from: PlainDate; to: PlainDate },
+  options: CalendarEntryOptions = {},
 ): Promise<CalendarEntry[]> {
-  const scope = await privacyScope();
+  // No override means the live request scope, which also refreshes the idle
+  // timeout. The feed must not do that: there is no session to keep alive.
+  const scope = options.scope ?? (await privacyScope());
+  const perSourceCap = options.perSourceCap ?? PER_SOURCE_CAP;
 
   // Interactions are the only source stored as an instant rather than a day, so
   // they are the only one whose bounds have to be resolved in a timezone. The
@@ -149,10 +177,11 @@ export async function getCalendarEntries(
           status: true,
           plannedFor: true,
           plannedStartMinute: true,
+          plannedDurationMinutes: true,
           contact: { select: { id: true, firstName: true, lastName: true } },
         },
         orderBy: { plannedFor: "asc" },
-        take: PER_SOURCE_CAP,
+        take: perSourceCap,
       }),
       // Recurring dates cannot be bounded in SQL — the stored anchor is years
       // from the occurrence being asked about — so the row set is narrowed by
@@ -194,7 +223,7 @@ export async function getCalendarEntries(
           type: { select: { slug: true } },
           contact: { select: { id: true, firstName: true, lastName: true } },
         },
-        take: PER_SOURCE_CAP,
+        take: perSourceCap,
       }),
       fetchContactBirthdays(ownerId, scope),
       prisma.task.findMany({
@@ -211,7 +240,7 @@ export async function getCalendarEntries(
           contact: { select: { id: true, firstName: true, lastName: true } },
         },
         orderBy: { dueDate: "asc" },
-        take: PER_SOURCE_CAP,
+        take: perSourceCap,
       }),
       prisma.happening.findMany({
         where: {
@@ -255,7 +284,7 @@ export async function getCalendarEntries(
         // nearest the window rather than an arbitrary slice of the year the
         // reach-back reopened.
         orderBy: { date: "desc" },
-        take: PER_SOURCE_CAP,
+        take: perSourceCap,
       }),
       prisma.interaction.findMany({
         where: {
@@ -278,7 +307,7 @@ export async function getCalendarEntries(
           },
         },
         orderBy: { occurredAt: "asc" },
-        take: PER_SOURCE_CAP,
+        take: perSourceCap,
       }),
     ]);
 
@@ -307,6 +336,7 @@ export async function getCalendarEntries(
       href: "/ideas",
       contact: plan.contact,
       minute: plan.plannedStartMinute,
+      durationMinutes: plan.plannedDurationMinutes,
       // "Pencilled in" and "planned" are different promises, and the column
       // cannot tell them apart on its own: "Not planned after all" returns a
       // plan to OPEN and deliberately leaves `plannedFor` behind, so a day
@@ -398,6 +428,7 @@ export async function getCalendarEntries(
         href: `/people/${row.contact.id}`,
         contact: row.contact,
         minute: null,
+      durationMinutes: null,
         note: null,
       });
     }
@@ -413,6 +444,7 @@ export async function getCalendarEntries(
       href: "/tasks",
       contact: task.contact,
       minute: null,
+      durationMinutes: null,
       note: task.completedAt ? "done" : null,
     });
   }
@@ -448,6 +480,7 @@ export async function getCalendarEntries(
         href: `/people/${happening.contact.id}`,
         contact: happening.contact,
         minute: null,
+      durationMinutes: null,
         note: diffPlainDays(span.start, span.end) > 0 ? "ongoing" : null,
       });
     }
@@ -470,6 +503,7 @@ export async function getCalendarEntries(
       // `zonedMinuteOfDay`. The two disagree by an hour on the days that are
       // not 24 hours long, and it is the minute that is displayed and sorted.
       minute: zonedMinuteOfDay(interaction.occurredAt, timezone),
+      durationMinutes: null,
       note: null,
     });
   }
@@ -481,7 +515,7 @@ export async function getCalendarEntries(
   for (const kind of Object.keys(byKind) as CalendarKind[]) {
     const bucket = byKind[kind];
     bucket.sort((a, b) => diffPlainDays(b.day, a.day));
-    entries.push(...bucket.slice(0, PER_SOURCE_CAP));
+    entries.push(...bucket.slice(0, perSourceCap));
   }
 
   // Within a day: timed things first in clock order, then the all-day ones

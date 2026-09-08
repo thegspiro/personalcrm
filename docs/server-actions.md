@@ -1,8 +1,9 @@
 # Write surface: server actions
 
 There is no REST API. Every mutation is a Next.js **server action** in
-`src/server/actions/`, and the only route handler in the app is
-`GET /api/health`.
+`src/server/actions/`. Route handlers exist only where something outside the
+app has to make the request: the container healthcheck, the avatar read, and
+the calendar subscription.
 
 Contact birthdays are updated by `updateContactBirthday`. It validates a
 partial date (including `MONTH_DAY`), scopes the contact by owner, and applies
@@ -77,7 +78,14 @@ and explicitly exclude the current token hash.
 | --- | --- |
 | `previewImport` | Reads a `.vcf` or `.csv` and says what would happen. Writes nothing. Flags rows that match somebody already here, and rows that repeat within the file itself |
 | `commitImport` | Writes the confirmed rows. Parses the file **again** rather than trusting what the browser sends back — the client chooses which rows, never what is in them, so nothing absent from the file can be written by a crafted request. Imported contacts are never private; activity columns are seeded through `contact-activity.ts` rather than written directly |
-| `exportAccount` | Returns the file rather than serving one. There is no route handler for it by design — `GET /api/health` stays the only route in the app, and building the download in the browser keeps the export out of the service worker's fetch handling. Refuses outright while the privacy lock is closed over an account that holds anything private: every read here filters those rows, so an export built the same way would be a file that claims to be everything and silently is not |
+| `exportAccount` | Returns the file rather than serving one. There is no route handler for it by design — a download the signed-in browser can assemble itself does not need one, and doing it this way keeps the export out of the service worker's fetch handling. Refuses outright while the privacy lock is closed over an account that holds anything private: every read here filters those rows, so an export built the same way would be a file that claims to be everything and silently is not |
+| `startTwoFactorEnrolment` | Confirms the account password, then returns the key to show once. Refuses while a confirmed factor exists — re-enrolling is disabling and enrolling again, said explicitly |
+| `confirmTwoFactorEnrolment` | Proves the authenticator holds the same secret and returns the recovery codes. Until this succeeds nothing gates a sign-in |
+| `regenerateTwoFactorRecoveryCodes` | Password-confirmed. Replaces every code already issued |
+| `turnOffTwoFactor` | Password-confirmed. Deletes the secret and every recovery code, and ends every other session |
+| `verifyTwoFactorAction` | The second sign-in step. Takes an authenticator code or a recovery code — the person cannot be asked which they hold without telling an attacker which to try. Throttled on the same counter as the password |
+| `regenerateCalendarFeed` | Creates the subscription, or replaces the existing one — the same action, because one account has one address and replacing it *is* how you revoke it. Lock-gated |
+| `disableCalendarFeed` | Deletes the subscription; the address stops resolving immediately. Lock-gated |
 
 
 ### Contacts — `actions/contacts.ts`
@@ -643,14 +651,34 @@ exists to prevent:
 - **A failing field aborts the whole save** rather than leaving a record
   half-written.
 
-## The two HTTP endpoints
+## The three HTTP endpoints
 
 `GET /api/health` → `200` with `{ status, database, setup, latencyMs, version,
 uptimeSeconds }`, or `503` with `{ status: "error", database: "down", message }`.
-`cache-control: no-store`, runtime `nodejs`, `force-dynamic`.
+`cache-control: no-store`, runtime `nodejs`, `force-dynamic`. The `503` message
+is a fixed sentence, never the driver's: this endpoint is unauthenticated and
+the driver quotes the connection string. The real error is logged instead.
 
 `setup` is `"complete"` or `"pending"`, so an operator can tell a
 booted-but-unconfigured instance from a working one without opening a browser.
+
+`GET /api/calendar/[token].ics` → `200` with `text/calendar; charset=utf-8` and
+`cache-control: private, no-store`, or `404`. The trailing `.ics` is optional and
+stripped; some calendar clients refuse a URL without it.
+
+This is the only endpoint with no session at all — the fetch is made by Google
+or Apple on the user's behalf, so there is nobody present to sign in. Two
+consequences, both load-bearing:
+
+- **The privacy lock is treated as permanently closed.** `buildCalendarFeed`
+  passes a shut scope to `getCalendarEntries`, so private contacts and private
+  rows are excluded by construction. What the URL can retrieve is a strict
+  subset of what a locked browser already shows — which includes a plan naming a
+  romantic contact, since plans are not behind the lock. See
+  [privacy.md](privacy.md#the-calendar-subscription).
+- **Every refusal is the same `404`** — a token never issued, one that has been
+  regenerated, a deactivated account — because whether a URL was ever valid is
+  itself a disclosure. Same rule as the avatar route.
 
 `GET /api/avatars/[filename]` → the image bytes with `cache-control: private,
 no-store` and `x-content-type-options: nosniff`, or `404`. It is `404` for every

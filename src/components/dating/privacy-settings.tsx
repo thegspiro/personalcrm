@@ -138,13 +138,13 @@ export function PrivacySettings({
           </p>
 
           {pinState.error ? (
-            <p className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <p className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive-11">
               <AlertCircle className="mt-px size-3.5 shrink-0" />
               {pinState.error}
             </p>
           ) : null}
           {clearState.error ? (
-            <p className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <p className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive-11">
               <AlertCircle className="mt-px size-3.5 shrink-0" />
               {clearState.error}
             </p>
@@ -157,7 +157,7 @@ export function PrivacySettings({
 
           {pinSet && !changingPin ? (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 text-xs text-[var(--success)]">
+              <span className="inline-flex items-center gap-1.5 text-xs text-[var(--success-11)]">
                 <ShieldCheck className="size-3.5" />
                 PIN set
               </span>

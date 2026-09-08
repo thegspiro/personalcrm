@@ -163,7 +163,7 @@ function TaskRow({
               {relativeDay(task.dueDate, today)}
             </span>
           ) : null}
-          {task.priority === "HIGH" ? <span className="text-[var(--warning)]">High</span> : null}
+          {task.priority === "HIGH" ? <span className="text-[var(--warning-11)]">High</span> : null}
         </div>
         {task.notes ? (
           <p className="mt-0.5 whitespace-pre-line text-xs text-muted-foreground">{task.notes}</p>
@@ -182,7 +182,7 @@ function TaskRow({
           type="button"
           onClick={onDelete}
           aria-label="Delete task"
-          className="rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+          className="rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive-11 focus-visible:opacity-100 group-hover:opacity-100"
         >
           <span aria-hidden>×</span>
         </button>

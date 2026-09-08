@@ -137,6 +137,16 @@ It runs `SELECT 1` against the database, so a `503` with `"database": "down"`
 means the app is serving but MariaDB is not up — which is what makes Docker
 restart the container rather than leave it half-alive.
 
+```json
+{ "status": "error", "database": "down", "message": "The database could not be reached. See the container log for details." }
+```
+
+The failure body is deliberately generic. The endpoint takes no session — the
+healthcheck runs before anyone signs in — and the driver's own message quotes
+the connection string it failed on, so returning it published the database host,
+user and password to anyone who could reach the port. The detail goes to the
+container log as `[health] database unreachable`, with the password masked.
+
 ## Backups
 
 `svc-backup` makes a gzip-compressed, transactionally consistent SQL dump each
@@ -160,6 +170,19 @@ retention semantics, and a restore procedure.
 - MariaDB errors: `/config/logs/`.
 - Startup housekeeping logs as `[startup] …`, permissions as `[init-perms] …`,
   secrets as `[secrets] …`.
+
+Application lines are `<timestamp> <LEVEL> [scope] <message> key=value`, with a
+stack indented underneath when there is one. `warn` and `error` go to stderr,
+everything else to stdout.
+
+| Variable | Effect |
+| --- | --- |
+| `LOG_LEVEL` | `debug`, `info`, `warn`, `error` or `silent`. Defaults to `info` in the container |
+| `LOG_FORMAT` | `text` (default) or `json` — one object per line, for a log shipper |
+
+Passwords inside connection strings, and any field named after a secret, are
+masked before a line is written, so a driver error can be logged in full
+without publishing the credential it quotes.
 
 ## Architecture support
 

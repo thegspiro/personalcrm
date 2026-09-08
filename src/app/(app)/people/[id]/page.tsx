@@ -271,7 +271,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
             <div className="grid gap-0.5 px-1">
               <p className="text-xs text-muted-foreground">{reciprocity.text}</p>
               {reciprocity.coverage ? (
-                <p className="text-[11px] text-muted-foreground/70">{reciprocity.coverage}</p>
+                <p className="text-[11px] text-muted-foreground">{reciprocity.coverage}</p>
               ) : null}
             </div>
           ) : null}

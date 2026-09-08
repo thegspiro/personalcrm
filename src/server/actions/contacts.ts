@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
+import { createLogger } from "@/server/log";
 import { recomputeContactActivity } from "@/server/services/contact-activity";
 import {
   customFieldFailure,
@@ -34,6 +35,8 @@ import {
   str,
   strList,
 } from "./helpers";
+
+const log = createLogger("contacts");
 
 /**
  * Replace a contact's tags with the set `lockSubmittedTags` has already
@@ -178,7 +181,7 @@ export async function createContact(
       if (error instanceof AvatarValidationError) return fail(error.message);
       // A misconfigured UPLOADS_DIR or a full volume: the operator's to fix,
       // so it is logged where they look rather than shown where they don't.
-      console.error("Unable to store an avatar", error);
+      log.error("unable to store an avatar", error);
       return fail("The avatar could not be stored.");
     }
   }
@@ -280,7 +283,7 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
       if (error instanceof AvatarValidationError) return fail(error.message);
       // A misconfigured UPLOADS_DIR or a full volume: the operator's to fix,
       // so it is logged where they look rather than shown where they don't.
-      console.error("Unable to store an avatar", error);
+      log.error("unable to store an avatar", error);
       return fail("The avatar could not be stored.");
     }
   }
@@ -340,7 +343,7 @@ export async function updateContact(form: FormData): Promise<ActionResult> {
     // obsolete bytes are removed. A cleanup failure can therefore leave an
     // unreferenced file, but never a broken Contact.avatarPath.
     await removeAvatarFile(existing.avatarPath).catch((error) => {
-      console.error("Unable to remove obsolete avatar", error);
+      log.error("unable to remove an obsolete avatar", error);
     });
   }
 
@@ -458,7 +461,7 @@ export async function deleteContact(id: string): Promise<ActionResult> {
   // Delete the row first: if unlink fails the only consequence is an orphan,
   // never a database path to a file that no longer exists.
   await removeAvatarFile(contact.avatarPath).catch((error) => {
-    console.error("Unable to remove deleted contact avatar", error);
+    log.error("unable to remove a deleted contact's avatar", error);
   });
 
   revalidateContact(id);

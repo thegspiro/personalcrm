@@ -42,7 +42,7 @@ export function Field({
       {error ? (
         <p className="text-xs text-destructive">{error}</p>
       ) : hint ? (
-        <p className="text-xs text-muted-foreground/80">{hint}</p>
+        <p className="text-xs text-muted-foreground">{hint}</p>
       ) : null}
     </div>
   );

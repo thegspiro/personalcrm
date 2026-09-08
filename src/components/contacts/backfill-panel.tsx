@@ -202,7 +202,7 @@ export function BackfillPanel({
         <Card>
           <CardContent className="pt-4">
             {error ? (
-              <p className="mb-3 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              <p className="mb-3 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive-11">
                 {error}
               </p>
             ) : null}

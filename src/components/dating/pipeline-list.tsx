@@ -183,7 +183,7 @@ function PipelineCard({
               {person.dateCount} {person.dateCount === 1 ? "date" : "dates"}
             </span>
             {daysQuiet !== null ? (
-              <span className={cn(daysQuiet >= 10 && "text-[var(--warning)]")}>
+              <span className={cn(daysQuiet >= 10 && "text-[var(--warning-11)]")}>
                 {daysQuiet === 0 ? "spoke today" : `${daysQuiet}d quiet`}
               </span>
             ) : (
@@ -191,10 +191,10 @@ function PipelineCard({
             )}
             {person.sourceLabel ? <span className="truncate">{person.sourceLabel}</span> : null}
             {person.greenFlags > 0 ? (
-              <span className="text-[var(--success)]">{person.greenFlags}↑</span>
+              <span className="text-[var(--success-11)]">{person.greenFlags}↑</span>
             ) : null}
             {person.redFlags > 0 ? (
-              <span className="text-[var(--warning)]">{person.redFlags}↓</span>
+              <span className="text-[var(--warning-11)]">{person.redFlags}↓</span>
             ) : null}
             {person.dealbreakers > 0 ? (
               <span className="text-destructive">{person.dealbreakers}✕</span>
