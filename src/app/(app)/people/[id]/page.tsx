@@ -52,7 +52,7 @@ import {
   listPlaceSuggestions,
 } from "@/server/queries/locations";
 import { originsFor } from "@/server/queries/origins";
-import { getGeoStatus } from "@/server/geo/config";
+import { getLookupUi } from "@/server/geo/config";
 import { distanceBetween, formatDistance, pointOf, withDistance } from "@/lib/geo";
 import { mapLinkFor } from "@/lib/locations";
 import { NearbyPlaces } from "@/components/locations/nearby-places";
@@ -108,7 +108,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     upcomingDates,
     locations,
     happenings,
-    geoStatus,
+    lookupUi,
     origins,
     placeSuggestions,
   ] = await Promise.all([
@@ -140,7 +140,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     getUpcomingDates(user.id, timezone, 366, 100, id),
     listContactLocations(user.id, id),
     listContactHappenings(user.id, id, timezone),
-    getGeoStatus(),
+    getLookupUi(),
     originsFor(user.id, id),
     listPlaceSuggestions(user.id, timezone),
   ]);
@@ -439,7 +439,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
         <AddressesSection
           contactId={contact.id}
-          lookupEnabled={geoStatus.enabled && geoStatus.usable}
+          lookup={lookupUi}
           isPrivate={contact.isPrivate}
           places={placeSuggestions.items}
           placesTruncated={placeSuggestions.truncated}

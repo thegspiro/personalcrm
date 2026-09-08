@@ -22,8 +22,8 @@ import {
   setLocationArchived,
   updateLocation,
 } from "@/server/actions/locations";
-import type { GeoCandidateView } from "@/server/geo/providers";
-import { PlaceLookup } from "./place-lookup";
+import type { GeoCandidateView, LookupUi } from "@/server/geo/providers";
+import { usePlaceLookup } from "./place-lookup";
 
 export interface EditablePlace {
   id: string;
@@ -49,14 +49,15 @@ export interface EditablePlace {
  *
  * Places used to be created only as a side effect of logging something, which
  * meant a typo was permanent and every practical field was unreachable. The
- * lookup button is deliberate rather than automatic — see `src/server/geo/`.
+ * lookup button is deliberate; suggestions while typing are a separate opt-in
+ * that only some endpoints permit — see `src/server/geo/`.
  */
 export function EditPlaceSheet({
   place,
-  lookupEnabled,
+  lookup,
 }: {
   place: EditablePlace;
-  lookupEnabled: boolean;
+  lookup: LookupUi;
 }) {
   const run = useAction();
   const [open, setOpen] = React.useState(false);
@@ -67,10 +68,7 @@ export function EditPlaceSheet({
   // What a lookup filled in, held here rather than written on the spot so a
   // single Save carries it alongside anything typed by hand.
   const [applied, setApplied] = React.useState<GeoCandidateView | null>(null);
-  // The name field is uncontrolled, so the query reads it through a ref rather
-  // than by walking up to the form element.
-  const nameRef = React.useRef<HTMLInputElement>(null);
-
+  const [name, setName] = React.useState(place.name);
   const [address, setAddress] = React.useState(place.address ?? "");
   const [city, setCity] = React.useState(place.city ?? "");
   const [region, setRegion] = React.useState(place.region ?? "");
@@ -116,15 +114,19 @@ export function EditPlaceSheet({
   }
 
   // Only the name and whatever address is in the form. Nothing else about this
-  // place — not the notes, not who was seen here — is sent anywhere.
-  function buildQuery() {
-    return [nameRef.current?.value, address].filter(Boolean).join(", ");
-  }
+  // place — not the notes, not who was seen here — is sent anywhere. One value
+  // rather than a function, so what the field offers to send and what it sends
+  // cannot differ.
+  const query = React.useMemo(
+    () => [name, address].map((part) => part.trim()).filter(Boolean).join(", "),
+    [name, address],
+  );
 
-  function runLookup(query: string) {
+  function runLookup(text: string, options?: { interactive?: boolean }) {
     const form = new FormData();
     form.set("id", place.id);
-    form.set("query", query);
+    form.set("query", text);
+    if (options?.interactive) form.set("interactive", "1");
     return lookupLocationAddress(form);
   }
 
@@ -133,7 +135,10 @@ export function EditPlaceSheet({
     // can see and correct it — and Save posts the whole thing at once. Writing
     // immediately and closing discarded every other edit in the panel.
     setApplied(candidate);
-    if (candidate.address) setAddress(candidate.address);
+    // The street in preference to the display name, which for Nominatim runs
+    // from the house number to the country and is not an address line.
+    const line = candidate.street ?? candidate.address;
+    if (line) setAddress(line);
     if (candidate.city) setCity(candidate.city);
     if (candidate.region) setRegion(candidate.region);
     if (candidate.country) setCountry(candidate.country);
@@ -142,6 +147,15 @@ export function EditPlaceSheet({
     setLatitude(candidate.latitude ?? "");
     setLongitude(candidate.longitude ?? "");
   }
+
+  const placeLookup = usePlaceLookup({
+    enabled: lookup.enabled,
+    lookup,
+    query,
+    search: runLookup,
+    onAccept: accept,
+    listId: `place-${place.id}-suggestions`,
+  });
 
   return (
     <>
@@ -174,8 +188,8 @@ export function EditPlaceSheet({
                 <Input
                   id="place-name"
                   name="name"
-                  ref={nameRef}
-                  defaultValue={place.name}
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
                   required
                   maxLength={191}
                 />
@@ -189,16 +203,12 @@ export function EditPlaceSheet({
                   onChange={(event) => setAddress(event.target.value)}
                   maxLength={500}
                   placeholder="123 Main St"
+                  {...placeLookup.inputProps}
                 />
+                {placeLookup.suggestions}
               </Field>
 
-              {lookupEnabled ? (
-                <PlaceLookup
-                  buildQuery={buildQuery}
-                  search={runLookup}
-                  onAccept={accept}
-                />
-              ) : null}
+              {placeLookup.panel}
 
               <div className="grid gap-3 sm:grid-cols-3">
                 <Field label="City" htmlFor="place-city">

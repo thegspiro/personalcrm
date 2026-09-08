@@ -165,10 +165,11 @@ rather than trusted, so an assisted parse cannot do anything the local parse
 refuses to do — including the venue it reads, which is re-matched against your
 own places rather than taken on the model's word.
 
-`src/server/geo/` is the same arrangement for address lookup: optional, off by
-default, and reached only from an explicit button. Switched off — which is how
-it ships — nothing in it runs, and a place's address is simply something you
-type.
+`src/server/geo/` is the same arrangement for address lookup: optional and off
+by default. Switched off — which is how it ships — nothing in it runs, and a
+place's address is simply something you type. Switched on, it is reached from an
+explicit button; suggestions while you type are a further opt-in, offered only
+where the endpoint's operator permits them and never on a page load either way.
 
 Both layers are reached from their *runtime* path behind a dynamic `import()`
 wrapped in a `try`, so an endpoint that is missing, misconfigured or unreachable

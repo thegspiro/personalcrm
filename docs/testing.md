@@ -42,7 +42,8 @@ does not own. That is what makes these fast and worth writing.
 | `security-headers.test.ts` | The response headers the app sets, and the one it leaves to the proxy |
 | `service-worker.test.ts` | That `public/sw.js` parses as a classic script |
 | `migrations.test.ts` | That every migration on disk is accounted for |
-| `geo-providers.test.ts` | Reading an address-lookup reply across provider dialects |
+| `geo-providers.test.ts` | Reading an address-lookup reply across provider dialects, and which endpoints may be queried while typing |
+| `typeahead.test.ts` | When an address field may send anything on its own — including that a form does not send one just by opening |
 | `ai-quick-add.test.ts` | That an assisted parse cannot do what the local one refuses to |
 
 The date-sensitive suites run against a **fixed clock**, and the timezone-aware
@@ -113,7 +114,16 @@ the schema do, not things a mock can:
 - `reciprocity.test.ts` — the reaching-out ratio against real interaction rows.
 - `geo-settings.test.ts`, `ai-settings.test.ts` — that the two settings stored
   per installation rather than per owner are only writable by an `ADMIN`, and
-  that a refusal leaves the stored value alone.
+  that a refusal leaves the stored value alone. `geo-settings.test.ts` also
+  covers the typeahead opt-in: off even once the lookup is on, refused for an
+  endpoint whose policy forbids it however the post is made, and withdrawn the
+  moment the endpoint changes under it.
+- `address-typeahead.test.ts` — what actually reaches a provider when an address
+  field suggests as you type. The provider is stubbed into an array of the
+  queries it received, so "nothing was sent" is an assertion on that array
+  rather than on a stubbed refusal: a private contact's address never arrives,
+  and neither does a request whose `interactive` claim the settings do not
+  support.
 - `settings-counts.test.ts` — the aggregates on a page the lock does not gate:
   that every usage total and custom-field count is filtered by the same scope
   as the rows behind it, that a life event naming a private participant is

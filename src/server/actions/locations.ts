@@ -12,6 +12,7 @@ import type { GeoCandidateView } from "@/server/geo/providers";
 import { privacyScope } from "@/server/privacy/filter";
 import {
   type ActionResult,
+  bool,
   fail,
   fieldError,
   invalid,
@@ -392,9 +393,11 @@ function identityFrom(data: {
 /**
  * Ask the configured endpoint about an address. Writes nothing.
  *
- * Pressed deliberately, never on a page load and never while typing — both
- * because an address should not leave the machine as a side effect of browsing,
- * and because Nominatim's usage policy forbids search-as-you-type outright.
+ * Pressed deliberately, or — where an administrator has separately asked for it
+ * and the endpoint's operator permits it — after a pause in typing. Never on a
+ * page load either way: an address should not leave the machine as a side
+ * effect of opening a form. The public OpenStreetMap endpoint is never reached
+ * while typing, whatever is switched on, because its usage policy forbids it.
  *
  * Only the place's name and whatever address the user typed are sent. Never the
  * notes, never who was seen there, never anything about an interaction.
@@ -415,7 +418,7 @@ export async function lookupLocationAddress(
   // The whole optional directory sits behind `searchPlaces`, which loads it
   // dynamically and turns every failure into a message rather than an error.
   const { searchPlaces, LOOKUP_MESSAGES } = await import("@/server/geo/lookup");
-  const outcome = await searchPlaces(query);
+  const outcome = await searchPlaces(query, { interactive: bool(form, "interactive") });
   if (!outcome.ok) return fail(LOOKUP_MESSAGES[outcome.reason]);
 
   const { toCandidateView } = await import("@/server/geo/providers");

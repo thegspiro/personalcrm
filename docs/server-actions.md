@@ -476,8 +476,13 @@ with the stored ones so only a *change* is held back: every other field stays
 editable, and a save that resubmits the aliases it was rendered with goes
 through.
 
-Every place a lookup can be reached from is behind an explicit button. See
-[privacy.md](privacy.md) for what is sent.
+A lookup is reached from an explicit button, or — where an administrator has
+separately switched it on and the endpoint permits it — after a pause in typing.
+Never on a page load: the query a form would send is a join of the fields it is
+showing, so an already-filled address would otherwise go out on open;
+`shouldSuggest` in `src/lib/typeahead.ts` is what refuses that. The `interactive`
+flag the browser posts is a claim, not a grant — `searchPlaces` re-checks it
+against the stored setting. See [privacy.md](privacy.md) for what is sent.
 
 The gate itself — the toggle check, the dynamic `import()` of the optional
 directory, and turning every failure into a sentence rather than an error page —
@@ -599,6 +604,7 @@ lock boundary.
 | Action | Notes |
 | --- | --- |
 | `updateGeoEnabled` | The toggle. Off until switched on |
+| `updateGeoTypeahead` | Suggestions while you type. A second opt-in, off until switched on, refused for an endpoint whose policy forbids it |
 | `saveGeoConnection` | Provider and, for a self-hosted one, the endpoint. A fixed public endpoint is not editable from the app |
 
 ### AI settings — `actions/ai-settings.ts`

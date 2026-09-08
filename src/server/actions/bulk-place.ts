@@ -139,7 +139,7 @@ export async function placeUnplaced(
 
     // Two, so "exactly one" can be told from "more than one" without asking for
     // a page of answers nobody will read.
-    const candidates = await searchAddress(config, row.query, 2);
+    const candidates = await searchAddress(config, row.query, { limit: 2 });
 
     // Nobody is here to choose. `normalizeLocationName` already sets the house
     // position — whitespace and case are safe, fuzzy matching is not — and a

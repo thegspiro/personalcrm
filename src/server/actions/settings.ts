@@ -172,7 +172,7 @@ export async function lookupHomeBase(
   if (!query) return fail("Fill in the address first, then look it up.");
 
   const { searchPlaces, LOOKUP_MESSAGES } = await import("@/server/geo/lookup");
-  const outcome = await searchPlaces(query);
+  const outcome = await searchPlaces(query, { interactive: bool(form, "interactive") });
   if (!outcome.ok) return fail(LOOKUP_MESSAGES[outcome.reason]);
 
   const { toCandidateView } = await import("@/server/geo/providers");

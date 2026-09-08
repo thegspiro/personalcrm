@@ -7,6 +7,12 @@ import { createContact, ensureSignedIn } from "./helpers";
  * Address lookup is off in the shipped state and needs a network endpoint, so
  * nothing here presses it. Coordinates go in by hand — which is the supported
  * route in its own right, and the *only* route for a private contact.
+ *
+ * That shipped state is itself asserted below. A field that suggests as you
+ * type is a field that sends an address without being asked, so "off means
+ * off" is the one thing about the feature that can be proved without a live
+ * endpoint — and the thing worth proving, since the failure it catches is the
+ * feature quietly defaulting on.
  */
 test.describe.configure({ mode: "serial" });
 
@@ -56,6 +62,26 @@ test("an address keeps its coordinates and offers a map link", async ({ page }) 
   const map = addresses.getByRole("link", { name: "Open map" });
   await expect(map).toBeVisible();
   await expect(map).toHaveAttribute("href", /mlat=53\.7965/);
+});
+
+test("an address field offers no suggestions until it is asked to", async ({ page }) => {
+  await ensureSignedIn(page);
+  await createContact(page, person());
+
+  const addresses = page.locator("section").filter({ hasText: "Where they are" });
+  await addresses.getByRole("button", { name: "Add an address" }).click();
+
+  const line = addresses.getByLabel("Address", { exact: true });
+  // No combobox: the field is a plain text box, and nothing it receives goes
+  // anywhere. `role` is the whole of the difference, so it is the whole of the
+  // assertion.
+  await expect(line).not.toHaveAttribute("role", "combobox");
+  await expect(line).not.toHaveAttribute("aria-expanded", /.*/);
+
+  // Typing a real address changes nothing but the box.
+  await line.fill("120 Maple Street");
+  await expect(addresses.getByRole("listbox")).toHaveCount(0);
+  await expect(line).toHaveValue("120 Maple Street");
 });
 
 test("half a coordinate pair is refused rather than stored", async ({ page }) => {
