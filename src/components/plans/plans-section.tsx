@@ -13,6 +13,7 @@ import { SubmitButton } from "@/components/form/submit-button";
 import { useAction, useAddAction, useEditAction } from "@/components/form/use-action";
 import { DateField } from "@/components/form/date-field";
 import { TermChips, type TermOption } from "@/components/form/term-select";
+import { PlacePicker, type PlaceSuggestion } from "@/components/form/place-picker";
 import {
   SectionCard,
   SectionEmpty,
@@ -195,13 +196,20 @@ function PlanFields({
   contactId,
   people,
   plan,
+  places,
+  placesTruncated,
 }: {
   formId: string;
   categories: TermOption[];
   contactId: string | null;
   people: PlanPerson[];
   plan?: PlanItem;
+  places: PlaceSuggestion[];
+  placesTruncated: boolean;
 }) {
+  // Filled by the picker, leaving `defaultValue` the single source of the
+  // entered venue.
+  const locationRef = React.useRef<HTMLInputElement>(null);
   const [checklist, setChecklist] = React.useState<PlanChecklistItem[]>(() =>
     plan
       ? readPlanChecklist(plan.checklist)
@@ -324,7 +332,14 @@ function PlanFields({
         </div>
         <div className="grid min-w-0 gap-2.5 sm:grid-cols-2">
           <Field label="Venue" htmlFor={`${formId}-location`}>
-            <Input id={`${formId}-location`} name="location" defaultValue={plan?.location ?? ""} placeholder="Alamo Drafthouse" />
+            <Input id={`${formId}-location`} name="location" ref={locationRef} maxLength={191} defaultValue={plan?.location ?? ""} placeholder="Alamo Drafthouse" />
+            <PlacePicker
+              places={places}
+              truncated={placesTruncated}
+              onPick={(place) => {
+                if (locationRef.current) locationRef.current.value = place.name;
+              }}
+            />
           </Field>
           <Field label="Complete address" htmlFor={`${formId}-address`}>
             <Input id={`${formId}-address`} name="address" maxLength={500} defaultValue={plan?.address ?? ""} placeholder="123 Main St, Arlington, VA" />
@@ -411,6 +426,8 @@ export function PlansSection({
   people = [],
   title = "Things to do",
   defaultOpen = true,
+  places = [],
+  placesTruncated = false,
 }: {
   /** Null on a list page, where the section spans everyone. */
   contactId?: string | null;
@@ -420,6 +437,9 @@ export function PlansSection({
   people?: PlanPerson[];
   title?: string;
   defaultOpen?: boolean;
+  /** Places you have already been, for the venue box. */
+  places?: PlaceSuggestion[];
+  placesTruncated?: boolean;
 }) {
   const run = useAction();
   // Which rows have a completion in flight. `useAction` does not expose its
@@ -456,6 +476,8 @@ export function PlansSection({
             categories={categories}
             contactId={contactId}
             people={people}
+            places={places}
+            placesTruncated={placesTruncated}
           />
           <SubmitButton size="sm">Save</SubmitButton>
         </form>
@@ -480,6 +502,8 @@ export function PlansSection({
                   contactId={contactId}
                   people={people}
                   plan={plan}
+                  places={places}
+                  placesTruncated={placesTruncated}
                 />
                 <SubmitButton size="sm">Save</SubmitButton>
               </form>

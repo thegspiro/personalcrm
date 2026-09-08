@@ -20,6 +20,7 @@ import { CollapsibleCustomFields } from "@/components/custom-fields/field-render
 import { DateTimeField } from "@/components/form/date-field";
 import { TermChips } from "@/components/form/term-select";
 import { ContactPicker } from "@/components/form/contact-picker";
+import { PlacePicker } from "@/components/form/place-picker";
 import { SENTIMENTS } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
@@ -60,6 +61,9 @@ export function EditInteractionSheet({
 }) {
   const router = useRouter();
   const [record, setRecord] = React.useState<InteractionForEdit | null>(null);
+  // Filled by the picker. Uncontrolled, so the existing `defaultValue` stays
+  // the single source of the entered label.
+  const locationRef = React.useRef<HTMLInputElement>(null);
   const [loadError, setLoadError] = React.useState<string>();
   const [error, setError] = React.useState<string>();
   const [sentiment, setSentiment] = React.useState<number | null>(null);
@@ -189,8 +193,17 @@ export function EditInteractionSheet({
                 <Input
                   id="edit-location"
                   name="location"
+                  ref={locationRef}
+                  maxLength={191}
                   defaultValue={record.location ?? ""}
                   placeholder="Northside Cafe"
+                />
+                <PlacePicker
+                  places={record.places}
+                  truncated={record.placesTruncated}
+                  onPick={(place) => {
+                    if (locationRef.current) locationRef.current.value = place.name;
+                  }}
                 />
               </Field>
 

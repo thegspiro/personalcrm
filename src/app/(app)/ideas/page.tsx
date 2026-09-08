@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { getUserContext } from "@/server/user/context";
+import { listPlaceSuggestions } from "@/server/queries/locations";
 import { prisma } from "@/server/db/client";
 import { listContactOptions } from "@/server/queries/contacts";
 import { listPlans } from "@/server/queries/plans";
@@ -32,10 +33,10 @@ const PLAN_CAP = 200;
  * belong on the same page.
  */
 export default async function IdeasPage() {
-  const { user } = await getUserContext();
+  const { user, timezone } = await getUserContext();
   const scope = await privacyScope();
 
-  const [ideaRows, planRows, planCategories, contacts, cacheable] = await Promise.all([
+  const [ideaRows, planRows, planCategories, contacts, cacheable, placeSuggestions] = await Promise.all([
     prisma.idea.findMany({
       where: {
         ownerId: user.id,
@@ -50,6 +51,7 @@ export default async function IdeasPage() {
     listTerms(user.id, "PLAN_CATEGORY"),
     listContactOptions(user.id),
     offlineCacheable(user.id),
+    listPlaceSuggestions(user.id, timezone),
   ]);
 
   const { items: ideas, truncated: ideasTruncated } = applyCap(ideaRows, IDEA_CAP);
@@ -96,6 +98,8 @@ export default async function IdeasPage() {
           firstName: contact.firstName,
           lastName: contact.lastName,
         }))}
+        places={placeSuggestions.items}
+        placesTruncated={placeSuggestions.truncated}
       />
       {plansTruncated ? (
         <ListCapNotice

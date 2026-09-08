@@ -20,6 +20,7 @@ import { LogInteractionSheet } from "./log-interaction";
 import type { RenderableField } from "@/components/custom-fields/field-renderer";
 import type { TermOption } from "@/components/form/term-select";
 import type { PickerContact } from "@/components/form/contact-picker";
+import type { PlaceSuggestion } from "@/components/form/place-picker";
 import { cadenceMessage, termColorClasses } from "@/lib/format";
 import { methodLink } from "@/lib/contact-methods";
 import { cadenceLabel } from "@/lib/cadence";
@@ -41,6 +42,8 @@ export function ContactHeader({
   interactionTypes,
   contacts,
   interactionFields = [],
+  places = [],
+  placesTruncated = false,
   allergySummary,
   datingAvailable = false,
 }: {
@@ -73,6 +76,9 @@ export function ContactHeader({
   contacts: PickerContact[];
   /** Your own interaction fields, for the log sheet. */
   interactionFields?: RenderableField[];
+  /** Places you have already been, for the log sheet's "Where" box. */
+  places?: PlaceSuggestion[];
+  placesTruncated?: boolean;
   allergySummary?: string | null;
   /**
    * Whether the dating module may be shown at all — the module is on and the
@@ -339,6 +345,8 @@ export function ContactHeader({
         types={interactionTypes}
         defaultContactIds={[contact.id]}
         customFields={interactionFields}
+        places={places}
+        placesTruncated={placesTruncated}
       />
     </div>
   );

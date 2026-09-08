@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import type { TermOption } from "@/components/form/term-select";
+import { PlacePicker, type PlaceSuggestion } from "@/components/form/place-picker";
 import {
   confirmQuickAdd,
   interpretQuickAdd,
@@ -28,11 +29,20 @@ export function QuickAddBox({
   className,
   autoFocus,
   onDone,
+  places = [],
+  placesTruncated = false,
 }: {
   types: TermOption[];
   className?: string;
   autoFocus?: boolean;
   onDone?: () => void;
+  /**
+   * Places you have already been. The parser matches these too, and says so —
+   * this is the same list, offered before you have typed the line rather than
+   * only recognised after.
+   */
+  places?: PlaceSuggestion[];
+  placesTruncated?: boolean;
 }) {
   const router = useRouter();
   const [text, setText] = React.useState("");
@@ -66,6 +76,8 @@ export function QuickAddBox({
         types={types}
         original={text}
         className={className}
+        places={places}
+        placesTruncated={placesTruncated}
         onCancel={reset}
         onSaved={() => {
           reset();
@@ -109,6 +121,8 @@ function QuickAddPreviewForm({
   className,
   onCancel,
   onSaved,
+  places,
+  placesTruncated,
 }: {
   preview: QuickAddPreview;
   types: TermOption[];
@@ -116,7 +130,13 @@ function QuickAddPreviewForm({
   className?: string;
   onCancel: () => void;
   onSaved: () => void;
+  places: PlaceSuggestion[];
+  placesTruncated: boolean;
 }) {
+  // Filled by the picker rather than held in state: the box already carries the
+  // parser's reading as its `defaultValue`, and a second source of truth for
+  // the same input is how the two would drift.
+  const locationRef = React.useRef<HTMLInputElement>(null);
   // One choice per ambiguous name, starting empty so nothing is picked for you.
   const [choices, setChoices] = React.useState<Record<number, string>>({});
   const [newNames, setNewNames] = React.useState<string[]>(preview.newNames);
@@ -275,9 +295,17 @@ function QuickAddPreviewForm({
         <Input
           id="qa-location"
           name="location"
+          ref={locationRef}
           defaultValue={preview.place?.name ?? ""}
           maxLength={191}
           placeholder="Northside Cafe"
+        />
+        <PlacePicker
+          places={places}
+          truncated={placesTruncated}
+          onPick={(place) => {
+            if (locationRef.current) locationRef.current.value = place.name;
+          }}
         />
       </Field>
 

@@ -16,6 +16,10 @@ import {
 } from "@/server/services/custom-field-values";
 import { interactionPrivacyWhere, privacyScope } from "@/server/privacy/filter";
 import { listContactOptions } from "@/server/queries/contacts";
+import {
+  listPlaceSuggestions,
+  type PlaceSuggestion,
+} from "@/server/queries/locations";
 import { fieldsFor } from "@/server/queries/custom-fields";
 import { listTerms } from "@/server/taxonomy/queries";
 import type { CustomFieldType } from "@prisma/client";
@@ -277,6 +281,14 @@ export interface InteractionForEdit {
     };
     value: unknown;
   }>;
+  /**
+   * Places you have already been, for the "Where" box. Loaded here rather than
+   * passed down for the same reason the contacts are: the timeline renders
+   * hundreds of rows and none of them should carry a list for a sheet that may
+   * never open.
+   */
+  places: PlaceSuggestion[];
+  placesTruncated: boolean;
 }
 
 /**
@@ -291,7 +303,7 @@ export interface InteractionForEdit {
 export async function loadInteractionForEdit(
   id: string,
 ): Promise<ActionResult<InteractionForEdit>> {
-  const { ownerId } = await owner();
+  const { ownerId, timezone } = await owner();
   if (!id) return fail("Missing interaction.");
 
   const scope = await privacyScope();
@@ -313,10 +325,11 @@ export async function loadInteractionForEdit(
   });
   if (!interaction) return fail("Interaction not found.");
 
-  const [contacts, types, customFields] = await Promise.all([
+  const [contacts, types, customFields, places] = await Promise.all([
     listContactOptions(ownerId),
     listTerms(ownerId, "INTERACTION_TYPE"),
     fieldsFor(ownerId, "INTERACTION", id),
+    listPlaceSuggestions(ownerId, timezone),
   ]);
 
   // Someone archived, or private and currently hidden, can still be on an
@@ -372,6 +385,8 @@ export async function loadInteractionForEdit(
       },
       value: field.value,
     })),
+    places: places.items,
+    placesTruncated: places.truncated,
   });
 }
 

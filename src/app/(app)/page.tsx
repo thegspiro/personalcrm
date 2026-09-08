@@ -2,6 +2,7 @@ import { getUserContext } from "@/server/user/context";
 import { normalizeDashboardLayout, WIDGET_REGISTRY, widgetSetting } from "@/lib/dashboard";
 import { prisma } from "@/server/db/client";
 import { listContactOptions } from "@/server/queries/contacts";
+import { listPlaceSuggestions } from "@/server/queries/locations";
 import { listTerms } from "@/server/taxonomy/queries";
 import { getDatingSummary } from "@/server/queries/dating";
 import { canSeeDating } from "@/server/privacy/filter";
@@ -81,6 +82,7 @@ export default async function HomePage() {
     stats,
     datingSummary,
     interactionFields,
+    placeSuggestions,
   ] = await Promise.all([
     enabled.has("quick-add") ? listContactOptions(user.id) : [],
     enabled.has("quick-add") ? listTerms(user.id, "INTERACTION_TYPE") : [],
@@ -111,6 +113,9 @@ export default async function HomePage() {
     enabled.has("stats") ? getStats(user.id, timezone) : null,
     enabled.has("dating-pipeline") && showDating ? getDatingSummary(user.id) : null,
     enabled.has("quick-add") ? fieldsFor(user.id, "INTERACTION", null) : [],
+    enabled.has("quick-add")
+      ? listPlaceSuggestions(user.id, timezone)
+      : { items: [], truncated: false },
   ]);
 
   const mapInteractions = (rows: typeof recent) =>
@@ -128,6 +133,8 @@ export default async function HomePage() {
         contacts={contacts}
         types={interactionTypes}
         customFields={interactionFields}
+        places={placeSuggestions.items}
+        placesTruncated={placeSuggestions.truncated}
       />
     ),
     overdue: <OverdueWidget contacts={overdue} />,

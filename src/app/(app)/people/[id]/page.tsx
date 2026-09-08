@@ -46,7 +46,11 @@ import { displayName } from "@/lib/utils";
 import { getUpcomingDates } from "@/server/queries/dashboard";
 import { UpcomingDatesWidget } from "@/components/dashboard/widgets";
 import { isBirthdayImportantDate, projectContactBirthday } from "@/server/queries/birthdays";
-import { listContactLocations, listLocationsNear } from "@/server/queries/locations";
+import {
+  listContactLocations,
+  listLocationsNear,
+  listPlaceSuggestions,
+} from "@/server/queries/locations";
 import { originsFor } from "@/server/queries/origins";
 import { getGeoStatus } from "@/server/geo/config";
 import { distanceBetween, formatDistance, pointOf, withDistance } from "@/lib/geo";
@@ -106,6 +110,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     happenings,
     geoStatus,
     origins,
+    placeSuggestions,
   ] = await Promise.all([
     listTermsByKind(user.id, [
       "INTERACTION_TYPE",
@@ -137,6 +142,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     listContactHappenings(user.id, id, timezone),
     getGeoStatus(),
     originsFor(user.id, id),
+    listPlaceSuggestions(user.id, timezone),
   ]);
 
   // Measured from the person, not from home: standing on their page, "how far
@@ -241,6 +247,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
               : null,
           }}
           interactionFields={interactionFields}
+          places={placeSuggestions.items}
+          placesTruncated={placeSuggestions.truncated}
           datingAvailable={datingAvailable}
           cadence={{
             status: cadenceStatus(contact.nextTouchAt, timezone),
@@ -347,6 +355,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
               customFields={dateEntryFields}
               customFieldsByDate={customFieldsByDate}
               blurPrivate={prefs.blurPrivateNotes}
+              places={placeSuggestions.items}
+              placesTruncated={placeSuggestions.truncated}
               activityTypes={terms.DATE_ACTIVITY_TYPE}
               plans={plans.map((plan) => ({
                 id: plan.id,
@@ -529,6 +539,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
         <PlansSection
           contactId={contact.id}
           categories={terms.PLAN_CATEGORY}
+          places={placeSuggestions.items}
+          placesTruncated={placeSuggestions.truncated}
           plans={placedPlans.map((plan) => ({
             id: plan.id,
             title: plan.title,
