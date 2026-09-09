@@ -34,7 +34,7 @@ import { HomeBaseSettings } from "@/components/settings/home-base-settings";
 import { BulkPlaceSettings } from "@/components/settings/bulk-place-settings";
 import { countUnplaced } from "@/server/queries/unplaced";
 import { isRateLimited } from "@/server/geo/providers";
-import { getGeoStatus } from "@/server/geo/config";
+import { getGeoStatus, getLookupUi } from "@/server/geo/config";
 import { GEO_PROVIDERS } from "@/server/geo/providers";
 import { listTags } from "@/server/queries/tags";
 import { getFeedStatus } from "@/server/services/calendar-feed";
@@ -68,6 +68,7 @@ export default async function SettingsPage() {
     valueCounts,
     ai,
     geo,
+    lookupUi,
     privacyState,
     channels,
     tags,
@@ -82,6 +83,7 @@ export default async function SettingsPage() {
     valueCountsByDefinition(user.id, await privacyScope()),
     getAiStatus(),
     getGeoStatus(),
+    getLookupUi(),
     getPrivacyState(),
     listChannelsForSettings(user.id),
     listTags(user.id),
@@ -231,13 +233,15 @@ export default async function SettingsPage() {
                 prefs.homeLongitude === null ? null : String(prefs.homeLongitude)
               }
               distanceUnit={prefs.distanceUnit}
-              lookupEnabled={geo.enabled && geo.usable}
+              lookup={lookupUi}
             />
             <GeoSettings
               enabled={geo.enabled}
               usable={geo.usable}
               provider={geo.provider}
               baseUrl={geo.baseUrl}
+              typeahead={geo.typeahead}
+              typeaheadCapable={geo.typeaheadCapable}
               providers={GEO_PROVIDERS}
               canEdit={user.role === "ADMIN"}
             />

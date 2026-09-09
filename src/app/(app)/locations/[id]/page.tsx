@@ -7,7 +7,7 @@ import { getLocation } from "@/server/queries/locations";
 import { mapLinkFor } from "@/lib/locations";
 import { distanceBetween, formatDistance, pointOf } from "@/lib/geo";
 import { originsFor } from "@/server/queries/origins";
-import { getGeoStatus } from "@/server/geo/config";
+import { getLookupUi } from "@/server/geo/config";
 import { EditPlaceSheet } from "@/components/locations/edit-place";
 
 export const metadata: Metadata = { title: "Place" };
@@ -40,7 +40,7 @@ export default async function LocationPage({
       });
   }
   const mapHref = mapLinkFor(location);
-  const { enabled: lookupEnabled } = await getGeoStatus();
+  const lookup = await getLookupUi();
   // Null unless both this place and a home base have coordinates, so a distance
   // is either right or absent — never a zero standing in for "don't know".
   const origins = await originsFor(user.id);
@@ -104,7 +104,7 @@ export default async function LocationPage({
           </div>
           <div className="ml-auto shrink-0">
             <EditPlaceSheet
-              lookupEnabled={lookupEnabled}
+              lookup={lookup}
               place={{
                 id: location.id,
                 name: location.name,

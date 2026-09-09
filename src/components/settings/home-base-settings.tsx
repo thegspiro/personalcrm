@@ -6,9 +6,9 @@ import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { useAddAction } from "@/components/form/use-action";
 import { LOCALITY_LIST_IDS } from "@/components/form/locality-options";
-import { PlaceLookup } from "@/components/locations/place-lookup";
+import { usePlaceLookup } from "@/components/locations/place-lookup";
 import { lookupHomeBase, updateHomeBase } from "@/server/actions/settings";
-import type { GeoCandidateView } from "@/server/geo/providers";
+import type { GeoCandidateView, LookupUi } from "@/server/geo/providers";
 
 export interface HomeBaseSettingsProps {
   homeAddress: string | null;
@@ -19,8 +19,8 @@ export interface HomeBaseSettingsProps {
   homeLatitude: string | null;
   homeLongitude: string | null;
   distanceUnit: string;
-  /** Whether the installation has address lookup switched on at all. */
-  lookupEnabled: boolean;
+  /** Whether the installation offers address lookup, and how. */
+  lookup: LookupUi;
 }
 
 /**
@@ -40,7 +40,7 @@ export function HomeBaseSettings({
   homeLatitude,
   homeLongitude,
   distanceUnit,
-  lookupEnabled,
+  lookup,
 }: HomeBaseSettingsProps) {
   const save = useAddAction();
   const [address, setAddress] = React.useState(homeAddress ?? "");
@@ -50,27 +50,42 @@ export function HomeBaseSettings({
   const [latitude, setLatitude] = React.useState(homeLatitude ?? "");
   const [longitude, setLongitude] = React.useState(homeLongitude ?? "");
 
-  function buildQuery() {
-    return [address, city, region, country]
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .join(", ");
-  }
+  const query = React.useMemo(
+    () =>
+      [address, city, region, country]
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .join(", "),
+    [address, city, region, country],
+  );
 
-  function runLookup(query: string) {
+  function runLookup(text: string, options?: { interactive?: boolean }) {
     const form = new FormData();
-    form.set("query", query);
+    form.set("query", text);
+    if (options?.interactive) form.set("interactive", "1");
     return lookupHomeBase(form);
   }
 
   function accept(candidate: GeoCandidateView) {
-    if (candidate.address) setAddress(candidate.address);
+    // The street line, not the whole display name a Nominatim match carries.
+    const line = candidate.street ?? candidate.address;
+    if (line) setAddress(line);
     if (candidate.city) setCity(candidate.city);
     if (candidate.region) setRegion(candidate.region);
     if (candidate.country) setCountry(candidate.country);
     setLatitude(candidate.latitude ?? "");
     setLongitude(candidate.longitude ?? "");
   }
+
+  const placeLookup = usePlaceLookup({
+    enabled: lookup.enabled,
+    lookup,
+    query,
+    search: runLookup,
+    onAccept: accept,
+    listId: "home-base-suggestions",
+    idleLabel: "Look up my address",
+  });
 
   return (
     <section className="rounded-xl border border-border bg-card p-4">
@@ -80,7 +95,7 @@ export function HomeBaseSettings({
           Optional. Set this and plans and places can say how far away they are,
           and a person&apos;s page can suggest somewhere near them. Only the
           coordinates are used; nothing is shown to anyone but you, and nothing
-          is sent anywhere unless you press the lookup button.
+          is sent anywhere unless you ask the lookup for it.
         </p>
       </div>
 
@@ -93,7 +108,9 @@ export function HomeBaseSettings({
             value={address}
             onChange={(event) => setAddress(event.target.value)}
             placeholder="120 Maple Street"
+            {...placeLookup.inputProps}
           />
+          {placeLookup.suggestions}
         </Field>
 
         <div className="grid gap-2.5 sm:grid-cols-3">
@@ -129,14 +146,7 @@ export function HomeBaseSettings({
           </Field>
         </div>
 
-        {lookupEnabled ? (
-          <PlaceLookup
-            buildQuery={buildQuery}
-            search={runLookup}
-            onAccept={accept}
-            idleLabel="Look up my address"
-          />
-        ) : null}
+        {placeLookup.panel}
 
         <div className="grid gap-2.5 sm:grid-cols-3">
           <Field label="Latitude" htmlFor="home-latitude">

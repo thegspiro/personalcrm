@@ -22,6 +22,17 @@ export interface GeoProviderDefinition {
   baseUrlEditable: boolean;
   /** Which response shape to read. */
   dialect: "nominatim" | "photon";
+  /**
+   * Whether this provider's *default* endpoint permits search-as-you-type.
+   *
+   * A property of whose hardware answers, not of what we would like. Nominatim's
+   * usage policy forbids it outright; Photon is built on a search index for
+   * exactly this and its public instance says so; a self-hosted endpoint is
+   * nobody else's to protect. `typeaheadAllowed` is the runtime question,
+   * because an editable endpoint can be pointed somewhere this flag did not
+   * anticipate.
+   */
+  typeahead: boolean;
   note: string;
 }
 
@@ -32,8 +43,9 @@ export const GEO_PROVIDERS: GeoProviderDefinition[] = [
     defaultBaseUrl: "https://nominatim.openstreetmap.org",
     baseUrlEditable: false,
     dialect: "nominatim",
+    typeahead: false,
     note:
-      "Free, run by the OpenStreetMap Foundation on donated servers. Their usage policy allows at most one request a second and forbids search-as-you-type, which is why lookup is a button you press rather than something that happens while you type.",
+      "Free, run by the OpenStreetMap Foundation on donated servers. Their usage policy allows at most one request a second and forbids search-as-you-type, so lookup here is always a button you press rather than something that happens while you type.",
   },
   {
     id: "photon",
@@ -45,8 +57,9 @@ export const GEO_PROVIDERS: GeoProviderDefinition[] = [
     // speaks the other dialect.
     baseUrlEditable: true,
     dialect: "photon",
+    typeahead: true,
     note:
-      "Also OpenStreetMap data. The public instance is best-effort and throttles heavy use; it is open source and considerably lighter to run than Nominatim, so point this at your own if you have one.",
+      "Also OpenStreetMap data, and built for search-as-you-type — this is the one that can suggest addresses while you type. The public instance is best-effort and throttles heavy use; it is open source and considerably lighter to run than Nominatim, so point this at your own if you have one.",
   },
   {
     id: "custom",
@@ -54,8 +67,9 @@ export const GEO_PROVIDERS: GeoProviderDefinition[] = [
     defaultBaseUrl: "http://localhost:8080",
     baseUrlEditable: true,
     dialect: "nominatim",
+    typeahead: true,
     note:
-      "Anything that speaks the Nominatim search API. Nothing leaves your network if the endpoint doesn't.",
+      "Anything that speaks the Nominatim search API. Nothing leaves your network if the endpoint doesn't, which is also why it may suggest as you type — unless you point it back at the public OpenStreetMap service, whose policy still applies.",
   },
 ];
 
@@ -68,11 +82,47 @@ export interface GeoConfig {
   baseUrl: string;
 }
 
+/**
+ * What a form needs to know about the lookup, in one object.
+ *
+ * One prop rather than two booleans that can disagree, and it carries the
+ * provider's name so a field that suggests while you type can say where the
+ * suggestions come from. Declared here rather than in `config.ts` because this
+ * module has no `server-only` marker and client components may import it.
+ */
+export interface LookupUi {
+  /** Switched on and configured — the "Look up" button is worth offering. */
+  enabled: boolean;
+  /** Suggestions may be fetched while the user is still typing. */
+  typeahead: boolean;
+  providerLabel: string;
+  /** The host the suggestions come from, for the hint beside the field. */
+  endpointHost: string;
+}
+
+/**
+ * How much has to be typed before a suggestion is worth a request.
+ *
+ * Exported so the client, the server and the tests share one number rather
+ * than three that drift.
+ */
+export const TYPEAHEAD_MIN_QUERY = 4;
+
 /** One candidate the user can accept. Nothing is written until they do. */
 export interface GeoCandidate {
   /** What the provider calls this place, for choosing between candidates. */
   label: string;
   address: string | null;
+  /**
+   * The street line alone — house number and road, nothing else.
+   *
+   * Separate from `address` because the two dialects disagree about what that
+   * field means: Photon's is the street, Nominatim's is the entire display name
+   * down to the country. Filling a form's first address line needs the street,
+   * and putting "120 Maple Street, Arlington, Virginia, 22201, United States"
+   * there is worse than leaving what the user typed.
+   */
+  street: string | null;
   city: string | null;
   region: string | null;
   country: string | null;
@@ -96,6 +146,7 @@ export function toCandidateView(candidate: GeoCandidate): GeoCandidateView {
   return {
     label: candidate.label,
     address: candidate.address,
+    street: candidate.street,
     city: candidate.city,
     region: candidate.region,
     country: candidate.country,
@@ -118,19 +169,37 @@ const USER_AGENT = "personalcrm (self-hosted personal relationship manager)";
 const TIMEOUT_MS = 8_000;
 
 /**
+ * The budget while somebody is typing.
+ *
+ * A suggestion that lands eight seconds later is not a suggestion, and a server
+ * action cannot be aborted from the browser — so a slow one holds the queue
+ * behind it, including the Save the user presses next.
+ */
+const INTERACTIVE_TIMEOUT_MS = 3_000;
+
+/**
  * Endpoints run for everyone, on somebody else's donated hardware.
  *
  * Nominatim's policy caps an application at one request a second across all of
  * its users. A button press is not a fast loop, but two people on one
  * installation clicking at once are two requests in the same instant, and the
  * penalty is throttling or a block that this module would surface as "found
- * nothing" — indistinguishable from a bad address. A self-hosted endpoint is
- * nobody else's to protect, so it is not gated.
+ * nothing" — indistinguishable from a bad address.
  */
 const RATE_LIMITED_HOSTS = new Set(["nominatim.openstreetmap.org"]);
 
 /** A little over a second, since the limit is a ceiling rather than a target. */
-const MIN_INTERVAL_MS = 1_100;
+const RATE_LIMITED_INTERVAL_MS = 1_100;
+
+/**
+ * Every other endpoint we do not run ourselves.
+ *
+ * Photon's public instance has no published per-second cap but throttles heavy
+ * use, and typing turns one lookup into several. Small enough that a person
+ * never notices it, large enough that an installation cannot become a fast loop
+ * against hardware somebody else pays for.
+ */
+const SHARED_INTERVAL_MS = 300;
 
 export function isRateLimited(baseUrl: string): boolean {
   try {
@@ -140,23 +209,98 @@ export function isRateLimited(baseUrl: string): boolean {
   }
 }
 
+/**
+ * An endpoint on this machine or this network — nobody else's to protect.
+ *
+ * Deliberately conservative: a self-hosted Photon behind a public DNS name is
+ * not recognised here and simply gets the shared spacing, which costs its owner
+ * 300ms and nothing else. Guessing the other way would take a stranger's server
+ * for our own.
+ */
+export function isPrivateHost(baseUrl: string): boolean {
+  let host: string;
+  try {
+    // `hostname` rather than `host`: the port is not part of this question, and
+    // an IPv6 literal arrives here without its brackets.
+    host = new URL(baseUrl).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  if (host === "::1" || host === "[::1]") return true;
+  if (host.endsWith(".local") || host.endsWith(".internal")) return true;
+
+  const octets = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!octets) return false;
+  const parts = octets.slice(1).map(Number);
+  // Anything out of range is a hostname that merely looks like an address.
+  if (parts.some((part) => part > 255)) return false;
+
+  const [first, second] = parts;
+  if (first === 127 || first === 10) return true;
+  if (first === 192 && second === 168) return true;
+  if (first === 172 && second >= 16 && second <= 31) return true;
+  return false;
+}
+
+/** How long to leave between requests to this endpoint. */
+export function minIntervalFor(baseUrl: string): number {
+  if (isRateLimited(baseUrl)) return RATE_LIMITED_INTERVAL_MS;
+  if (isPrivateHost(baseUrl)) return 0;
+  return SHARED_INTERVAL_MS;
+}
+
+/**
+ * Whether suggestions may be fetched while the user is still typing.
+ *
+ * Both halves are load-bearing. The table says what the provider's operator
+ * permits; `isRateLimited` catches the case the table cannot see — a "custom"
+ * endpoint pointed back at the public OpenStreetMap service, whose policy
+ * forbids this however it is reached.
+ */
+export function typeaheadAllowed(config: GeoConfig): boolean {
+  const definition = geoProviderById(config.provider);
+  if (!definition?.typeahead) return false;
+  return !isRateLimited(config.baseUrl);
+}
+
 // Installation-wide because the module is a singleton in the server process,
 // which for this app is the whole installation.
 let queue: Promise<unknown> = Promise.resolve();
 let lastRequestAt = 0;
+let waiting = 0;
+
+/**
+ * Whether this request would have to wait its turn.
+ *
+ * Only interesting while typing: a keystroke that has to queue is answering a
+ * prefix the user has already moved past, so it is better dropped than served
+ * late. A pressed button waits, because somebody is looking at it.
+ */
+function wouldWait(baseUrl: string): boolean {
+  const interval = minIntervalFor(baseUrl);
+  if (interval === 0) return false;
+  return waiting > 0 || Date.now() - lastRequestAt < interval;
+}
 
 function spaceOutRequests(baseUrl: string): Promise<void> {
-  if (!isRateLimited(baseUrl)) return Promise.resolve();
+  const interval = minIntervalFor(baseUrl);
+  if (interval === 0) return Promise.resolve();
 
+  waiting += 1;
   const turn = queue.then(async () => {
     const since = Date.now() - lastRequestAt;
-    if (since < MIN_INTERVAL_MS) {
-      await new Promise((resolve) => setTimeout(resolve, MIN_INTERVAL_MS - since));
+    if (since < interval) {
+      await new Promise((resolve) => setTimeout(resolve, interval - since));
     }
     lastRequestAt = Date.now();
+    waiting -= 1;
   });
   // The queue must not stay rejected, or one failure blocks every later call.
-  queue = turn.catch(() => {});
+  queue = turn.catch(() => {
+    waiting -= 1;
+  });
   return turn;
 }
 
@@ -166,11 +310,24 @@ function spaceOutRequests(baseUrl: string): Promise<void> {
  * Same trade as the AI layer: a lookup that quietly finds nothing is better
  * than an error page in front of a form the user can still fill in by hand.
  */
+export interface SearchOptions {
+  limit?: number;
+  /**
+   * The user is still typing.
+   *
+   * Two differences, both about not making somebody wait for an answer they
+   * have already moved past: a much shorter budget, and a request that would
+   * have to queue is dropped rather than served late.
+   */
+  interactive?: boolean;
+}
+
 export async function searchAddress(
   config: GeoConfig,
   query: string,
-  limit = 5,
+  options: SearchOptions = {},
 ): Promise<GeoCandidate[]> {
+  const { limit = 5, interactive = false } = options;
   const trimmed = query.trim();
   if (!trimmed) return [];
 
@@ -182,12 +339,17 @@ export async function searchAddress(
       ? `${base}/api?q=${encodeURIComponent(trimmed)}&limit=${limit}`
       : `${base}/search?q=${encodeURIComponent(trimmed)}&format=jsonv2&addressdetails=1&limit=${limit}`;
 
+  if (interactive && wouldWait(base)) return [];
+
   // Waited out before the timeout starts, so queueing does not eat the budget
   // the request itself gets.
   await spaceOutRequests(base);
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(
+    () => controller.abort(),
+    interactive ? INTERACTIVE_TIMEOUT_MS : TIMEOUT_MS,
+  );
   try {
     const response = await fetch(url, {
       headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
@@ -236,10 +398,17 @@ export function readNominatim(body: unknown): GeoCandidate[] {
     const address = (row.address ?? {}) as Record<string, unknown>;
     const label = text(row.display_name);
     if (!label) return [];
+    // `addressdetails=1` is always requested, so the parts are here to be had.
+    // The road is what makes a street line: a result without one — a city, a
+    // park — yields nothing rather than the display name, which is not a
+    // street, and a house number on its own, which is just "120".
+    const road = text(address.road);
+    const street = road ? [text(address.house_number), road].filter(Boolean).join(" ") : null;
     return [
       {
         label,
         address: label,
+        street,
         // A place can be a city, a town or a village depending on its size, and
         // the caller only wants one "city".
         city:
@@ -279,6 +448,7 @@ export function readPhoton(body: unknown): GeoCandidate[] {
       {
         label: [label, text(props.city), text(props.country)].filter(Boolean).join(", "),
         address: street || name,
+        street: street || null,
         city: text(props.city),
         region: text(props.state) ?? text(props.county),
         country: text(props.country),

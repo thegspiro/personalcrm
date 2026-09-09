@@ -2,8 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { type ActionResult, fail, isAdmin, ok, owner, str } from "./helpers";
-import { setGeoConnection, setGeoEnabled } from "@/server/geo/config";
-import { geoProviderById } from "@/server/geo/providers";
+import {
+  getGeoStatus,
+  setGeoConnection,
+  setGeoEnabled,
+  setGeoTypeahead,
+} from "@/server/geo/config";
+import { geoProviderById, typeaheadAllowed } from "@/server/geo/providers";
 
 /**
  * Configuring the optional address lookup.
@@ -29,6 +34,35 @@ export async function updateGeoEnabled(enabled: boolean): Promise<ActionResult> 
   await owner();
   if (!(await isAdmin())) return fail("Only an administrator can change this.");
   await setGeoEnabled(enabled);
+  touch();
+  return ok();
+}
+
+/**
+ * Suggestions while you type, on the endpoints that permit them.
+ *
+ * Separate from `updateGeoEnabled` because it is a separate promise. Turning
+ * the lookup on says an address may be sent when asked for; this says it may be
+ * sent every time you pause. The stored answer is kept even when the current
+ * endpoint cannot honour it — `getGeoStatus` decides whether it applies — so
+ * trying Nominatim for an afternoon does not lose the setting.
+ */
+export async function updateGeoTypeahead(enabled: boolean): Promise<ActionResult> {
+  await owner();
+  if (!(await isAdmin())) return fail("Only an administrator can change this.");
+
+  // Re-checked here, not merely hidden in the panel: this is a public POST
+  // endpoint, and an endpoint whose operator forbids search-as-you-type must
+  // not be switched into it by a hand-made request. Switching *off* is always
+  // allowed — a refusal that traps the setting on would be the wrong way round.
+  if (enabled) {
+    const status = await getGeoStatus();
+    if (!typeaheadAllowed({ provider: status.provider, baseUrl: status.baseUrl })) {
+      return fail("This endpoint doesn't allow suggestions while you type.");
+    }
+  }
+
+  await setGeoTypeahead(enabled);
   touch();
   return ok();
 }
