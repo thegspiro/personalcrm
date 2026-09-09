@@ -1492,15 +1492,26 @@ enum NotificationChannelKind {
 }
 
 model NotificationChannel {
-  id        String                  @id @default(cuid())
-  ownerId   String
-  kind      NotificationChannelKind
-  name      String                  @db.VarChar(96)
+  id          String                  @id @default(cuid())
+  ownerId     String
+  kind        NotificationChannelKind
+  name        String                  @db.VarChar(96)
   /// Channel-specific settings (SMTP host, topic URL, webhook URL, ...).
-  config    Json
-  isEnabled Boolean                 @default(true)
-  createdAt DateTime                @default(now())
-  updatedAt DateTime                @updatedAt
+  config      Json
+  isEnabled   Boolean                 @default(true)
+  /// Set when a run of undelivered reminders paused this channel automatically.
+  /// Deliberately not `isEnabled`: that switch is the operator's own answer, and
+  /// collapsing the two would make "I turned this off" and "the app gave up on
+  /// this" the same state, so resuming could not tell them apart.
+  pausedAt    DateTime?
+  /// Why it was paused, shown in Settings. Transport text only — the same
+  /// strings `ReminderLog.error` holds, which never carry message content.
+  pauseReason String?                 @db.Text
+  /// When a paused channel was last probed with a real delivery, so the probe
+  /// happens daily rather than on every hourly pass.
+  lastProbeAt DateTime?
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
 
   owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   reminderLogs ReminderLog[]
@@ -1530,6 +1541,10 @@ model ReminderLog {
   scheduledFor     DateTime       @db.Date
   offsetDays       Int            @default(0)
   sentAt           DateTime?
+  /// Every attempt, delivered or not. `sentAt` is only written on success, so
+  /// without this a failed row carries no time at all and "last failure" is
+  /// unanswerable — which is why nothing could report a channel had gone quiet.
+  lastAttemptAt    DateTime?
   channelId        String?
   ok               Boolean        @default(false)
   attemptCount     Int            @default(0)

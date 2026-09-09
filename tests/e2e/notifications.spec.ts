@@ -151,6 +151,28 @@ test("a Gotify channel takes a priority, and defaults to one that alerts", async
   await expect(page.locator("section").filter({ hasText: name })).toHaveCount(0);
 });
 
+test("a channel says whether it is actually delivering", async ({ page }) => {
+  await ensureSignedIn(page);
+  await openReminderSettings(page);
+
+  const name = `Health ${test.info().project.name} ${STAMP}`;
+  const addForm = page.locator("section").filter({ hasText: "Add a channel" });
+  await addForm.getByRole("button", { name: "Webhook", exact: true }).click();
+  await addForm.getByLabel("Name", { exact: true }).fill(name);
+  await addForm.getByLabel("URL", { exact: true }).fill("https://hook.example.com/health");
+  await addForm.getByRole("button", { name: "Add channel" }).click();
+
+  // A brand-new channel has delivered nothing and failed at nothing. Saying so
+  // is the point: reading that state as healthy is the reassuring answer and
+  // the wrong one, since it is also the state a channel that never works is in.
+  const card = page.locator("section").filter({ hasText: name });
+  await expect(card.getByText("Nothing has been sent to this channel yet.")).toBeVisible();
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await card.getByRole("button", { name: "Delete" }).click();
+  await expect(page.locator("section").filter({ hasText: name })).toHaveCount(0);
+});
+
 test("the daily digest can be switched off and given an hour", async ({ page }) => {
   await ensureSignedIn(page);
   await openReminderSettings(page);

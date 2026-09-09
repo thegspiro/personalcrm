@@ -42,9 +42,17 @@ import {
   type SchedulingPolicy,
 } from "@/lib/reminder-schedule";
 import { formatPlanTime } from "@/lib/plan-time";
+import {
+  LEDGER_RETENTION_DAYS,
+  MAX_DELIVERY_ATTEMPTS,
+  PRUNABLE_POLICIES,
+  PROBE_INTERVAL_MS,
+  dueForProbe,
+  shouldPause,
+} from "@/lib/channel-health";
 import { deliverToChannel } from "./notify";
 
-const MAX_ATTEMPTS = 5;
+const MAX_ATTEMPTS = MAX_DELIVERY_ATTEMPTS;
 /** How soon after a failed send the next attempt may be made. */
 const FIRST_RETRY_MS = 60_000;
 /**
@@ -802,6 +810,167 @@ function currentChannel(db: Db, ownerId: string, channelId: string) {
   return db.notificationChannel.findFirst({ where: { id: channelId, ownerId, isEnabled: true } });
 }
 
+/**
+ * Stop attempting a channel that has swallowed a run of reminders.
+ *
+ * Written with `updateMany` and a `pausedAt: null` guard rather than `update`,
+ * so two overlapping passes cannot each stamp a pause and the second cannot
+ * overwrite the first one's reason with a later, less informative failure.
+ *
+ * `isEnabled` is deliberately left alone. Flipping it would say the operator
+ * turned this channel off, which is a different sentence and one they would
+ * have to undo by hand without ever being told why.
+ */
+async function pauseChannel(db: Db, channelId: string, reason: string, now: Date) {
+  await db.notificationChannel.updateMany({
+    where: { id: channelId, pausedAt: null },
+    data: { pausedAt: now, pauseReason: reason },
+  });
+}
+
+/** A delivery got through, so the run of failures the pause counted is over. */
+async function clearPause(db: Db, channelId: string) {
+  await db.notificationChannel.updateMany({
+    where: { id: channelId, pausedAt: { not: null } },
+    data: { pausedAt: null, pauseReason: null, lastProbeAt: null },
+  });
+}
+
+/**
+ * Called the moment a reminder is given up on, not on a schedule of its own.
+ *
+ * Counted since the channel last delivered anything, so one success resets it:
+ * three failures spread over a year with working weeks between them is not a
+ * broken channel, and pausing on a lifetime total would eventually pause every
+ * channel that has ever had a bad night.
+ */
+async function considerPause(db: Db, channelId: string, reason: string, now: Date) {
+  const lastOk = await db.reminderLog.findFirst({
+    where: { channelId, ok: true, sentAt: { not: null } },
+    orderBy: { sentAt: "desc" },
+    select: { sentAt: true },
+  });
+  const abandoned = await db.reminderLog.count({
+    where: {
+      channelId,
+      ok: false,
+      nextAttemptAt: null,
+      attemptCount: { gte: MAX_ATTEMPTS },
+      ...(lastOk?.sentAt ? { lastAttemptAt: { gt: lastOk.sentAt } } : {}),
+    },
+  });
+  if (shouldPause(abandoned)) {
+    await pauseChannel(db, channelId, reason, now);
+  }
+}
+
+/**
+ * Take a paused channel's daily probe, if it is owed one.
+ *
+ * The claim is the write: `lastProbeAt` is stamped before anything is sent, and
+ * only for a row that still looks due, so two overlapping passes cannot both
+ * decide to probe. Losing the race means not probing this hour, which costs
+ * nothing — the channel is paused either way.
+ */
+async function claimProbe(db: Db, channelId: string, now: Date): Promise<boolean> {
+  const { count } = await db.notificationChannel.updateMany({
+    where: {
+      id: channelId,
+      pausedAt: { not: null },
+      OR: [
+        { lastProbeAt: null },
+        { lastProbeAt: { lt: new Date(now.getTime() - PROBE_INTERVAL_MS) } },
+      ],
+    },
+    data: { lastProbeAt: now },
+  });
+  return count > 0;
+}
+
+/**
+ * Give one abandoned reminder a further attempt, as the probe.
+ *
+ * This is what a probe is made of, and the reason it cannot simply be "let one
+ * fresh candidate through". The reminders a dead channel swallowed already have
+ * ledger rows, and an overdue cadence or task regenerates the *same* candidate
+ * every hour — so it is skipped as already ledgered for ever. An account with
+ * nothing newly due would therefore never probe at all, and the pause the daily
+ * probe exists to lift would be permanent silence by another name.
+ *
+ * Requeueing an abandoned row instead sends something that was actually owed,
+ * through `currentMessage`, so the policy, state and privacy re-check applies
+ * exactly as it does to any other retry. `attemptCount` is put back to one
+ * below the limit rather than to zero: a probe is worth one attempt, not a
+ * fresh set of five.
+ */
+async function probeWithAbandoned(db: Db, channelId: string, now: Date): Promise<boolean> {
+  const row = await db.reminderLog.findFirst({
+    where: { channelId, ok: false, nextAttemptAt: null, attemptCount: { gte: MAX_ATTEMPTS } },
+    orderBy: { lastAttemptAt: "desc" },
+    select: { id: true },
+  });
+  if (!row) return false;
+  const { count } = await db.reminderLog.updateMany({
+    where: { id: row.id, ok: false, nextAttemptAt: null },
+    data: { nextAttemptAt: now, attemptCount: MAX_ATTEMPTS - 1 },
+  });
+  return count > 0;
+}
+
+/**
+ * Every paused channel owed a probe, claimed and armed before the pass runs.
+ *
+ * Returns the channels whose probe is still unspent — the ones with nothing
+ * abandoned left to requeue, because every such row has since been cancelled
+ * by a policy or state change. Those fall back to being allowed one fresh
+ * candidate in the fan-out, so a channel cannot become permanently unprobeable.
+ */
+async function armProbes(db: Db, now: Date): Promise<Set<string>> {
+  const paused = await db.notificationChannel.findMany({
+    where: { isEnabled: true, pausedAt: { not: null } },
+    select: { id: true, pausedAt: true, lastProbeAt: true },
+  });
+  const unspent = new Set<string>();
+  for (const channel of paused) {
+    if (!dueForProbe(channel, now)) continue;
+    if (!(await claimProbe(db, channel.id, now))) continue;
+    if (!(await probeWithAbandoned(db, channel.id, now))) unspent.add(channel.id);
+  }
+  return unspent;
+}
+
+/**
+ * Delete delivered ledger rows old enough that their occurrence cannot come
+ * round again.
+ *
+ * **The row is what stops a second send**, so this is narrower than it looks.
+ * `PRUNABLE_POLICIES` says which policies are safe and why: cadence and task
+ * reminders regenerate an identical candidate every hour until you act on
+ * them, so deleting one of those rows does not tidy history, it re-sends the
+ * reminder. Both bounds have to be past — `sentAt` for when it went out and
+ * `scheduledFor` for the occurrence itself, which an offset of up to a year
+ * can put ahead of the send.
+ *
+ * Failed and abandoned rows are kept whatever their age: they are what the
+ * channel's health is read from, and there are few of them by construction.
+ */
+export async function pruneReminderLog(
+  now: Date = new Date(),
+  dependencies: { db?: Db } = {},
+): Promise<number> {
+  const db = dependencies.db ?? prisma;
+  const cutoff = new Date(now.getTime() - LEDGER_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const { count } = await db.reminderLog.deleteMany({
+    where: {
+      ok: true,
+      schedulingPolicy: { in: [...PRUNABLE_POLICIES] },
+      sentAt: { lt: cutoff },
+      scheduledFor: { lt: cutoff },
+    },
+  });
+  return count;
+}
+
 async function cancel(db: Db, id: string, reason: string) {
   await db.reminderLog.update({ where: { id }, data: { nextAttemptAt: null, error: reason } });
 }
@@ -873,10 +1042,14 @@ async function createAndDeliver(
   }
   try {
     await send(live, message.subject, message.body, undefined, message.data);
+    const at = clock();
     await db.reminderLog.update({
       where: { id: log.id },
-      data: { ok: true, sentAt: clock(), attemptCount: 1, nextAttemptAt: null },
+      data: { ok: true, sentAt: at, lastAttemptAt: at, attemptCount: 1, nextAttemptAt: null },
     });
+    // Anything getting through is the answer a pause was waiting for, probe or
+    // not: the run of failures it was counting has ended.
+    if (live.pausedAt) await clearPause(db, live.id);
     return true;
   } catch (error) {
     // From the clock, like the lease: a deadline stamped from the pass's
@@ -885,6 +1058,7 @@ async function createAndDeliver(
       where: { id: log.id },
       data: {
         attemptCount: 1,
+        lastAttemptAt: clock(),
         error: error instanceof Error ? error.message : "Delivery failed.",
         nextAttemptAt: new Date(clock().getTime() + FIRST_RETRY_MS),
       },
@@ -915,6 +1089,10 @@ export async function processReminderDeliveries(
   let sent = 0;
   let failed = 0;
 
+  // Before anything else, so a requeued reminder is picked up by this pass's
+  // own retry loop rather than waiting an hour for the next one.
+  const unspentProbes = await armProbes(db, now);
+
   const users = await db.user.findMany({
     where: { isActive: true },
     select: { id: true, preference: PREFERENCE, notificationChannels: { where: { isEnabled: true } } },
@@ -925,13 +1103,24 @@ export async function processReminderDeliveries(
     const candidates = await candidatesForUser(db, user, now);
     if (candidates.length === 0) continue;
 
+    // A paused channel is skipped rather than dropped: it stays in the list so
+    // one delivery a day can still be tried against it. Anything else and a
+    // pause would be permanent silence until somebody opened Settings, which
+    // is the state this whole feature exists to end.
+    const usable = user.notificationChannels.filter(
+      (channel) => !channel.pausedAt || unspentProbes.has(channel.id),
+    );
+    if (usable.length === 0) continue;
+    /** Paused channels get exactly one delivery per pass, not a full pass. */
+    const probeSpent = new Set<string>();
+
     // An overdue cadence or task stays a candidate every hour until someone
     // acts on it, so most of what is owed on any pass has already been sent.
     // One read of the keys already in the ledger keeps that from being one
     // failed insert per item per channel per hour, with the unique key kept
     // for the race between two schedulers rather than as the normal path.
     const pairs = candidates.flatMap((candidate) =>
-      user.notificationChannels.map((channel) => ({ candidate, channel, dedupKey: dedupKeyFor(user, candidate, channel) })),
+      usable.map((channel) => ({ candidate, channel, dedupKey: dedupKeyFor(user, candidate, channel) })),
     );
     const rows = await db.reminderLog.findMany({
       where: { ownerId: user.id, dedupKey: { in: pairs.map((pair) => pair.dedupKey) } },
@@ -960,6 +1149,14 @@ export async function processReminderDeliveries(
       if (candidate.supersedes?.some((id) =>
         superseded.has(supersededKey(id, candidate.scheduledFor, candidate.offsetDays, channel.id)),
       )) continue;
+      // A paused channel reaches here only with a probe already claimed and
+      // nothing abandoned to spend it on, and then for one candidate: the
+      // probe is a real reminder, so a channel that is still broken costs one
+      // delivery a day rather than one per reminder due.
+      if (channel.pausedAt) {
+        if (probeSpent.has(channel.id)) continue;
+        probeSpent.add(channel.id);
+      }
       const result = await createAndDeliver(db, send, user, candidate, channel, dedupKey, now, clock);
       if (result === true) sent += 1;
       if (result === false) failed += 1;
@@ -1016,21 +1213,30 @@ export async function processReminderDeliveries(
     }
     try {
       await send(live, message.subject, message.body, undefined, message.data);
+      const at = clock();
       await db.reminderLog.update({
         where: { id: log.id },
-        data: { ok: true, sentAt: clock(), attemptCount: { increment: 1 }, nextAttemptAt: null, error: null },
+        data: { ok: true, sentAt: at, lastAttemptAt: at, attemptCount: { increment: 1 }, nextAttemptAt: null, error: null },
       });
+      if (live.pausedAt) await clearPause(db, live.id);
       sent += 1;
     } catch (error) {
       const attempt = log.attemptCount + 1;
+      const reason = error instanceof Error ? error.message : "Delivery failed.";
+      const at = clock();
+      const abandoning = attempt >= MAX_ATTEMPTS;
       await db.reminderLog.update({
         where: { id: log.id },
         data: {
           attemptCount: attempt,
-          error: error instanceof Error ? error.message : "Delivery failed.",
-          nextAttemptAt: attempt < MAX_ATTEMPTS ? new Date(clock().getTime() + FIRST_RETRY_MS * 2 ** (attempt - 1)) : null,
+          lastAttemptAt: at,
+          error: reason,
+          nextAttemptAt: abandoning ? null : new Date(at.getTime() + FIRST_RETRY_MS * 2 ** (attempt - 1)),
         },
       });
+      // The only place a reminder is given up on, so the only place the run of
+      // them can have just reached the point of not asking this channel again.
+      if (abandoning) await considerPause(db, live.id, reason, at);
       failed += 1;
     }
   }

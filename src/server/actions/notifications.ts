@@ -263,6 +263,35 @@ export async function setChannelEnabled(id: string, enabled: boolean): Promise<A
   return ok();
 }
 
+/**
+ * Start attempting a paused channel again.
+ *
+ * Separate from `setChannelEnabled` because the two states mean different
+ * things: `isEnabled` is the operator's own switch, and `pausedAt` is the app
+ * saying it stopped trying and why. Collapsing them would make a channel you
+ * turned off and a channel that broke indistinguishable, and resuming one
+ * would silently switch on the other.
+ *
+ * The health read counts abandoned reminders since the last success, so the
+ * ledger is left exactly as it is: nothing here rewrites history, and if the
+ * channel is still broken the next run of failures pauses it again.
+ */
+export async function resumeChannel(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const existing = await prisma.notificationChannel.findFirst({
+    where: { id, ownerId },
+    select: { id: true },
+  });
+  if (!existing) return fail("Not found.");
+
+  await prisma.notificationChannel.update({
+    where: { id },
+    data: { pausedAt: null, pauseReason: null, lastProbeAt: null },
+  });
+  touch();
+  return ok();
+}
+
 export async function deleteChannel(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
   const existing = await prisma.notificationChannel.findFirst({
@@ -337,6 +366,17 @@ export async function sendTestNotification(id: string): Promise<ActionResult> {
     );
   } catch (error) {
     return fail(await testFailureMessage(error));
+  }
+
+  // A send that got through is the same evidence a probe would have produced,
+  // so fixing the token and pressing test is enough — there is no second step
+  // where you also have to remember to resume it.
+  if (channel.pausedAt) {
+    await prisma.notificationChannel.update({
+      where: { id: channel.id },
+      data: { pausedAt: null, pauseReason: null, lastProbeAt: null },
+    });
+    touch();
   }
 
   return ok();

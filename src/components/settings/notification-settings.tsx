@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Bell, TriangleAlert } from "lucide-react";
+import { Bell, CircleCheck, PauseCircle, TriangleAlert } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -18,11 +18,15 @@ import {
   type ChannelField,
   type ChannelKind,
 } from "@/lib/notification-channels";
+import type { SettingsChannel } from "@/server/queries/notifications";
 import type { RedactedChannel } from "@/server/notifications/config";
+import { channelState, PAUSE_AFTER_ABANDONED, type ChannelHealth } from "@/lib/channel-health";
+import { relativeInstant } from "@/lib/format";
 import type { ActionResult } from "@/server/actions/helpers";
 import {
   createChannel,
   deleteChannel,
+  resumeChannel,
   sendTestNotification,
   setChannelEnabled,
   updateChannel,
@@ -92,7 +96,7 @@ export function NotificationSettings({
   channels,
   digest,
 }: {
-  channels: RedactedChannel[];
+  channels: SettingsChannel[];
   digest: DigestPreference;
 }) {
   const { errors, submit } = useChannelForm();
@@ -129,7 +133,7 @@ export function NotificationSettings({
       <DigestSettings digest={digest} />
 
       {channels.map((channel) => (
-        <ChannelCard key={channel.id} channel={channel} />
+        <ChannelCard key={channel.id} channel={channel} timezone={digest.timezone} />
       ))}
 
       <section className="rounded-xl border border-dashed border-border p-4">
@@ -242,7 +246,7 @@ function DigestSettings({ digest }: { digest: DigestPreference }) {
   );
 }
 
-function ChannelCard({ channel }: { channel: RedactedChannel }) {
+function ChannelCard({ channel, timezone }: { channel: SettingsChannel; timezone: string }) {
   const run = useAction();
   const { errors, submit } = useChannelForm();
   const [editing, setEditing] = React.useState(false);
@@ -284,6 +288,12 @@ function ChannelCard({ channel }: { channel: RedactedChannel }) {
           </span>
         </p>
       ) : null}
+
+      <ChannelHealthNote
+        channel={channel}
+        timezone={timezone}
+        onResume={() => void run(() => resumeChannel(channel.id), "Sending to it again")}
+      />
 
       {editing ? (
         <form
@@ -341,6 +351,92 @@ function ChannelCard({ channel }: { channel: RedactedChannel }) {
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * Whether this channel is actually delivering.
+ *
+ * The card used to say only what the channel *was* — its kind and address — so
+ * a revoked token or a host that started answering 404 looked exactly like a
+ * quiet week. Everything below is read from the delivery ledger; none of it
+ * names a person, because the errors it reports are transport errors and the
+ * counts are counts of deliveries.
+ */
+function ChannelHealthNote({
+  channel,
+  timezone,
+  onResume,
+}: {
+  channel: SettingsChannel;
+  timezone: string;
+  onResume: () => void;
+}) {
+  const health: ChannelHealth = channel.health;
+  const state = channelState(health);
+  const when = (iso: string | null) =>
+    iso ? relativeInstant(new Date(iso), timezone).toLowerCase() : null;
+
+  if (state === "paused") {
+    return (
+      <div className="mt-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2 text-xs">
+        <p className="flex items-start gap-1.5">
+          <PauseCircle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+          <span>
+            <strong className="font-medium">Paused {when(health.pausedAt)}</strong> after{" "}
+            {PAUSE_AFTER_ABANDONED} reminders went undelivered. One delivery a day is still
+            tried, so this clears itself if the problem goes away.
+          </span>
+        </p>
+        {health.pauseReason ? (
+          <p className="mt-1 pl-5 text-muted-foreground">{health.pauseReason}</p>
+        ) : null}
+        <Button type="button" variant="outline" size="sm" className="mt-2" onClick={onResume}>
+          Send to it again
+        </Button>
+      </div>
+    );
+  }
+
+  if (state === "failing") {
+    return (
+      <p className="mt-2 flex items-start gap-1.5 rounded-lg border border-[color-mix(in_oklab,var(--warning)_40%,transparent)] bg-[color-mix(in_oklab,var(--warning)_8%,transparent)] p-2 text-xs">
+        <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-[var(--warning-11)]" />
+        <span>
+          {health.abandoned > 0 ? (
+            <>
+              <strong className="font-medium">
+                {health.abandoned} {health.abandoned === 1 ? "reminder" : "reminders"} never
+                arrived
+              </strong>{" "}
+              here. They are not retried again.{" "}
+            </>
+          ) : (
+            <>
+              <strong className="font-medium">The last delivery failed</strong>
+              {when(health.lastFailureAt) ? ` ${when(health.lastFailureAt)}` : ""}, and is being
+              retried.{" "}
+            </>
+          )}
+          {health.lastError ? <span className="text-muted-foreground">{health.lastError}</span> : null}
+        </span>
+      </p>
+    );
+  }
+
+  if (state === "healthy") {
+    return (
+      <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <CircleCheck className="size-3.5 shrink-0 text-[var(--success-11)]" />
+        Last delivered {when(health.lastOkAt)}.
+      </p>
+    );
+  }
+
+  return (
+    <p className="mt-2 text-xs text-muted-foreground">
+      Nothing has been sent to this channel yet.
+    </p>
   );
 }
 

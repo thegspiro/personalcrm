@@ -28,6 +28,114 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
   beforeEach(reset);
   afterAll(() => prisma.$disconnect());
 
+  /**
+   * An account with one channel and one overdue person, so every hourly pass
+   * has exactly one reminder to attempt. That makes the run of failures a
+   * pause counts easy to drive without inventing ledger rows by hand.
+   */
+  async function accountWithOneOverduePerson() {
+    const user = await createTestUser();
+    await prisma.userPreference.create({
+      data: { userId: user.id, timezone: "UTC", digestEnabled: false },
+    });
+    const channel = await prisma.notificationChannel.create({
+      data: { ownerId: user.id, kind: "WEBHOOK", name: "Desk", config: { url: "https://example.invalid" } },
+    });
+    await prisma.contact.create({
+      data: {
+        ownerId: user.id,
+        firstName: "Overdue",
+        nextTouchAt: new Date("2026-09-01T00:00:00Z"),
+      },
+    });
+    return { user, channel };
+  }
+
+  /** Run enough hourly passes for one reminder to use every attempt it gets. */
+  async function exhaustOneReminder(send: () => Promise<void>, from: Date) {
+    for (let hour = 0; hour < 6; hour += 1) {
+      await processImportantDateReminders(new Date(from.getTime() + hour * 3_600_000), {
+        db: prisma,
+        send,
+      });
+    }
+  }
+
+  it("stamps every attempt, so a failure has a time to report", async () => {
+    // `sentAt` is only written on success, so before this a failed row carried
+    // no instant at all and "when did this channel last fail?" — the question
+    // the settings page exists to answer — had no answer in the data.
+    const { channel } = await accountWithOneOverduePerson();
+    const send = vi.fn(async () => { throw new Error("Channel returned HTTP 401."); });
+    const now = new Date("2026-09-09T10:00:00Z");
+    await processImportantDateReminders(now, { db: prisma, send });
+
+    const row = await prisma.reminderLog.findFirstOrThrow({ where: { channelId: channel.id } });
+    expect(row.ok).toBe(false);
+    expect(row.sentAt).toBeNull();
+    expect(row.lastAttemptAt).toEqual(now);
+    expect(row.error).toContain("401");
+  });
+
+  it("pauses a channel once a run of reminders has been given up on", async () => {
+    const { user, channel } = await accountWithOneOverduePerson();
+    // Two more people, so three separate reminders can each exhaust their
+    // attempts against the same dead channel.
+    for (const firstName of ["Second", "Third"]) {
+      await prisma.contact.create({
+        data: { ownerId: user.id, firstName, nextTouchAt: new Date("2026-09-01T00:00:00Z") },
+      });
+    }
+    const send = vi.fn(async () => { throw new Error("connect ECONNREFUSED"); });
+    await exhaustOneReminder(send, new Date("2026-09-09T10:00:00Z"));
+
+    const abandoned = await prisma.reminderLog.count({
+      where: { channelId: channel.id, ok: false, nextAttemptAt: null, attemptCount: { gte: 5 } },
+    });
+    expect(abandoned).toBe(3);
+
+    const after = await prisma.notificationChannel.findFirstOrThrow({ where: { id: channel.id } });
+    expect(after.pausedAt).not.toBeNull();
+    expect(after.pauseReason).toContain("ECONNREFUSED");
+    // The operator's own switch is untouched: "I turned this off" and "the app
+    // gave up on this" have to stay distinguishable, or resuming cannot tell
+    // which one it is undoing.
+    expect(after.isEnabled).toBe(true);
+  });
+
+  it("stops attempting a paused channel, but still probes it once a day", async () => {
+    const { user, channel } = await accountWithOneOverduePerson();
+    await prisma.contact.createMany({
+      data: ["Second", "Third"].map((firstName) => ({
+        ownerId: user.id,
+        firstName,
+        nextTouchAt: new Date("2026-09-01T00:00:00Z"),
+      })),
+    });
+    const send = vi.fn<() => Promise<void>>(async () => { throw new Error("connect ECONNREFUSED"); });
+    const start = new Date("2026-09-09T10:00:00Z");
+    await exhaustOneReminder(send, start);
+    expect((await prisma.notificationChannel.findFirstOrThrow({ where: { id: channel.id } })).pausedAt)
+      .not.toBeNull();
+
+    // The hour after the pause: nothing new is attempted, and the probe that
+    // was taken on the pausing pass is not repeated.
+    send.mockClear();
+    await processImportantDateReminders(new Date(start.getTime() + 7 * 3_600_000), { db: prisma, send });
+    const attemptsWhilePaused = send.mock.calls.length;
+    expect(attemptsWhilePaused).toBeLessThanOrEqual(1);
+
+    // A day later the box is back. One probe gets through and the pause lifts,
+    // so nobody has to notice it happened.
+    send.mockClear();
+    send.mockImplementation(async () => undefined);
+    await processImportantDateReminders(new Date(start.getTime() + 30 * 3_600_000), { db: prisma, send });
+    expect(send).toHaveBeenCalled();
+    const healed = await prisma.notificationChannel.findFirstOrThrow({ where: { id: channel.id } });
+    expect(healed.pausedAt).toBeNull();
+    expect(healed.pauseReason).toBeNull();
+  });
+
   it("creates one idempotent delivery and excludes archived and locked-private contacts", async () => {
     const user = await createTestUser();
     await prisma.userPreference.create({ data: { userId: user.id, timezone: "America/Los_Angeles", privacyLockEnabled: true, digestEnabled: false } });

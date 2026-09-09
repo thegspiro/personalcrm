@@ -27,8 +27,15 @@ vi.mock("node:dns/promises", () => ({
   // A public answer for everything, so no test depends on the network — except
   // one name that answers with nothing, which is how a destination that cannot
   // be resolved reaches the code under test.
+  // One name answers with the loopback, so a test can stand up a server and
+  // drive a delivery that actually succeeds — the only way to cover what
+  // happens *after* a send works, which is where a pause is lifted.
   lookup: async (hostname: string) =>
-    hostname.includes("unresolvable") ? [] : [{ address: "93.184.216.34", family: 4 }],
+    hostname.includes("unresolvable")
+      ? []
+      : hostname.includes("loopback")
+        ? [{ address: "127.0.0.1", family: 4 }]
+        : [{ address: "93.184.216.34", family: 4 }],
 }));
 
 vi.mock("@/server/user/context", () => ({
@@ -42,11 +49,13 @@ vi.mock("@/server/user/context", () => ({
 const {
   createChannel,
   deleteChannel,
+  resumeChannel,
   sendTestNotification,
   setChannelEnabled,
   updateChannel,
 } = await import("@/server/actions/notifications");
-const { listChannelsForSettings } = await import("@/server/queries/notifications");
+const { channelHealth, listChannelsForSettings } = await import("@/server/queries/notifications");
+const { pruneReminderLog } = await import("@/server/services/reminders");
 const { resolveChannelSecrets } = await import("@/server/notifications/config");
 const { deliverToChannel } = await import("@/server/services/notify");
 
@@ -362,6 +371,253 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     );
     return sent[0];
   }
+
+
+  /**
+   * Delivery health, which nothing read back until this existed.
+   *
+   * A channel that has quietly stopped working is the one failure this app
+   * cannot report through the thing that broke, so the ledger it was already
+   * writing had to start reaching the settings page.
+   */
+  describe("channel health", () => {
+    async function ledger(
+      channelId: string,
+      rows: Array<{ ok: boolean; at: Date; attempts?: number; error?: string; policy?: string }>,
+    ) {
+      let key = 0;
+      for (const row of rows) {
+        key += 1;
+        await prisma.reminderLog.create({
+          data: {
+            ownerId,
+            entityType: "CADENCE",
+            entityId: `entity-${key}`,
+            schedulingPolicy: row.policy ?? "OVERDUE_CADENCE",
+            dedupKey: `health-fixture-${channelId}-${key}`,
+            scheduledFor: new Date("2026-09-01"),
+            channelId,
+            ok: row.ok,
+            sentAt: row.ok ? row.at : null,
+            lastAttemptAt: row.at,
+            attemptCount: row.attempts ?? (row.ok ? 1 : 5),
+            nextAttemptAt: null,
+            error: row.ok ? null : row.error ?? "Channel returned HTTP 401.",
+          },
+        });
+      }
+    }
+
+    async function channel(overrides: Record<string, unknown> = {}) {
+      return prisma.notificationChannel.create({
+        data: {
+          ownerId,
+          kind: "GOTIFY",
+          name: "Gotify",
+          config: { url: "https://gotify.example/message", token: "t" },
+          ...overrides,
+        },
+      });
+    }
+
+    it("says nothing has been tried rather than reporting a new channel as healthy", async () => {
+      await channel();
+      const [only] = await listChannelsForSettings(ownerId);
+      // A channel added a minute ago has delivered nothing and failed at
+      // nothing, which is also the state one that will never work is in.
+      expect(only.health).toMatchObject({
+        lastOkAt: null,
+        lastFailureAt: null,
+        abandoned: 0,
+        pausedAt: null,
+      });
+    });
+
+    it("counts only what has been given up on since the last success", async () => {
+      const row = await channel();
+      await ledger(row.id, [
+        { ok: false, at: new Date("2026-09-01T10:00:00Z") },
+        { ok: true, at: new Date("2026-09-02T10:00:00Z") },
+        { ok: false, at: new Date("2026-09-03T10:00:00Z"), error: "connect ECONNREFUSED" },
+        { ok: false, at: new Date("2026-09-04T10:00:00Z"), error: "connect ECONNREFUSED" },
+      ]);
+
+      const health = await channelHealth(row);
+      // A channel that failed in March and has worked every day since is not
+      // broken; counting a lifetime total would eventually condemn every one.
+      expect(health.abandoned).toBe(2);
+      expect(health.lastOkAt).toBe("2026-09-02T10:00:00.000Z");
+      expect(health.lastFailureAt).toBe("2026-09-04T10:00:00.000Z");
+      expect(health.lastError).toBe("connect ECONNREFUSED");
+    });
+
+    it("does not count a cancelled reminder as a delivery failure", async () => {
+      const row = await channel();
+      // Cancelled rows have the same empty nextAttemptAt as an abandoned one —
+      // a completed task, a contact made private. They are not failures, and
+      // the scheduler puts them back on the retry path when they are owed
+      // again, so counting them would report a working channel as broken.
+      await ledger(row.id, [
+        { ok: false, at: new Date("2026-09-03T10:00:00Z"), attempts: 2, error: "Delivery cancelled." },
+      ]);
+      expect((await channelHealth(row)).abandoned).toBe(0);
+    });
+
+    it("carries the pause and its reason to the settings page", async () => {
+      const row = await channel({
+        pausedAt: new Date("2026-09-05T10:00:00Z"),
+        pauseReason: "Channel returned HTTP 401.",
+      });
+      const health = await channelHealth(row);
+      expect(health.pausedAt).toBe("2026-09-05T10:00:00.000Z");
+      expect(health.pauseReason).toBe("Channel returned HTTP 401.");
+    });
+
+    it("resumes a paused channel without touching the switch or the ledger", async () => {
+      const row = await channel({
+        isEnabled: true,
+        pausedAt: new Date("2026-09-05T10:00:00Z"),
+        pauseReason: "nope",
+        lastProbeAt: new Date("2026-09-05T11:00:00Z"),
+      });
+      await ledger(row.id, [{ ok: false, at: new Date("2026-09-05T10:00:00Z") }]);
+
+      expect((await resumeChannel(row.id)).ok).toBe(true);
+      const after = await prisma.notificationChannel.findFirstOrThrow({ where: { id: row.id } });
+      expect(after.pausedAt).toBeNull();
+      expect(after.pauseReason).toBeNull();
+      expect(after.lastProbeAt).toBeNull();
+      expect(after.isEnabled).toBe(true);
+      // History is left alone: if it is still broken, the next run of failures
+      // pauses it again rather than starting from a clean slate that hides it.
+      expect(await prisma.reminderLog.count({ where: { channelId: row.id } })).toBe(1);
+    });
+
+    it("refuses to resume another account's channel", async () => {
+      const stranger = await createTestUser();
+      const theirs = await prisma.notificationChannel.create({
+        data: {
+          ownerId: stranger.id,
+          kind: "NTFY",
+          name: "Theirs",
+          config: { url: "https://ntfy.sh/theirs" },
+          pausedAt: new Date("2026-09-05T10:00:00Z"),
+        },
+      });
+      expect((await resumeChannel(theirs.id)).ok).toBe(false);
+      expect(
+        (await prisma.notificationChannel.findFirstOrThrow({ where: { id: theirs.id } })).pausedAt,
+      ).not.toBeNull();
+    });
+
+    it("lifts a pause when a test send gets through", async () => {
+      const server = createServer((_request: IncomingMessage, response: ServerResponse) => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end("{}");
+      });
+      try {
+        await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+        const port = (server.address() as AddressInfo).port;
+        const row = await channel({
+          config: { url: `http://loopback.test:${port}/message`, token: "t" },
+          pausedAt: new Date("2026-09-05T10:00:00Z"),
+          pauseReason: "Channel returned HTTP 401.",
+        });
+
+        // Fixing the token and pressing test is the same evidence a probe
+        // would have produced; needing to also remember to resume afterwards
+        // is a second step nobody would find.
+        expect((await sendTestNotification(row.id)).ok).toBe(true);
+        const after = await prisma.notificationChannel.findFirstOrThrow({ where: { id: row.id } });
+        expect(after.pausedAt).toBeNull();
+        expect(after.pauseReason).toBeNull();
+        expect(after.lastProbeAt).toBeNull();
+      } finally {
+        await new Promise<void>((done) => server.close(() => done()));
+      }
+    });
+  });
+
+  describe("pruning the ledger", () => {
+    async function delivered(policy: string, sentAt: Date, scheduledFor: Date, key: string) {
+      const row = await prisma.notificationChannel.create({
+        data: { ownerId, kind: "NTFY", name: key, config: { url: "https://ntfy.sh/x" } },
+      });
+      return prisma.reminderLog.create({
+        data: {
+          ownerId,
+          entityType: "DIGEST",
+          entityId: `entity-${key}`,
+          schedulingPolicy: policy,
+          dedupKey: `prune-${key}`,
+          scheduledFor,
+          channelId: row.id,
+          ok: true,
+          sentAt,
+          lastAttemptAt: sentAt,
+          attemptCount: 1,
+        },
+      });
+    }
+
+    const now = new Date("2026-09-09T12:00:00Z");
+    const ancient = new Date("2026-01-01T12:00:00Z");
+
+    it("never deletes a row whose reminder would simply be sent again", async () => {
+      // The ledger row is the only thing stopping a second send, and an overdue
+      // cadence keys on a `nextTouchAt` that does not move until an interaction
+      // is logged — so the same candidate is regenerated on the very next
+      // hourly pass. Deleting it does not tidy history; it re-sends.
+      const cadence = await delivered("OVERDUE_CADENCE", ancient, ancient, "cadence");
+      const task = await delivered("INCOMPLETE_TASK_DUE", ancient, ancient, "task");
+
+      expect(await pruneReminderLog(now, { db: prisma })).toBe(0);
+      expect(await prisma.reminderLog.count({ where: { id: { in: [cadence.id, task.id] } } })).toBe(2);
+    });
+
+    it("deletes delivered rows whose occurrence cannot come round again", async () => {
+      const digest = await delivered("DAILY_DIGEST", ancient, ancient, "digest");
+      const date = await delivered("IMPORTANT_DATE_OFFSET", ancient, ancient, "date");
+      const plan = await delivered("SCHEDULED_PLAN", ancient, ancient, "plan");
+
+      expect(await pruneReminderLog(now, { db: prisma })).toBe(3);
+      expect(await prisma.reminderLog.count({ where: { id: { in: [digest.id, date.id, plan.id] } } }))
+        .toBe(0);
+    });
+
+    it("keeps a row whose occurrence is still ahead of the window", async () => {
+      // A reminder can be sent up to a year before the day it is about, so the
+      // send being old does not mean the occurrence is. Both bounds have to be
+      // past before the row is safe to lose.
+      const early = await delivered("IMPORTANT_DATE_OFFSET", ancient, new Date("2026-12-25"), "early");
+      expect(await pruneReminderLog(now, { db: prisma })).toBe(0);
+      expect(await prisma.reminderLog.count({ where: { id: early.id } })).toBe(1);
+    });
+
+    it("keeps failures whatever their age, because health is read from them", async () => {
+      const row = await prisma.notificationChannel.create({
+        data: { ownerId, kind: "NTFY", name: "Old", config: { url: "https://ntfy.sh/x" } },
+      });
+      await prisma.reminderLog.create({
+        data: {
+          ownerId,
+          entityType: "DIGEST",
+          entityId: "entity-failed",
+          schedulingPolicy: "DAILY_DIGEST",
+          dedupKey: "prune-failed",
+          scheduledFor: ancient,
+          channelId: row.id,
+          ok: false,
+          lastAttemptAt: ancient,
+          attemptCount: 5,
+          nextAttemptAt: null,
+          error: "Channel returned HTTP 500.",
+        },
+      });
+      expect(await pruneReminderLog(now, { db: prisma })).toBe(0);
+      expect(await prisma.reminderLog.count()).toBe(1);
+    });
+  });
 
   it("authenticates Gotify with its own header, not a bearer token", async () => {
     const sent = await gotifySend({ url: "https://gotify.example/message", token: "app-token" });

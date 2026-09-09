@@ -689,6 +689,13 @@ account's channels are its own and `owner()` scoping is the whole guard. The
 other two store an `AppSetting`, which belongs to the *installation* and has no
 owner to scope by — which is why they need a role check and this does not.
 
+`resumeChannel` clears an automatic pause. It deliberately does not touch
+`isEnabled` or the ledger: the switch is the operator's own answer, and the
+history is what the channel's health is read from — starting from a clean slate
+would hide the failures rather than fix them, and a channel that is still
+broken pauses again on its next run of them. A successful `sendTestNotification`
+clears a pause for the same reason a probe would.
+
 `sendTestNotification` is separate from saving on purpose. Verifying before
 storing is right for the AI key — one global value, where a bad key means
 silent nothingness — and wrong for a row: a Gotify box down for ten minutes
