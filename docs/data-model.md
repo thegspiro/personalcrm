@@ -930,6 +930,21 @@ Enabled channels receive due important-date reminders from the hourly scheduler.
 
 ### `NotificationChannel`
 
+`pausedAt`, `pauseReason` and `lastProbeAt` hold delivery health. **They are
+not `isEnabled`**: that switch is the operator's own answer, and collapsing the
+two would make "I turned this off" and "the app gave up on this" the same
+state, so resuming could not tell them apart. A channel is paused after
+`PAUSE_AFTER_ABANDONED` reminders since its last success have used every
+attempt; while paused it is skipped except for one probe a day, which requeues
+an abandoned reminder rather than waiting for a new one — the reminders a dead
+channel swallowed are already in the ledger and an overdue cadence regenerates
+the same candidate for ever, so "let one fresh candidate through" would never
+fire on an account with nothing newly due.
+
+`ReminderLog.lastAttemptAt` is stamped on every attempt, delivered or not.
+`sentAt` is only written on success, so without it a failed row carried no
+instant and "when did this channel last fail?" had no answer in the data.
+
 `kind`: `EMAIL` | `NTFY` | `GOTIFY` | `DISCORD` | `WEBHOOK`; `name`; `config`
 JSON (channel-specific); `isEnabled`. Email uses `host`, `port` (a **number**,
 defaulted to 587), `secure`, optional `user`, and required `from`/`to`.

@@ -83,6 +83,7 @@ Documented so nobody assumes a feature works:
 | **Finding a number by a different format** | Contact search matches the stored string, so someone filed as `+1 (555) 010-4477` is not found by typing `5550104477`. Deliberate: normalising would mean guessing a country nobody supplied |
 | **The calendar feed is a rolling window** | The subscription carries one month back and thirteen months forward, re-fetched on your calendar app's schedule, rather than an endless recurring rule. Every annual date therefore appears, but looking years ahead in your calendar will not show them. Interactions are left out entirely — a subscription is for what is coming |
 | **The calendar feed omits what is private** | Whoever fetches it is not signed in and cannot unlock, so it is built as though the lock were closed. For an account that uses the privacy marker the feed is deliberately incomplete; see [privacy.md](privacy.md#the-calendar-subscription) |
+| **A reminder is given up on after about four hours** | Five attempts, paced by the hourly scheduler. A channel that is unreachable for longer than that loses whatever was owed in the window; the reminders are not re-sent when it comes back. Settings → Reminders now counts them, and pauses a channel after three, so the loss is at least visible rather than silent |
 | **Offline writes** | Deliberately absent. Non-GET requests go straight to the network and fail honestly rather than pretending something was saved |
 
 The project is under active development and nothing has been tagged as a
