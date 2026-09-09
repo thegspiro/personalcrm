@@ -13,7 +13,67 @@ export type SchedulingPolicy =
 export interface ReminderMessage {
   subject: string;
   body: string;
+  /** The same reminder, in fields rather than prose. */
+  data: ReminderData;
 }
+
+/**
+ * The machine-readable half of a reminder, for channels that can carry one.
+ *
+ * Every field here is already stated in the body — the person's name, the
+ * label, the day — so a channel that receives it learns nothing it was not
+ * already being told in prose. That is the rule this type is built to keep,
+ * and the reason there are no identifiers in it: a `contactId` would say
+ * nothing new about *today's* message and everything about which messages
+ * across months are about the same person, which the wording alone does not
+ * hand over. There is nothing on the receiving end that needs one.
+ *
+ * It is derived here rather than in the sender so that the wording and the
+ * fields cannot disagree: both are built from the same arguments, in the same
+ * function, and a change to one is made looking straight at the other.
+ */
+export interface ReminderData {
+  policy: SchedulingPolicy;
+  /** The day the reminder is about, as `YYYY-MM-DD`. */
+  date: string;
+  /**
+   * Whole days from the day this is being sent to `date`; negative has
+   * already passed. The receiving end cannot work this out for itself — it
+   * knows its own clock, not the owner's timezone, and those disagree for
+   * several hours of every day.
+   */
+  daysAway: number;
+  /** Important dates only. */
+  label?: string;
+  /** Tasks and plans only. */
+  title?: string;
+  /** Absent when the reminder is not about one particular person. */
+  contactName?: string;
+  /** Plans only, and only when the plan carries a time. */
+  startsAt?: string;
+  /** Digest only: the entries the body listed, in the order it listed them. */
+  items?: ReminderDataItem[];
+  /** Digest only: entries past the cap, which the body reports as a count. */
+  hiddenItems?: number;
+  /**
+   * Set only by the sample the test button sends. The subject and the body
+   * both say they are a sample; something reading the fields instead of the
+   * words needs to be told as plainly, or a channel wired into an automation
+   * acts on five invented people the first time it is tested.
+   */
+  sample?: true;
+}
+
+export interface ReminderDataItem {
+  kind: DigestItem["kind"];
+  label?: string;
+  title?: string;
+  contactName?: string;
+  date: string;
+  timing: DigestTiming;
+}
+
+export type DigestTiming = "overdue" | "due today" | "upcoming";
 
 export function localClock(instant: Date, timezone: string): PlainDate & { hour: number } {
   const date = calendarDateInTz(instant, timezone);
@@ -70,9 +130,17 @@ export function importantDateMessage(
   occurrence: PlainDate,
   today: PlainDate,
 ): ReminderMessage {
+  const days = diffPlainDays(today, occurrence);
   return {
     subject: `Reminder: ${label}`,
-    body: `${label} for ${person} ${relativeWhen(diffPlainDays(today, occurrence))} (${plainDateKey(occurrence)}).`,
+    body: `${label} for ${person} ${relativeWhen(days)} (${plainDateKey(occurrence)}).`,
+    data: {
+      policy: "IMPORTANT_DATE_OFFSET",
+      date: plainDateKey(occurrence),
+      daysAway: days,
+      label,
+      contactName: person,
+    },
   };
 }
 
@@ -102,20 +170,51 @@ export function scheduledPlanMessage(
     // uses once its day has passed, and it makes no claim about the tense.
     subject: `${days < 0 ? "Reminder" : "Coming up"}: ${title}`,
     body: `${title}${who} ${relativeWhen(days)}${at} (${plainDateKey(occurrence)}).`,
+    data: {
+      policy: "SCHEDULED_PLAN",
+      date: plainDateKey(occurrence),
+      daysAway: days,
+      title,
+      ...(person ? { contactName: person } : {}),
+      ...(startsAt ? { startsAt } : {}),
+    },
   };
 }
 
-export function cadenceMessage(person: string, dueDay: PlainDate): ReminderMessage {
+/**
+ * `today` is not used by the wording — it never was — but `daysAway` cannot be
+ * derived without it, and deriving it anywhere but here would let the fields
+ * and the prose drift apart. Both callers already hold the owner's local day.
+ */
+export function cadenceMessage(person: string, dueDay: PlainDate, today: PlainDate): ReminderMessage {
   return {
     subject: `Time to reach out to ${person}`,
     body: `${person}'s keep-in-touch cadence has been due since ${plainDateKey(dueDay)}.`,
+    data: {
+      policy: "OVERDUE_CADENCE",
+      date: plainDateKey(dueDay),
+      daysAway: diffPlainDays(today, dueDay),
+      contactName: person,
+    },
   };
 }
 
-export function taskMessage(title: string, person: string | null, dueDay: PlainDate): ReminderMessage {
+export function taskMessage(
+  title: string,
+  person: string | null,
+  dueDay: PlainDate,
+  today: PlainDate,
+): ReminderMessage {
   return {
     subject: `Task due: ${title}`,
     body: `${title}${person ? ` for ${person}` : ""} was due ${plainDateKey(dueDay)}.`,
+    data: {
+      policy: "INCOMPLETE_TASK_DUE",
+      date: plainDateKey(dueDay),
+      daysAway: diffPlainDays(today, dueDay),
+      title,
+      ...(person ? { contactName: person } : {}),
+    },
   };
 }
 
@@ -137,9 +236,25 @@ export type DigestItem = { preview?: boolean } & (
 /** Kept deliberately small enough for the most restrictive supported push channel. */
 export const DIGEST_ENTRY_LIMIT = 20;
 
-function digestEntry(item: DigestItem, today: PlainDate): string {
+function digestTiming(item: DigestItem, today: PlainDate): DigestTiming {
   const days = diffPlainDays(today, item.date);
-  const timing = days < 0 ? "overdue" : days === 0 ? "due today" : "upcoming";
+  return days < 0 ? "overdue" : days === 0 ? "due today" : "upcoming";
+}
+
+/** The same entry the body prints, in fields. Nothing here is new. */
+function digestDataItem(item: DigestItem, today: PlainDate): ReminderDataItem {
+  return {
+    kind: item.kind,
+    ...(item.kind === "IMPORTANT_DATE" ? { label: item.label } : {}),
+    ...(item.kind === "TASK" || item.kind === "PLAN" ? { title: item.title } : {}),
+    ...(item.contactName ? { contactName: item.contactName } : {}),
+    date: plainDateKey(item.date),
+    timing: digestTiming(item, today),
+  };
+}
+
+function digestEntry(item: DigestItem, today: PlainDate): string {
+  const timing = digestTiming(item, today);
   const detail = item.kind === "IMPORTANT_DATE"
     ? `${item.label} — ${item.contactName}`
     : item.kind === "CADENCE"
@@ -189,6 +304,15 @@ export function digestMessage(items: DigestItem[], today: PlainDate, limit = DIG
     body: sections.length === 0
       ? "Nothing needs your attention today."
       : `${sections.join("\n\n")}${hidden > 0 ? `\n\n… and ${hidden} more ${hidden === 1 ? "item" : "items"}.` : ""}`,
+    data: {
+      policy: "DAILY_DIGEST",
+      date: plainDateKey(today),
+      daysAway: 0,
+      // Only what the body listed. Sending the entries the cap dropped would
+      // put names on the wire that the message itself does not mention.
+      items: shown.map((item) => digestDataItem(item, today)),
+      hiddenItems: hidden,
+    },
   };
 }
 

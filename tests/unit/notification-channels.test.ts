@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CHANNEL_FIELDS,
   CHANNEL_KINDS,
+  DEFAULT_GOTIFY_PRIORITY,
   encryptedKeyFor,
   isChannelKind,
   secretFieldsFor,
@@ -129,5 +130,39 @@ describe("Gotify", () => {
     // a channel that never delivers.
     expect(token?.secret).toBe(true);
     expect(token?.hint).toMatch(/required/i);
+  });
+
+  it("stores a priority the clients will alert on when none is given", () => {
+    // Gotify's own default is 0, which its clients deliver silently. A stored
+    // number is what the sender reads, so it has to be a number: a string
+    // "5" falls through `typeof stored === "number"` to the default, which is
+    // the same trap `port` documents on the email channel.
+    const blank = validateChannelConfig("GOTIFY", { url: "https://gotify.example/message" });
+    expect(blank.ok).toBe(true);
+    expect(blank.config.priority).toBe(DEFAULT_GOTIFY_PRIORITY);
+    expect(typeof blank.config.priority).toBe("number");
+
+    const quiet = validateChannelConfig("GOTIFY", { url: "https://gotify.example/message", priority: "0" });
+    expect(quiet.config.priority).toBe(0);
+  });
+
+  it("refuses a priority outside Gotify's scale", () => {
+    for (const priority of ["-1", "11", "5.5", "urgent"]) {
+      const result = validateChannelConfig("GOTIFY", {
+        url: "https://gotify.example/message",
+        priority,
+      });
+      expect(result.ok).toBe(false);
+      expect(result.errors.priority).toEqual(expect.any(String));
+    }
+  });
+
+  it("keeps priority out of the other url channels", () => {
+    // ntfy and webhooks have no such field, and a stray one in their config
+    // would be sent to a server that has no idea what it means.
+    for (const kind of ["NTFY", "WEBHOOK"] as const) {
+      expect(validateChannelConfig(kind, { url: "https://example.com/x" }).config.priority)
+        .toBeUndefined();
+    }
   });
 });

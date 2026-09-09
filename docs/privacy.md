@@ -412,6 +412,18 @@ no confirmation step. A retry after a failure re-reads the record and sends
 the same fields again, worded for the day it goes out — it is not a shorter
 message, and it never carries anything the first attempt would not have.
 
+**Gotify is sent the same reminder twice over: once as prose, once as fields.**
+Its `extras` carry the policy, the day, how far away it is, the label or title,
+the person's name, and for a digest each entry the message listed — the same
+information the body states, in a form something can read rather than look at.
+Nothing is in there that is not already in the message: no record identifiers,
+because an id would say nothing new about today's reminder and everything about
+which reminders across months are about the same person, which the wording
+alone does not hand over; and no digest entry the cap dropped, because those
+names are not in the body either. When `APP_URL` is set the message also
+carries a link to the installation's own address, so tapping the notification
+opens the app — the published address and nothing more specific.
+
 **Email is different in kind from the rest.** An ntfy, Gotify or webhook URL can
 point at a box on your own network, and then nothing leaves it. SMTP goes
 through a mail relay — a third party unless you run your own — and the contents

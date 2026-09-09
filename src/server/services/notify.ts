@@ -6,8 +6,10 @@ import net from "node:net";
 import nodemailer from "nodemailer";
 import type SMTPTransport from "nodemailer/lib/smtp-transport";
 import { prisma } from "@/server/db/client";
+import { resolveAppUrl } from "@/lib/app-url";
+import type { ReminderData } from "@/lib/reminder-schedule";
 import { resolveChannelSecrets } from "@/server/notifications/config";
-import type { ChannelKind } from "@/lib/notification-channels";
+import { DEFAULT_GOTIFY_PRIORITY, type ChannelKind } from "@/lib/notification-channels";
 import {
   resolveHostname,
   validateDestination,
@@ -344,6 +346,45 @@ function smtpAdapter(dependencies: DeliveryDependencies): SmtpAdapter {
 }
 
 /**
+ * Gotify's own priority scale, 0–10.
+ *
+ * Five, not zero, when a channel has none stored. Gotify's clients read
+ * priority as importance and its Android client alerts from four upward, so
+ * the messages this app sent before the field existed arrived correctly and
+ * silently — a reminder delivered into a list nobody is looking at is the same
+ * as one not sent, and it is the one failure mode a working transport cannot
+ * report. An operator who wants them quiet can now say so, which is the
+ * difference between silence chosen and silence by default.
+ */
+function gotifyPriority(stored: unknown): number {
+  if (typeof stored !== "number" || !Number.isInteger(stored)) return DEFAULT_GOTIFY_PRIORITY;
+  return Math.max(0, Math.min(10, stored));
+}
+
+/**
+ * Gotify's `extras`: a namespaced map its clients read for display hints, and
+ * anything else for whatever is reading the message.
+ *
+ * The click target is the installation's own address and nothing more
+ * specific. `APP_URL` is the address the operator has already published, and
+ * a deep link would need a record identifier — see `ReminderData` for why one
+ * is not sent. Unset, the key is omitted rather than guessed: a link built
+ * from a request host has no meaning here, because the scheduler runs without
+ * a request.
+ */
+function gotifyExtras(data: ReminderData | null): Record<string, unknown> {
+  const extras: Record<string, unknown> = {
+    // The digest is headings and bullet lists; told it is markdown, a Gotify
+    // client renders it as such instead of as one unbroken block.
+    "client::display": { contentType: "text/markdown" },
+  };
+  const appUrl = resolveAppUrl(process.env.APP_URL, {});
+  if (appUrl) extras["client::notification"] = { click: { url: appUrl } };
+  if (data) extras["personalcrm::reminder"] = data;
+  return extras;
+}
+
+/**
  * A failure that happened after the destination was confirmed public.
  *
  * Everything up to and including `validateDestination` can say something about
@@ -361,11 +402,18 @@ export class ReachedDestinationError extends Error {
   }
 }
 
+/**
+ * `data` is last, after the injection point, so every existing three- and
+ * four-argument call still reads correctly. It is optional because not every
+ * delivery has one — nothing else about the send depends on it, and a channel
+ * that cannot carry structured fields ignores it entirely.
+ */
 export async function deliverToChannel(
   channel: NotificationChannel,
   subject: string,
   body: string,
   dependencies: DeliveryDependencies = {},
+  data: ReminderData | null = null,
 ): Promise<void> {
   body = bodyForChannel(channel.kind as ChannelKind, body);
   const resolved = resolveChannelSecrets({ kind: channel.kind as ChannelKind, config: channel.config });
@@ -440,6 +488,15 @@ export async function deliverToChannel(
   const rawUrl = typeof config.url === "string" ? config.url : null;
   if (!rawUrl) throw new Error(`${channel.kind} channel requires a URL.`);
   const url = new URL(rawUrl);
+  // Gotify posts go to `/message`; the server's root answers a POST with 404,
+  // so a channel saved with the address off the browser's bar — which is the
+  // obvious thing to paste — was offered, saved, and then failed every send
+  // with an HTTP code and nothing to act on. Only a bare root is filled in:
+  // any path the operator actually typed is theirs, including the subpath a
+  // reverse proxy puts Gotify behind.
+  if (channel.kind === "GOTIFY" && (url.pathname === "" || url.pathname === "/")) {
+    url.pathname = "/message";
+  }
   const addresses = await withinBudget(
     validateDestination(url.hostname, administrative, resolveDns),
   );
@@ -449,7 +506,11 @@ export async function deliverToChannel(
     if (channel.kind === "GOTIFY") headers["x-gotify-key"] = token;
     else headers.authorization = `Bearer ${token}`;
   }
-  const payload = channel.kind === "DISCORD" ? { content: `${subject}\n${body}` } : { title: subject, message: body };
+  const payload = channel.kind === "DISCORD"
+    ? { content: `${subject}\n${body}` }
+    : channel.kind === "GOTIFY"
+      ? { title: subject, message: body, priority: gotifyPriority(config.priority), extras: gotifyExtras(data) }
+      : { title: subject, message: body };
   const response = await afterValidation(
     (dependencies.http ?? defaultHttp)({
       url, addresses, headers, body: JSON.stringify(payload),

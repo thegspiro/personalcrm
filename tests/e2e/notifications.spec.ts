@@ -112,6 +112,45 @@ test("a channel is refused rather than saved in a shape the sender rejects", asy
   await expect(page.locator("section").filter({ hasText: "smtp.example.com" })).toHaveCount(0);
 });
 
+test("a Gotify channel takes a priority, and defaults to one that alerts", async ({ page }) => {
+  await ensureSignedIn(page);
+  await openReminderSettings(page);
+
+  const name = `Gotify ${test.info().project.name} ${STAMP}`;
+  const addForm = page.locator("section").filter({ hasText: "Add a channel" });
+  await addForm.getByRole("button", { name: "Gotify", exact: true }).click();
+  await addForm.getByLabel("Name", { exact: true }).fill(name);
+  await addForm.getByLabel("URL", { exact: true }).fill("https://gotify.example.com");
+  await addForm.getByLabel("Application token", { exact: true }).fill("an-app-token");
+  // Left blank: Gotify's own default is 0, which its clients deliver silently,
+  // so the field saved empty has to come back as a number that alerts.
+  await addForm.getByRole("button", { name: "Add channel" }).click();
+
+  const card = page.locator("section").filter({ hasText: name });
+  await expect(card).toBeVisible();
+  await card.getByRole("button", { name: "Edit" }).click();
+  await expect(card.getByLabel("Priority", { exact: true })).toHaveValue("5");
+
+  await card.getByLabel("Priority", { exact: true }).fill("11");
+  await card.getByRole("button", { name: "Save" }).click();
+  await expect(card.getByText(/whole number between 0 and 10/i)).toBeVisible();
+
+  await card.getByLabel("Priority", { exact: true }).fill("8");
+  await card.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+  await openReminderSettings(page);
+  const saved = page.locator("section").filter({ hasText: name });
+  await saved.getByRole("button", { name: "Edit" }).click();
+  await expect(saved.getByLabel("Priority", { exact: true })).toHaveValue("8");
+  // Out of the edit form first: it renders Save and Cancel in place of Edit
+  // and Delete, so deleting from here waits on a button that is not there.
+  await saved.getByRole("button", { name: "Cancel" }).click();
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await saved.getByRole("button", { name: "Delete" }).click();
+  await expect(page.locator("section").filter({ hasText: name })).toHaveCount(0);
+});
+
 test("the daily digest can be switched off and given an hour", async ({ page }) => {
   await ensureSignedIn(page);
   await openReminderSettings(page);
