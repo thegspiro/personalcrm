@@ -2837,7 +2837,10 @@ export async function lookupContactAddress(
   if (!query) return fail("Fill in the address first, then look it up.");
 
   const { searchPlaces, LOOKUP_MESSAGES } = await import("@/server/geo/lookup");
-  const outcome = await searchPlaces(query);
+  // Whether this came from a pause in typing rather than the button. Claimed by
+  // the caller and re-checked in `searchPlaces` against the settings, never
+  // trusted: a posted flag cannot grant what an endpoint's operator forbids.
+  const outcome = await searchPlaces(query, { interactive: bool(form, "interactive") });
   if (!outcome.ok) return fail(LOOKUP_MESSAGES[outcome.reason]);
 
   const { toCandidateView } = await import("@/server/geo/providers");

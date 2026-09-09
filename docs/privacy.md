@@ -531,11 +531,29 @@ place's address is simply something you type.
 Five rules, the same shape as the assisted reading's:
 
 1. **Nothing is sent until you switch it on.** Off is the shipped state.
-2. **Nothing is sent except when you press the button.** Never while you type,
-   never on a page load, never in the background. An address does not leave the
-   machine as a side effect of browsing. This also happens to be what
-   Nominatim's usage policy requires — it forbids search-as-you-type outright —
-   but it is the rule we would want regardless.
+2. **Nothing is sent on a page load, and nothing in the background.** An address
+   does not leave the machine as a side effect of browsing or of opening a form
+   to read it. That half is absolute, and it takes work to keep: the query a
+   form would send is a join of its address lines, city, region and country, so
+   an already-filled address produces a long, plausible query before a key is
+   pressed. `shouldSuggest` in `src/lib/typeahead.ts` is where that is refused,
+   by comparing against what the form opened with.
+
+   Beyond that, **the button is the default and suggestions while you type are a
+   second, separate opt-in.** Off unless an administrator has switched it on in
+   Settings → Places, and only offered at all where the endpoint's operator
+   permits it: the OpenStreetMap Foundation's own service forbids
+   search-as-you-type outright, so it is never queried that way whatever else is
+   switched on. `typeaheadAllowed` decides, from the provider *and* the host, so
+   pointing a "self-hosted" entry back at the public service does not get around
+   it. The action re-checks the setting itself rather than believing the flag
+   the browser posts.
+
+   The reason it is a second switch rather than part of the first: turning the
+   lookup on is consent to send an address when you ask for one. It is not
+   consent to send a dozen prefixes of every address you touch, including the
+   ones you abandon. An installation that ticked the first box under the older,
+   stricter wording of this rule keeps exactly the behaviour it agreed to.
 3. **Only the place's name and the address you typed.** Never the notes, never
    who was seen there, never anything about an interaction. A place is the only
    subject; the people are not part of the query. Looking up a *person's* address
@@ -549,10 +567,16 @@ Five rules, the same shape as the assisted reading's:
    coordinates are typed in by hand instead, and the form offers the fields
    directly for exactly that.
 5. **Nothing is written from the answer.** Candidates are shown, you pick one,
-   and the write goes through `applyLocationLookup` — or an ordinary address or
+   and the write goes through `updateLocation` — or an ordinary address or
    home-base save — like any other action. Every failure — not configured, timed
    out, an unreadable reply — returns no candidates rather than an error, and the
    field stays typeable.
+
+Rule 4 is worth restating against rule 2, because it is the first question this
+raises: a private contact gets no suggestions and no button. The field withholds
+both, and `lookupContactAddress` refuses before any provider is reached — so a
+private address is never on the wire even for the instant it would take to be
+turned down. Their coordinates go in by hand, as they always did.
 
 What it stores is an OpenStreetMap object reference (`osmType` + `osmId`) plus
 the address parts and coordinates. Nominatim's own `place_id` is deliberately

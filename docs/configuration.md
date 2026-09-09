@@ -42,6 +42,62 @@ app, and keeps the key out of the database and therefore out of your backups.
 Provider, base URL and model are configured in Settings (stored in
 `AppSetting`), not in the environment.
 
+### Optional address lookup
+
+No environment variables. Provider, endpoint and both switches live in Settings
+→ Places (stored in `AppSetting`), and everything is off until an administrator
+turns it on. The endpoint belongs to the installation rather than to a person,
+which is why only an administrator may change it: anyone else could otherwise
+point it at a server they control and collect what every account looks up.
+
+Three providers ship. **OpenStreetMap (Nominatim)** is free and run by the
+OpenStreetMap Foundation on donated servers; its usage policy caps an
+application at one request a second and forbids search-as-you-type, so it is
+always a button. **Photon** is the same data behind a search index built for
+typing, and is the only public option that may suggest as you type.
+**Self-hosted or other** is anything speaking the Nominatim search API.
+
+#### Suggesting as you type
+
+A second switch beside the lookup's own, off until asked for and offered only
+where the endpoint permits it. Turning the lookup on is consent to send an
+address when you ask for one; this is consent to send one every time you pause,
+so it is a separate decision. Nothing is ever sent on a page load, and a private
+contact's address is never sent at all — see [privacy.md](privacy.md).
+
+#### Running Photon yourself
+
+The option where no address leaves your network. Photon is a separate container:
+it is not bundled, and the published image does not change.
+
+```yaml
+# Alongside the app. Not part of docker-compose.yml: the index is large enough
+# that nobody should pull it by running `docker compose up`.
+services:
+  photon:
+    image: ghcr.io/rtuszik/photon-docker:latest
+    container_name: photon
+    restart: unless-stopped
+    environment:
+      # A country rather than the planet. GraphHopper publishes weekly extracts
+      # for 200-plus of them; the planet index is roughly two orders of
+      # magnitude larger and wants an SSD and a great deal of memory.
+      REGION: "us"
+    volumes:
+      - photon-data:/photon/photon_data
+    ports:
+      - "2322:2322"
+
+volumes:
+  photon-data:
+```
+
+Then in Settings → Places choose **Photon** and give the endpoint as
+`http://photon:2322` — the base address only, since the `/api` path is added for
+you. The first start downloads and unpacks the index, which takes a while and
+needs several gigabytes for a country extract; the app degrades to "found
+nothing" until it is ready, and the address fields stay typeable throughout.
+
 ### Development and test only
 
 | Variable | Notes |
@@ -91,7 +147,7 @@ config:
 | `DashboardLayout` | Which home-screen widgets are on, in what order, with what row counts |
 | `TaxonomyTerm` | Every type list in the app — labels, colours, icons, order |
 | `CustomFieldDefinition` | User-defined fields on contacts, dating profiles, interactions and dates |
-| `AppSetting` | Instance-wide: first-run state, AI provider/base URL/model/key, address-lookup provider/base URL |
+| `AppSetting` | Instance-wide: first-run state, AI provider/base URL/model/key, address-lookup provider/base URL and whether it may suggest while you type |
 
 The account timezone is the one to get right: every cadence, every "overdue",
 every date parse in quick add is anchored to it rather than to the server clock.

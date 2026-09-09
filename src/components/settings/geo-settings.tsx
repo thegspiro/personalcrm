@@ -7,13 +7,28 @@ import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
 import { useAction, useAddAction } from "@/components/form/use-action";
 import type { GeoProviderDefinition, GeoProviderId } from "@/server/geo/providers";
-import { saveGeoConnection, updateGeoEnabled } from "@/server/actions/geo-settings";
+import {
+  saveGeoConnection,
+  updateGeoEnabled,
+  updateGeoTypeahead,
+} from "@/server/actions/geo-settings";
 
 export interface GeoSettingsProps {
   enabled: boolean;
   usable: boolean;
   provider: GeoProviderId;
   baseUrl: string;
+  /** Whether suggestions while typing are switched on and in effect. */
+  typeahead: boolean;
+  /**
+   * Whether the *saved* endpoint permits search-as-you-type at all.
+   *
+   * Saved, not selected: the dropdown below is local state until "Save
+   * connection" is pressed, and a switch that writes against the stored
+   * connection must not appear or vanish because of a choice nobody has
+   * committed yet.
+   */
+  typeaheadCapable: boolean;
   providers: GeoProviderDefinition[];
   /** The endpoint is per-installation, so only an administrator may change it. */
   canEdit: boolean;
@@ -31,6 +46,8 @@ export function GeoSettings({
   usable,
   provider,
   baseUrl,
+  typeahead,
+  typeaheadCapable,
   providers,
   canEdit,
 }: GeoSettingsProps) {
@@ -61,15 +78,53 @@ export function GeoSettings({
         />
       </div>
 
+      {/*
+        Offered only where the endpoint permits it: Nominatim's usage policy
+        forbids search-as-you-type, so its switch is simply not there rather
+        than there and refusing. Disabled until the lookup itself is on, since
+        this decides how an address is sent rather than whether.
+      */}
+      {typeaheadCapable ? (
+        <div className="mt-3 flex min-w-0 items-start justify-between gap-3 border-t border-border/70 pt-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Suggest addresses as I type</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              The endpoint sees what you have typed each time you pause, rather than once when
+              you press the button. Faster to fill in an address; more that leaves the machine.
+              Off unless you ask for it.
+            </p>
+          </div>
+          <Switch
+            checked={typeahead}
+            aria-label="Suggest addresses as I type"
+            disabled={!enabled || !usable || !canEdit}
+            onCheckedChange={(checked) =>
+              void run(() => updateGeoTypeahead(checked), checked ? "Turned on" : "Turned off")
+            }
+          />
+        </div>
+      ) : null}
+
       <div className="mt-3 grid gap-3 border-t border-border/70 pt-3">
         <div className="rounded-lg bg-muted/60 px-3 py-2.5">
           <p className="text-xs font-medium">What gets sent, and when</p>
           <ul className="mt-1 grid gap-1 text-[11px] text-muted-foreground">
-            <li>· Only when you press &ldquo;Look up&rdquo;. Never while you type, never on a page load.</li>
+            {typeahead ? (
+              <li>
+                · Each time you pause while typing an address, and when you press &ldquo;Look
+                up&rdquo;. Never on a page load.
+              </li>
+            ) : (
+              <li>
+                · Only when you press &ldquo;Look up&rdquo;. Never while you type, never on a page
+                load.
+              </li>
+            )}
             <li>· Only the place&apos;s name and whatever address you typed.</li>
             <li>
               · Never your notes, never who you saw there, never anything about an interaction.
             </li>
+            <li>· Never a private person&apos;s address, whatever these switches say.</li>
             <li>· Nothing at all while this is off, which is how it ships.</li>
           </ul>
         </div>
@@ -104,7 +159,11 @@ export function GeoSettings({
             <Field
               label="Endpoint"
               htmlFor="geo-base"
-              hint="Anything that answers the Nominatim /search API."
+              hint={
+                definition.dialect === "photon"
+                  ? "Anything that answers the Photon /api endpoint. Give the base address only — the path is added for you."
+                  : "Anything that answers the Nominatim /search API. Give the base address only — the path is added for you."
+              }
             >
               {/*
                 Keyed on the provider so switching remounts the field. Two

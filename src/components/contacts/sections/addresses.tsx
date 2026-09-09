@@ -13,10 +13,10 @@ import {
   lookupContactAddress,
   updateAddress,
 } from "@/server/actions/details";
-import { PlaceLookup } from "@/components/locations/place-lookup";
+import { usePlaceLookup } from "@/components/locations/place-lookup";
 import { LOCALITY_LIST_IDS } from "@/components/form/locality-options";
 import { PlacePicker, type PlaceSuggestion } from "@/components/form/place-picker";
-import type { GeoCandidateView } from "@/server/geo/providers";
+import type { GeoCandidateView, LookupUi } from "@/server/geo/providers";
 import { mapLinkFor } from "@/lib/locations";
 
 export interface AddressItem {
@@ -53,7 +53,7 @@ function AddressFields({
   formId,
   contactId,
   address,
-  lookupEnabled,
+  lookup,
   isPrivate,
   places,
   placesTruncated,
@@ -61,7 +61,7 @@ function AddressFields({
   formId: string;
   contactId: string;
   address?: AddressItem;
-  lookupEnabled: boolean;
+  lookup: LookupUi;
   /** A private contact's address is never sent anywhere. See below. */
   isPrivate: boolean;
   /** Places you have already been, to copy an address from. */
@@ -72,46 +72,49 @@ function AddressFields({
   // A place copied into this form, playing the same role a lookup match does:
   // it fills the boxes visibly and nothing is written until Save.
   const [pickedPlace, setPickedPlace] = React.useState<PlaceSuggestion | null>(null);
+  // Every field is controlled, including the street lines. They used to be read
+  // through refs because a lookup never wrote them back; it does now — an
+  // accepted suggestion fills the street — and a suggestion that fires while
+  // you type has to be able to see what you have typed.
+  const [line1, setLine1] = React.useState(address?.line1 ?? "");
+  const [line2, setLine2] = React.useState(address?.line2 ?? "");
   const [city, setCity] = React.useState(address?.city ?? "");
   const [region, setRegion] = React.useState(address?.region ?? "");
   const [country, setCountry] = React.useState(address?.country ?? "");
   const [latitude, setLatitude] = React.useState(address?.latitude ?? "");
   const [longitude, setLongitude] = React.useState(address?.longitude ?? "");
-  // The street lines stay uncontrolled — they are the only fields a lookup does
-  // not write back — so the query reads them through refs.
-  const line1Ref = React.useRef<HTMLInputElement>(null);
-  const line2Ref = React.useRef<HTMLInputElement>(null);
 
   // A private contact's address is never sent anywhere, whatever the toggle
   // says. The action refuses it too — this only keeps the button from offering
   // something that would be turned down.
-  const canLookUp = lookupEnabled && !isPrivate;
+  const canLookUp = lookup.enabled && !isPrivate;
 
   // Only the address itself — the lines, the city, the region, the country.
   // Never the label, never the notes, and never the name of the person who
-  // lives there.
-  function buildQuery() {
-    return [
-      line1Ref.current?.value,
-      line2Ref.current?.value,
-      city,
-      region,
-      country,
-    ]
-      .map((part) => part?.trim())
-      .filter(Boolean)
-      .join(", ");
-  }
+  // lives there. One value rather than a function, so that what the field says
+  // it will send and what it sends are the same string.
+  const query = React.useMemo(
+    () =>
+      [line1, line2, city, region, country]
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .join(", "),
+    [line1, line2, city, region, country],
+  );
 
-  function runLookup(query: string) {
+  function runLookup(text: string, options?: { interactive?: boolean }) {
     const form = new FormData();
     form.set("contactId", contactId);
-    form.set("query", query);
+    form.set("query", text);
+    if (options?.interactive) form.set("interactive", "1");
     return lookupContactAddress(form);
   }
 
   function accept(candidate: GeoCandidateView) {
     setApplied(candidate);
+    // Only when the match actually carries one: what the user typed is better
+    // than a display name that runs from the house number to the country.
+    if (candidate.street) setLine1(candidate.street);
     if (candidate.city) setCity(candidate.city);
     if (candidate.region) setRegion(candidate.region);
     if (candidate.country) setCountry(candidate.country);
@@ -138,7 +141,7 @@ function AddressFields({
    */
   function copyPlace(place: PlaceSuggestion) {
     setPickedPlace(place);
-    if (place.address && line1Ref.current) line1Ref.current.value = place.address;
+    if (place.address) setLine1(place.address);
     if (place.city) setCity(place.city);
     if (place.region) setRegion(place.region);
     if (place.country) setCountry(place.country);
@@ -163,6 +166,15 @@ function AddressFields({
     if (!source) return false;
     return latitude === (source.latitude ?? "") && longitude === (source.longitude ?? "");
   }
+
+  const placeLookup = usePlaceLookup({
+    enabled: canLookUp,
+    lookup,
+    query,
+    search: runLookup,
+    onAccept: accept,
+    listId: `${formId}-suggestions`,
+  });
 
   const osmReference = stillDescribes(applied)
     ? applied
@@ -193,19 +205,21 @@ function AddressFields({
         <Input
           id={`${formId}-line1`}
           name="line1"
-          ref={line1Ref}
           maxLength={191}
-          defaultValue={address?.line1 ?? ""}
+          value={line1}
+          onChange={(event) => setLine1(event.target.value)}
           placeholder="120 Maple Street"
+          {...placeLookup.inputProps}
         />
+        {placeLookup.suggestions}
       </Field>
       <Field label="Line 2 (optional)" htmlFor={`${formId}-line2`}>
         <Input
           id={`${formId}-line2`}
           name="line2"
-          ref={line2Ref}
           maxLength={191}
-          defaultValue={address?.line2 ?? ""}
+          value={line2}
+          onChange={(event) => setLine2(event.target.value)}
         />
       </Field>
       <div className="grid gap-2.5 sm:grid-cols-2">
@@ -257,9 +271,7 @@ function AddressFields({
         precisely than a name does. The coordinate fields below are the way in
         for them, and the way to correct a bad match for anyone else.
       */}
-      {canLookUp ? (
-        <PlaceLookup buildQuery={buildQuery} search={runLookup} onAccept={accept} />
-      ) : null}
+      {placeLookup.panel}
 
       {/*
         Gated on having places rather than on `canLookUp`. The list is already
@@ -351,14 +363,14 @@ function addressLines(address: AddressItem): string[] {
 function AddressRow({
   address,
   contactId,
-  lookupEnabled,
+  lookup,
   isPrivate,
   places,
   placesTruncated,
 }: {
   address: AddressItem;
   contactId: string;
-  lookupEnabled: boolean;
+  lookup: LookupUi;
   isPrivate: boolean;
   places: PlaceSuggestion[];
   placesTruncated: boolean;
@@ -394,7 +406,7 @@ function AddressRow({
             formId={`address-${address.id}`}
             contactId={contactId}
             address={address}
-            lookupEnabled={lookupEnabled}
+            lookup={lookup}
             isPrivate={isPrivate}
             places={places}
             placesTruncated={placesTruncated}
@@ -434,15 +446,15 @@ function AddressRow({
 export function AddressesSection({
   contactId,
   addresses,
-  lookupEnabled,
+  lookup,
   isPrivate,
   places = [],
   placesTruncated = false,
 }: {
   contactId: string;
   addresses: AddressItem[];
-  /** Whether the installation has address lookup switched on at all. */
-  lookupEnabled: boolean;
+  /** Whether the installation offers address lookup, and how. */
+  lookup: LookupUi;
   isPrivate: boolean;
   /** Places you have already been, to copy an address from. */
   places?: PlaceSuggestion[];
@@ -466,7 +478,7 @@ export function AddressesSection({
           <AddressFields
             formId="address-new"
             contactId={contactId}
-            lookupEnabled={lookupEnabled}
+            lookup={lookup}
             isPrivate={isPrivate}
             places={places}
             placesTruncated={placesTruncated}
@@ -483,7 +495,7 @@ export function AddressesSection({
             key={address.id}
             address={address}
             contactId={contactId}
-            lookupEnabled={lookupEnabled}
+            lookup={lookup}
             isPrivate={isPrivate}
             places={places}
             placesTruncated={placesTruncated}
