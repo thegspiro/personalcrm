@@ -11,7 +11,11 @@ import {
   validateChannelConfig,
   type ChannelKind,
 } from "@/lib/notification-channels";
-import { TEST_NOTIFICATION_BODY, TEST_NOTIFICATION_SUBJECT } from "@/lib/sample-digest";
+import {
+  TEST_NOTIFICATION_BODY,
+  TEST_NOTIFICATION_DATA,
+  TEST_NOTIFICATION_SUBJECT,
+} from "@/lib/sample-digest";
 import { configOf, mergeChannelSecrets, resolveChannelSecrets } from "@/server/notifications/config";
 import net from "node:net";
 import { ReachedDestinationError, deliverToChannel } from "@/server/services/notify";
@@ -324,7 +328,13 @@ export async function sendTestNotification(id: string): Promise<ActionResult> {
     // read from the database. Settings stays reachable while the privacy lock
     // is closed, so this is the one button there that could otherwise put a
     // private person's name on the wire.
-    await deliverToChannel(channel, TEST_NOTIFICATION_SUBJECT, TEST_NOTIFICATION_BODY);
+    await deliverToChannel(
+      channel,
+      TEST_NOTIFICATION_SUBJECT,
+      TEST_NOTIFICATION_BODY,
+      undefined,
+      TEST_NOTIFICATION_DATA,
+    );
   } catch (error) {
     return fail(await testFailureMessage(error));
   }

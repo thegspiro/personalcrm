@@ -8,7 +8,18 @@ import {
   readReminderPolicy,
   samePlanReminderPolicy,
 } from "@/lib/reminders";
-import { dailyOccurrence, digestIsDue, digestMessage, importantDateMessage, localClock, reminderDedupKey, scheduledPlanMessage } from "@/lib/reminder-schedule";
+import {
+  cadenceMessage,
+  dailyOccurrence,
+  digestIsDue,
+  digestMessage,
+  importantDateMessage,
+  localClock,
+  reminderDedupKey,
+  scheduledPlanMessage,
+  taskMessage,
+} from "@/lib/reminder-schedule";
+import type { PlainDate } from "@/lib/dates";
 
 describe("reminder policies", () => {
   it("keeps account default, custom, and disabled distinct", () => {
@@ -256,5 +267,89 @@ describe("reminder wording", () => {
       "… and 2 more items.",
     ].join("\n"));
     expect(digestMessage(items, today, 2).body).not.toContain("Person 3");
+  });
+});
+
+/**
+ * The fields that travel beside the wording, for a channel able to carry them.
+ *
+ * The rule these hold to is that the fields say exactly what the body says and
+ * no more: same people, same days, no identifiers. A field naming somebody the
+ * prose does not would leave the machine without ever appearing in the message
+ * anybody reads.
+ */
+describe("reminder data", () => {
+  const today: PlainDate = { year: 2026, month: 9, day: 2 };
+
+  it("states the same day and distance the wording does", () => {
+    const message = importantDateMessage("Birthday", "Sam Jones", { year: 2026, month: 9, day: 4 }, today);
+    expect(message.body).toContain("is in 2 days");
+    expect(message.data).toEqual({
+      policy: "IMPORTANT_DATE_OFFSET",
+      date: "2026-09-04",
+      daysAway: 2,
+      label: "Birthday",
+      contactName: "Sam Jones",
+    });
+  });
+
+  it("counts backwards for something already past", () => {
+    const message = cadenceMessage("Alex Example", { year: 2026, month: 8, day: 30 }, today);
+    expect(message.data).toEqual({
+      policy: "OVERDUE_CADENCE",
+      date: "2026-08-30",
+      daysAway: -3,
+      contactName: "Alex Example",
+    });
+  });
+
+  it("leaves out a person the message does not name", () => {
+    expect(taskMessage("Book a table", null, today, today).data).toEqual({
+      policy: "INCOMPLETE_TASK_DUE",
+      date: "2026-09-02",
+      daysAway: 0,
+      title: "Book a table",
+    });
+    expect(taskMessage("Write card", "Zoe", today, today).data.contactName).toBe("Zoe");
+  });
+
+  it("carries a plan's time only when it has one", () => {
+    const timed = scheduledPlanMessage("Alamo", "Robin", today, today, "7:30pm");
+    expect(timed.data).toMatchObject({ policy: "SCHEDULED_PLAN", title: "Alamo", contactName: "Robin", startsAt: "7:30pm" });
+    expect(scheduledPlanMessage("Alamo", null, today, today, null).data.startsAt).toBeUndefined();
+  });
+
+  it("lists only the digest entries the body printed", () => {
+    const items = Array.from({ length: 4 }, (_, index) => ({
+      kind: "TASK" as const,
+      title: `Task ${index + 1}`,
+      contactName: `Person ${index + 1}`,
+      date: today,
+    }));
+    const { data } = digestMessage(items, today, 2);
+    // The cap exists so a long digest does not overrun a push channel; sending
+    // the dropped entries as fields would put the names back on the wire.
+    expect(data.items).toEqual([
+      { kind: "TASK", title: "Task 1", contactName: "Person 1", date: "2026-09-02", timing: "due today" },
+      { kind: "TASK", title: "Task 2", contactName: "Person 2", date: "2026-09-02", timing: "due today" },
+    ]);
+    expect(data.hiddenItems).toBe(2);
+    expect(JSON.stringify(data)).not.toContain("Person 3");
+  });
+
+  it("never carries a record identifier", () => {
+    // A name is already in the message; an id would be a stable handle for the
+    // same person across every notification, which the wording is not.
+    const messages = [
+      importantDateMessage("Birthday", "Sam", today, today),
+      cadenceMessage("Alex", today, today),
+      taskMessage("Book table", "Zoe", today, today),
+      scheduledPlanMessage("Alamo", "Robin", today, today, null),
+      digestMessage([{ kind: "CADENCE", contactName: "Alex", date: today }], today),
+    ];
+    for (const message of messages) {
+      expect(Object.keys(message.data)).not.toContain("id");
+      expect(JSON.stringify(message.data)).not.toMatch(/"(id|contactId|entityId|ownerId)"/);
+    }
   });
 });

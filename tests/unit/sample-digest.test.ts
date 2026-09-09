@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { TEST_NOTIFICATION_BODY, TEST_NOTIFICATION_SUBJECT } from "@/lib/sample-digest";
+import {
+  TEST_NOTIFICATION_BODY,
+  TEST_NOTIFICATION_DATA,
+  TEST_NOTIFICATION_SUBJECT,
+} from "@/lib/sample-digest";
 
 describe("the sample digest", () => {
   it("carries no interpolation and nothing read from an account", () => {
@@ -34,6 +38,25 @@ describe("the sample digest", () => {
     }
     for (const timing of ["overdue:", "due today:", "upcoming:"]) {
       expect(TEST_NOTIFICATION_BODY).toContain(timing);
+    }
+  });
+
+  it("sends the same invented people as fields, for a channel that carries them", () => {
+    // A channel able to take structured fields has to be exercised by the test
+    // button too, or the one payload nobody has seen fail is the one the
+    // scheduler sends. Same rule as the body: every name here is invented.
+    // Marked in the fields too: the subject and the body both say "sample",
+    // and something reading this instead of reading them needs telling.
+    expect(TEST_NOTIFICATION_DATA.sample).toBe(true);
+    expect(TEST_NOTIFICATION_DATA.policy).toBe("DAILY_DIGEST");
+    expect(TEST_NOTIFICATION_DATA.items).toHaveLength(5);
+    for (const item of TEST_NOTIFICATION_DATA.items ?? []) {
+      if (item.contactName) expect(item.contactName).toMatch(/ Example$/);
+      expect(item.date).toMatch(/^2030-06-\d\d$/);
+    }
+    // Whatever the body lists, the fields list — and nothing beyond it.
+    for (const item of TEST_NOTIFICATION_DATA.items ?? []) {
+      expect(TEST_NOTIFICATION_BODY).toContain(item.contactName ?? item.title ?? "");
     }
   });
 });

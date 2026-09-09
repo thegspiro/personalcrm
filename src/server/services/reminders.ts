@@ -561,7 +561,7 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
       occurrence: contact.nextTouchAt.toISOString(),
       scheduledFor: plainDateToDb(dueDay),
       offsetDays: 0,
-      ...cadenceMessage(personName(contact), dueDay),
+      ...cadenceMessage(personName(contact), dueDay, schedule.today),
     });
   }
 
@@ -579,7 +579,7 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
       occurrence: plainDateKey(dueDay),
       scheduledFor: plainDateToDb(dueDay),
       offsetDays: 0,
-      ...taskMessage(task.title, task.contact ? personName(task.contact) : null, dueDay),
+      ...taskMessage(task.title, task.contact ? personName(task.contact) : null, dueDay, schedule.today),
     });
   }
 
@@ -698,7 +698,11 @@ async function currentMessage(
       }) === log.dedupKey;
       if (!stillOwed) return null;
       if (contact.nextTouchAt > endOfDayInTz(now, schedule.timezone)) return NOT_YET;
-      return cadenceMessage(personName(contact), calendarDateInTz(contact.nextTouchAt, schedule.timezone));
+      return cadenceMessage(
+        personName(contact),
+        calendarDateInTz(contact.nextTouchAt, schedule.timezone),
+        schedule.today,
+      );
     }
     case "INCOMPLETE_TASK_DUE": {
       const task = await db.task.findFirst({
@@ -709,7 +713,7 @@ async function currentMessage(
       const dueDay = plainDateFromDb(task.dueDate);
       if (plainDateKey(dueDay) !== plainDateKey(scheduled)) return null;
       if (comparePlainDates(dueDay, schedule.today) > 0) return NOT_YET;
-      return taskMessage(task.title, task.contact ? personName(task.contact) : null, dueDay);
+      return taskMessage(task.title, task.contact ? personName(task.contact) : null, dueDay, schedule.today);
     }
     case "SCHEDULED_PLAN": {
       const plan = await db.plan.findFirst({
@@ -868,7 +872,7 @@ async function createAndDeliver(
     return null;
   }
   try {
-    await send(live, message.subject, message.body);
+    await send(live, message.subject, message.body, undefined, message.data);
     await db.reminderLog.update({
       where: { id: log.id },
       data: { ok: true, sentAt: clock(), attemptCount: 1, nextAttemptAt: null },
@@ -1011,7 +1015,7 @@ export async function processReminderDeliveries(
       continue;
     }
     try {
-      await send(live, message.subject, message.body);
+      await send(live, message.subject, message.body, undefined, message.data);
       await db.reminderLog.update({
         where: { id: log.id },
         data: { ok: true, sentAt: clock(), attemptCount: { increment: 1 }, nextAttemptAt: null, error: null },

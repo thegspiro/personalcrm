@@ -933,7 +933,12 @@ Enabled channels receive due important-date reminders from the hourly scheduler.
 `kind`: `EMAIL` | `NTFY` | `GOTIFY` | `DISCORD` | `WEBHOOK`; `name`; `config`
 JSON (channel-specific); `isEnabled`. Email uses `host`, `port` (a **number**,
 defaulted to 587), `secure`, optional `user`, and required `from`/`to`.
-HTTP-backed channels use `url`.
+HTTP-backed channels use `url`. Gotify additionally stores `priority` (a
+**number**, 0–10, defaulted to 5): Gotify's own default of 0 is delivered
+silently by its clients, so a channel that says nothing gets an ordinary
+notification rather than one nobody sees. Its `url` is the message endpoint —
+an address saved without a path is sent to `/message`, since Gotify answers a
+POST to its root with 404.
 
 **Credentials are stored encrypted, under their own key.** The SMTP password
 lands in `passEnc` and a bearer token in `tokenEnc`, AES-256-GCM under a key

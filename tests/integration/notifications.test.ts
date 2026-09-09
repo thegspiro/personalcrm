@@ -1,3 +1,5 @@
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestUser, hasTestDatabase, prisma, reset } from "./db";
 
@@ -334,31 +336,173 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     });
   });
 
-  it("authenticates Gotify with its own header, not a bearer token", async () => {
+  /** Capture one Gotify delivery without leaving the process. */
+  async function gotifySend(
+    config: Record<string, unknown>,
+    data: Parameters<typeof deliverToChannel>[4] = null,
+  ) {
     const channel = await prisma.notificationChannel.create({
-      data: {
-        ownerId,
-        kind: "GOTIFY",
-        name: "Gotify",
-        config: { url: "https://gotify.example/message", token: "app-token" },
-      },
+      data: { ownerId, kind: "GOTIFY", name: "Gotify", config: config as never },
     });
-
-    const calls: Array<Record<string, string>> = [];
-    const http = vi.fn(async (input: { headers: Record<string, string> }) => {
-      calls.push(input.headers);
+    const sent: Array<{ url: URL; headers: Record<string, string>; body: Record<string, unknown> }> = [];
+    const http = vi.fn(async (input: { url: URL; headers: Record<string, string>; body: string }) => {
+      sent.push({ url: input.url, headers: input.headers, body: JSON.parse(input.body) });
       return { status: 200 };
     });
-    await deliverToChannel(channel, "subject", "body", {
-      resolve: async () => [{ address: "93.184.216.34", family: 4 }],
-      isAdministrator: async () => true,
-      http,
-    });
+    await deliverToChannel(
+      channel,
+      "subject",
+      "body",
+      {
+        resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+        isAdministrator: async () => true,
+        http,
+      },
+      data,
+    );
+    return sent[0];
+  }
+
+  it("authenticates Gotify with its own header, not a bearer token", async () => {
+    const sent = await gotifySend({ url: "https://gotify.example/message", token: "app-token" });
 
     // Gotify rejects a bearer token, so sharing ntfy's scheme meant the channel
     // was offered and never delivered.
-    expect(calls[0]["x-gotify-key"]).toBe("app-token");
-    expect(calls[0].authorization).toBeUndefined();
+    expect(sent.headers["x-gotify-key"]).toBe("app-token");
+    expect(sent.headers.authorization).toBeUndefined();
+  });
+
+  it("posts to /message when the saved address is a bare host", async () => {
+    // The address off the browser's bar is what people paste, and Gotify
+    // answers a POST to its root with 404 — a channel that saved cleanly and
+    // then failed every send.
+    const bare = await gotifySend({ url: "https://gotify.example", token: "t" });
+    expect(bare.url.href).toBe("https://gotify.example/message");
+
+    const slash = await gotifySend({ url: "https://gotify.example/", token: "t" });
+    expect(slash.url.href).toBe("https://gotify.example/message");
+
+    // A path the operator typed is theirs — a reverse proxy subpath included.
+    const proxied = await gotifySend({ url: "https://host.example/gotify/message", token: "t" });
+    expect(proxied.url.href).toBe("https://host.example/gotify/message");
+  });
+
+  it("sends a priority Gotify's clients will alert on, and honours a stored one", async () => {
+    // Gotify defaults an absent priority to 0, which its clients file away
+    // without a sound: the reminder arrives and is never seen.
+    const unset = await gotifySend({ url: "https://gotify.example/message", token: "t" });
+    expect(unset.body.priority).toBe(5);
+
+    const quiet = await gotifySend({ url: "https://gotify.example/message", token: "t", priority: 0 });
+    expect(quiet.body.priority).toBe(0);
+
+    const urgent = await gotifySend({ url: "https://gotify.example/message", token: "t", priority: 9 });
+    expect(urgent.body.priority).toBe(9);
+
+    // Nonsense in the stored JSON is not a reason to send nothing at all.
+    const junk = await gotifySend({ url: "https://gotify.example/message", token: "t", priority: "high" });
+    expect(junk.body.priority).toBe(5);
+  });
+
+  it("carries the reminder as fields as well as prose, and never an identifier", async () => {
+    const sent = await gotifySend({ url: "https://gotify.example/message", token: "t" }, {
+      policy: "OVERDUE_CADENCE",
+      date: "2030-06-12",
+      daysAway: -3,
+      contactName: "Alex Example",
+    });
+
+    const extras = sent.body.extras as Record<string, unknown>;
+    // Declared markdown so the digest's headings and bullets render as such.
+    expect(extras["client::display"]).toEqual({ contentType: "text/markdown" });
+    expect(extras["personalcrm::reminder"]).toEqual({
+      policy: "OVERDUE_CADENCE",
+      date: "2030-06-12",
+      daysAway: -3,
+      contactName: "Alex Example",
+    });
+    // The prose is unchanged: the fields are alongside it, not instead of it.
+    expect(sent.body.title).toBe("subject");
+    expect(sent.body.message).toBe("body");
+    expect(JSON.stringify(sent.body)).not.toMatch(/\bid\b|contactId|entityId/);
+  });
+
+  it("links back only to an address the operator has published", async () => {
+    const previous = process.env.APP_URL;
+    try {
+      process.env.APP_URL = "https://crm.example.com/";
+      const linked = await gotifySend({ url: "https://gotify.example/message", token: "t" });
+      expect((linked.body.extras as Record<string, unknown>)["client::notification"]).toEqual({
+        click: { url: "https://crm.example.com" },
+      });
+
+      // Unset, there is nothing to link to: the scheduler runs without a
+      // request, so a host header cannot stand in for one.
+      delete process.env.APP_URL;
+      const unlinked = await gotifySend({ url: "https://gotify.example/message", token: "t" });
+      expect((unlinked.body.extras as Record<string, unknown>)["client::notification"]).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.APP_URL;
+      else process.env.APP_URL = previous;
+    }
+  });
+
+  it("delivers over a real socket to a server that answers as Gotify does", async () => {
+    // Everything above replaces the HTTP adapter. This one does not: the
+    // request is built, the socket is opened and the answer is read, so a
+    // payload Gotify would reject — a missing token, a body it cannot parse,
+    // the wrong path — fails here rather than in production an hour later.
+    const seen: Array<{ method: string; path: string; token: unknown; body: Record<string, unknown> }> = [];
+    const server = createServer((request: IncomingMessage, response: ServerResponse) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk) => chunks.push(chunk as Buffer));
+      request.on("end", () => {
+        const path = (request.url ?? "").split("?")[0];
+        const token = request.headers["x-gotify-key"];
+        let body: Record<string, unknown> | null = null;
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+        } catch {
+          body = null;
+        }
+        seen.push({ method: request.method ?? "", path, token, body: body ?? {} });
+        // gotify/server's own refusals, in the order it applies them.
+        const answer = request.method !== "POST" || path !== "/message" ? 404
+          : !token ? 401
+          : typeof body?.message !== "string" || body.message === "" ? 400
+          : 200;
+        response.writeHead(answer, { "content-type": "application/json" });
+        response.end(JSON.stringify(answer === 200 ? { id: 1, ...body } : { error: "no" }));
+      });
+    });
+    try {
+      await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+      const port = (server.address() as AddressInfo).port;
+      const channel = await prisma.notificationChannel.create({
+        data: {
+          ownerId,
+          kind: "GOTIFY",
+          name: "Gotify",
+          // No path, so this also proves the endpoint is filled in on the wire.
+          config: { url: `http://127.0.0.1:${port}`, token: "app-token", priority: 7 },
+        },
+      });
+
+      await deliverToChannel(channel, "Your Personal CRM daily digest", "Keep in touch\n- Alex Example", {
+        resolve: async () => [{ address: "127.0.0.1", family: 4 }],
+        isAdministrator: async () => true,
+      }, { policy: "DAILY_DIGEST", date: "2030-06-15", daysAway: 0, items: [], hiddenItems: 0 });
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({ method: "POST", path: "/message", token: "app-token" });
+      expect(seen[0].body).toMatchObject({
+        title: "Your Personal CRM daily digest",
+        message: "Keep in touch\n- Alex Example",
+        priority: 7,
+      });
+    } finally {
+      await new Promise<void>((done) => server.close(() => done()));
+    }
   });
 
   it("keeps a member from aiming a channel at this network", async () => {

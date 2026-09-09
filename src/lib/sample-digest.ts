@@ -28,6 +28,13 @@ const SAMPLE_ITEMS: DigestItem[] = [
 const SAMPLE = digestMessage(SAMPLE_ITEMS, SAMPLE_TODAY);
 
 export const TEST_NOTIFICATION_SUBJECT = "Personal CRM sample digest";
+/**
+ * The structured half of the sample, from the same `digestMessage` call as the
+ * body — so a channel that carries fields is exercised by the test button
+ * exactly as a real digest would exercise it, and with the same invented
+ * people. Nothing from the account is read to build it.
+ */
+export const TEST_NOTIFICATION_DATA = { ...SAMPLE.data, sample: true } as const;
 export const TEST_NOTIFICATION_BODY = [
   "This is a sample. Everyone named below is invented and no record from this account was read to build it.",
   "",

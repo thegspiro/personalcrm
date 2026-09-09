@@ -103,6 +103,13 @@ export const CHANNEL_FIELDS: Record<ChannelKind, ChannelField[]> = {
       // without one, so a channel saved blank is a channel that never delivers.
       hint: "Required. Gotify rejects a message posted without one.",
     },
+    {
+      name: "priority",
+      label: "Priority",
+      type: "number",
+      placeholder: "5",
+      hint: "0–10. Gotify's clients only alert from 4 upward; 5 is an ordinary notification, 8 is urgent.",
+    },
   ],
   DISCORD: DISCORD_FIELDS,
   WEBHOOK: URL_FIELDS,
@@ -122,6 +129,14 @@ export function isChannelKind(value: unknown): value is ChannelKind {
 }
 
 const DEFAULT_SMTP_PORT = 587;
+
+/**
+ * Gotify's own default is 0, which its clients treat as "file it away without
+ * saying anything". Reminders were arriving and going unseen, so a channel
+ * that says nothing about priority gets a normal one. `gotifyPriority` in the
+ * sender holds the same number for rows written before this field existed.
+ */
+export const DEFAULT_GOTIFY_PRIORITY = 5;
 
 /** JSON-safe, because this is written straight into `NotificationChannel.config`. */
 export type ChannelConfigValue = string | number | boolean;
@@ -190,6 +205,20 @@ export function validateChannelConfig(
     return { ok: Object.keys(errors).length === 0, errors, config };
   }
 
+  if (kind === "GOTIFY") {
+    const rawPriority = input.priority?.trim();
+    if (rawPriority) {
+      const priority = Number(rawPriority);
+      if (!Number.isInteger(priority) || priority < 0 || priority > 10) {
+        errors.priority = "The priority has to be a whole number between 0 and 10.";
+      } else {
+        config.priority = priority;
+      }
+    } else {
+      config.priority = DEFAULT_GOTIFY_PRIORITY;
+    }
+  }
+
   // Where the URL is itself the credential it goes through the secret path, so
   // it is only validated here — never copied into the readable config.
   const secretUrl = CHANNEL_FIELDS[kind].some((field) => field.name === "url" && field.secret);
@@ -214,15 +243,3 @@ export function validateChannelConfig(
 
   return { ok: Object.keys(errors).length === 0, errors, config };
 }
-
-/**
- * The fixed body of a test notification.
- *
- * No interpolation, ever. Channels are configured on a page that stays
- * reachable while the privacy lock is closed, so this is the one path by which
- * a button there could push a private person's name off the machine. There is
- * nothing here to leak.
- */
-export const TEST_NOTIFICATION_SUBJECT = "Personal CRM test";
-export const TEST_NOTIFICATION_BODY =
-  "If you're reading this, this channel works. Nothing else was sent.";
