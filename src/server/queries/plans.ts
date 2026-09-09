@@ -110,20 +110,42 @@ export async function listPlans(
         },
       },
     },
-    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+    // Status leads on any list that still has open rows in it, because an enum
+    // sorts by declaration order — OPEN, PLANNED, DONE, ARCHIVED — which is
+    // exactly the order such a list wants.
+    //
+    // On the closed view it would do the opposite. Every row there is DONE or
+    // ARCHIVED, so leading with status buys no useful grouping and instead
+    // decides which of the two the cap truncates: with more DONE rows than the
+    // limit, no ARCHIVED row is ever reached, however recent. That is the same
+    // bug as fetching closed rows behind open ones, one level down, so it takes
+    // the same answer — ask for them in the order the view actually wants.
+    orderBy: options.closedOnly
+      ? [{ updatedAt: "desc" }]
+      : [{ status: "asc" }, { createdAt: "desc" }],
     take: options.take ?? 200,
   });
 
-  // A place belonging to someone else is dropped before anything is derived
-  // from it. The relation cannot carry an owner predicate — Prisma has no
-  // `where` on a to-one include — so the check is here, and it has to come
-  // first: the name, the map link and the distance are each built from these
+  // Both of a plan's pointers, checked together, before anything is derived
+  // from either. `Plan.place` and `Plan.category` are each keyed on the target
+  // id alone — `SET NULL` needs every column of the key nullable and `ownerId`
+  // is not — so a restored or imported plan can point at another account's
+  // `Location` or `TaxonomyTerm`. `ownedPlanRefs` says the same thing on the
+  // write side; this is the read.
+  //
+  // The relation cannot carry an owner predicate — Prisma has no `where` on a
+  // to-one include — so the check is here, and for the place it has to come
+  // first: the name, the map link and the distance are each built from those
   // columns, so filtering afterwards would mean deciding what to disclose after
-  // already computing it. The plan keeps its typed `location` text either way;
-  // what is dropped is a pointer that should never have been stored.
-  const owned = rows.map(({ place, ...plan }) => ({
+  // already computing it. A category is a label, an icon and a colour, which is
+  // another account's taxonomy drawn on your row.
+  //
+  // The plan keeps its own typed `location` text and its `categoryId` either
+  // way; what is dropped is a foreign key that should never have been stored.
+  const owned = rows.map(({ place, category, ...plan }) => ({
     ...plan,
     place: place && place.ownerId === ownerId ? place : null,
+    category: category && category.ownerId === ownerId ? category : null,
   }));
 
   // Annotated in process — see the note on `listLocationsNear` for why this is
