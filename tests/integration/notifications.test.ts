@@ -619,6 +619,32 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     });
   });
 
+  /**
+   * Every request one Gotify delivery makes, with the endpoint deciding what
+   * each POST is answered with. Separate from `gotifySend` because the whole
+   * point of these cases is the second request, which a helper returning only
+   * the first cannot see.
+   */
+  async function gotifyAttempts(
+    config: Record<string, unknown>,
+    answer: (path: string) => number,
+  ): Promise<{ paths: string[]; error: string | null }> {
+    const channel = await prisma.notificationChannel.create({
+      data: { ownerId, kind: "GOTIFY", name: "Gotify", config: config as never },
+    });
+    const paths: string[] = [];
+    const http = vi.fn(async (input: { url: URL }) => {
+      paths.push(input.url.pathname);
+      return { status: answer(input.url.pathname) };
+    });
+    const error = await deliverToChannel(channel, "subject", "body", {
+      resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+      isAdministrator: async () => true,
+      http,
+    }).then(() => null, (thrown: unknown) => (thrown as Error).message);
+    return { paths, error };
+  }
+
   it("authenticates Gotify with its own header, not a bearer token", async () => {
     const sent = await gotifySend({ url: "https://gotify.example/message", token: "app-token" });
 
@@ -641,6 +667,62 @@ describe.skipIf(!hasTestDatabase)("notification channels", () => {
     // A path the operator typed is theirs — a reverse proxy subpath included.
     const proxied = await gotifySend({ url: "https://host.example/gotify/message", token: "t" });
     expect(proxied.url.href).toBe("https://host.example/gotify/message");
+
+    // Gotify's router answers `/message/` with a redirect, which is not
+    // followed — the same paste failing as a 307 instead of a 404.
+    const trailing = await gotifySend({ url: "https://gotify.example/message/", token: "t" });
+    expect(trailing.url.href).toBe("https://gotify.example/message");
+  });
+
+  it("finds the message endpoint under a reverse-proxy subpath after a 404", async () => {
+    // `https://home.example/gotify` is the whole of what a proxied Gotify
+    // shows in the browser's bar, and it is what gets pasted. Filling in
+    // `/message` unconditionally would take away an alias that maps straight
+    // onto the endpoint and works today, so it is tried only once the server
+    // has said it does not recognise the path.
+    for (const typed of ["/gotify", "/gotify/"]) {
+      const attempt = await gotifyAttempts(
+        { url: `https://home.example${typed}`, token: "t" },
+        (path) => (path === "/gotify/message" ? 200 : 404),
+      );
+      expect(attempt.paths).toEqual(["/gotify", "/gotify/message"]);
+      expect(attempt.error).toBeNull();
+    }
+  });
+
+  it("asks once, and keeps the real reason when the endpoint answers", async () => {
+    // An alias that already is the message endpoint answers the first POST, so
+    // nothing further is asked and the message cannot be delivered twice.
+    const working = await gotifyAttempts(
+      { url: "https://home.example/notify", token: "t" },
+      () => 200,
+    );
+    expect(working.paths).toEqual(["/notify"]);
+
+    // A wrong token at the endpoint beneath the typed path is worth far more
+    // than the 404 the typed path produced, so it is what gets reported.
+    const wrongToken = await gotifyAttempts(
+      { url: "https://home.example/gotify", token: "t" },
+      (path) => (path === "/gotify/message" ? 401 : 404),
+    );
+    expect(wrongToken.paths).toEqual(["/gotify", "/gotify/message"]);
+    expect(wrongToken.error).toBe("Channel returned HTTP 401.");
+
+    // Nothing anywhere: the path was never the problem, and the message says
+    // which endpoint was looked for rather than only the code.
+    const nothing = await gotifyAttempts(
+      { url: "https://home.example/gotify", token: "t" },
+      () => 404,
+    );
+    expect(nothing.paths).toEqual(["/gotify", "/gotify/message"]);
+    expect(nothing.error).toContain("/gotify/message");
+
+    // An address already at `/message` has nothing further to try.
+    const already = await gotifyAttempts(
+      { url: "https://gotify.example/message", token: "t" },
+      () => 404,
+    );
+    expect(already.paths).toEqual(["/message"]);
   });
 
   it("sends a priority Gotify's clients will alert on, and honours a stored one", async () => {

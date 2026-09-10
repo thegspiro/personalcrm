@@ -385,6 +385,45 @@ function gotifyExtras(data: ReminderData | null): Record<string, unknown> {
 }
 
 /**
+ * Where a Gotify address should be posted, before anything has been tried.
+ *
+ * Only two things are decided here, and both are decided the same way for
+ * every address: a trailing slash is dropped, and a bare root becomes
+ * `/message`. The root case is the one worth naming — Gotify's own web UI puts
+ * `https://gotify.example.com/` in the browser's bar, that is what gets
+ * pasted, and a POST to it answers 404. `/message/` is the same mistake in a
+ * different spelling: Gotify's router answers the trailing slash with a
+ * redirect, which is not followed, so the channel failed with a 307 nobody
+ * could act on.
+ *
+ * A path that is neither is left exactly as typed. It may be the subpath a
+ * reverse proxy puts Gotify behind, and guessing at it here would rewrite
+ * addresses that already work; `gotifyMessageEndpoint` handles that case after
+ * the server has said it does not recognise the path.
+ */
+function gotifyNormalize(url: URL): void {
+  const path = url.pathname.replace(/\/+$/, "");
+  url.pathname = path === "" ? "/message" : path;
+}
+
+/**
+ * The message endpoint beneath a Gotify address that answered 404.
+ *
+ * `https://home.example.com/gotify` is the whole of what a reverse-proxied
+ * Gotify shows in the browser's bar, and its message endpoint is one segment
+ * further down. Null when the path already ends in `message`, because then the
+ * 404 is about something other than the path and asking twice would say
+ * nothing new.
+ */
+function gotifyMessageEndpoint(url: URL): URL | null {
+  const path = url.pathname.replace(/\/+$/, "");
+  if (path.split("/").pop() === "message") return null;
+  const endpoint = new URL(url);
+  endpoint.pathname = `${path}/message`;
+  return endpoint;
+}
+
+/**
  * A failure that happened after the destination was confirmed public.
  *
  * Everything up to and including `validateDestination` can say something about
@@ -488,15 +527,7 @@ export async function deliverToChannel(
   const rawUrl = typeof config.url === "string" ? config.url : null;
   if (!rawUrl) throw new Error(`${channel.kind} channel requires a URL.`);
   const url = new URL(rawUrl);
-  // Gotify posts go to `/message`; the server's root answers a POST with 404,
-  // so a channel saved with the address off the browser's bar — which is the
-  // obvious thing to paste — was offered, saved, and then failed every send
-  // with an HTTP code and nothing to act on. Only a bare root is filled in:
-  // any path the operator actually typed is theirs, including the subpath a
-  // reverse proxy puts Gotify behind.
-  if (channel.kind === "GOTIFY" && (url.pathname === "" || url.pathname === "/")) {
-    url.pathname = "/message";
-  }
+  if (channel.kind === "GOTIFY") gotifyNormalize(url);
   const addresses = await withinBudget(
     validateDestination(url.hostname, administrative, resolveDns),
   );
@@ -511,18 +542,47 @@ export async function deliverToChannel(
     : channel.kind === "GOTIFY"
       ? { title: subject, message: body, priority: gotifyPriority(config.priority), extras: gotifyExtras(data) }
       : { title: subject, message: body };
-  const response = await afterValidation(
-    (dependencies.http ?? defaultHttp)({
-      url, addresses, headers, body: JSON.stringify(payload),
+  const http = dependencies.http ?? defaultHttp;
+  const post = (target: URL) => afterValidation(
+    http({
+      url: target, addresses, headers, body: JSON.stringify(payload),
       deadlineMs: Math.max(1, remaining()),
     }),
   );
+
+  let attempted = url;
+  let response = await post(attempted);
+  // A Gotify address that is not the message endpoint answers 404, and until
+  // now that was the end of it. The fallback is tried rather than assumed
+  // because a path the operator typed may already be one: an alias in front of
+  // Gotify that maps straight onto `/message` works today, and rewriting every
+  // address would take it away. Nothing that delivers reaches here — a 404 is
+  // a request that changed nothing, so the second POST cannot duplicate a
+  // message — and the extra round trip is only ever paid by a channel that has
+  // just failed.
+  const fallback = channel.kind === "GOTIFY" && response.status === 404
+    ? gotifyMessageEndpoint(url)
+    : null;
+  if (fallback) {
+    const retried = await post(fallback);
+    attempted = fallback;
+    // Anything but another 404 is the answer: a 401 from the real endpoint is
+    // a wrong token, which is worth far more than the 404 the address it was
+    // typed at produced. Two 404s mean the path was never the problem, so the
+    // first one stands and the message names the endpoint that was looked for.
+    response = retried.status === 404 ? response : retried;
+  }
+
   if (response.status >= 300 && response.status < 400) {
     throw new ReachedDestinationError(
       new Error(`Channel redirected (HTTP ${response.status}), which is not followed. Configure the address it points at.`),
     );
   }
   if (response.status < 200 || response.status >= 300) {
-    throw new ReachedDestinationError(new Error(`Channel returned HTTP ${response.status}.`));
+    throw new ReachedDestinationError(new Error(
+      response.status === 404 && channel.kind === "GOTIFY"
+        ? `Channel returned HTTP 404. Nothing answered at ${attempted.pathname}; check the address is the Gotify server's own, including any subpath a reverse proxy puts it behind.`
+        : `Channel returned HTTP ${response.status}.`,
+    ));
   }
 }

@@ -92,7 +92,11 @@ export const CHANNEL_FIELDS: Record<ChannelKind, ChannelField[]> = {
       label: "URL",
       type: "url",
       required: true,
-      placeholder: "https://gotify.example.com/message",
+      placeholder: "https://gotify.example.com",
+      // The address off the browser's bar is enough, subpath and all: the
+      // sender posts to the server's `/message` endpoint beneath whatever is
+      // typed here, and only asks for it once the address itself answers 404.
+      hint: "Your Gotify server's address. The message endpoint is found from it.",
     },
     {
       name: "token",
