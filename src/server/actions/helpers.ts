@@ -1,7 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { getUserContext } from "@/server/user/context";
-import { parsePlainDate, plainDateToDb, type PlainDate } from "@/lib/dates";
+import { parsePlainDate, plainDateToDb } from "@/lib/dates";
 import { normalizeToPrecision, type DatePrecision } from "@/lib/date-precision";
 
 /** What every server action returns, so forms can render errors uniformly. */
@@ -138,6 +138,3 @@ export function plainDate(form: FormData, key: string): Date | undefined {
   return parsed ? plainDateToDb(parsed) : undefined;
 }
 
-export function toDbDate(date: PlainDate): Date {
-  return plainDateToDb(date);
-}

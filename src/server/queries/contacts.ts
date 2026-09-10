@@ -369,41 +369,6 @@ export const getContact = cache(
   },
 );
 
-/** Interactions for one contact, newest first, including future-dated ones. */
-export async function listContactInteractions(
-  ownerId: string,
-  contactId: string,
-  take = 50,
-) {
-  const scope = await privacyScope();
-  return prisma.interaction.findMany({
-    where: {
-      ownerId,
-      OR: [
-        { participants: { some: { contactId } } },
-        { mentions: { some: { contactId } } },
-      ],
-      ...interactionPrivacyWhere(scope),
-    },
-    include: {
-      type: true,
-      dateEntry: { include: { activityType: true } },
-      participants: {
-        include: {
-          contact: { select: { id: true, firstName: true, lastName: true } },
-        },
-      },
-      mentions: {
-        include: {
-          contact: { select: { id: true, firstName: true, lastName: true } },
-        },
-      },
-    },
-    orderBy: { occurredAt: "desc" },
-    take,
-  });
-}
-
 /**
  * How the reaching out has been split with one contact.
  *

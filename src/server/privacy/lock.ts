@@ -350,12 +350,6 @@ export async function recordProtectedActivity(
 /** At most one activity check/write is issued by all protected reads in a render. */
 export const recordProtectedReadActivity = cache(recordProtectedActivity);
 
-/** True when the caller must be sent to the unlock screen. */
-export async function isLocked(): Promise<boolean> {
-  const state = await getPrivacyState();
-  return state.enabled && !state.unlocked;
-}
-
 /**
  * Guard for write actions that touch private content.
  *

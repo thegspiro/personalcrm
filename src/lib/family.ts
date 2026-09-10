@@ -84,10 +84,6 @@ export function familyMeta(term: TermLike | null | undefined): FamilyMeta | null
   return { tier, generation, role };
 }
 
-export function isFamilyTerm(term: TermLike | null | undefined): boolean {
-  return familyMeta(term) !== null;
-}
-
 /**
  * What a relationship becomes when it ends.
  *

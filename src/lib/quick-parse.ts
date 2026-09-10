@@ -13,7 +13,7 @@
  * Pure and free of Prisma, so it unit-tests against a fixed clock.
  */
 import * as chrono from "chrono-node";
-import { calendarDateInTz, plainDateKey, type PlainDate } from "./dates";
+import { calendarDateInTz, type PlainDate } from "./dates";
 
 export interface ParseContact {
   id: string;
@@ -817,10 +817,3 @@ export function touchesPrivateContact(result: QuickParseResult): boolean {
   );
 }
 
-/** The parsed date as a form value, or today's when the line had no date. */
-export function parsedDateKey(
-  result: QuickParseResult,
-  today: PlainDate,
-): string {
-  return plainDateKey(result.date ?? today);
-}
