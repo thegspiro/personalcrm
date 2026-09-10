@@ -28,7 +28,7 @@ and follows the same five steps:
 
 1. `await owner()` → `{ ownerId, timezone }` (redirects when signed out).
 2. Parse `FormData` with the typed helpers — `str`, `num`, `bool`, `strList`,
-   `instant`, `partialDate`, `plainDate`, `toDbDate`.
+   `instant`, `partialDate`, `plainDate`.
 3. Validate with Zod; `invalid(err)` maps issues onto `fieldErrors`.
 4. Write — in `prisma.$transaction` whenever more than one table is touched.
 5. Re-derive denormalised state, `revalidatePath`, return.
@@ -140,7 +140,7 @@ list, because a person missing from the form would be silently dropped on save.
 | People in their life (`Associate`) | `createAssociate`, `updateAssociate`, `promoteAssociate`, `deleteAssociate` |
 | Plans | `createPlan`, `updatePlan`, `schedulePlan`, `completePlan`, `setPlanStatus`, `setPlanChecklistItem`, `deletePlan` |
 | Tasks | `createTask`, `updateTask`, `setTaskDone`, `deleteTask` |
-| Gifts | `createGift`, `updateGift`, `setGiftStatus`, `deleteGift` |
+| Gifts | `createGift`, `updateGift`, `deleteGift` |
 | Debts | `createDebt`, `updateDebt`, `settleDebt`, `deleteDebt` |
 | Dietary needs | `createDietaryNeed`, `updateDietaryNeed`, `deleteDietaryNeed`, `updateAllergyStatus` |
 | Relationships | `createRelationship`, `updateRelationship`, `deleteRelationship` |

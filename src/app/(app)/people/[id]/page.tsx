@@ -38,7 +38,8 @@ import { TasksSection } from "@/components/contacts/sections/tasks";
 import { MilestonesSummary } from "@/components/contacts/milestones-summary";
 import { TimelineList } from "@/components/timeline/timeline-list";
 import { SectionCard } from "@/components/contacts/section-card";
-import { calendarDateInTz, plainDateFromDb, plainDateKey } from "@/lib/dates";
+import { calendarDateInTz, comparePlainDates, plainDateFromDb, plainDateKey } from "@/lib/dates";
+import { recentMilestones } from "@/lib/life-events";
 import { readReminderPolicy } from "@/lib/reminders";
 import { cadenceMessage } from "@/lib/format";
 import { cadenceStatus, daysSinceLastInteraction, daysUntilTouch } from "@/lib/cadence";
@@ -224,11 +225,15 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     type: event.type
       ? { label: event.type.label, icon: event.type.icon, color: event.type.color }
       : null,
-  }));
+  }))
+    // Each half arrived ordered, but two ordered lists concatenated are not one:
+    // every shared event sorted after every event of the contact's own, whatever
+    // its date. Both the summary and the section below read this order.
+    .toSorted((left, right) => comparePlainDates(right.date, left.date));
 
-  // A summary, not a second home: the rows are already ordered newest first, and
-  // every one of them still appears in the section below.
-  const milestones = lifeEvents.filter((event) => event.isMilestone).slice(0, 3);
+  // A summary, not a second home: every milestone still appears in the section
+  // below, in the same order.
+  const milestones = recentMilestones(lifeEvents);
 
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">

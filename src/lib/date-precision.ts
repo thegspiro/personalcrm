@@ -17,7 +17,6 @@
  */
 import {
   type PlainDate,
-  addPlainDays,
   clampPlainDate,
   daysInMonth,
   diffPlainDays,
@@ -338,15 +337,6 @@ export function yearsSince(
     (today.month === anchor.month && (precision === "MONTH" || today.day >= anchor.day));
   if (!monthPassed) years -= 1;
   return Math.max(0, years);
-}
-
-/** Shift a partial date by whole days, keeping its precision meaningful. */
-export function shiftPartialDate(
-  date: PlainDate,
-  precision: DatePrecision,
-  days: number,
-): PlainDate {
-  return normalizeToPrecision(addPlainDays(date, days), precision);
 }
 
 function isPlausibleYear(year: number): boolean {

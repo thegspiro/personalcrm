@@ -2074,9 +2074,9 @@ export async function createGift(form: FormData): Promise<ActionResult<{ id: str
 /**
  * Correct a gift.
  *
- * `status` is carried in the form rather than left to `setGiftStatus`, because
- * an edit that reset every gift to IDEA on save would quietly un-give things
- * you have already handed over.
+ * `status` is carried in the form and defaults to the stored value, because an
+ * edit that reset every gift to IDEA on save would quietly un-give things you
+ * have already handed over.
  */
 export async function updateGift(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
@@ -2108,19 +2108,6 @@ export async function updateGift(form: FormData): Promise<ActionResult> {
     },
   });
 
-  touch(existing.contactId);
-  revalidatePath("/gifts");
-  return ok();
-}
-
-export async function setGiftStatus(
-  id: string,
-  status: "IDEA" | "RESERVED" | "PURCHASED" | "GIVEN",
-): Promise<ActionResult> {
-  const { ownerId } = await owner();
-  const existing = await prisma.gift.findFirst({ where: { id, ownerId, ...viaContactPrivacyWhere(await privacyScope()) }, select: { contactId: true } });
-  if (!existing) return fail("Not found.");
-  await prisma.gift.update({ where: { id }, data: { status } });
   touch(existing.contactId);
   revalidatePath("/gifts");
   return ok();

@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import { Toaster } from "sonner";
 import { ThemeProvider, appearanceBootScript } from "@/components/providers/theme-provider";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { ServiceWorkerRegistrar, ServiceWorkerUpdateNotification } from "@/components/offline/offline";
 import "./globals.css";
 
@@ -45,7 +44,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           disableTransitionOnChange
           nonce={nonce}
         >
-          <TooltipProvider delayDuration={300}>{children}</TooltipProvider>
+          {children}
           <ServiceWorkerRegistrar />
           <ServiceWorkerUpdateNotification />
           <Toaster
