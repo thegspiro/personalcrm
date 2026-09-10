@@ -201,12 +201,40 @@ const RATE_LIMITED_INTERVAL_MS = 1_100;
  */
 const SHARED_INTERVAL_MS = 300;
 
-export function isRateLimited(baseUrl: string): boolean {
+/**
+ * The endpoint's host, in one spelling.
+ *
+ * Every question this module asks about a host asks it through here, because
+ * one host has several valid spellings and comparing the raw value let them
+ * disagree:
+ *
+ * - A fully qualified name may carry a trailing dot. `nominatim.openstreetmap.org.`
+ *   is the same host, and `new URL()` keeps the dot — so that spelling walked
+ *   past the protected-host check: typing reached the service the gate exists to
+ *   protect, bulk placing stopped refusing it, and the one-a-second spacing
+ *   dropped to the shared 300ms.
+ * - The port is not part of the question. `hostname` rather than `host`, so a
+ *   non-default port on the Foundation's name is still the Foundation's
+ *   machine. Note that `hostname` keeps an IPv6 literal's brackets — the
+ *   comment this replaces claimed the opposite, and the check below reads it
+ *   bracketed for that reason.
+ *
+ * `null` for anything unparseable, so a caller cannot mistake "no host" for a
+ * host that matched nothing.
+ */
+function hostOf(baseUrl: string): string | null {
   try {
-    return RATE_LIMITED_HOSTS.has(new URL(baseUrl).host.toLowerCase());
+    const value = new URL(baseUrl).hostname.toLowerCase();
+    // Only the root label's dot, and never a bare "." that would empty the name.
+    return value.length > 1 && value.endsWith(".") ? value.slice(0, -1) : value;
   } catch {
-    return false;
+    return null;
   }
+}
+
+export function isRateLimited(baseUrl: string): boolean {
+  const host = hostOf(baseUrl);
+  return host !== null && RATE_LIMITED_HOSTS.has(host);
 }
 
 /**
@@ -218,17 +246,12 @@ export function isRateLimited(baseUrl: string): boolean {
  * for our own.
  */
 export function isPrivateHost(baseUrl: string): boolean {
-  let host: string;
-  try {
-    // `hostname` rather than `host`: the port is not part of this question, and
-    // an IPv6 literal arrives here without its brackets.
-    host = new URL(baseUrl).hostname.toLowerCase();
-  } catch {
-    return false;
-  }
+  const host = hostOf(baseUrl);
+  if (host === null) return false;
 
   if (host === "localhost" || host.endsWith(".localhost")) return true;
-  if (host === "::1" || host === "[::1]") return true;
+  // Bracketed, because that is how `hostname` reports an IPv6 literal.
+  if (host === "[::1]") return true;
   if (host.endsWith(".local") || host.endsWith(".internal")) return true;
 
   const octets = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
@@ -305,10 +328,19 @@ function spaceOutRequests(baseUrl: string): Promise<void> {
 }
 
 /**
- * Ask for candidates. Returns an empty list for every failure.
+ * Ask for candidates.
  *
- * Same trade as the AI layer: a lookup that quietly finds nothing is better
- * than an error page in front of a form the user can still fill in by hand.
+ * `null` means the endpoint did not answer — unreachable, timed out, an error
+ * status, a body that would not parse. An empty array means it answered and
+ * knows of no such place. Those used to be the same value, and conflating them
+ * cost two things: an unreachable endpoint told the user "Nothing matched",
+ * which reads as *your address is wrong*, and a field suggesting while you type
+ * could not tell that it should stop asking, so every pause spent the whole
+ * timeout again.
+ *
+ * Neither is an exception. The trade the AI layer makes holds here too: a
+ * lookup that comes back empty-handed is better than an error page in front of
+ * a form the user can still fill in by hand — the caller decides what to say.
  */
 export interface SearchOptions {
   limit?: number;
@@ -326,9 +358,10 @@ export async function searchAddress(
   config: GeoConfig,
   query: string,
   options: SearchOptions = {},
-): Promise<GeoCandidate[]> {
+): Promise<GeoCandidate[] | null> {
   const { limit = 5, interactive = false } = options;
   const trimmed = query.trim();
+  // Nothing was asked, so nothing failed.
   if (!trimmed) return [];
 
   const definition = geoProviderById(config.provider);
@@ -339,6 +372,9 @@ export async function searchAddress(
       ? `${base}/api?q=${encodeURIComponent(trimmed)}&limit=${limit}`
       : `${base}/search?q=${encodeURIComponent(trimmed)}&format=jsonv2&addressdetails=1&limit=${limit}`;
 
+  // Dropped rather than served late, and not a failure: the endpoint is fine,
+  // this keystroke is simply stale. Reporting it as one would stop a field
+  // suggesting for the rest of its life over a fast typist.
   if (interactive && wouldWait(base)) return [];
 
   // Waited out before the timeout starts, so queueing does not eat the budget
@@ -355,11 +391,12 @@ export async function searchAddress(
       headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
       signal: controller.signal,
     });
-    if (!response.ok) return [];
+    if (!response.ok) return null;
     const body: unknown = await response.json();
     return dialect === "photon" ? readPhoton(body) : readNominatim(body);
   } catch {
-    return [];
+    // Unreachable, aborted on the timeout, or a body that would not parse.
+    return null;
   } finally {
     clearTimeout(timer);
   }

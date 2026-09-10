@@ -152,6 +152,12 @@ export function EditPlaceSheet({
     enabled: lookup.enabled,
     lookup,
     query,
+    // The button sends the name and the address together, which is the better
+    // query — a venue's name helps place it. Typing only counts as typing an
+    // address, though: watching the whole join meant renaming a place sent the
+    // new name and the old address to a geocoder, which is neither what the
+    // user was doing nor what the switch offered to do.
+    typeaheadTrigger: address,
     search: runLookup,
     onAccept: accept,
     listId: `place-${place.id}-suggestions`,

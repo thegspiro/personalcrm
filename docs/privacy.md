@@ -580,9 +580,12 @@ Five rules, the same shape as the assisted reading's:
    directly for exactly that.
 5. **Nothing is written from the answer.** Candidates are shown, you pick one,
    and the write goes through `updateLocation` — or an ordinary address or
-   home-base save — like any other action. Every failure — not configured, timed
-   out, an unreadable reply — returns no candidates rather than an error, and the
-   field stays typeable.
+   home-base save — like any other action. No failure — not configured, timed
+   out, an unreadable reply — becomes an error page: the field stays typeable
+   and you can fill it in by hand. A failure does say so, though, rather than
+   reporting itself as an address nobody could find; that difference is what
+   lets a field suggesting while you type stop asking after one, instead of
+   waiting out the timeout again at every pause.
 
 Rule 4 is worth restating against rule 2, because it is the first question this
 raises: a private contact gets no suggestions and no button. The field withholds

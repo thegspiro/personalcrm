@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   GEO_PROVIDERS,
   geoProviderById,
@@ -7,6 +7,7 @@ import {
   minIntervalFor,
   readNominatim,
   readPhoton,
+  searchAddress,
   toCandidateView,
   typeaheadAllowed,
 } from "@/server/geo/providers";
@@ -262,6 +263,24 @@ describe("respecting a shared endpoint", () => {
     expect(isPrivateHost("http://photon.local")).toBe(true);
   });
 
+  it("gates the protected service however its host is spelled", () => {
+    // A fully qualified name may carry a trailing dot, and `new URL()` keeps
+    // it. Comparing the raw value let that spelling walk past every check at
+    // once: typing reached the service the gate protects, bulk placing stopped
+    // refusing it, and the one-a-second spacing dropped to the shared 300ms.
+    const dotted = "https://nominatim.openstreetmap.org./";
+    expect(isRateLimited(dotted)).toBe(true);
+    expect(minIntervalFor(dotted)).toBe(1_100);
+    expect(typeaheadAllowed({ provider: "custom", baseUrl: dotted })).toBe(false);
+  });
+
+  it("reads a host the same whatever port it answers on", () => {
+    // The port is not part of the question: that name resolves to the
+    // Foundation's servers whichever one is addressed.
+    expect(isRateLimited("https://nominatim.openstreetmap.org:8443")).toBe(true);
+    expect(isPrivateHost("http://127.0.0.1:2322")).toBe(true);
+  });
+
   it("does not mistake a public name for one of your own", () => {
     expect(isPrivateHost("https://photon.komoot.io")).toBe(false);
     // Just outside the private range, and a name that only looks like an
@@ -269,6 +288,8 @@ describe("respecting a shared endpoint", () => {
     expect(isPrivateHost("http://172.32.0.1")).toBe(false);
     expect(isPrivateHost("http://999.1.1.1")).toBe(false);
     expect(isPrivateHost("not a url")).toBe(false);
+    // A lone dot is a root label, not an empty hostname to match on.
+    expect(isRateLimited("http://./")).toBe(false);
   });
 
   it("spaces requests by whose hardware answers them", () => {
@@ -294,5 +315,49 @@ describe("crossing into the browser", () => {
       ],
     });
     expect(Object.keys(toCandidateView(candidate)).sort()).toEqual(Object.keys(candidate).sort());
+  });
+});
+
+describe("telling a silent endpoint from an empty answer", () => {
+  // Localhost, so the request is neither spaced out nor queued and the test
+  // does not wait on a timer it did not set.
+  const config = { provider: "custom" as const, baseUrl: "http://localhost:8080" };
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reports nothing found when the endpoint says so", async () => {
+    vi.stubGlobal("fetch", async () => new Response("[]", { status: 200 }));
+    await expect(searchAddress(config, "120 Maple Street")).resolves.toEqual([]);
+  });
+
+  it("reports a failure when the endpoint cannot be reached", async () => {
+    // These used to be the same empty array, and conflating them cost two
+    // things: an unreachable endpoint told the user "Nothing matched", which
+    // reads as *your address is wrong*, and a field suggesting while you type
+    // could not tell it should stop asking, so every pause spent the whole
+    // timeout again.
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    await expect(searchAddress(config, "120 Maple Street")).resolves.toBeNull();
+  });
+
+  it("reports a failure for an error status", async () => {
+    vi.stubGlobal("fetch", async () => new Response("nope", { status: 503 }));
+    await expect(searchAddress(config, "120 Maple Street")).resolves.toBeNull();
+  });
+
+  it("reports a failure for a reply it cannot read", async () => {
+    vi.stubGlobal("fetch", async () => new Response("<html>oops</html>", { status: 200 }));
+    await expect(searchAddress(config, "120 Maple Street")).resolves.toBeNull();
+  });
+
+  it("does not call an empty query a failure", async () => {
+    // Nothing was asked, so nothing failed — and a field must not stop
+    // suggesting because the box was briefly cleared.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(searchAddress(config, "   ")).resolves.toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -17,6 +17,8 @@ const state = vi.hoisted(() => ({
   typeahead: true,
   /** Every query that actually reached the provider, in order. */
   sent: [] as { query: string; interactive: boolean }[],
+  /** What the stubbed provider answers with: `null` is an endpoint that did not. */
+  answer: [] as unknown[] | null,
 }));
 
 vi.mock("@/server/db/client", async () => ({ prisma: (await import("./db")).prisma }));
@@ -42,10 +44,18 @@ vi.mock("@/server/privacy/lock", () => ({
     state.unlocked ? { ok: true } : { ok: false, error: "Unlock to continue." },
 }));
 
+// One snapshot, matching what `searchPlaces` actually reads: it takes a single
+// `getGeoStatus()` so the endpoint it sends to and the permission it checks
+// cannot describe different settings.
 vi.mock("@/server/geo/config", () => ({
-  lookupAvailable: async () => true,
-  currentGeoConfig: async () => ({ provider: "photon", baseUrl: "http://box.local:2322" }),
-  typeaheadEnabled: async () => state.typeahead,
+  getGeoStatus: async () => ({
+    enabled: true,
+    provider: "photon" as const,
+    baseUrl: "http://box.local:2322",
+    usable: true,
+    typeaheadCapable: true,
+    typeahead: state.typeahead,
+  }),
 }));
 
 // The real module apart from the network call, so the shaping and the host
@@ -62,7 +72,7 @@ vi.mock("@/server/geo/providers", async () => {
       options: { interactive?: boolean } = {},
     ) => {
       state.sent.push({ query, interactive: options.interactive === true });
-      return [];
+      return state.answer;
     },
   };
 });
@@ -86,6 +96,7 @@ describe.skipIf(!hasTestDatabase)("suggesting a contact's address", () => {
     state.unlocked = true;
     state.typeahead = true;
     state.sent = [];
+    state.answer = [];
 
     const open = await prisma.contact.create({
       data: { ownerId: user.id, firstName: "Dana", lastName: "Okafor" },
@@ -176,5 +187,34 @@ describe.skipIf(!hasTestDatabase)("suggesting a contact's address", () => {
 
     expect(result.ok).toBe(false);
     expect(state.sent).toEqual([]);
+  });
+
+  it("says a lookup failed rather than that nothing matched", async () => {
+    // An endpoint that does not answer used to be indistinguishable from one
+    // that answered "no such place". Two things went wrong with that: the user
+    // was told their address was not found when it had never been looked for,
+    // and a field suggesting while you type had no way to know it should stop
+    // asking, so every pause spent the whole timeout again.
+    state.answer = null;
+
+    const result = await lookupContactAddress(
+      form({ contactId: openId, query: "120 Maple Street", interactive: "1" }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("didn't work");
+    // It was reached — this is a failure to answer, not a refusal to send.
+    expect(state.sent).toEqual([{ query: "120 Maple Street", interactive: true }]);
+  });
+
+  it("still reports an empty answer as an empty answer", async () => {
+    state.answer = [];
+
+    const result = await lookupContactAddress(
+      form({ contactId: openId, query: "120 Maple Street", interactive: "1" }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.data?.candidates).toEqual([]);
   });
 });
