@@ -951,9 +951,14 @@ defaulted to 587), `secure`, optional `user`, and required `from`/`to`.
 HTTP-backed channels use `url`. Gotify additionally stores `priority` (a
 **number**, 0–10, defaulted to 5): Gotify's own default of 0 is delivered
 silently by its clients, so a channel that says nothing gets an ordinary
-notification rather than one nobody sees. Its `url` is the message endpoint —
-an address saved without a path is sent to `/message`, since Gotify answers a
-POST to its root with 404.
+notification rather than one nobody sees. Its `url` is the Gotify server's
+address rather than an exact endpoint: a bare root is posted to `/message`
+(Gotify answers a POST to its root with 404), a trailing slash is dropped, and
+any other path is posted to as typed — an alias in front of Gotify that maps
+straight onto `/message` keeps working. Only if that path answers 404 is
+`/message` beneath it tried, once, which is how the subpath a reverse proxy
+puts Gotify behind is found from the address in the browser's bar. A 404 posts
+nothing, so the second attempt cannot duplicate a message.
 
 **Credentials are stored encrypted, under their own key.** The SMTP password
 lands in `passEnc` and a bearer token in `tokenEnc`, AES-256-GCM under a key
