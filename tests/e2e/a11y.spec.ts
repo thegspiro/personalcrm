@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { ACCOUNT, ensureSignedIn } from "./helpers";
+import { ACCOUNT, createContact, ensureSignedIn } from "./helpers";
 
 /**
  * Accessibility, checked by axe against the real pages.
@@ -93,6 +93,56 @@ for (const route of ROUTES) {
     await scan(page, route);
   });
 }
+
+/**
+ * A calendar with something on it, which the plain route scan cannot promise.
+ *
+ * `/calendar` above renders whatever the account happens to hold, so the chips
+ * are only scanned when another spec's data lands in the month on show. That is
+ * how a contrast failure survived: the suffix inside a chip is drawn only when a
+ * happening carries a contact or a note, so the violation appeared or vanished
+ * with the date and the order the suites ran in, and a green run proved nothing
+ * about it. This puts a chip on today by construction.
+ *
+ * Dates are computed rather than written down. A fixed day would drift out of
+ * the month on show and quietly stop covering anything, which is the failure
+ * this test exists to end.
+ */
+test("the calendar is accessible with something on it", async ({ page }) => {
+  await ensureSignedIn(page);
+
+  const iso = (offsetDays: number) => {
+    const day = new Date();
+    day.setDate(day.getDate() + offsetDays);
+    return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+  };
+
+  const person = `Chip ${test.info().project.name} ${Date.now().toString(36)}`;
+  await createContact(page, person);
+
+  // Spanning today rather than sitting on it: the chip then carries both
+  // suffixes — the contact's name and the "ongoing" note — and today's square
+  // is on every grid, whichever month is showing.
+  const section = page.locator("section#happenings");
+  await section.scrollIntoViewIfNeeded();
+  await section.getByRole("button", { name: "Add something they have on" }).click();
+  await section.getByLabel("What have they got on?").fill(`Away ${person}`);
+  for (const [label, value] of [["When", iso(-1)], ["Until", iso(1)]] as const) {
+    await page.getByRole("button", { name: label, exact: true }).click();
+    const typed = page.getByLabel("Type a date");
+    await typed.fill(value);
+    await typed.press("Enter");
+    await expect(typed).toBeHidden();
+  }
+  await section.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(section.getByText(`Away ${person}`, { exact: true })).toBeVisible();
+
+  await page.goto("/calendar");
+  // The chip has to be on screen before axe measures it, or this passes by
+  // scanning a calendar with nothing on it — exactly the hole it closes.
+  await expect(page.getByRole("link", { name: new RegExp(`Away ${person}`) }).first()).toBeVisible();
+  await scan(page, "/calendar with entries");
+});
 
 test("the person form is accessible", async ({ page }) => {
   await ensureSignedIn(page);
