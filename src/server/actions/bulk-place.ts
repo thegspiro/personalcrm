@@ -145,7 +145,12 @@ export async function placeUnplaced(
     // position — whitespace and case are safe, fuzzy matching is not — and a
     // pin in the wrong city is worse than no pin, because it looks answered.
     // So anything but a single unambiguous match is left for a person.
-    const only = candidates.length === 1 ? candidates[0] : null;
+    //
+    // An endpoint that did not answer at all reads as no match here, which is
+    // the behaviour this pass has always had. The row keeps its place in the
+    // cursor and the next pass tries it again — a pass that gave up on the
+    // first unreachable row would strand every row behind it.
+    const only = candidates?.length === 1 ? candidates[0] : null;
     const point = only ? pointOf(only) : null;
     // One answer is necessary but not sufficient: a geocoder handed a misspelt
     // or half-written address will happily return a single fallback — often the

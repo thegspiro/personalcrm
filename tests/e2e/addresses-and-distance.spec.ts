@@ -80,16 +80,22 @@ test("an address field offers no suggestions until it is asked to", async ({ pag
   await addresses.getByRole("button", { name: "Add an address" }).click();
 
   const line = addresses.getByLabel("Address", { exact: true });
-  // No combobox: the field is a plain text box, and nothing it receives goes
-  // anywhere. `role` is the whole of the difference, so it is the whole of the
-  // assertion.
+
+  // Typing a real address changes nothing but the box. This is the assertion
+  // that matters — whether anything is fetched while you type — and it is put
+  // first for that reason.
+  await line.fill("120 Maple Street");
+  await expect(line).toHaveValue("120 Maple Street");
+  await expect(addresses.getByRole("listbox")).toHaveCount(0);
+
+  // With the whole feature off the field is plain: no combobox, and no control
+  // to press either. Note this says nothing about the *typeahead* switch on its
+  // own — the combobox markup is present whenever a result list can open, since
+  // a list reached by pressing the button needs the same keyboard handling as
+  // one reached by typing.
   await expect(line).not.toHaveAttribute("role", "combobox");
   await expect(line).not.toHaveAttribute("aria-expanded", /.*/);
-
-  // Typing a real address changes nothing but the box.
-  await line.fill("120 Maple Street");
-  await expect(addresses.getByRole("listbox")).toHaveCount(0);
-  await expect(line).toHaveValue("120 Maple Street");
+  await expect(addresses.getByRole("button", { name: /Look up/ })).toHaveCount(0);
 });
 
 test("half a coordinate pair is refused rather than stored", async ({ page }) => {

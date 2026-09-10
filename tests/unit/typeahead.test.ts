@@ -71,4 +71,20 @@ describe("deciding whether to suggest", () => {
   it("refuses on a failure even when everything else says yes", () => {
     expect(shouldSuggest(state({ broken: true, suspended: false, lastSent: null }))).toBe(false);
   });
+
+  it("measures whatever the caller says the user is typing in", () => {
+    // The place editor sends "name, address" but watches the address alone, so
+    // that renaming a place is not mistaken for typing an address. What this
+    // function is handed is the trigger, not the query — the two differ there,
+    // and a rename must come back false however much the sent query changed.
+    const address = "12 Bridge Street";
+    expect(
+      shouldSuggest(state({ query: address, initialQuery: address, lastSent: null })),
+    ).toBe(false);
+
+    // Editing that same address is still a real edit.
+    expect(
+      shouldSuggest(state({ query: "12 Bridge Str", initialQuery: address })),
+    ).toBe(true);
+  });
 });

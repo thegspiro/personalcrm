@@ -25,25 +25,38 @@ export async function searchPlaces(
   if (!trimmed) return { ok: true, candidates: [] };
 
   try {
-    const { lookupAvailable, currentGeoConfig, typeaheadEnabled } = await import("./config");
-    if (!(await lookupAvailable())) return { ok: false, reason: "off" };
-
-    const config = await currentGeoConfig();
-    if (!config) return { ok: false, reason: "unconfigured" };
+    const { getGeoStatus } = await import("./config");
+    // One snapshot answers all four questions — switched on, configured,
+    // permitted to be typed at, and which endpoint. Read separately, they could
+    // describe different settings: an administrator repointing the connection
+    // between two of the reads could have the permission describe the new
+    // endpoint while the request went to the old one, which is how an
+    // interactive query reaches a service whose policy forbids exactly that.
+    // It is also three times the queries, since each read loaded the lot.
+    const status = await getGeoStatus();
+    if (!status.enabled) return { ok: false, reason: "off" };
+    if (!status.usable) return { ok: false, reason: "unconfigured" };
 
     // Re-checked here rather than trusted from the caller: a server action is a
     // public POST endpoint, so "the field only sends this when it is allowed to"
     // is not a guarantee. An endpoint whose operator forbids search-as-you-type
     // must not be reachable that way by a hand-made request either.
-    if (options.interactive && !(await typeaheadEnabled())) {
+    if (options.interactive && !status.typeahead) {
       return { ok: false, reason: "typing-not-allowed" };
     }
 
     const { searchAddress } = await import("./providers");
-    return {
-      ok: true,
-      candidates: await searchAddress(config, trimmed, { interactive: options.interactive }),
-    };
+    const candidates = await searchAddress(
+      { provider: status.provider, baseUrl: status.baseUrl },
+      trimmed,
+      { interactive: options.interactive },
+    );
+    // `null` is the endpoint not answering, which is a different thing to say
+    // than "nothing matched" — and the difference a field suggesting while you
+    // type needs, so that it stops asking rather than spending the timeout
+    // again on every pause.
+    if (candidates === null) return { ok: false, reason: "failed" };
+    return { ok: true, candidates };
   } catch {
     return { ok: false, reason: "failed" };
   }

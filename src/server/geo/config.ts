@@ -151,14 +151,3 @@ export async function setGeoConnection(provider: GeoProviderId, baseUrl: string)
   await writeSetting(PROVIDER, provider);
   await writeSetting(BASE_URL, baseUrl);
 }
-
-/**
- * Whether suggestions while typing are switched on, permitted and usable.
- *
- * The gate `searchPlaces` consults before it will answer an interactive
- * request, so the rule holds however the action is reached rather than only
- * where the field decides not to ask.
- */
-export async function typeaheadEnabled(): Promise<boolean> {
-  return (await getGeoStatus()).typeahead;
-}

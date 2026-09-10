@@ -56,6 +56,17 @@ export interface PlaceLookupOptions {
   lookup: LookupUi;
   /** Exactly what would be sent. One string, so the hint cannot misdescribe it. */
   query: string;
+  /**
+   * The string whose *change* starts a debounce, when that is not the whole
+   * query. Defaults to `query`.
+   *
+   * The two differ where the query carries something that is not the address
+   * being typed. The place editor sends "name, address" — the better query,
+   * since a venue's name helps — but renaming a place is not typing an address,
+   * and watching the join meant a rename quietly sent the new name and the old
+   * address to a geocoder. The trigger there is the address field alone.
+   */
+  typeaheadTrigger?: string;
   search: (
     query: string,
     options?: { interactive?: boolean },
@@ -70,27 +81,55 @@ export function usePlaceLookup({
   enabled,
   lookup,
   query,
+  typeaheadTrigger,
   search,
   onAccept,
   listId,
   idleLabel = "Look up this address",
 }: PlaceLookupOptions): PlaceLookupHandle {
-  const [candidates, setCandidates] = React.useState<GeoCandidateView[] | null>(null);
+  /**
+   * The candidates, and which query they answer.
+   *
+   * One value rather than two, because they must change together. Keep typing
+   * after results appear and the list from the previous query stayed open and
+   * selectable right through the debounce and the next request, so Enter could
+   * fill in a match for text the field no longer held. Holding the query
+   * alongside its answer closes the list the moment it stops describing what is
+   * in the box — whether the user typed more, deleted below the minimum, or
+   * cleared the field. A ref would not do: it changes without a render, so the
+   * list would go on being drawn from a stale comparison.
+   */
+  const [answer, setAnswer] = React.useState<{
+    forQuery: string;
+    candidates: GeoCandidateView[];
+  } | null>(null);
   const [looking, setLooking] = React.useState(false);
   const [error, setError] = React.useState<string>();
   const [open, setOpen] = React.useState(false);
   const [active, setActive] = React.useState(-1);
 
   const typing = enabled && lookup.typeahead;
+  const trigger = typeaheadTrigger ?? query;
 
   // What the form opened with. The guard that keeps "never on a page load" true.
-  const initialQuery = React.useRef(query);
+  const initialTrigger = React.useRef(trigger);
   const lastSent = React.useRef<string | null>(null);
   const suspended = React.useRef(false);
   const broken = React.useRef(false);
   const composing = React.useRef(false);
   const sequence = React.useRef(0);
   const listRef = React.useRef<HTMLUListElement>(null);
+  /**
+   * The field itself, so a button press can hand focus back to it.
+   *
+   * The arrow keys live on the input — that is where the combobox pattern puts
+   * them, and an option in a listbox is deliberately not focusable. But the
+   * button that opens the list is several fields further down the form, so
+   * without this a keyboard user who presses "Look up" is left standing on the
+   * button, with the results they asked for reachable only by shift-tabbing
+   * back past every field in between.
+   */
+  const inputRef = React.useRef<HTMLInputElement>(null);
 
   // Held in refs and left out of the effect's dependencies: both arrive as new
   // closures on every render of the form, and depending on them would restart
@@ -102,15 +141,15 @@ export function usePlaceLookup({
     acceptRef.current = onAccept;
   });
 
-  const shown = candidates ?? [];
-  const listOpen = open && shown.length > 0;
+  const shown = answer?.candidates ?? [];
+  const listOpen = open && shown.length > 0 && answer?.forQuery === query.trim();
 
   const accept = React.useCallback((candidate: GeoCandidateView) => {
     // Accepting writes the matched street back into the field, which changes
     // the query. Without this the list would reopen under the field the user
     // has just finished with.
     suspended.current = true;
-    setCandidates(null);
+    setAnswer(null);
     setOpen(false);
     setActive(-1);
     setError(undefined);
@@ -119,18 +158,18 @@ export function usePlaceLookup({
 
   const dismiss = React.useCallback(() => {
     // Recorded rather than flagged, so the very next keystroke searches again.
-    lastSent.current = query.trim();
-    setCandidates(null);
+    lastSent.current = trigger.trim();
+    setAnswer(null);
     setOpen(false);
     setActive(-1);
-  }, [query]);
+  }, [trigger]);
 
   React.useEffect(() => {
     if (!typing || composing.current) return;
 
     const permitted = shouldSuggest({
-      query,
-      initialQuery: initialQuery.current,
+      query: trigger,
+      initialQuery: initialTrigger.current,
       lastSent: lastSent.current,
       minLength: TYPEAHEAD_MIN_QUERY,
       suspended: suspended.current,
@@ -148,24 +187,33 @@ export function usePlaceLookup({
     const timer = setTimeout(() => {
       void (async () => {
         const text = query.trim();
-        lastSent.current = text;
+        lastSent.current = trigger.trim();
         const mine = (sequence.current += 1);
         setLooking(true);
 
         const result = await searchRef.current(text, { interactive: true });
+
         // A superseded answer is discarded rather than shown: a server action
         // cannot be aborted, so a slow one can still arrive after a newer one.
-        if (cancelled || mine !== sequence.current) return;
+        // The newer request owns the spinner in that case, so it is left alone.
+        if (mine !== sequence.current) return;
+        // Cleared before the cancellation check, never after. The effect being
+        // torn down without a replacement request — deleting back below the
+        // minimum, say — used to leave "Looking…" on screen for good, with the
+        // button disabled beside it and no way back.
         setLooking(false);
+        if (cancelled) return;
 
         if (!result.ok) {
+          // One failure is enough. An endpoint that is not answering would
+          // otherwise spend the whole timeout again on every pause.
           broken.current = true;
-          setCandidates(null);
+          setAnswer(null);
           setOpen(false);
           return;
         }
         const found = result.data?.candidates ?? [];
-        setCandidates(found);
+        setAnswer({ forQuery: text, candidates: found });
         setActive(-1);
         setOpen(found.length > 0);
       })();
@@ -175,7 +223,7 @@ export function usePlaceLookup({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [typing, query]);
+  }, [typing, query, trigger]);
 
   async function lookUp() {
     const text = query.trim();
@@ -184,22 +232,34 @@ export function usePlaceLookup({
       return;
     }
 
+    // Claims the sequence too, so a suggestion still in flight from a moment
+    // ago cannot land on top of the answer the user actually asked for.
+    const mine = (sequence.current += 1);
     setLooking(true);
     const result = await search(text);
+    if (mine !== sequence.current) return;
     setLooking(false);
 
     if (!result.ok) {
       setError(result.error ?? "That lookup didn't work.");
-      setCandidates(null);
+      setAnswer(null);
       setOpen(false);
       return;
     }
     setError(undefined);
-    lastSent.current = text;
+    // A press that worked clears an earlier failure, so suggestions resume
+    // rather than staying switched off for the life of the form because the
+    // endpoint was briefly unreachable.
+    broken.current = false;
+    lastSent.current = trigger.trim();
     const found = result.data?.candidates ?? [];
-    setCandidates(found);
+    setAnswer({ forQuery: text, candidates: found });
     setActive(-1);
     setOpen(found.length > 0);
+    // Focus follows the answer, so the arrow keys reach it. Only when there is
+    // something to move through: taking focus off the button to say "nothing
+    // matched" would be a second surprise on top of the first.
+    if (found.length > 0) inputRef.current?.focus();
   }
 
   function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
@@ -224,8 +284,22 @@ export function usePlaceLookup({
     }
   }
 
-  const inputProps: React.ComponentProps<"input"> = typing
+  /**
+   * Keyed on `enabled`, not on `typing`.
+   *
+   * The list is an autocomplete popup either way; the only difference between
+   * the two modes is what opens it. Installing these only while typing left the
+   * default configuration — lookup on, suggestions off — with a list of
+   * non-focusable options and no key handling at all: you could press "Look up"
+   * with a keyboard and then reach none of the results. The markup this
+   * replaced used real buttons, so that was a regression rather than an
+   * omission, and axe cannot catch it because the ARIA is well-formed either
+   * way. One code path rather than two, which is the reason this is a shared
+   * hook at all.
+   */
+  const inputProps: React.ComponentProps<"input"> = enabled
     ? {
+        ref: inputRef,
         role: "combobox",
         "aria-expanded": listOpen,
         // Never a dangling id: an `aria-controls` pointing at an element that
@@ -310,7 +384,7 @@ export function usePlaceLookup({
 
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
-      {candidates?.length === 0 ? (
+      {answer?.candidates.length === 0 ? (
         <p className="text-xs text-muted-foreground">Nothing matched. Fill it in by hand.</p>
       ) : null}
     </div>
