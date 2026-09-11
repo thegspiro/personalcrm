@@ -1,0 +1,48 @@
+name: Review findings
+
+# Its own workflow rather than a job in CI, because of the triggers below. A
+# review comment has to re-run this check — that is the entire point, since the
+# review lands *after* CI has already gone green — and hanging those triggers on
+# CI would rebuild the container and re-run the whole end-to-end suite every
+# time a bot left a note.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+  # The one that lets a red check go green again: resolving a thread is how you
+  # say you have dealt with a finding.
+  pull_request_review_thread:
+    types: [resolved, unresolved]
+  workflow_dispatch:
+
+concurrency:
+  group: review-findings-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  findings:
+    name: Review findings addressed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # `workflow_dispatch` has no pull request attached, and neither does a run
+    # on a branch; there is nothing to check in either case.
+    if: github.event.pull_request != null
+    steps:
+      # Only the script is needed — no install, no Prisma client, no build.
+      # This has to finish in seconds or it becomes the thing people wait on.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/check-review-threads.mjs
+          sparse-checkout-cone-mode: false
+
+      - name: Check for unresolved review-bot findings
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/check-review-threads.mjs ${{ github.event.pull_request.number }}
