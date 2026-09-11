@@ -213,6 +213,37 @@ possessive in it, check the person survives into the title, then correct that
 title from the timeline. It is the only spec that exercises `updateInteraction`
 through the UI.
 
+### The two address-lookup specs stand up their own endpoint
+
+`address-lookup-keyboard.spec.ts` and `address-typeahead.spec.ts` are the only
+specs that need a geocoder, so they run one: a few lines of `node:http` inside
+the spec file, speaking the Nominatim reply shape that the "Self-hosted or
+other" provider expects. Hermetic — they say nothing about whether
+OpenStreetMap is reachable from CI — and bound to loopback, so the app treats
+the endpoint as this machine's and applies no request spacing that a test would
+then have to wait out.
+
+`address-typeahead.spec.ts` records **what the endpoint was asked**, and that
+log is the assertion. Half of what matters about suggesting while you type is
+when it stays silent, and "no list appeared" is far too weak a proxy: a list can
+be absent for a dozen uninteresting reasons. So every silence is asserted
+against the request log — and paired with a request the same field *does* make,
+because a test proving no request happened passes most easily of all when the
+feature is simply broken.
+
+Both specs switch address lookup back off in a final **test**, not an
+`afterAll` hook. `AppSetting` is stored per installation rather than per
+account, so whatever they leave behind is what every later spec sees; making the
+restore an assertion means a failure is reported in the file that caused it
+rather than surfacing as an unrelated spec failing for reasons of its own. They
+share `setAddressLookup` in `helpers.ts` for the same reason — two copies of
+that drifting apart would be two different ways to strand the run.
+
+A private contact is covered in `tests/integration/address-typeahead.test.ts`
+instead, where the provider is stubbed into a list of the queries it received:
+the guarantee is that nothing reaches the endpoint at all, which is a stronger
+claim than anything the rendered page can show.
+
 `edit-entries.spec.ts` does the same for the contact page's sections — add
 something, get it wrong, fix it in place — and checks the fixes that are easy
 to get wrong from the server side alone: that the edit form opens holding the
