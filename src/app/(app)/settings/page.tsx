@@ -32,6 +32,8 @@ import { PROVIDERS } from "@/server/ai/providers";
 import { GeoSettings } from "@/components/settings/geo-settings";
 import { HomeBaseSettings } from "@/components/settings/home-base-settings";
 import { BulkPlaceSettings } from "@/components/settings/bulk-place-settings";
+import { PostalCodeSettings } from "@/components/settings/postal-code-settings";
+import { listPostalSources } from "@/server/queries/postal-codes";
 import { countUnplaced } from "@/server/queries/unplaced";
 import { isRateLimited } from "@/server/geo/providers";
 import { getGeoStatus, getLookupUi } from "@/server/geo/config";
@@ -69,6 +71,7 @@ export default async function SettingsPage() {
     ai,
     geo,
     lookupUi,
+    postalSources,
     privacyState,
     channels,
     tags,
@@ -84,6 +87,7 @@ export default async function SettingsPage() {
     getAiStatus(),
     getGeoStatus(),
     getLookupUi(),
+    listPostalSources(),
     getPrivacyState(),
     listChannelsForSettings(user.id),
     listTags(user.id),
@@ -243,6 +247,15 @@ export default async function SettingsPage() {
               typeahead={geo.typeahead}
               typeaheadCapable={geo.typeaheadCapable}
               providers={GEO_PROVIDERS}
+              canEdit={user.role === "ADMIN"}
+            />
+            <PostalCodeSettings
+              // `Date` does not survive the crossing into a client component.
+              sources={postalSources.map((source) => ({
+                country: source.country,
+                rows: source.rows,
+                importedAt: source.importedAt.toISOString().slice(0, 10),
+              }))}
               canEdit={user.role === "ADMIN"}
             />
             <BulkPlaceSettings
