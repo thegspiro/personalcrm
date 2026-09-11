@@ -12,10 +12,14 @@ on:
     types: [submitted, dismissed]
   pull_request_review_comment:
     types: [created, edited, deleted]
-  # The one that lets a red check go green again: resolving a thread is how you
-  # say you have dealt with a finding.
-  pull_request_review_thread:
-    types: [resolved, unresolved]
+  # `pull_request_review_thread` is deliberately absent, and its absence is the
+  # one rough edge here. Resolving a thread is how you say you have dealt with a
+  # finding, so it is the natural trigger for turning this check green again —
+  # but it exists only as a webhook. It has never been ported to Actions, and
+  # naming it fails the whole workflow at startup: no jobs, no annotation, just
+  # a run attributed to the push that introduced the file. That is how it was
+  # found. So after resolving, re-run this check from the Actions tab or let the
+  # next push carry it.
   workflow_dispatch:
 
 concurrency:
