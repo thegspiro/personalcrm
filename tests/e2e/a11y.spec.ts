@@ -144,6 +144,100 @@ test("the calendar is accessible with something on it", async ({ page }) => {
   await scan(page, "/calendar with entries");
 });
 
+/**
+ * States that are drawn recessed, which the route scans cannot promise.
+ *
+ * A settled debt and something that is over are both drawn set back from the
+ * rows around them. Until recently each did that by fading its own text, which
+ * put an 11px amount at 2.9 and a date at 2.4 against a 4.5 threshold — and
+ * neither was ever measured, because the scans above read whatever the account
+ * happens to hold and these rows only exist once something has been settled or
+ * has finished. That is the same blind spot that let the calendar chip through.
+ * Both states are now created deliberately, then scanned.
+ *
+ * Only a state that changes how something is drawn needs a fixture. The other
+ * sites the sweep found — the count inside a pipeline pill, the "· 12d" on a
+ * quiet contact, the pager's ellipsis — now carry no conditional styling at
+ * all, so every render of them is already covered above.
+ */
+test("a profile is accessible with rows that have been set back", async ({ page }) => {
+  await ensureSignedIn(page);
+
+  const iso = (offsetDays: number) => {
+    const day = new Date();
+    day.setDate(day.getDate() + offsetDays);
+    return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+  };
+
+  const person = `Recessed ${test.info().project.name} ${Date.now().toString(36)}`;
+  await createContact(page, person);
+
+  // A settled debt: the row stays, set back, with its description struck through.
+  await page.getByRole("button", { name: /^Lent and borrowed/ }).click();
+  await page.getByRole("button", { name: "Add a debt" }).click();
+  await page.getByLabel("What was it?").fill("Covered lunch");
+  await page.getByLabel("How much?").fill("25");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("button", { name: "Mark settled" }).first().click();
+  // The disclosure is what puts the settled row in the tree at all.
+  await page.getByRole("button", { name: /\d+ settled/ }).click();
+  await expect(page.getByText("Covered lunch")).toBeVisible();
+
+  // Something that is over: dated wholly in the past, so its phase is "ended".
+  const happenings = page.locator("section#happenings");
+  await happenings.scrollIntoViewIfNeeded();
+  await happenings.getByRole("button", { name: "Add something they have on" }).click();
+  await happenings.getByLabel("What have they got on?").fill("Trip that has been");
+  for (const [label, value] of [["When", iso(-30)], ["Until", iso(-20)]] as const) {
+    await page.getByRole("button", { name: label, exact: true }).click();
+    const typed = page.getByLabel("Type a date");
+    await typed.fill(value);
+    await typed.press("Enter");
+    await expect(typed).toBeHidden();
+  }
+  await happenings.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(happenings.getByText("Trip that has been", { exact: true })).toBeVisible();
+
+  await scan(page, "a profile with rows set back");
+});
+
+/**
+ * A type that has been switched off.
+ *
+ * It is drawn in neutral colours rather than as a faded coloured pill, which is
+ * what the sweep changed: dimming the pill took its label from 4.6 to 2.2. The
+ * term is created and deleted inside this test rather than switching an
+ * existing one off, because types are account-wide and the three projects share
+ * one account — leaving a default type off would change what every later spec
+ * sees in its dropdowns.
+ */
+test("settings is accessible with a type switched off", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto("/settings");
+  await page.getByRole("tab", { name: "Types" }).click();
+
+  const label = `Off ${test.info().project.name} ${Date.now().toString(36)}`;
+  // A section's add control is its own header button, and opens the section with
+  // it — the group titles are not headings, so they cannot be located by role.
+  await page.getByRole("button", { name: "Add to fact categories" }).click();
+  await page.getByLabel("Name").fill(label);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText(label).first()).toBeVisible();
+
+  await page.getByRole("button", { name: `Edit ${label}` }).click();
+  await page.getByRole("button", { name: "Turn off" }).click();
+  // "Off ·" in the line below the pill is the state the colour used to repeat.
+  await expect(page.getByText("Off ·").first()).toBeVisible();
+
+  await scan(page, "settings with a type switched off");
+
+  // Put the account back as it was found. The term is unused, so it can be
+  // deleted outright, and its edit form is the only one open on the page.
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByText(label)).toHaveCount(0);
+});
+
 test("the person form is accessible", async ({ page }) => {
   await ensureSignedIn(page);
   await page.goto("/people/new");
