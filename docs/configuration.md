@@ -98,6 +98,30 @@ you. The first start downloads and unpacks the index, which takes a while and
 needs several gigabytes for a country extract; the app degrades to "found
 nothing" until it is ready, and the address fields stay typeable throughout.
 
+### Optional postal codes
+
+No environment variables, and nothing is ever fetched. An administrator
+downloads a country file from
+[GeoNames](https://download.geonames.org/export/zip/), unzips it, and uploads
+the `.txt` in Settings → Places. An installation with no outbound network at
+all can therefore still fill in a city and a state from a postal code — which
+is the whole reason this is stored rather than asked of a geocoder.
+
+One country at a time: `US.txt`, `GB.txt`. `allCountries.txt` is refused, and
+the refusal names the countries it found, because that is the file somebody
+reaches for by mistake. A re-import replaces a country rather than adding a
+second copy of it.
+
+The data is stored per *installation* rather than per account — it is published
+reference data, the same for everybody — which is why importing and removing
+are administrator-only, the same reasoning as the address lookup's endpoint.
+Reading it is not restricted: there is nothing there that one account could
+learn about another.
+
+Published by GeoNames under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Attribution is a
+licence condition, not a courtesy, and appears in the settings panel.
+
 ### Development and test only
 
 | Variable | Notes |

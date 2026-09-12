@@ -54,6 +54,7 @@ import {
 } from "@/server/queries/locations";
 import { originsFor } from "@/server/queries/origins";
 import { getLookupUi } from "@/server/geo/config";
+import { hasPostalCodes } from "@/server/queries/postal-codes";
 import { distanceBetween, formatDistance, pointOf, withDistance } from "@/lib/geo";
 import { mapLinkFor } from "@/lib/locations";
 import { readLoveLanguages } from "@/lib/love-languages";
@@ -112,6 +113,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     locations,
     happenings,
     lookupUi,
+    postalCodes,
     origins,
     placeSuggestions,
   ] = await Promise.all([
@@ -144,6 +146,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     listContactLocations(user.id, id),
     listContactHappenings(user.id, id, timezone),
     getLookupUi(),
+    hasPostalCodes(),
     originsFor(user.id, id),
     listPlaceSuggestions(user.id, timezone),
   ]);
@@ -453,6 +456,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
         <AddressesSection
           contactId={contact.id}
           lookup={lookupUi}
+          postalCodes={postalCodes}
           isPrivate={contact.isPrivate}
           places={placeSuggestions.items}
           placesTruncated={placeSuggestions.truncated}
