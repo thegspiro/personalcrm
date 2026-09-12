@@ -24,6 +24,18 @@ import {
 /** `0` = Sunday, `1` = Monday. What `UserPreference.weekStartsOn` stores. */
 export type WeekStart = 0 | 1;
 
+/**
+ * Narrow the preference column to the two values a grid can be built from.
+ *
+ * The column is an `Int`, so it can hold anything a hand-edited row put there,
+ * and every surface that reads it has to answer the same question the same
+ * way. Two places narrowing it with their own inline ternary is how a calendar
+ * page and a date picker come to disagree about which day a week starts on.
+ */
+export function toWeekStart(value: number | null | undefined): WeekStart {
+  return value === 1 ? 1 : 0;
+}
+
 /** A month, without a day. What the URL carries and the grid is built from. */
 export interface PlainMonth {
   year: number;

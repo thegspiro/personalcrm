@@ -10,6 +10,7 @@ import {
   monthGridWindow,
   parsePlainMonth,
   stepGridDay,
+  toWeekStart,
   plainMonthKey,
   weekdayOf,
   weekdayOrder,
@@ -224,6 +225,27 @@ describe("keyboard navigation", () => {
     // Tab, Escape and Enter all have to reach the popover around it.
     for (const key of ["Tab", "Escape", "Enter", " ", "a"]) {
       expect(stepGridDay(midMonth, key, 0)).toBeNull();
+    }
+  });
+});
+
+/**
+ * The preference column, narrowed.
+ *
+ * `UserPreference.weekStartsOn` is an `Int`, so a hand-edited row can hold
+ * anything, and the calendar page and the date picker both have to answer the
+ * same way — a page beginning on Monday while a picker begins on Sunday is one
+ * inline ternary away.
+ */
+describe("reading the week-start preference", () => {
+  it("keeps the two values a grid can be built from", () => {
+    expect(toWeekStart(0)).toBe(0);
+    expect(toWeekStart(1)).toBe(1);
+  });
+
+  it("answers Sunday for anything else the column could hold", () => {
+    for (const value of [2, -1, 7, 1.5, Number.NaN, null, undefined]) {
+      expect(toWeekStart(value)).toBe(0);
     }
   });
 });

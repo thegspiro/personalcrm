@@ -1,9 +1,11 @@
 import { redirect } from "next/navigation";
 import { AppearanceSync } from "@/components/providers/theme-provider";
+import { WeekStartProvider } from "@/components/providers/week-start";
 import { BottomNav } from "@/components/nav/bottom-nav";
 import { Sidebar } from "@/components/nav/sidebar";
 import { TopBar } from "@/components/nav/top-bar";
 import { getUserContext } from "@/server/user/context";
+import { toWeekStart } from "@/lib/calendar-grid";
 import { listContactOptions } from "@/server/queries/contacts";
 import {
   listLocalitySuggestions,
@@ -62,37 +64,41 @@ export default async function AppLayout({
       idleTimeoutMs={IDLE_TIMEOUT_MS}
       heartbeatMs={ACTIVITY_HEARTBEAT_MS}
     >
-      <div className="min-h-dvh">
-        <AppearanceSync accent={prefs.accent} density={prefs.density} />
-        <Sidebar hideDating={prefs.hideDating} />
-        <div className="lg:pl-60">
-          <TopBar
-            name={user.name}
-            email={user.email}
-            hideDating={prefs.hideDating}
-            privacyControl={
-              privacy.enabled && privacy.unlocked ? <LockNowButton /> : null
-            }
+      {/* Wraps the whole shell, not just `main`: the floating log button is a
+          sibling of it and opens a date picker of its own. */}
+      <WeekStartProvider value={toWeekStart(prefs.weekStartsOn)}>
+        <div className="min-h-dvh">
+          <AppearanceSync accent={prefs.accent} density={prefs.density} />
+          <Sidebar hideDating={prefs.hideDating} />
+          <div className="lg:pl-60">
+            <TopBar
+              name={user.name}
+              email={user.email}
+              hideDating={prefs.hideDating}
+              privacyControl={
+                privacy.enabled && privacy.unlocked ? <LockNowButton /> : null
+              }
+            />
+            <main className="pb-nav mx-auto w-full max-w-5xl px-4 pt-4 lg:px-6 lg:pb-10">
+              {/* Rendered on the server, so it says how old this copy actually is
+                rather than when the browser noticed it was offline. */}
+              <OfflineBanner renderedAt={new Date().toISOString()} />
+              {children}
+            </main>
+          </div>
+          <QuickLogFab
+            contacts={contacts}
+            types={interactionTypes}
+            customFields={interactionFields}
+            places={places.items}
+            placesTruncated={places.truncated}
           />
-          <main className="pb-nav mx-auto w-full max-w-5xl px-4 pt-4 lg:px-6 lg:pb-10">
-            {/* Rendered on the server, so it says how old this copy actually is
-              rather than when the browser noticed it was offline. */}
-            <OfflineBanner renderedAt={new Date().toISOString()} />
-            {children}
-          </main>
+          <BottomNav hideDating={prefs.hideDating} />
+          {/* One set for the whole shell: every city, state and country box in
+              the app points its `list` at these ids. */}
+          <LocalityOptions localities={localities} />
         </div>
-        <QuickLogFab
-          contacts={contacts}
-          types={interactionTypes}
-          customFields={interactionFields}
-          places={places.items}
-          placesTruncated={places.truncated}
-        />
-        <BottomNav hideDating={prefs.hideDating} />
-        {/* One set for the whole shell: every city, state and country box in
-            the app points its `list` at these ids. */}
-        <LocalityOptions localities={localities} />
-      </div>
+      </WeekStartProvider>
     </PrivacyActivityController>
   );
 }

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { ensureSignedIn } from "./helpers";
 
 /**
@@ -166,4 +166,47 @@ test("the calendar opens on the selected day and walks from the keyboard", async
 
   await page.keyboard.press("Escape");
   await expect(page.getByRole("grid")).toBeHidden();
+});
+
+/**
+ * The account's first day of the week, reaching a picker six components below
+ * the page that knows it.
+ *
+ * Asserted through the setting rather than through a prop, because the prop
+ * was never the risk: the picker sits under a sheet opened by a floating
+ * button the app shell renders, and what could go wrong is the preference not
+ * arriving at all — which looks like nothing at all, a calendar that begins on
+ * Sunday because that is the default.
+ */
+async function setWeekStart(page: Page, day: "Sunday" | "Monday") {
+  await page.goto("/settings");
+  await page.getByRole("tab", { name: "Look" }).click();
+  await page.getByLabel("Weeks start on").selectOption({ label: day });
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Saved")).toBeVisible();
+}
+
+/** The grid's first column, as the popover on the dashboard draws it. */
+async function firstColumn(page: Page) {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Log an interaction" }).click();
+  await page.getByRole("button", { name: "Open calendar" }).click();
+  const grid = page.getByRole("grid");
+  await expect(grid).toBeVisible();
+  return grid.getByRole("columnheader").first();
+}
+
+test("the calendar begins on the day the account chose", async ({ page }) => {
+  await ensureSignedIn(page);
+
+  try {
+    await setWeekStart(page, "Monday");
+    await expect(await firstColumn(page)).toHaveText("Mo");
+  } finally {
+    // Restored even when the assertion above fails: this file runs serially
+    // and the calendar suite reads the same column.
+    await setWeekStart(page, "Sunday");
+  }
+
+  await expect(await firstColumn(page)).toHaveText("Su");
 });

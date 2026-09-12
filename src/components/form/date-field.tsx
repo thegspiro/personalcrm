@@ -46,6 +46,7 @@ import {
   type PlainDate,
 } from "@/lib/dates";
 import type { WeekStart } from "@/lib/calendar-grid";
+import { useWeekStart } from "@/components/providers/week-start";
 import { CalendarPicker, focusSelectedDay } from "@/components/form/calendar-picker";
 import {
   type LocalDateTime,
@@ -439,14 +440,18 @@ export function DateTimeField({
   label,
   defaultValue,
   hint,
-  weekStartsOn = 0,
+  weekStartsOn,
   className,
 }: {
   name: string;
   label?: string;
   defaultValue?: Date | string | null;
   hint?: string;
-  /** First column of the calendar. `0` = Sunday, matching `UserPreference`. */
+  /**
+   * First column of the calendar. Defaults to the account's setting, which the
+   * app shell puts in context — every one of these sits several components
+   * below the page that could pass it down.
+   */
   weekStartsOn?: WeekStart;
   className?: string;
 }) {
@@ -458,6 +463,8 @@ export function DateTimeField({
   const [today, setToday] = React.useState<PlainDate | null>(null);
   const [timeDraft, setTimeDraft] = React.useState<string | null>(null);
   const contentRef = React.useRef<HTMLDivElement>(null);
+  const accountWeekStart = useWeekStart();
+  const firstDay = weekStartsOn ?? accountWeekStart;
 
   const current = parseLocalDateTime(value) ?? nowLocal();
 
@@ -530,7 +537,7 @@ export function DateTimeField({
               <CalendarPicker
                 value={current.date}
                 today={today}
-                weekStartsOn={weekStartsOn}
+                weekStartsOn={firstDay}
                 onSelect={(date) => commit(withLocalDate(current, date))}
               />
             ) : null}
