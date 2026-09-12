@@ -153,8 +153,12 @@ function TermRow({ term, group }: { term: AdminTermView; group: TaxonomyGroupVie
           <span
             className={cn(
               "inline-flex max-w-full items-center gap-1 rounded-full px-1.5 py-0.5 text-xs",
-              termColorClasses(term.color),
-              !term.isActive && "opacity-50",
+              // A term that is off loses its colour rather than its contrast.
+              // Dimming the coloured pill took its label from 4.6 to 2.2
+              // against a 4.5 threshold, and "Off ·" below already says so in
+              // words — so the opacity was a second, unreadable copy of a state
+              // that was written down anyway.
+              term.isActive ? termColorClasses(term.color) : "bg-muted text-muted-foreground",
             )}
           >
             {term.icon ? <Icon name={term.icon} className="size-3 shrink-0" /> : null}

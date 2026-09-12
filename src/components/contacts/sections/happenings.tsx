@@ -125,7 +125,10 @@ export function HappeningsSection({
             <SectionRow
               key={happening.id}
               id={`happening-${happening.id}`}
-              className={cn(past && "opacity-60")}
+              // Something over recedes by its background rather than by
+              // fading: at 60% its dates read at 2.4 against a 4.5 threshold,
+              // and the dates are what say it has been and gone.
+              className={cn(past && "bg-muted/40")}
               onDelete={() => void run(() => deleteHappening(happening.id), "Removed")}
               deleteConfirm={`Delete “${happening.title}” from what this person has on?`}
               deleteLabel="Delete happening"

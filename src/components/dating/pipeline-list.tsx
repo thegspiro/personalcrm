@@ -163,7 +163,10 @@ function PipelineCard({
     <div
       className={cn(
         "flex min-w-0 items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5",
-        dimmed && "opacity-70",
+        // A terminal stage recedes by its background. Fading the card put its
+        // date count at 2.9 against a 4.5 threshold, and the stage heading
+        // above already says which stage this is.
+        dimmed && "bg-muted/40",
       )}
     >
       <Link href={`/people/${person.id}`} className="flex min-w-0 flex-1 items-center gap-3">

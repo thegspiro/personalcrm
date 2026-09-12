@@ -220,7 +220,11 @@ export function DebtsSection({ contactId, debts }: { contactId: string; debts: D
             ? settled.map((debt) => (
                 <SectionRow
                   key={debt.id}
-                  className="opacity-70"
+                  // Recessed by its background, not by fading its text: at
+                  // 70% the amount read at 2.9 against a 4.5 threshold. The
+                  // strikethrough and the "settled" disclosure above already
+                  // carry the state.
+                  className="bg-muted/40"
                   onDelete={() => void run(() => deleteDebt(debt.id), "Removed")}
                   deleteLabel="Delete debt"
                   editLabel="Edit debt"

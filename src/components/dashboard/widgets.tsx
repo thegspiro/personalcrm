@@ -355,7 +355,7 @@ export function DatingPipelineWidget({
               >
                 <Icon name={stage.icon ?? "CircleDot"} className="size-3" />
                 {stage.label}
-                <span className="tabular-nums opacity-70">{stage.count}</span>
+                <span className="tabular-nums">{stage.count}</span>
               </span>
             ))}
           </div>
@@ -390,7 +390,7 @@ export function DatingPipelineWidget({
                   >
                     {displayName(person)}
                     {person.lastInteractionAt ? (
-                      <span className="opacity-60">
+                      <span>
                         {" "}
                         · {Math.round((now.getTime() - person.lastInteractionAt.getTime()) / 86_400_000)}d
                       </span>
