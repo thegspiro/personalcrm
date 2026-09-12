@@ -58,7 +58,7 @@ export function Pager({
             Previous
           </Link>
         ) : (
-          <span className={cn(step, "text-muted-foreground opacity-60")} aria-hidden="true">
+          <span className={cn(step, "text-muted-foreground")} aria-hidden="true">
             <ChevronLeft className="size-4" />
             Previous
           </span>
@@ -74,7 +74,7 @@ export function Pager({
             <ChevronRight className="size-4" />
           </Link>
         ) : (
-          <span className={cn(step, "text-muted-foreground opacity-60")} aria-hidden="true">
+          <span className={cn(step, "text-muted-foreground")} aria-hidden="true">
             Next
             <ChevronRight className="size-4" />
           </span>
