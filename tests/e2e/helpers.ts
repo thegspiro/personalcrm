@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 /**
  * The account the suite uses. Created by first-run setup if the instance is
@@ -125,4 +125,59 @@ export async function openPrivacySettings(page: Page): Promise<void> {
   await page.goto("/settings");
   await page.getByRole("tab", { name: "Privacy" }).click();
   await page.getByText(/doesn't encrypt anything/i).waitFor();
+}
+
+/**
+ * Switch the optional address lookup on or off, and its typeahead with it.
+ *
+ * Shared because two specs need it and both are changing an `AppSetting`, which
+ * is stored per *installation* rather than per account: whatever this leaves
+ * behind is what every later spec in the run sees. Two copies of this drifting
+ * apart would be two different ways to strand the suite in a state it does not
+ * expect, and the failure would surface in whichever file ran next rather than
+ * in the one that caused it.
+ *
+ * Order matters on the way in. The connection has to be saved before the
+ * typeahead switch exists at all — it is only offered where the *saved*
+ * endpoint permits search-as-you-type — and lookup has to be on before that
+ * switch is enabled.
+ */
+export async function setAddressLookup(
+  page: Page,
+  settings: { lookup: boolean; typeahead?: boolean; baseUrl?: string },
+): Promise<void> {
+  await page.goto("/settings");
+  await page.getByRole("tab", { name: "Places" }).click();
+  const panel = page.locator("section").filter({ hasText: "Address lookup" });
+
+  if (settings.lookup && settings.baseUrl) {
+    await panel.getByLabel("Provider").selectOption("custom");
+    await panel.getByLabel("Endpoint").fill(settings.baseUrl);
+    await panel.getByRole("button", { name: "Save connection" }).click();
+    // Portalled to the document root, so it is not inside `panel`.
+    await page.getByText("Connection saved").waitFor();
+  }
+
+  // Switched on before off, so the typeahead switch is never asked to change
+  // while it is disabled; switched off after, for the same reason in reverse.
+  if (settings.lookup) await toggle(panel, "Use address lookup", true);
+  await toggle(panel, "Suggest addresses as I type", settings.typeahead ?? false);
+  if (!settings.lookup) await toggle(panel, "Use address lookup", false);
+}
+
+/**
+ * Set one Radix switch, reading `aria-checked` rather than `isChecked()` —
+ * these are buttons with `role="switch"`, not checkbox inputs.
+ *
+ * A switch that is not on the page is not an error: the typeahead one is only
+ * rendered where the endpoint permits it, and asking for the state it already
+ * has is a no-op everywhere.
+ */
+async function toggle(panel: Locator, name: string, on: boolean): Promise<void> {
+  const control = panel.getByRole("switch", { name });
+  if ((await control.count()) === 0) return;
+
+  const want = on ? "true" : "false";
+  if ((await control.getAttribute("aria-checked")) !== want) await control.click();
+  await expect(control).toHaveAttribute("aria-checked", want);
 }
