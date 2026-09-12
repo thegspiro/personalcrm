@@ -16,6 +16,7 @@ import {
   monthOf,
   parsePlainMonth,
   plainMonthKey,
+  toWeekStart,
 } from "@/lib/calendar-grid";
 import { groupByDay, isWithin } from "@/lib/calendar-grid";
 import { formatPartialDate } from "@/lib/date-precision";
@@ -74,7 +75,7 @@ export default async function CalendarPage({
   const month = requested ?? monthOf(today);
 
   // 0 = Sunday, 1 = Monday; anything else in the column is a hand-edited row.
-  const weekStartsOn: WeekStart = prefs.weekStartsOn === 1 ? 1 : 0;
+  const weekStartsOn: WeekStart = toWeekStart(prefs.weekStartsOn);
 
   // The window is the grid's, not the month's: the first and last rows show
   // days from the neighbouring months, and they would render empty while

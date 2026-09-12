@@ -6,6 +6,16 @@ import { cn } from "@/lib/utils";
 
 export const Popover = PopoverPrimitive.Root;
 export const PopoverTrigger = PopoverPrimitive.Trigger;
+/**
+ * Positions the content against something other than the trigger.
+ *
+ * `DateTimeField` anchors its calendar to the whole date box while the trigger
+ * is the 32px button inside it, so the popover lines up under the value being
+ * edited rather than hanging off its right-hand edge. Removed once as unused
+ * and re-added here: it had no caller at the time, and this comment is what
+ * stops the next sweep reaching the same conclusion.
+ */
+export const PopoverAnchor = PopoverPrimitive.Anchor;
 
 /**
  * A popover taller than the space it has scrolls inside itself.
