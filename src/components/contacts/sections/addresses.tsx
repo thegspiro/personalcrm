@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { MapPin } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
 import { Field } from "@/components/ui/label";
 import { SubmitButton } from "@/components/form/submit-button";
@@ -13,6 +14,7 @@ import {
   lookupContactAddress,
   updateAddress,
 } from "@/server/actions/details";
+import { lookupPostalCode } from "@/server/actions/postal-codes";
 import { usePlaceLookup } from "@/components/locations/place-lookup";
 import { LOCALITY_LIST_IDS } from "@/components/form/locality-options";
 import { PlacePicker, type PlaceSuggestion } from "@/components/form/place-picker";
@@ -57,6 +59,7 @@ function AddressFields({
   isPrivate,
   places,
   placesTruncated,
+  postalCodes,
 }: {
   formId: string;
   contactId: string;
@@ -67,6 +70,8 @@ function AddressFields({
   /** Places you have already been, to copy an address from. */
   places: PlaceSuggestion[];
   placesTruncated: boolean;
+  /** Whether any postal codes have been imported to fill a city from. */
+  postalCodes: boolean;
 }) {
   const [applied, setApplied] = React.useState<GeoCandidateView | null>(null);
   // A place copied into this form, playing the same role a lookup match does:
@@ -76,6 +81,16 @@ function AddressFields({
   // through refs because a lookup never wrote them back; it does now — an
   // accepted suggestion fills the street — and a suggestion that fires while
   // you type has to be able to see what you have typed.
+  const [postalCode, setPostalCode] = React.useState(address?.postalCode ?? "");
+  /**
+   * What the imported postal codes say this code names.
+   *
+   * `null` until asked. An empty array is "asked, and nothing answered", which
+   * is a different thing to say.
+   */
+  const [postalPlaces, setPostalPlaces] = React.useState<
+    { country: string; place: string; region: string | null }[] | null
+  >(null);
   const [line1, setLine1] = React.useState(address?.line1 ?? "");
   const [line2, setLine2] = React.useState(address?.line2 ?? "");
   const [city, setCity] = React.useState(address?.city ?? "");
@@ -167,6 +182,38 @@ function AddressFields({
     return latitude === (source.latitude ?? "") && longitude === (source.longitude ?? "");
   }
 
+  /**
+   * Fill the city and region in from the postal code.
+   *
+   * A button rather than something that happens while you type. The reason is
+   * the opposite of the address lookup's: nothing here leaves the machine, so
+   * there is no harm in asking — but there is no reason to overwrite a city
+   * somebody has already typed without being asked to either.
+   *
+   * Filled only when exactly one place answers. A postal code can legitimately
+   * name several, and picking one of them would be the guess that
+   * `placeUnplaced` refuses to make for the same reason: a wrong city looks
+   * exactly like a right one.
+   */
+  async function fillFromPostalCode() {
+    const form = new FormData();
+    form.set("code", postalCode);
+    const result = await lookupPostalCode(form);
+    if (!result.ok) {
+      setPostalPlaces([]);
+      return;
+    }
+
+    const places = result.data?.places ?? [];
+    setPostalPlaces(places);
+    if (places.length === 1) applyPostalPlace(places[0]);
+  }
+
+  function applyPostalPlace(match: { place: string; region: string | null }) {
+    setCity(match.place);
+    if (match.region) setRegion(match.region);
+  }
+
   const placeLookup = usePlaceLookup({
     enabled: canLookUp,
     lookup,
@@ -248,7 +295,12 @@ function AddressFields({
             id={`${formId}-postalCode`}
             name="postalCode"
             maxLength={32}
-            defaultValue={address?.postalCode ?? ""}
+            value={postalCode}
+            onChange={(event) => {
+              setPostalCode(event.target.value);
+              // The answer described the old code; it is no longer an answer.
+              setPostalPlaces(null);
+            }}
           />
         </Field>
         <Field label="Country" htmlFor={`${formId}-country`}>
@@ -262,6 +314,59 @@ function AddressFields({
           />
         </Field>
       </div>
+
+      {/*
+        Offered only where postal codes have actually been imported, so an
+        installation that has imported none sees no new control at all. Nothing
+        here reaches the network — the data is already on this machine, which is
+        why it works for a private contact where the address lookup does not.
+      */}
+      {postalCodes ? (
+        <div className="grid gap-2">
+          <div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!postalCode.trim()}
+              onClick={() => void fillFromPostalCode()}
+            >
+              <MapPin className="size-3.5" />
+              Fill city from postal code
+            </Button>
+          </div>
+
+          {postalPlaces?.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No imported postal code matches that. Fill the city in by hand.
+            </p>
+          ) : null}
+
+          {postalPlaces && postalPlaces.length > 1 ? (
+            <div className="grid gap-1.5 rounded-lg border border-border p-1.5">
+              <p className="px-2 text-xs text-muted-foreground">
+                That code covers more than one place. Which one?
+              </p>
+              {postalPlaces.map((match) => (
+                <button
+                  key={`${match.country}-${match.place}`}
+                  type="button"
+                  onClick={() => {
+                    applyPostalPlace(match);
+                    setPostalPlaces(null);
+                  }}
+                  className="flex w-full min-w-0 items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted"
+                >
+                  <span className="min-w-0 flex-1">
+                    {match.place}
+                    {match.region ? `, ${match.region}` : ""} ({match.country})
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {/*
         Placing an address is what lets the app answer "somewhere near her?".
@@ -367,6 +472,7 @@ function AddressRow({
   isPrivate,
   places,
   placesTruncated,
+  postalCodes,
 }: {
   address: AddressItem;
   contactId: string;
@@ -374,6 +480,7 @@ function AddressRow({
   isPrivate: boolean;
   places: PlaceSuggestion[];
   placesTruncated: boolean;
+  postalCodes: boolean;
 }) {
   const run = useAction();
   const edit = useEditAction();
@@ -410,6 +517,7 @@ function AddressRow({
             isPrivate={isPrivate}
             places={places}
             placesTruncated={placesTruncated}
+            postalCodes={postalCodes}
           />
           <SubmitButton size="sm">Save</SubmitButton>
         </form>
@@ -450,6 +558,7 @@ export function AddressesSection({
   isPrivate,
   places = [],
   placesTruncated = false,
+  postalCodes = false,
 }: {
   contactId: string;
   addresses: AddressItem[];
@@ -459,6 +568,8 @@ export function AddressesSection({
   /** Places you have already been, to copy an address from. */
   places?: PlaceSuggestion[];
   placesTruncated?: boolean;
+  /** Whether any postal codes have been imported to fill a city from. */
+  postalCodes?: boolean;
 }) {
   const add = useAddAction();
 
@@ -482,6 +593,7 @@ export function AddressesSection({
             isPrivate={isPrivate}
             places={places}
             placesTruncated={placesTruncated}
+            postalCodes={postalCodes}
           />
           <SubmitButton size="sm">Add</SubmitButton>
         </form>
@@ -499,6 +611,7 @@ export function AddressesSection({
             isPrivate={isPrivate}
             places={places}
             placesTruncated={placesTruncated}
+            postalCodes={postalCodes}
           />
         ))
       )}

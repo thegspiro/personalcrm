@@ -249,6 +249,56 @@ model AppSetting {
   updatedAt DateTime @updatedAt
 }
 
+/// A postal code and the place it names, from a GeoNames country file.
+///
+/// Reference data rather than anybody's data, which is why there is no
+/// `ownerId` here — the same reason `AppSetting` has none. Owner scoping exists
+/// to stop one account seeing another's rows, and a published postal code is
+/// not anybody's to see. Scoping it would also mean a separate copy of forty
+/// thousand rows for every account on an installation that imported one country.
+///
+/// Deliberately narrow. The file carries twelve columns; this keeps the four
+/// that answer "what city and region is this postal code in", which is the only
+/// question it is imported to answer. Coordinates are in the file and are not
+/// stored: a postal code's centroid would place an address about as accurately
+/// as pointing at the town, and an address placed that way looks exactly like
+/// one a geocoder matched.
+model PostalCode {
+  id      String  @id @default(cuid())
+  /// ISO 3166-1 alpha-2, as the file's first column gives it.
+  country String  @db.VarChar(2)
+  /// As written in the file, which is how it is shown back.
+  code    String  @db.VarChar(20)
+  /// Folded for lookup: one code is written several ways — "SW1A 1AA",
+  /// "sw1a1aa" — and the file holds only one of them.
+  lookup  String  @db.VarChar(20)
+  place   String  @db.VarChar(180)
+  /// The first-order subdivision: a state, a province, a nation of the UK.
+  region  String? @db.VarChar(100)
+
+  /// One code can name several places, so the place is part of the key: the
+  /// file legitimately holds more than one row for a code, and that ambiguity
+  /// is information rather than duplication.
+  @@unique([country, lookup, place])
+  /// Looked up by code alone, not by country: an address here holds a country
+  /// as free text ("United States"), while this table is keyed by ISO code, and
+  /// there is no mapping between them. So a code is searched across whatever
+  /// has been imported and only fills the form when exactly one place answers —
+  /// the same refusal to guess that bulk placing makes. Deleting a country on
+  /// re-import reads the unique index instead, which leads on `country`.
+  @@index([lookup])
+}
+
+/// What has been imported, so the settings page can say so and a re-import can
+/// replace a country rather than pile a second copy on top of the first.
+model PostalCodeSource {
+  country    String   @id @db.VarChar(2)
+  /// Rows actually stored, which is not the file's line count — a file carries
+  /// blank and unreadable lines, and they are skipped rather than stored.
+  rows       Int
+  importedAt DateTime @default(now())
+}
+
 // ---------------------------------------------------------------------------
 // Taxonomies — user-editable lists that back every "type" field in the app
 // ---------------------------------------------------------------------------
