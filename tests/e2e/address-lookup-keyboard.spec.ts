@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { expect, test } from "@playwright/test";
-import { createContact, ensureSignedIn } from "./helpers";
+import { createContact, ensureSignedIn, setAddressLookup } from "./helpers";
 
 /**
  * Choosing a looked-up address without a mouse.
@@ -60,37 +60,9 @@ test.afterAll(async () => {
   await new Promise<void>((resolve) => endpoint.close(() => resolve()));
 });
 
-/**
- * Address lookup is stored per installation, not per account, so leaving it on
- * would change what every other spec in the run sees — starting with the one
- * that asserts an address field offers nothing until asked. Switching it off is
- * a test in its own right rather than a cleanup hook, so a failure to restore
- * is reported here instead of as a mystery in another file.
- */
-async function setLookup(page: import("@playwright/test").Page, on: boolean) {
-  await page.goto("/settings");
-  await page.getByRole("tab", { name: "Places" }).click();
-  const panel = page.locator("section").filter({ hasText: "Address lookup" });
-
-  if (on) {
-    await panel.getByLabel("Provider").selectOption("custom");
-    await panel.getByLabel("Endpoint").fill(baseUrl);
-    await panel.getByRole("button", { name: "Save connection" }).click();
-    // The toast is portalled to the document root, so it is not inside `panel`.
-    await expect(page.getByText("Connection saved")).toBeVisible();
-  }
-
-  // Read through `aria-checked` rather than `isChecked()`: this is a Radix
-  // switch, a button with `role="switch"`, not a checkbox input.
-  const toggle = panel.getByRole("switch", { name: "Use address lookup" });
-  const want = on ? "true" : "false";
-  if ((await toggle.getAttribute("aria-checked")) !== want) await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-checked", want);
-}
-
 test("a looked-up address can be chosen from the keyboard", async ({ page }) => {
   await ensureSignedIn(page);
-  await setLookup(page, true);
+  await setAddressLookup(page, { lookup: true, typeahead: false, baseUrl });
 
   await createContact(page, person());
   const addresses = page.locator("section").filter({ hasText: "Where they are" });
@@ -150,7 +122,7 @@ test("escape closes the suggestions without closing the form", async ({ page }) 
 
 test("address lookup is switched back off for the rest of the run", async ({ page }) => {
   await ensureSignedIn(page);
-  await setLookup(page, false);
+  await setAddressLookup(page, { lookup: false, typeahead: false });
 
   await page.goto("/settings");
   await page.getByRole("tab", { name: "Places" }).click();

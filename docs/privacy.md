@@ -643,6 +643,29 @@ on an account that is [cacheable](#offline-caching) at all, a home address and
 its coordinates are written to disk by the service worker alongside the rest of
 that person's card, and locking or signing out wipes it with everything else.
 
+### Postal codes
+
+The one address helper that works for a contact you marked private, and it works
+for the same reason distances do: nothing is sent. An operator imports a
+country's postal codes from GeoNames once — a file they download and upload, so
+the app never fetches it either — and the code a person types is then answered
+from a table on this machine.
+
+That makes rule 4 above cost nothing here. There is no wire for a private
+address to be on, so the button is offered for a private contact exactly as it is
+for anyone else, and the geocoder's refusal does not need restating.
+
+The table carries no `isPrivate` and is not owner-scoped: it is published
+reference data, the same facts for every account, so it changes neither
+`countPrivateRows` nor the offline gate, and it needs no where-fragment. It is
+also the reason an installation with no outbound network is not a lesser one —
+the whole feature is available to it.
+
+What it fills in is a city and a region, and deliberately nothing else. The
+GeoNames file carries coordinates too; storing them would place an address at a
+postcode centroid, which is about as precise as pointing at the town and is
+indistinguishable on screen from a point a geocoder actually matched.
+
 ### Endpoints
 
 Nominatim (the OpenStreetMap Foundation's own, on donated servers), Photon, or

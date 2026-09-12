@@ -11,11 +11,9 @@ import { Drawer as DrawerPrimitive } from "vaul";
 import { cn } from "@/lib/utils";
 
 export const Sheet = DrawerPrimitive.Root;
-export const SheetTrigger = DrawerPrimitive.Trigger;
-export const SheetClose = DrawerPrimitive.Close;
-export const SheetPortal = DrawerPrimitive.Portal;
+const SheetPortal = DrawerPrimitive.Portal;
 
-export function SheetOverlay({
+function SheetOverlay({
   className,
   ...props
 }: React.ComponentProps<typeof DrawerPrimitive.Overlay>) {

@@ -225,9 +225,53 @@ is how every installation reads the day it upgrades.
 ### `AppSetting`
 
 Instance-wide key/value store (`key` PK, `value` JSON). Used for first-run
-completion state and the optional AI settings (`ai.enabled`, `ai.provider`,
+completion state, the optional AI settings (`ai.enabled`, `ai.provider`,
 `ai.baseUrl`, `ai.model`, `ai.apiKey` — the last encrypted, see
-[Privacy and data flow](privacy.md#optional-assisted-reading)).
+[Privacy and data flow](privacy.md#optional-assisted-reading)) and the address
+lookup's `geo.enabled`, `geo.provider`, `geo.baseUrl` and `geo.typeahead`.
+
+### `PostalCode` and `PostalCodeSource`
+
+Postal codes imported from a GeoNames country file, so an address can fill in
+its city and region from a code with no network at all.
+
+**Neither has an `ownerId`, and that is the point.** Every other table in this
+document is owner-scoped because it holds somebody's records. These hold
+published reference data — identical for every account, the same facts whoever
+reads them. Owner scoping exists to stop one account seeing another's rows, and
+a postal code is not anybody's row; it is also the reason nothing here carries
+`isPrivate`, needs a where-fragment, or appears in `countPrivateRows`. Scoping
+it would mean a private copy of forty thousand rows per account. `AppSetting`
+is installation-wide for the same reason.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `cuid` | PK |
+| `country` | `varchar(2)` | ISO 3166-1 alpha-2, as the file's first column gives it |
+| `code` | `varchar(20)` | As written in the file, which is how it is shown back |
+| `lookup` | `varchar(20)` | Folded — upper-cased, everything but letters and digits removed — so "SW1A 1AA" and "sw1a1aa" meet |
+| `place` | `varchar(180)` | The city or town the code names |
+| `region` | `varchar(100)?` | First-order subdivision: a state, a province, a nation of the UK |
+
+Unique on `(country, lookup, place)`: one code can legitimately name several
+places, and that ambiguity is information — it is what stops the address form
+guessing between them. Indexed on `lookup` alone, because a code is searched
+across every imported country. An address holds its country as free text
+("United States", "USA", "us") while this table is keyed by ISO code and there
+is no mapping between them, so searching everything and refusing to guess
+between answers is honest where narrowing by a made-up mapping would not be.
+
+Coordinates are in the file and deliberately not stored. A postal code's
+centroid places an address about as precisely as pointing at the town, and an
+address placed that way is indistinguishable on screen from one a geocoder
+matched.
+
+`PostalCodeSource` is one row per imported country — `country` PK, `rows`,
+`importedAt` — so the settings page can say what is loaded and a re-import can
+replace a country rather than accumulate on top of it.
+
+The data is published by GeoNames under CC BY 4.0; attribution is a licence
+condition and appears in Settings → Places.
 
 ---
 
@@ -1188,6 +1232,7 @@ the `init-migrate` s6 oneshot).
 | `20260905180000_add_plan_completion_key` | Additive nullable `Plan.completionKey` and a unique index on `(ownerId, completionKey)`, making the shared-idea completion path replay-safe. Purely additive: the column is null on every existing row, and both MySQL and MariaDB allow unlimited `NULL`s under a unique index, so nothing stored changes meaning |
 | `20260906010000_add_plan_reminders` | Additive nullable `Plan.reminderDaysBefore` and `PLAN` appended to `ReminderEntity`. Appended, not reordered: MySQL stores an enum by position, so inserting a value in the middle would change the meaning of every stored `ReminderLog.entityType`. Nothing to backfill — the column is null on every existing row, and for a plan null means no reminders, so no already-scheduled plan starts sending on the first pass after the upgrade |
 | `20260908120000_add_life_event_place` | Additive nullable `LifeEvent.location` and `LifeEvent.locationId`, its index, and the `SET NULL` foreign key to `Location`. Nothing to backfill and nothing dropped — both columns are null on every existing row, which reads exactly as "no place recorded". The foreign key names `Location(id)` rather than the same-owner composite, for the MariaDB reason above |
+| `20260911193014_add_postal_codes` | Adds `PostalCode` and `PostalCodeSource`, for postal codes imported from a GeoNames country file. Purely additive: two new tables, no existing column re-expressed and no enum modified, so there is nothing to backfill and nothing that can be lost. Neither table has an `ownerId` — they hold published reference data rather than anybody's records, the same reasoning `AppSetting` runs on |
 | `20260905153056_add_associates` | Adds `Associate` — the people in a contact's life who are not tracked themselves. Purely additive: one new table, no existing column re-expressed and no enum modified, so there is nothing to backfill and nothing that can be lost. `promotedContactId` is the third single-column key into `Contact`, for the `SET NULL` reason above |
 
 Writing a migration that changes the meaning of existing data — not just its

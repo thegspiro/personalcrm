@@ -39,7 +39,11 @@ enforces rather than documents:
 - Every value is re-validated server-side. The browser is not a validator.
 - Every dating write re-checks the privacy lock instead of trusting that the
   page was gated.
-- Every query is scoped by `ownerId`, or by a parent that is.
+- Every query is scoped by `ownerId`, or by a parent that is. The exception is
+  the handful of actions that write installation-wide settings and reference
+  data — `geo-settings.ts`, `ai-settings.ts`, `postal-codes.ts` — where there is
+  no owner to scope to. Those are gated on `isAdmin()` instead, which is a
+  stronger check, not a waived one.
 
 ## Reference
 
@@ -657,6 +661,31 @@ lock boundary.
 | `updateGeoEnabled` | The toggle. Off until switched on |
 | `updateGeoTypeahead` | Suggestions while you type. A second opt-in, off until switched on, refused for an endpoint whose policy forbids it |
 | `saveGeoConnection` | Provider and, for a self-hosted one, the endpoint. A fixed public endpoint is not editable from the app |
+
+### Postal codes — `actions/postal-codes.ts`
+
+| Action | Notes |
+| --- | --- |
+| `importPostalCodes` | Administrator. Takes the unzipped GeoNames country `.txt` as an upload, one country per file. Replaces that country rather than merging, so a re-import is how a country is brought up to date |
+| `clearPostalCodes` | Administrator. Removes one country and leaves the others |
+| `lookupPostalCode` | Signed in, *not* administrator. What a code names, for an address form to fill in |
+
+Nothing here is owner-scoped, and nothing here fetches. The data is published
+reference data under CC BY 4.0 — identical for every account, so there is
+nothing one account could learn about another, which is why reading is not
+restricted and writing is gated on the role instead of an owner.
+
+The import is deliberately **not one transaction**. A country runs to tens of
+thousands of rows, which would sit well past Prisma's transaction timeout; it is
+batched instead, and the `PostalCodeSource` row is written last, so an
+interrupted import reads as "not imported" and the next one replaces whatever
+landed.
+
+`lookupPostalCode` searches by code alone. An address holds its country as free
+text ("United States", "USA", "us") while the table is keyed by ISO code, and
+there is no mapping between the two — so a code is searched across whatever has
+been imported, and the form fills itself in only when exactly one place answers.
+Inventing a country mapping to narrow the search would be the guess.
 
 ### AI settings — `actions/ai-settings.ts`
 

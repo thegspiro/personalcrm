@@ -6,7 +6,6 @@ import { cn } from "@/lib/utils";
 
 export const Popover = PopoverPrimitive.Root;
 export const PopoverTrigger = PopoverPrimitive.Trigger;
-export const PopoverAnchor = PopoverPrimitive.Anchor;
 
 /**
  * A popover taller than the space it has scrolls inside itself.

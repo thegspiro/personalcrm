@@ -1,0 +1,125 @@
+/**
+ * Reading a GeoNames postal code file.
+ *
+ * The files are tab-separated UTF-8, one country per download, twelve columns
+ * per line. Only the first four are kept — country, code, place, first-order
+ * subdivision — because the one question this data is imported to answer is
+ * "what city and region is this postal code in".
+ *
+ * Pure and free of Prisma, so the reading can be tested against recorded lines
+ * without a database, the same arrangement `quick-parse.ts` uses.
+ *
+ * The data is published by GeoNames under CC BY 4.0. Attribution belongs
+ * wherever it is shown, not in this file.
+ */
+
+/** Columns, as `readme.txt` at download.geonames.org/export/zip/ defines them. */
+const COUNTRY = 0;
+const CODE = 1;
+const PLACE = 2;
+const REGION = 3;
+/** Below this a line cannot answer the question, whatever else it holds. */
+const MINIMUM_COLUMNS = 3;
+
+/**
+ * A ceiling, so a misdirected upload fails with a sentence rather than by
+ * filling the database.
+ *
+ * The largest single-country file is well under this; `allCountries.txt` — the
+ * one somebody reaches for by mistake — is an order of magnitude over it.
+ */
+export const POSTAL_CODE_LIMIT = 250_000;
+
+/** Column widths, from the model. A row that does not fit is not stored. */
+const WIDTHS = { code: 20, place: 180, region: 100 } as const;
+
+export interface PostalCodeRow {
+  country: string;
+  /** As written in the file, which is how it is shown back. */
+  code: string;
+  /** Folded, for looking up what somebody typed. */
+  lookup: string;
+  place: string;
+  region: string | null;
+}
+
+export type PostalCodeParse =
+  | { ok: true; country: string; rows: PostalCodeRow[]; skipped: number }
+  | { ok: false; reason: "empty" | "mixed" | "too-many"; detail?: string };
+
+/**
+ * One postal code, one spelling.
+ *
+ * A person types "sw1a 1aa", the file holds "SW1A 1AA", and a Dutch code is
+ * written "1012 AB" or "1012AB" depending on who is writing it. Case and
+ * everything that is not a letter or a digit go, so all of those meet.
+ */
+export function foldPostalCode(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function fits(value: string, width: number): boolean {
+  return value.length > 0 && value.length <= width;
+}
+
+export function parsePostalCodeFile(text: string): PostalCodeParse {
+  const rows: PostalCodeRow[] = [];
+  // Keyed on what the model's unique key is keyed on, so a file that repeats a
+  // line cannot fail the insert on its own duplicate.
+  const seen = new Set<string>();
+  const countries = new Set<string>();
+  let skipped = 0;
+
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+
+    const columns = line.split("\t");
+    if (columns.length < MINIMUM_COLUMNS) {
+      skipped += 1;
+      continue;
+    }
+
+    const country = (columns[COUNTRY] ?? "").trim().toUpperCase();
+    const code = (columns[CODE] ?? "").trim();
+    const place = (columns[PLACE] ?? "").trim();
+    const region = (columns[REGION] ?? "").trim();
+    const lookup = foldPostalCode(code);
+
+    // One rule for every field rather than truncating some and refusing
+    // others: a place name cut to fit is a different place, and a row that
+    // cannot be stored whole is better counted than guessed at.
+    const usable =
+      /^[A-Z]{2}$/.test(country) &&
+      fits(code, WIDTHS.code) &&
+      fits(lookup, WIDTHS.code) &&
+      fits(place, WIDTHS.place) &&
+      (region.length === 0 || region.length <= WIDTHS.region);
+
+    if (!usable) {
+      skipped += 1;
+      continue;
+    }
+
+    countries.add(country);
+    const key = `${lookup}\u0000${place}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    rows.push({ country, code, lookup, place, region: region || null });
+    // Checked inside the loop so an enormous file is refused without first
+    // being held in memory in full.
+    if (rows.length > POSTAL_CODE_LIMIT) {
+      return { ok: false, reason: "too-many" };
+    }
+  }
+
+  if (rows.length === 0) return { ok: false, reason: "empty" };
+  if (countries.size > 1) {
+    // A country at a time, because that is what is imported and replaced. The
+    // file somebody reaches for by mistake is `allCountries.txt`, so say which
+    // ones were found rather than only that it was wrong.
+    return { ok: false, reason: "mixed", detail: [...countries].sort().join(", ") };
+  }
+
+  return { ok: true, country: [...countries][0], rows, skipped };
+}

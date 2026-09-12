@@ -34,19 +34,6 @@ export function CardTitle({ className, ...props }: React.ComponentProps<"h3">) {
   );
 }
 
-export function CardDescription({ className, ...props }: React.ComponentProps<"p">) {
-  return <p className={cn("text-xs text-muted-foreground", className)} {...props} />;
-}
-
 export function CardContent({ className, ...props }: React.ComponentProps<"div">) {
   return <div data-slot="card-content" className={cn("px-4 pb-4", className)} {...props} />;
-}
-
-export function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      className={cn("flex items-center gap-2 border-t border-border px-4 py-3", className)}
-      {...props}
-    />
-  );
 }

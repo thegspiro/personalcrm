@@ -67,6 +67,8 @@ const TABLES = [
   "Session",
   "User",
   "AppSetting",
+  "PostalCode",
+  "PostalCodeSource",
 ];
 
 /**

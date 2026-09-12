@@ -234,6 +234,33 @@ is a record of how the work happened, not a rule for future commits.
 description in. Its conditional sections are the same invariants listed above —
 delete the ones that do not apply rather than ticking them unread.
 
+### A review finding blocks the merge until somebody answers it
+
+`Review findings addressed` fails while an unresolved review thread from a bot
+is open. Fix the finding, or reply saying why it does not apply — then resolve
+the thread. Resolving is the whole interface: the check cannot judge whether a
+finding is right, only that somebody read it and decided.
+
+This is enforced for the same reason the changelog convention is. Pull request
+#106 merged ninety minutes after an automated review posted seven findings on
+it; none had been addressed, and every one was real — including an
+accessibility regression in the *default* configuration, where the results of
+an address lookup could not be reached from a keyboard. All four CI jobs were
+green throughout, because none of the seven is the kind of thing a type checker
+or a test suite knows to look for.
+
+An unresolved thread from a *person* does not block: that is usually a
+conversation still in progress, and a reviewer who is finished can approve or
+resolve. A check people learn to override is worse than no check, so this one
+is kept narrow enough to be worth obeying. `BLOCK_HUMAN_THREADS` in
+[`scripts/check-review-threads.mjs`](scripts/check-review-threads.mjs) is the
+single line to change if that ever needs revisiting.
+
+It runs in its own workflow rather than as a CI job, because a review comment
+has to *re-run* it — the review lands after CI has already gone green — and
+hanging that trigger on CI would rebuild the container and re-run the whole
+end-to-end suite every time a bot left a note.
+
 ## Changelog
 
 Entries go in [`CHANGELOG.d/`](CHANGELOG.d/README.md), one file per change,
