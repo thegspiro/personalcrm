@@ -9,6 +9,7 @@ import {
   monthGridDays,
   monthGridWindow,
   parsePlainMonth,
+  stepGridDay,
   plainMonthKey,
   weekdayOf,
   weekdayOrder,
@@ -150,5 +151,79 @@ describe("grouping", () => {
       ["b"],
     );
     expect(grouped.get("2026-03-03")).toBeUndefined();
+  });
+});
+
+/**
+ * Arrow keys, at the edges.
+ *
+ * Every interesting case leaves the month being shown, and a grid that refuses
+ * to is a grid you cannot reach last month with. `weekStartsOn` only changes
+ * the two row-end keys, so both settings are checked on the same day.
+ */
+describe("keyboard navigation", () => {
+  const midMonth = { year: 2026, month: 9, day: 11 }; // A Friday.
+
+  it("steps a day and a week in each direction", () => {
+    expect(stepGridDay(midMonth, "ArrowLeft", 0)).toEqual({ year: 2026, month: 9, day: 10 });
+    expect(stepGridDay(midMonth, "ArrowRight", 0)).toEqual({ year: 2026, month: 9, day: 12 });
+    expect(stepGridDay(midMonth, "ArrowUp", 0)).toEqual({ year: 2026, month: 9, day: 4 });
+    expect(stepGridDay(midMonth, "ArrowDown", 0)).toEqual({ year: 2026, month: 9, day: 18 });
+  });
+
+  it("walks out of the month rather than stopping at its edge", () => {
+    expect(stepGridDay({ year: 2026, month: 9, day: 1 }, "ArrowLeft", 0)).toEqual({
+      year: 2026,
+      month: 8,
+      day: 31,
+    });
+    expect(stepGridDay({ year: 2026, month: 12, day: 31 }, "ArrowRight", 0)).toEqual({
+      year: 2027,
+      month: 1,
+      day: 1,
+    });
+    expect(stepGridDay({ year: 2026, month: 1, day: 3 }, "ArrowUp", 0)).toEqual({
+      year: 2025,
+      month: 12,
+      day: 27,
+    });
+  });
+
+  it("takes Home and End to the ends of the row the account actually sees", () => {
+    // Friday the 11th: Sunday-first that row runs the 6th to the 12th,
+    // Monday-first it runs the 7th to the 13th.
+    expect(stepGridDay(midMonth, "Home", 0)).toEqual({ year: 2026, month: 9, day: 6 });
+    expect(stepGridDay(midMonth, "End", 0)).toEqual({ year: 2026, month: 9, day: 12 });
+    expect(stepGridDay(midMonth, "Home", 1)).toEqual({ year: 2026, month: 9, day: 7 });
+    expect(stepGridDay(midMonth, "End", 1)).toEqual({ year: 2026, month: 9, day: 13 });
+  });
+
+  it("steps whole months, keeping the day where the month is long enough", () => {
+    expect(stepGridDay(midMonth, "PageUp", 0)).toEqual({ year: 2026, month: 8, day: 11 });
+    expect(stepGridDay(midMonth, "PageDown", 0)).toEqual({ year: 2026, month: 10, day: 11 });
+    // The 31st has nowhere to be in a thirty-day month, and nowhere at all in
+    // February. Clamping is what every other date calculation here does.
+    expect(stepGridDay({ year: 2026, month: 3, day: 31 }, "PageUp", 0)).toEqual({
+      year: 2026,
+      month: 2,
+      day: 28,
+    });
+    expect(stepGridDay({ year: 2026, month: 1, day: 31 }, "PageDown", 0)).toEqual({
+      year: 2026,
+      month: 2,
+      day: 28,
+    });
+    expect(stepGridDay({ year: 2026, month: 1, day: 15 }, "PageUp", 0)).toEqual({
+      year: 2025,
+      month: 12,
+      day: 15,
+    });
+  });
+
+  it("answers null for a key the grid does not own, so it keeps bubbling", () => {
+    // Tab, Escape and Enter all have to reach the popover around it.
+    for (const key of ["Tab", "Escape", "Enter", " ", "a"]) {
+      expect(stepGridDay(midMonth, key, 0)).toBeNull();
+    }
   });
 });

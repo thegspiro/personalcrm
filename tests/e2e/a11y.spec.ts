@@ -163,3 +163,25 @@ test("the two-factor screens are accessible", async ({ page }) => {
   await expect(page.getByLabel("2. Enter the code it shows")).toBeVisible();
   await scan(page, "two-factor enrolment");
 });
+
+/**
+ * The calendar the "When" field opens, which no route scan reaches.
+ *
+ * It is a popover inside a sheet, so it exists only after two clicks and is
+ * portalled outside the page — everything above walks routes and would report
+ * it clean without ever having rendered it. What is being checked is the part
+ * that is easy to get wrong by hand: an ARIA grid whose rows and cells have to
+ * nest in one particular way, an icon-only button that needs a name of its
+ * own, and a selected day whose colours are not the ones the rest of the app
+ * was measured on.
+ */
+test("the date-and-time calendar is accessible", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Log an interaction" }).click();
+  await page.getByRole("button", { name: "Open calendar" }).click();
+  await expect(page.getByRole("grid")).toBeVisible();
+
+  await scan(page, "the date-and-time calendar");
+});

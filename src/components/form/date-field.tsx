@@ -22,7 +22,12 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   DATE_PRECISIONS,
   PRECISION_LABELS,
@@ -40,6 +45,18 @@ import {
   parsePlainDate,
   type PlainDate,
 } from "@/lib/dates";
+import type { WeekStart } from "@/lib/calendar-grid";
+import { CalendarPicker, focusSelectedDay } from "@/components/form/calendar-picker";
+import {
+  type LocalDateTime,
+  formatLocalDateTime,
+  localDateTimeFromDate,
+  localTimeValue,
+  parseLocalDateTime,
+  shiftLocalDays,
+  withLocalDate,
+  withLocalTime,
+} from "@/lib/date-time-input";
 
 export interface DateFieldProps {
   name: string;
@@ -407,42 +424,146 @@ function NumberBox({
 
 /**
  * Date and time for something that happened at a moment rather than on a day.
+ *
  * Defaults to now; the presets shift the day and keep the time.
+ *
+ * The field stays a real `datetime-local`, so typing still works and the value
+ * submitted is byte-for-byte what it always was. What changed is the calendar:
+ * the browser's own indicator is hidden and replaced with a button of our own,
+ * because the native one is a four-millimetre target that opens a different
+ * widget in every browser — and none at all in some. Ours is the same grid
+ * everywhere, in the app's own theme, and reachable from the keyboard.
  */
 export function DateTimeField({
   name,
   label,
   defaultValue,
   hint,
+  weekStartsOn = 0,
   className,
 }: {
   name: string;
   label?: string;
   defaultValue?: Date | string | null;
   hint?: string;
+  /** First column of the calendar. `0` = Sunday, matching `UserPreference`. */
+  weekStartsOn?: WeekStart;
   className?: string;
 }) {
   const [value, setValue] = React.useState(() => toLocalInput(defaultValue ?? new Date()));
+  const [open, setOpen] = React.useState(false);
+  // Read when the popover opens rather than during render: the field is a
+  // client component that Next also renders on the server, and a clock read
+  // there would mark a different square as today than the browser does.
+  const [today, setToday] = React.useState<PlainDate | null>(null);
+  const [timeDraft, setTimeDraft] = React.useState<string | null>(null);
+  const contentRef = React.useRef<HTMLDivElement>(null);
+
+  const current = parseLocalDateTime(value) ?? nowLocal();
+
+  function commit(next: LocalDateTime) {
+    setValue(formatLocalDateTime(next));
+  }
 
   function shiftDays(days: number) {
-    const current = new Date(value);
-    const base = Number.isNaN(current.getTime()) ? new Date() : current;
-    base.setDate(base.getDate() + days);
-    setValue(toLocalInput(base));
+    commit(shiftLocalDays(current, days));
   }
 
   return (
     <div className={cn("grid gap-1.5", className)}>
       {label ? <Label htmlFor={name}>{label}</Label> : null}
-      <Input
-        id={name}
-        name={name}
-        type="datetime-local"
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-      />
+
+      <Popover
+        open={open}
+        onOpenChange={(next) => {
+          if (next) setToday(todayPlain());
+          setOpen(next);
+        }}
+      >
+        {/* Anchored to the whole field rather than to the button inside it, so
+            the calendar lines up under the value it is editing instead of
+            hanging off a 32px square at the right-hand edge. */}
+        <PopoverAnchor asChild>
+          <div className="relative">
+            <Input
+              id={name}
+              name={name}
+              type="datetime-local"
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              // Room for our button, and the native indicator out of the way so
+              // the field does not show two calendar icons that do different
+              // things. Firefox draws its own regardless and cannot be told
+              // not to; there it sits beside ours rather than replacing it.
+              className="pr-11 [&::-webkit-calendar-picker-indicator]:hidden"
+            />
+
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                aria-label="Open calendar"
+                className="absolute right-1 top-1 flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <CalendarDays className="size-4" />
+              </button>
+            </PopoverTrigger>
+          </div>
+        </PopoverAnchor>
+
+        <PopoverContent
+          ref={contentRef}
+          className="w-[19rem] p-3"
+          align="start"
+          // Radix would put focus on the first button, which is "previous
+          // month". The day already selected is what someone opening a
+          // calendar is looking for. It has to happen here rather than inside
+          // the grid: this is the point at which the popover's focus scope
+          // has taken over from the sheet's, and anything earlier is undone
+          // by the sheet pulling focus back to whatever opened it.
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            focusSelectedDay(contentRef.current);
+          }}
+        >
+          <div className="grid gap-3">
+            {today ? (
+              <CalendarPicker
+                value={current.date}
+                today={today}
+                weekStartsOn={weekStartsOn}
+                onSelect={(date) => commit(withLocalDate(current, date))}
+              />
+            ) : null}
+
+            <div className="grid gap-1.5">
+              <Label htmlFor={`${name}-time`}>Time</Label>
+              <Input
+                id={`${name}-time`}
+                type="time"
+                // Drafted for the reason `NumberBox` drafts: clearing the
+                // field passes through values that cannot be committed, and
+                // re-rendering the old one over them is a field that fights
+                // the keyboard. Blur drops the draft, so a half-entry snaps
+                // back visibly rather than saving something nobody typed.
+                value={timeDraft ?? localTimeValue(current)}
+                onChange={(event) => {
+                  setTimeDraft(event.target.value);
+                  const next = withLocalTime(current, event.target.value);
+                  if (next) commit(next);
+                }}
+                onBlur={() => setTimeDraft(null)}
+              />
+            </div>
+
+            <Button type="button" size="sm" onClick={() => setOpen(false)}>
+              Done
+            </Button>
+          </div>
+        </PopoverContent>
+        </Popover>
+
       <div className="flex flex-wrap gap-1.5 pt-0.5">
-        <PresetChip label="Now" onClick={() => setValue(toLocalInput(new Date()))} />
+        <PresetChip label="Now" onClick={() => commit(nowLocal())} />
         <PresetChip label="−1 day" onClick={() => shiftDays(-1)} />
         <PresetChip label="−1 week" onClick={() => shiftDays(-7)} />
         <PresetChip label="−1 month" onClick={() => shiftDays(-30)} />
@@ -464,12 +585,15 @@ function PresetChip({ label, onClick }: { label: string; onClick: () => void }) 
   );
 }
 
+/** The browser's wall clock, to the minute. */
+function nowLocal(): LocalDateTime {
+  // Never null: `new Date()` is always a valid instant.
+  return localDateTimeFromDate(new Date()) as LocalDateTime;
+}
+
 /** `datetime-local` wants local wall-clock time, not an ISO instant. */
 function toLocalInput(value: Date | string): string {
   const date = typeof value === "string" ? new Date(value) : value;
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
-    date.getHours(),
-  )}:${pad(date.getMinutes())}`;
+  const local = localDateTimeFromDate(date);
+  return local ? formatLocalDateTime(local) : "";
 }

@@ -1,6 +1,7 @@
 import {
   type PlainDate,
   addPlainDays,
+  clampPlainDate,
   daysInMonth,
   diffPlainDays,
   plainDateKey,
@@ -154,4 +155,46 @@ export function groupByDay<T>(items: T[], dayOf: (item: T) => PlainDate): Map<st
 /** Whether a day falls inside an inclusive window. */
 export function isWithin(date: PlainDate, window: { from: PlainDate; to: PlainDate }): boolean {
   return diffPlainDays(window.from, date) >= 0 && diffPlainDays(date, window.to) >= 0;
+}
+
+/**
+ * Where an arrow key moves inside a month grid.
+ *
+ * Separate from the component so the wrapping cases are testable without a
+ * browser: every one of them crosses a month boundary, and a grid that stops
+ * at the 1st is a grid you cannot reach last month with. Returning a date
+ * outside `month` is correct — the caller follows it and re-renders the month
+ * the focus landed in.
+ *
+ * `Home` and `End` are the ends of the row rather than of the month, which is
+ * what the ARIA grid pattern specifies and what a spreadsheet does.
+ */
+export function stepGridDay(
+  date: PlainDate,
+  key: string,
+  weekStartsOn: WeekStart,
+): PlainDate | null {
+  switch (key) {
+    case "ArrowLeft":
+      return addPlainDays(date, -1);
+    case "ArrowRight":
+      return addPlainDays(date, 1);
+    case "ArrowUp":
+      return addPlainDays(date, -7);
+    case "ArrowDown":
+      return addPlainDays(date, 7);
+    case "Home":
+      return addPlainDays(date, -((weekdayOf(date) - weekStartsOn + 7) % 7));
+    case "End":
+      return addPlainDays(date, 6 - ((weekdayOf(date) - weekStartsOn + 7) % 7));
+    // A month step keeps the day where it can: the 31st of a month whose
+    // neighbour is shorter has to land somewhere, and the last day is the
+    // convention every other date calculation in this app already uses.
+    case "PageUp":
+      return clampPlainDate({ ...addPlainMonths(monthOf(date), -1), day: date.day });
+    case "PageDown":
+      return clampPlainDate({ ...addPlainMonths(monthOf(date), 1), day: date.day });
+    default:
+      return null;
+  }
 }
