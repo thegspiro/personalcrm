@@ -22,12 +22,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Popover,
-  PopoverAnchor,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   DATE_PRECISIONS,
   PRECISION_LABELS,
@@ -51,9 +46,9 @@ import { CalendarPicker, focusSelectedDay } from "@/components/form/calendar-pic
 import {
   type LocalDateTime,
   formatLocalDateTime,
+  formatLocalDateTimeLabel,
   localDateTimeFromDate,
   localTimeValue,
-  parseLocalDateTime,
   shiftLocalDays,
   withLocalDate,
   withLocalTime,
@@ -426,14 +421,24 @@ function NumberBox({
 /**
  * Date and time for something that happened at a moment rather than on a day.
  *
- * Defaults to now; the presets shift the day and keep the time.
+ * Shaped like `DateField` above — a trigger showing the value, a popover, and a
+ * hidden input carrying what gets submitted — and for the same reason. It used
+ * to be a real `<input type="datetime-local">` with our calendar button laid
+ * over the browser's own picker indicator, which worked only where that
+ * indicator can be hidden: WebKit and Blink expose
+ * `::-webkit-calendar-picker-indicator`, Firefox exposes nothing and has not
+ * since it started drawing one, so Firefox showed two calendar icons that
+ * opened two different pickers. There is no CSS that reaches it and no honest
+ * way to feature-detect a widget the browser will not name, so the second icon
+ * is gone by construction: the app draws the only one there is.
  *
- * The field stays a real `datetime-local`, so typing still works and the value
- * submitted is byte-for-byte what it always was. What changed is the calendar:
- * the browser's own indicator is hidden and replaced with a button of our own,
- * because the native one is a four-millimetre target that opens a different
- * widget in every browser — and none at all in some. Ours is the same grid
- * everywhere, in the app's own theme, and reachable from the keyboard.
+ * What the native input gave up in exchange is real and worth naming: the
+ * phone's own date wheel, and segmented typing straight into the field. The
+ * typing comes back as the "Type a date" box below the grid, which reads the
+ * relative phrasings a `datetime-local` never accepted anyway.
+ *
+ * Submits `name` as the same `YYYY-MM-DDTHH:mm` string the input did, so no
+ * action, query or column changes.
  */
 export function DateTimeField({
   name,
@@ -455,30 +460,56 @@ export function DateTimeField({
   weekStartsOn?: WeekStart;
   className?: string;
 }) {
-  const [value, setValue] = React.useState(() => toLocalInput(defaultValue ?? new Date()));
+  const [value, setValue] = React.useState<LocalDateTime>(() => readDefault(defaultValue));
   const [open, setOpen] = React.useState(false);
   // Read when the popover opens rather than during render: the field is a
   // client component that Next also renders on the server, and a clock read
   // there would mark a different square as today than the browser does.
   const [today, setToday] = React.useState<PlainDate | null>(null);
   const [timeDraft, setTimeDraft] = React.useState<string | null>(null);
+  const [text, setText] = React.useState("");
   const contentRef = React.useRef<HTMLDivElement>(null);
   const accountWeekStart = useWeekStart();
   const firstDay = weekStartsOn ?? accountWeekStart;
 
-  const current = parseLocalDateTime(value) ?? nowLocal();
-
-  function commit(next: LocalDateTime) {
-    setValue(formatLocalDateTime(next));
+  function shiftDays(days: number) {
+    setValue((current) => shiftLocalDays(current, days));
   }
 
-  function shiftDays(days: number) {
-    commit(shiftLocalDays(current, days));
+  /**
+   * Free text, for the phrasings people actually reach for. A time is taken
+   * only when one was actually said: chrono fills the hour in from the
+   * reference clock either way, so trusting it would turn "yesterday" into
+   * whatever o'clock it happens to be now rather than leaving the time alone.
+   */
+  function commitText(raw: string, close: boolean) {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+
+    const parsed = chrono.parse(trimmed, new Date(), { forwardDate: false })[0]?.start;
+    if (!parsed) return;
+
+    const year = parsed.get("year");
+    const month = parsed.get("month");
+    const day = parsed.get("day");
+    if (year == null || month == null || day == null) return;
+
+    setValue((current) => ({
+      date: { year, month, day },
+      hour: parsed.isCertain("hour") ? (parsed.get("hour") ?? current.hour) : current.hour,
+      // A stated hour with no minute means o'clock, not the minute already set.
+      minute: parsed.isCertain("hour") ? (parsed.get("minute") ?? 0) : current.minute,
+    }));
+    setText("");
+    if (close) setOpen(false);
   }
 
   return (
     <div className={cn("grid gap-1.5", className)}>
-      {label ? <Label htmlFor={name}>{label}</Label> : null}
+      {label ? <Label htmlFor={`${name}-trigger`}>{label}</Label> : null}
+
+      {/* The value that actually gets submitted. */}
+      <input type="hidden" name={name} value={formatLocalDateTime(value)} />
 
       <Popover
         open={open}
@@ -487,35 +518,18 @@ export function DateTimeField({
           setOpen(next);
         }}
       >
-        {/* Anchored to the whole field rather than to the button inside it, so
-            the calendar lines up under the value it is editing instead of
-            hanging off a 32px square at the right-hand edge. */}
-        <PopoverAnchor asChild>
-          <div className="relative">
-            <Input
-              id={name}
-              name={name}
-              type="datetime-local"
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-              // Room for our button, and the native indicator out of the way so
-              // the field does not show two calendar icons that do different
-              // things. Firefox draws its own regardless and cannot be told
-              // not to; there it sits beside ours rather than replacing it.
-              className="pr-11 [&::-webkit-calendar-picker-indicator]:hidden"
-            />
-
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                aria-label="Open calendar"
-                className="absolute right-1 top-1 flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <CalendarDays className="size-4" />
-              </button>
-            </PopoverTrigger>
-          </div>
-        </PopoverAnchor>
+        <PopoverTrigger asChild>
+          <Button
+            id={`${name}-trigger`}
+            type="button"
+            variant="outline"
+            className="h-10 w-full justify-start gap-2 font-normal"
+          >
+            <CalendarDays className="size-4 shrink-0 opacity-60" />
+            <span className="truncate">{formatLocalDateTimeLabel(value)}</span>
+            <ChevronDown className="ml-auto size-4 shrink-0 opacity-50" />
+          </Button>
+        </PopoverTrigger>
 
         <PopoverContent
           ref={contentRef}
@@ -535,10 +549,10 @@ export function DateTimeField({
           <div className="grid gap-3">
             {today ? (
               <CalendarPicker
-                value={current.date}
+                value={value.date}
                 today={today}
                 weekStartsOn={firstDay}
-                onSelect={(date) => commit(withLocalDate(current, date))}
+                onSelect={(date) => setValue((current) => withLocalDate(current, date))}
               />
             ) : null}
 
@@ -552,13 +566,32 @@ export function DateTimeField({
                 // re-rendering the old one over them is a field that fights
                 // the keyboard. Blur drops the draft, so a half-entry snaps
                 // back visibly rather than saving something nobody typed.
-                value={timeDraft ?? localTimeValue(current)}
+                value={timeDraft ?? localTimeValue(value)}
                 onChange={(event) => {
                   setTimeDraft(event.target.value);
-                  const next = withLocalTime(current, event.target.value);
-                  if (next) commit(next);
+                  const next = withLocalTime(value, event.target.value);
+                  if (next) setValue(next);
                 }}
                 onBlur={() => setTimeDraft(null)}
+              />
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor={`${name}-text`}>Type a date</Label>
+              <Input
+                id={`${name}-text`}
+                value={text}
+                placeholder="yesterday, last Tuesday 3pm…"
+                onChange={(event) => setText(event.target.value)}
+                // Tapping straight into Time must not close the popover out
+                // from under the finger that opened it.
+                onBlur={(event) => commitText(event.target.value, false)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    commitText(text, true);
+                  }
+                }}
               />
             </div>
 
@@ -567,10 +600,10 @@ export function DateTimeField({
             </Button>
           </div>
         </PopoverContent>
-        </Popover>
+      </Popover>
 
       <div className="flex flex-wrap gap-1.5 pt-0.5">
-        <PresetChip label="Now" onClick={() => commit(nowLocal())} />
+        <PresetChip label="Now" onClick={() => setValue(nowLocal())} />
         <PresetChip label="−1 day" onClick={() => shiftDays(-1)} />
         <PresetChip label="−1 week" onClick={() => shiftDays(-7)} />
         <PresetChip label="−1 month" onClick={() => shiftDays(-30)} />
@@ -598,9 +631,12 @@ function nowLocal(): LocalDateTime {
   return localDateTimeFromDate(new Date()) as LocalDateTime;
 }
 
-/** `datetime-local` wants local wall-clock time, not an ISO instant. */
-function toLocalInput(value: Date | string): string {
-  const date = typeof value === "string" ? new Date(value) : value;
-  const local = localDateTimeFromDate(date);
-  return local ? formatLocalDateTime(local) : "";
+/**
+ * What the field starts on. Now, unless the caller names a moment — a record
+ * being edited always does, and everything else is being logged as it happens.
+ */
+function readDefault(value: Date | string | null | undefined): LocalDateTime {
+  if (!value) return nowLocal();
+  const instant = typeof value === "string" ? new Date(value) : value;
+  return localDateTimeFromDate(instant) ?? nowLocal();
 }

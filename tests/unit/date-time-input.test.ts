@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatLocalDateTime,
+  formatLocalDateTimeLabel,
   localDateTimeFromDate,
   localTimeValue,
   parseLocalDateTime,
@@ -65,6 +66,32 @@ describe("reading an input value", () => {
 
   it("answers null for an instant that is not one", () => {
     expect(localDateTimeFromDate(new Date("nonsense"))).toBeNull();
+  });
+});
+
+describe("the value in words", () => {
+  it("reads as a person would say it", () => {
+    expect(formatLocalDateTimeLabel(NOON)).toBe("September 11, 2026 at 12:00 PM");
+    expect(
+      formatLocalDateTimeLabel({ date: { year: 2026, month: 1, day: 5 }, hour: 9, minute: 5 }),
+    ).toBe("January 5, 2026 at 9:05 AM");
+    expect(
+      formatLocalDateTimeLabel({ date: { year: 2026, month: 3, day: 1 }, hour: 0, minute: 0 }),
+    ).toBe("March 1, 2026 at 12:00 AM");
+  });
+
+  it("names the day it holds, not the renderer's day", () => {
+    // A local `Date` here would read midnight as the previous evening for
+    // anyone west of Greenwich, putting the label a day out.
+    const previous = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
+    try {
+      expect(
+        formatLocalDateTimeLabel({ date: { year: 2026, month: 3, day: 1 }, hour: 0, minute: 0 }),
+      ).toBe("March 1, 2026 at 12:00 AM");
+    } finally {
+      process.env.TZ = previous;
+    }
   });
 });
 

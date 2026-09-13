@@ -92,6 +92,15 @@ test("a day its month does not have is corrected rather than dropped", async ({ 
  */
 const pad = (value: number) => String(value).padStart(2, "0");
 
+/**
+ * The hidden input that actually gets submitted. The visible control is a
+ * button showing the value in words, so the exact string has to be read from
+ * the thing the form posts rather than from what is on screen.
+ */
+function whenValue(page: Page) {
+  return page.getByRole("dialog").locator('input[name="occurredAt"]');
+}
+
 /** Split what the field holds: `2026-09-11T18:00`. */
 function readWhen(value: string) {
   const [date, time] = value.split("T");
@@ -110,10 +119,10 @@ test("a day and a time can be chosen from the calendar without typing", async ({
   await page.goto("/");
   await page.getByRole("button", { name: "Log an interaction" }).click();
 
-  const when = page.getByRole("dialog").getByLabel("When");
+  const when = whenValue(page);
   const opened = readWhen(await when.inputValue());
 
-  await page.getByRole("button", { name: "Open calendar" }).click();
+  await page.getByRole("dialog").getByLabel("When").click();
   await expect(page.getByRole("grid")).toBeVisible();
 
   // The month the field already reads, so opening the calendar never loses
@@ -141,11 +150,11 @@ test("the calendar opens on the selected day and walks from the keyboard", async
   await page.goto("/");
   await page.getByRole("button", { name: "Log an interaction" }).click();
 
-  const when = page.getByRole("dialog").getByLabel("When");
+  const when = whenValue(page);
   const opened = readWhen(await when.inputValue());
   const selected = `${opened.year}-${pad(opened.month)}-${pad(opened.day)}`;
 
-  await page.getByRole("button", { name: "Open calendar" }).click();
+  await page.getByRole("dialog").getByLabel("When").click();
   // Not the "previous month" button, which is what a popover focuses by
   // default. The day already chosen is what someone opening a calendar is
   // looking for, and it is the only tab stop in the grid.
@@ -190,7 +199,7 @@ async function setWeekStart(page: Page, day: "Sunday" | "Monday") {
 async function firstColumn(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Log an interaction" }).click();
-  await page.getByRole("button", { name: "Open calendar" }).click();
+  await page.getByRole("dialog").getByLabel("When").click();
   const grid = page.getByRole("grid");
   await expect(grid).toBeVisible();
   return grid.getByRole("columnheader").first();
@@ -209,4 +218,30 @@ test("the calendar begins on the day the account chose", async ({ page }) => {
   }
 
   await expect(await firstColumn(page)).toHaveText("Su");
+});
+
+test("a date and time can still be typed, in the words people use", async ({ page }) => {
+  await ensureSignedIn(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Log an interaction" }).click();
+
+  const when = whenValue(page);
+  const opened = readWhen(await when.inputValue());
+
+  await page.getByRole("dialog").getByLabel("When").click();
+  const typed = page.getByLabel("Type a date");
+
+  // A phrasing the native input this replaced would never have accepted.
+  await typed.fill("yesterday");
+  await typed.press("Enter");
+
+  // The day moved and the time did not. chrono fills the hour in from the
+  // clock whether or not one was said, so trusting it would quietly restamp
+  // the time as whatever o'clock the browser happens to be at.
+  await expect(when).toHaveValue(`${dayKey(opened, -1)}T${opened.time}`);
+
+  await page.getByRole("dialog").getByLabel("When").click();
+  await typed.fill("last tuesday at 3:30pm");
+  await typed.press("Enter");
+  await expect(when).toHaveValue(new RegExp("T15:30$"));
 });

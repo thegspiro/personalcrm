@@ -92,6 +92,27 @@ export function withLocalTime(value: LocalDateTime, raw: string): LocalDateTime 
   return { ...value, hour, minute };
 }
 
+/**
+ * The value as a person reads it: "September 11, 2026 at 6:00 PM".
+ *
+ * Formatted through UTC on both sides, the same trick the calendar grid uses:
+ * a `LocalDateTime` is a wall clock with no zone, and letting a local `Date`
+ * carry it would name the day before for anyone west of Greenwich.
+ */
+export function formatLocalDateTimeLabel(value: LocalDateTime): string {
+  const date = clampPlainDate(value.date);
+  return new Date(
+    Date.UTC(date.year, date.month - 1, date.day, value.hour, value.minute),
+  ).toLocaleString("en-US", {
+    timeZone: "UTC",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 /** The `HH:mm` half, for a `<input type="time">`. */
 export function localTimeValue(value: LocalDateTime): string {
   return `${pad(value.hour)}:${pad(value.minute)}`;
