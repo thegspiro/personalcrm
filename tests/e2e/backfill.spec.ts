@@ -22,7 +22,9 @@ test("backfill keeps its context between entries and can undo", async ({ page })
   // Set the date once, well into the past.
   await page.getByRole("button", { name: "−1 month" }).click();
   await page.getByRole("button", { name: "−1 month" }).click();
-  const when = page.getByLabel("When");
+  // The visible control is a button showing the value in words; the exact
+  // string is on the hidden input the form posts.
+  const when = page.locator('input[name="occurredAt"]');
   const afterFirstSet = await when.inputValue();
 
   await page.getByRole("button", { name: "Coffee", exact: true }).click();

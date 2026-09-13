@@ -274,7 +274,7 @@ test("the date-and-time calendar is accessible", async ({ page }) => {
   await page.goto("/");
 
   await page.getByRole("button", { name: "Log an interaction" }).click();
-  await page.getByRole("button", { name: "Open calendar" }).click();
+  await page.getByRole("dialog").getByLabel("When").click();
   await expect(page.getByRole("grid")).toBeVisible();
 
   await scan(page, "the date-and-time calendar");
