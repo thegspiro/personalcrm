@@ -1,6 +1,6 @@
 ### One person, one record — 2026-09-08
 
-*Schema: `20260908120000_add_duplicate_dismissal`*
+*Schema: `20260914120000_add_duplicate_dismissal`*
 
 #### Added
 - **Settings → Data now finds people who might be the same person**, and can

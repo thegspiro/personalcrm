@@ -165,7 +165,7 @@ and B/A are one row.
 
 Needed because the scan matches on a shared phone number, and in a *personal*
 address book a couple share one landline. Migration:
-`20260908120000_add_duplicate_dismissal`.
+`20260914120000_add_duplicate_dismissal`.
 
 ### `TwoFactor` / `RecoveryCode`
 
