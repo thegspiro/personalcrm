@@ -175,7 +175,7 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     // window. The orphaned row is what proves it was already sent.
     const user = await createTestUser();
     await prisma.userPreference.create({
-      data: { userId: user.id, timezone: "America/Los_Angeles" },
+      data: { userId: user.id, timezone: "America/Los_Angeles", digestEnabled: false },
     });
     const first = await prisma.notificationChannel.create({
       data: { ownerId: user.id, kind: "WEBHOOK", name: "First", config: { url: "https://example.invalid" } },
