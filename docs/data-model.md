@@ -1090,6 +1090,13 @@ exception: within its day it is retried with its counts read afresh — and
 waits if its hour has since been moved later — and once its day has ended it
 is dropped rather than sent stale.
 
+`channelId` is part of that key and is `SET NULL` when a channel is deleted, so
+the constraint alone does not survive a delete: a replacement channel gets a new
+id, a different key, and would send the same occurrence again inside one due
+window. The scheduler closes that by skipping an occurrence that already has a
+delivered row whose channel is gone — the orphaned row is the proof it was
+sent. A row is kept rather than deleted for exactly this reason.
+
 Cadence rows use `Contact.nextTouchAt` falling on or before the end of the
 owner's local day — the same reading as the overdue count and the People
 filter — task rows use an incomplete task's due date, and digest rows use the

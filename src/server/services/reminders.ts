@@ -110,6 +110,17 @@ function scheduleFor(user: Pick<ScheduledUser, "preference">, now: Date): Schedu
 }
 
 /**
+ * Identifies one occurrence independently of the channel it was sent to.
+ *
+ * Both sides go through `plainDateKey` so a `@db.Date` read back as a Date and
+ * a computed `PlainDate` cannot format differently — the set would silently
+ * never match, and the failure would look like the guard simply not working.
+ */
+function orphanKey(entityId: string, occurrence: PlainDate, offset: number): string {
+  return `${entityId}|${plainDateKey(occurrence)}|${offset}`;
+}
+
+/**
  * Without a preference row there is no timezone to anchor a day to and no
  * lock setting to honour — and reading the lock as "off" would send a
  * private person's name out of the building for an owner who set a PIN
@@ -1129,6 +1140,37 @@ export async function processReminderDeliveries(
     const ledgered = new Set(rows.map((row) => row.dedupKey));
     const superseded = await supersededPairs(db, user.id, candidates);
 
+    // An occurrence already delivered through a channel that has since been
+    // deleted must not go out again. `ReminderLog.channelId` is SET NULL, so the
+    // ledger keeps the record but loses the id — and the dedup key includes that
+    // id, so a replacement channel gets a fresh key and the insert below succeeds
+    // where it should collide. Deleting and recreating a channel inside one due
+    // window is the path that replays an already-sent reminder; the orphaned row
+    // is what proves it was sent. Gathered once per account rather than per
+    // candidate, because the common case is that there are none.
+    //
+    // IMPORTANT_DATE only. The same hole exists for the other entity types, but
+    // they cannot use this bound: an overdue cadence or task stays a candidate
+    // with a scheduledFor in the past, which `gte: today` would exclude.
+    const orphaned = await db.reminderLog.findMany({
+      where: {
+        ownerId: user.id,
+        entityType: "IMPORTANT_DATE",
+        channelId: null,
+        ok: true,
+        // Bounded to what could still come due. Without this the scan grows
+        // with the account's whole delivery history, for a check that only ever
+        // concerns occurrences at or ahead of today.
+        scheduledFor: { gte: plainDateToDb(scheduleFor(user, now).today) },
+      },
+      select: { entityId: true, scheduledFor: true, offsetDays: true },
+    });
+    const deliveredToARemovedChannel = new Set(
+      orphaned.map((row) =>
+        orphanKey(row.entityId, plainDateFromDb(row.scheduledFor), row.offsetDays),
+      ),
+    );
+
     // A row cancelled while its reminder was ineligible — the task completed,
     // the person made private — keeps its key, so the candidate it matches
     // now would otherwise be skipped for ever once the task is reopened or
@@ -1149,6 +1191,13 @@ export async function processReminderDeliveries(
       if (candidate.supersedes?.some((id) =>
         superseded.has(supersededKey(id, candidate.scheduledFor, candidate.offsetDays, channel.id)),
       )) continue;
+      // Same shape, different cause: delivered through a channel since deleted,
+      // so the row that proves it lost the id its key was built from.
+      if (
+        deliveredToARemovedChannel.has(
+          orphanKey(candidate.entityId, plainDateFromDb(candidate.scheduledFor), candidate.offsetDays),
+        )
+      ) continue;
       // A paused channel reaches here only with a probe already claimed and
       // nothing abandoned to spend it on, and then for one candidate: the
       // probe is a real reminder, so a channel that is still broken costs one

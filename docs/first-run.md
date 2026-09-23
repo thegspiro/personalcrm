@@ -13,9 +13,9 @@ failed. Watching `docker logs -f personalcrm` on a first boot you'll see:
    non-numeric `PORT` or an unwritable `/config` stop the container. So does a
    setting made only of spaces, and padding around `DATABASE_URL`: a value the
    shell reads as present but every consumer reads as broken would otherwise
-   pass here and stop a service later, on every restart. A typo in `TZ`, a
-   trailing slash on `APP_URL`, or plain `http` on a real hostname are warnings
-   — they're printed and boot continues.
+   pass here and stop a service later, on every restart. A typo in `TZ`, an
+   unset `APP_URL`, or plain `http` on a real hostname are warnings — they're
+   printed and boot continues.
 3. **`init-mariadb`** — generates `secrets.json` if it isn't there, then creates
    the database on first boot. Skipped entirely when `DATABASE_URL` is set.
 4. **`init-db-ready`** — waits for the database to accept connections.
