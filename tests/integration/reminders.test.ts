@@ -103,6 +103,61 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(after.isEnabled).toBe(true);
   });
 
+  /** Everything the logger writes to stderr while `work` runs. */
+  async function stderrDuring(work: () => Promise<void>): Promise<string> {
+    const lines: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      lines.push(String(chunk));
+      return true;
+    });
+    try {
+      await work();
+    } finally {
+      spy.mockRestore();
+    }
+    return lines.join("");
+  }
+
+  it("logs why a delivery failed, naming the channel but never the person", async () => {
+    // The reason used to reach only the ledger, so the container log said at
+    // most "failed=1" and an operator had to open Settings to learn anything.
+    const { channel } = await accountWithOneOverduePerson();
+    const send = vi.fn(async () => { throw new Error("connect ECONNREFUSED 192.168.1.20:80"); });
+    const output = await stderrDuring(() =>
+      processImportantDateReminders(new Date("2026-09-09T10:00:00Z"), { db: prisma, send }).then(() => undefined),
+    );
+
+    expect(output).toContain("[reminders] delivery failed");
+    expect(output).toContain(`channel=${channel.id}`);
+    expect(output).toContain("kind=WEBHOOK");
+    expect(output).toContain("policy=OVERDUE_CADENCE");
+    expect(output).toContain("attempt=1");
+    expect(output).toContain("ECONNREFUSED 192.168.1.20:80");
+    expect(output).toContain("retryAt=2026-09-09T10:01:00.000Z");
+    expect(output).not.toContain("gaveUp");
+    // The line is about the transport, not about who the reminder was for.
+    expect(output).not.toContain("Overdue");
+  });
+
+  it("logs a given-up reminder, and the channel pause it caused", async () => {
+    const { user } = await accountWithOneOverduePerson();
+    for (const firstName of ["Second", "Third"]) {
+      await prisma.contact.create({
+        data: { ownerId: user.id, firstName, nextTouchAt: new Date("2026-09-01T00:00:00Z") },
+      });
+    }
+    const send = vi.fn(async () => { throw new Error("Channel returned HTTP 401."); });
+    const output = await stderrDuring(() => exhaustOneReminder(send, new Date("2026-09-09T10:00:00Z")));
+
+    const lines = output.split("\n").filter((line) => line.includes("delivery failed"));
+    // Three reminders exhausted, plus the pausing pass's probe, which requeues
+    // one of them for a single attempt and fails it again.
+    expect(lines.filter((line) => line.includes("gaveUp=true"))).toHaveLength(4);
+    // Only the failure that tipped the channel over says so, not the probe after.
+    expect(lines.filter((line) => line.includes("paused=true"))).toHaveLength(1);
+    expect(lines.every((line) => line.includes("HTTP 401"))).toBe(true);
+  });
+
   it("stops attempting a paused channel, but still probes it once a day", async () => {
     const { user, channel } = await accountWithOneOverduePerson();
     await prisma.contact.createMany({
