@@ -78,6 +78,42 @@ and says so rather than showing a button that does nothing.
 Installing also requires the page be served over HTTPS, or from `localhost`.
 Over plain `http` on a LAN address no browser will offer it.
 
+## Reminders aren't arriving
+
+The scheduler runs once at startup and then at the top of every hour. Each
+attempt that fails writes one line to the container log with the reason:
+
+```bash
+docker logs personalcrm 2>&1 | grep '\[reminders\]'
+```
+
+```
+WARN  [reminders] delivery failed channel=cm… kind=GOTIFY policy=DAILY_DIGEST attempt=1 maxAttempts=5 reason="connect ECONNREFUSED 127.0.0.1:80" retryAt=…
+INFO  [reminders] delivery pass finished sent=0 failed=1
+```
+
+`gaveUp=true` means that reminder has used all its attempts; `paused=true`
+means the channel has now been paused and will be tried once a day until
+something gets through. The line never names who the reminder was for. The same
+reason is on the channel's card under Settings → Reminders.
+
+No `[reminders]` line at all means nothing was attempted. The daily digest is
+on by default and is sent even when nothing is due, after the digest hour
+(08:00 unless changed) in the account's timezone — not the container's `TZ`.
+If a whole day passes without one, check the digest switch and the timezone in
+Settings, and that the channel is switched on.
+
+For a channel on your own network (Gotify, ntfy, a webhook):
+
+- **`127.0.0.1` and `localhost` are the container itself**, not the machine
+  running it. Use the host's LAN address (`http://192.168.1.20:8080`), or the
+  other container's name if both are on the same user-defined Docker network.
+- **Only an administrator's channel may use a private address.** The first
+  account created is the administrator; a member's channel pointed at a LAN
+  address is refused, either when it is saved or when it is sent.
+- **The test button uses the same sender as the scheduler**, so a channel that
+  passes the test will connect for scheduled reminders too.
+
 ## An offline page is showing me old data
 
 That's the point of the banner — it says how old the copy is. Only pages with

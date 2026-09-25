@@ -51,6 +51,7 @@ import {
   shouldPause,
 } from "@/lib/channel-health";
 import { deliverToChannel } from "./notify";
+import { createLogger } from "@/server/log";
 
 const MAX_ATTEMPTS = MAX_DELIVERY_ATTEMPTS;
 /** How soon after a failed send the next attempt may be made. */
@@ -67,6 +68,38 @@ const DEFAULT_TIMEZONE = "America/New_York";
 
 /** A retry that is neither owed now nor cancelled: leave the row for a later pass. */
 const NOT_YET = Symbol("not-yet");
+
+const deliveryLog = createLogger("reminders");
+
+/**
+ * One line in the container log for every failed attempt.
+ *
+ * The ledger already held the reason, but only Settings read it back, so an
+ * operator looking at `docker logs` saw at most a failure count and never why.
+ * The fields identify the channel and the attempt and nothing about who the
+ * reminder was for: no entity id, which would be a stable handle on one person
+ * across every line, and no subject or body. The reason is a transport error,
+ * and the logger strips anything credential-shaped from it on the way out.
+ */
+function reportFailure(
+  channel: Pick<Channel, "id" | "kind">,
+  policy: string,
+  attempt: number,
+  reason: string,
+  nextAttemptAt: Date | null,
+  paused: boolean,
+) {
+  deliveryLog.warn("delivery failed", {
+    channel: channel.id,
+    kind: channel.kind,
+    policy,
+    attempt,
+    maxAttempts: MAX_ATTEMPTS,
+    reason,
+    ...(nextAttemptAt ? { retryAt: nextAttemptAt.toISOString() } : { gaveUp: true }),
+    ...(paused ? { paused: true } : {}),
+  });
+}
 
 type Db = typeof prisma;
 type Channel = Awaited<ReturnType<Db["notificationChannel"]["findFirstOrThrow"]>>;
@@ -832,11 +865,12 @@ function currentChannel(db: Db, ownerId: string, channelId: string) {
  * turned this channel off, which is a different sentence and one they would
  * have to undo by hand without ever being told why.
  */
-async function pauseChannel(db: Db, channelId: string, reason: string, now: Date) {
-  await db.notificationChannel.updateMany({
+async function pauseChannel(db: Db, channelId: string, reason: string, now: Date): Promise<boolean> {
+  const paused = await db.notificationChannel.updateMany({
     where: { id: channelId, pausedAt: null },
     data: { pausedAt: now, pauseReason: reason },
   });
+  return paused.count > 0;
 }
 
 /** A delivery got through, so the run of failures the pause counted is over. */
@@ -855,7 +889,7 @@ async function clearPause(db: Db, channelId: string) {
  * broken channel, and pausing on a lifetime total would eventually pause every
  * channel that has ever had a bad night.
  */
-async function considerPause(db: Db, channelId: string, reason: string, now: Date) {
+async function considerPause(db: Db, channelId: string, reason: string, now: Date): Promise<boolean> {
   const lastOk = await db.reminderLog.findFirst({
     where: { channelId, ok: true, sentAt: { not: null } },
     orderBy: { sentAt: "desc" },
@@ -870,9 +904,7 @@ async function considerPause(db: Db, channelId: string, reason: string, now: Dat
       ...(lastOk?.sentAt ? { lastAttemptAt: { gt: lastOk.sentAt } } : {}),
     },
   });
-  if (shouldPause(abandoned)) {
-    await pauseChannel(db, channelId, reason, now);
-  }
+  return shouldPause(abandoned) && (await pauseChannel(db, channelId, reason, now));
 }
 
 /**
@@ -1065,15 +1097,18 @@ async function createAndDeliver(
   } catch (error) {
     // From the clock, like the lease: a deadline stamped from the pass's
     // opening instant could already have passed, and with it the backoff.
+    const reason = error instanceof Error ? error.message : "Delivery failed.";
+    const nextAttemptAt = new Date(clock().getTime() + FIRST_RETRY_MS);
     await db.reminderLog.update({
       where: { id: log.id },
       data: {
         attemptCount: 1,
         lastAttemptAt: clock(),
-        error: error instanceof Error ? error.message : "Delivery failed.",
-        nextAttemptAt: new Date(clock().getTime() + FIRST_RETRY_MS),
+        error: reason,
+        nextAttemptAt,
       },
     });
+    reportFailure(live, candidate.policy, 1, reason, nextAttemptAt, false);
     return false;
   }
 }
@@ -1274,18 +1309,20 @@ export async function processReminderDeliveries(
       const reason = error instanceof Error ? error.message : "Delivery failed.";
       const at = clock();
       const abandoning = attempt >= MAX_ATTEMPTS;
+      const nextAttemptAt = abandoning ? null : new Date(at.getTime() + FIRST_RETRY_MS * 2 ** (attempt - 1));
       await db.reminderLog.update({
         where: { id: log.id },
         data: {
           attemptCount: attempt,
           lastAttemptAt: at,
           error: reason,
-          nextAttemptAt: abandoning ? null : new Date(at.getTime() + FIRST_RETRY_MS * 2 ** (attempt - 1)),
+          nextAttemptAt,
         },
       });
       // The only place a reminder is given up on, so the only place the run of
       // them can have just reached the point of not asking this channel again.
-      if (abandoning) await considerPause(db, live.id, reason, at);
+      const paused = abandoning && (await considerPause(db, live.id, reason, at));
+      reportFailure(live, log.schedulingPolicy, attempt, reason, nextAttemptAt, paused);
       failed += 1;
     }
   }
