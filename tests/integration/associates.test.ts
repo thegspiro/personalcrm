@@ -268,6 +268,17 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       ]);
     });
 
+    it("does not offer an entry known only through a private person while locked", async () => {
+      // The picker's own "not already linked here" condition is a `links`
+      // clause, and spread beside the privacy fragment it replaced the
+      // fragment's — so the name was offered from a page the lock does not gate.
+      await add({ contactId: hiddenId, name: "Dana" });
+      expect((await linkableAssociates(ownerId, carolId)).items).toHaveLength(1);
+
+      lock();
+      expect((await linkableAssociates(ownerId, carolId)).items).toEqual([]);
+    });
+
     it("refuses to link another account's entry", async () => {
       const theirs = await foreignEntry();
       expect(

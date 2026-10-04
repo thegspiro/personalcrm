@@ -216,8 +216,11 @@ export async function linkableAssociates(
     where: {
       ownerId,
       promotedContactId: null,
-      ...associatePrivacyWhere(scope),
-      links: { none: { contactId } },
+      // ANDed rather than spread beside `links`: the fragment carries a
+      // `links` key of its own while locked, and a second one in the same
+      // object silently replaces it — which offered, by name, associates
+      // known only through private contacts.
+      AND: [associatePrivacyWhere(scope), { links: { none: { contactId } } }],
     },
     include: { links: linkInclude(scope) },
     orderBy: [{ name: "asc" }, { id: "asc" }],
