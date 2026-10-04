@@ -6,9 +6,13 @@ import type { AssociateGroup } from "@/server/queries/associates";
  * Everyone noted as being in someone else's life, on /people/friends.
  *
  * Read-only, and a server component because of it: these entries are written
- * and corrected on the person's own page, where the context that makes them
- * mean anything is. A second editing surface would be the same wiring twice
- * and two places for the shared-fields trap to bite.
+ * and corrected on a friend's page or on the associate's own, where the
+ * context that makes them mean anything is. Someone in two friends' lives is
+ * listed under each, and both rows open the same page.
+ *
+ * The notes themselves are not repeated here — only how many there are. Which
+ * of them is safe to raise depends on which friend you are talking to, and a
+ * list grouped by friend would show every note under every one of them.
  */
 export function AssociateList({ groups }: { groups: AssociateGroup[] }) {
   return (
@@ -38,7 +42,12 @@ export function AssociateList({ groups }: { groups: AssociateGroup[] }) {
                       {entry.promoted.name}
                     </Link>
                   ) : (
-                    <span className="text-sm font-medium">{entry.name}</span>
+                    <Link
+                      href={`/people/friends/${entry.id}`}
+                      className="text-sm font-medium underline-offset-2 hover:underline"
+                    >
+                      {entry.name}
+                    </Link>
                   )}
                   {entry.isPromoted ? (
                     <span className="inline-flex items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
@@ -55,8 +64,10 @@ export function AssociateList({ groups }: { groups: AssociateGroup[] }) {
                 {entry.howTheyKnow ? (
                   <p className="text-xs text-muted-foreground">{entry.howTheyKnow}</p>
                 ) : null}
-                {entry.notes ? (
-                  <p className="mt-1 whitespace-pre-line text-sm">{entry.notes}</p>
+                {entry.noteCount > 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    {entry.noteCount === 1 ? "1 note" : `${entry.noteCount} notes`}
+                  </p>
                 ) : null}
               </li>
             ))}
