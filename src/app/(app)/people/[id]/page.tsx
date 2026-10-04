@@ -61,6 +61,7 @@ import { readLoveLanguages } from "@/lib/love-languages";
 import { readProfileLinks } from "@/lib/profile-links";
 import { NearbyPlaces } from "@/components/locations/nearby-places";
 import { listContactHappenings } from "@/server/queries/happenings";
+import { associatesForContact, linkableAssociates } from "@/server/queries/associates";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -116,6 +117,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     postalCodes,
     origins,
     placeSuggestions,
+    associates,
+    linkable,
   ] = await Promise.all([
     listTermsByKind(user.id, [
       "INTERACTION_TYPE",
@@ -149,6 +152,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     hasPostalCodes(),
     originsFor(user.id, id),
     listPlaceSuggestions(user.id, timezone),
+    associatesForContact(user.id, id),
+    linkableAssociates(user.id, id),
   ]);
 
   // Measured from the person, not from home: standing on their page, "how far
@@ -538,21 +543,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
         <AssociatesSection
           contactId={contact.id}
           contactName={displayName(contact)}
-          associates={contact.associates.map((entry) => ({
-            id: entry.id,
-            name: entry.name,
-            howTheyKnow: entry.howTheyKnow,
-            notes: entry.notes,
-            isPrivate: entry.isPrivate,
-            // Read from the column, not from the join: the person may be
-            // withheld while the entry is still tracked, and a row that
-            // forgets that becomes editable again and invites a second
-            // promotion.
-            isPromoted: entry.promotedContactId !== null,
-            promoted: entry.promoted
-              ? { id: entry.promoted.id, name: displayName(entry.promoted) }
-              : null,
-          }))}
+          associates={associates}
+          linkable={linkable.items}
           types={terms.RELATIONSHIP_TYPE}
         />
 

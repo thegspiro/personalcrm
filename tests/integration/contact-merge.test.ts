@@ -104,7 +104,14 @@ describe.skipIf(!hasTestDatabase)("merging two contacts", () => {
         prisma.householdMember.create({
           data: { ownerId, contactId: loserId, householdId: household.id },
         }),
-        prisma.associate.create({ data: { ownerId, contactId: loserId, name: "Their friend" } }),
+        prisma.associate.create({
+          data: {
+            ownerId,
+            name: "Their friend",
+            links: { create: { contactId: loserId } },
+            notes: { create: { kind: "DETAIL", content: "Climbs", heardFromContactId: loserId } },
+          },
+        }),
         prisma.interactionParticipant.create({
           data: { ownerId, contactId: loserId, interactionId: interaction.id },
         }),
@@ -155,7 +162,8 @@ describe.skipIf(!hasTestDatabase)("merging two contacts", () => {
         prisma.plan.count({ where: { contactId: winnerId } }),
         prisma.contactTag.count({ where: { contactId: winnerId } }),
         prisma.householdMember.count({ where: { contactId: winnerId } }),
-        prisma.associate.count({ where: { contactId: winnerId } }),
+        prisma.associateLink.count({ where: { contactId: winnerId } }),
+        prisma.associateNote.count({ where: { heardFromContactId: winnerId } }),
         prisma.interactionParticipant.count({ where: { contactId: winnerId } }),
         prisma.interactionMention.count({ where: { contactId: winnerId } }),
         prisma.lifeEventParticipant.count({ where: { contactId: winnerId } }),
@@ -181,6 +189,64 @@ describe.skipIf(!hasTestDatabase)("merging two contacts", () => {
 
       expect((await merge()).ok).toBe(true);
       expect(await prisma.contactTag.count({ where: { contactId: winnerId } })).toBe(1);
+    });
+
+    it("keeps one link when both knew the same associate, and the survivor's wording", async () => {
+      // The link's key is (associateId, contactId), so re-pointing the loser's
+      // link at the survivor would be a duplicate key and abort the merge.
+      const associate = await prisma.associate.create({
+        data: {
+          ownerId,
+          name: "Bob",
+          links: {
+            create: [
+              { contactId: winnerId, howTheyKnow: null },
+              { contactId: loserId, howTheyKnow: "Colleague" },
+            ],
+          },
+        },
+      });
+
+      expect((await merge()).ok).toBe(true);
+      expect(await prisma.associateLink.findMany({ where: { associateId: associate.id } })).toEqual([
+        expect.objectContaining({ contactId: winnerId, howTheyKnow: "Colleague" }),
+      ]);
+    });
+
+    it("drops an associate promoted into the survivor from the survivor's own life", async () => {
+      // Merging the colleague's profile into the friend who mentioned them
+      // would otherwise list a person as their own acquaintance.
+      const associate = await prisma.associate.create({
+        data: {
+          ownerId,
+          name: "Bob",
+          promotedContactId: loserId,
+          links: { create: { contactId: winnerId } },
+        },
+      });
+
+      expect((await merge()).ok).toBe(true);
+      expect(await prisma.associate.count({ where: { id: associate.id } })).toBe(0);
+    });
+
+    it("keeps such an associate while someone else still knows them", async () => {
+      const other = await contact("Carol");
+      const associate = await prisma.associate.create({
+        data: {
+          ownerId,
+          name: "Bob",
+          promotedContactId: loserId,
+          links: { create: [{ contactId: winnerId }, { contactId: other }] },
+        },
+      });
+
+      expect((await merge()).ok).toBe(true);
+      const row = await prisma.associate.findUniqueOrThrow({
+        where: { id: associate.id },
+        include: { links: true },
+      });
+      expect(row.promotedContactId).toBe(winnerId);
+      expect(row.links.map((link) => link.contactId)).toEqual([other]);
     });
 
     it("collapses an interaction that named both to a single participant", async () => {

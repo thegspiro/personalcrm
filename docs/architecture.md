@@ -320,6 +320,8 @@ can mutate data while disconnected.
 | `/` | Cacheable read-only | Allowed by the account-wide gate only when the dating layer is not rendered. |
 | `/people` | Cacheable read-only | Contact query is privacy-filtered; account-wide gate still applies. |
 | `/people/[id]` | Cacheable read-only | Conditional: only a non-private contact with no dating section, plus the account-wide gate. Query strings are cached as distinct pages. |
+| `/people/friends` | Cacheable read-only | Associates, their links and their note counts are privacy-filtered — an associate known only through private contacts, and a note heard from one, are withheld; account-wide gate applies. |
+| `/people/friends/[id]` | Cacheable read-only | Conditional: only a non-private associate, plus the account-wide gate. Its links and notes take the same filters as the roll-up. |
 | `/timeline` | Cacheable read-only | Interactions and their participants are privacy-filtered; account-wide gate applies. |
 | `/locations` | Cacheable read-only | Canonical places aggregate only privacy-filtered interactions and plans; counts use the same scope. |
 | `/tasks` | Cacheable read-only | Due cadences for visible contacts, plus tasks without a contact and tasks attached to a visible contact; account-wide gate applies. |

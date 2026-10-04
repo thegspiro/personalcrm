@@ -32,16 +32,19 @@ export function factPrivacyWhere(scope: PrivacyScope): Prisma.FactWhereInput {
 /**
  * Applied to Associate queries.
  *
- * Two conditions, and the second is not obvious. The row's own marker is the
- * first; the person it was *promoted into* is the second, because a promoted
- * entry keeps the name it was written under, and that name is now a private
- * contact's. Withholding only the join and leaving the row would still say
- * "there is someone called Bob, and he is tracked" from a page the lock does
- * not gate — the same disclosure `lifeEventPrivacyWhere` and the relationship
- * filter in `getContact` refuse, so the whole entry goes.
+ * Three conditions, and only the first is obvious. The row's own marker is
+ * the first. The person it was *promoted into* is the second, because a
+ * promoted entry keeps the name it was written under, and that name is now a
+ * private contact's. Withholding only the join and leaving the row would still
+ * say "there is someone called Bob, and he is tracked" from a page the lock
+ * does not gate — the same disclosure `lifeEventPrivacyWhere` and the
+ * relationship filter in `getContact` refuse, so the whole entry goes.
  *
- * The person the entry hangs off is a third question, answered by
- * `viaContactPrivacyWhere` alongside this one, exactly as a fact is filtered.
+ * The third is the people whose lives they are in. An associate is shown only
+ * through a link to someone visible: one known only through private contacts
+ * is that contact's business, exactly as it was when an entry hung off a
+ * single person. One known through a private *and* a public friend stays, and
+ * the private link is filtered off it by `viaContactPrivacyWhere`.
  *
  * The `OR` is built only inside the locked branch. Spread into a where-clause
  * from the unlocked branch it would be an empty member that matches nothing
@@ -55,6 +58,27 @@ export function associatePrivacyWhere(
   return {
     isPrivate: false,
     OR: [{ promotedContactId: null }, { promoted: { isPrivate: false } }],
+    links: { some: { contact: { isPrivate: false } } },
+  };
+}
+
+/**
+ * Applied to AssociateNote queries, always beside `associatePrivacyWhere` on
+ * the associate it belongs to.
+ *
+ * A note has no marker of its own — it follows its associate's — but it does
+ * name who you heard it from, and "Alice told you" names Alice. A note heard
+ * from a private contact is withheld with the lock closed, content and all:
+ * what a private friend confided is theirs, whoever it is about.
+ *
+ * Built only inside the locked branch, for the same reason as the `OR` above.
+ */
+export function associateNotePrivacyWhere(
+  scope: PrivacyScope,
+): Prisma.AssociateNoteWhereInput {
+  if (scope.unlocked) return {};
+  return {
+    OR: [{ heardFromContactId: null }, { heardFrom: { isPrivate: false } }],
   };
 }
 

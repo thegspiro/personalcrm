@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  associateNotePrivacyWhere,
   associatePrivacyWhere,
   householdPrivacyWhere,
   interactionPrivacyWhere,
@@ -13,13 +14,16 @@ const UNLOCKED: PrivacyScope = { enabled: true, unlocked: true };
 const OFF: PrivacyScope = { enabled: false, unlocked: true };
 
 describe("associate privacy where-fragment", () => {
-  it("withholds an entry marked private, or one promoted into a private person", () => {
+  it("withholds an entry marked private, promoted into a private person, or known only through private people", () => {
     // The second condition is the non-obvious one: a promoted entry keeps the
     // name it was written under, and that name is now a private contact's.
-    // Withholding only the join would leave the row still saying it.
+    // Withholding only the join would leave the row still saying it. The
+    // third is what sharing an associate between friends made necessary: one
+    // known only through a private friend is that friend's business.
     expect(associatePrivacyWhere(LOCKED)).toEqual({
       isPrivate: false,
       OR: [{ promotedContactId: null }, { promoted: { isPrivate: false } }],
+      links: { some: { contact: { isPrivate: false } } },
     });
   });
 
@@ -37,13 +41,28 @@ describe("associate privacy where-fragment", () => {
     expect(associatePrivacyWhere(OFF)).toEqual({});
   });
 
-  it("says nothing about the contact it hangs off", () => {
-    // Deliberately only half the answer. The entry's own marker and the
-    // person's are separate questions, and every caller spreads
-    // viaContactPrivacyWhere beside this one; folding them together here
-    // would be wrong inside `Contact.associates.some(...)`, where the
-    // contact half is already applied to the outer query.
-    expect(associatePrivacyWhere(LOCKED)).not.toHaveProperty("contact");
+  it("asks for *a* visible link, not that every link is visible", () => {
+    // `every` would hide someone in a public friend's life the moment a
+    // private friend also knew them — and their absence from the public
+    // friend's page would itself say something hidden was there.
+    expect(associatePrivacyWhere(LOCKED).links).toEqual({
+      some: { contact: { isPrivate: false } },
+    });
+  });
+});
+
+describe("associate note privacy where-fragment", () => {
+  it("withholds a note heard from a private contact while locked", () => {
+    // "Alice told you" names Alice. A note heard from nobody in particular
+    // stays — its first member — or every direct note would vanish too.
+    expect(associateNotePrivacyWhere(LOCKED)).toEqual({
+      OR: [{ heardFromContactId: null }, { heardFrom: { isPrivate: false } }],
+    });
+  });
+
+  it("does not filter notes while unlocked or when the lock is off", () => {
+    expect(associateNotePrivacyWhere(UNLOCKED)).toEqual({});
+    expect(associateNotePrivacyWhere(OFF)).toEqual({});
   });
 });
 

@@ -33,6 +33,8 @@ const TABLES = [
   "LocationAlias",
   "Location",
   "Fact",
+  "AssociateNote",
+  "AssociateLink",
   "Associate",
   "ImportantDate",
   "LifeEventParticipant",

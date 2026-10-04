@@ -127,8 +127,10 @@ function buildWhere(
       // belongs to, which would answer "is anything hidden here" from a page
       // the lock does not gate.
       {
-        associates: {
-          some: { name: { contains: search }, ...associatePrivacyWhere(privacy) },
+        associateLinks: {
+          some: {
+            associate: { name: { contains: search }, ...associatePrivacyWhere(privacy) },
+          },
         },
       },
       { dietaryNeeds: { some: { label: { contains: search } } } },
@@ -255,24 +257,6 @@ const detailInclude = (ownerId: string) =>
       include: { category: true },
       orderBy: [{ importance: "desc" }, { createdAt: "desc" }],
     },
-    // Ordered explicitly, like `addresses` above, for the same reason.
-    associates: {
-      include: {
-        // Selected with its owner: `promotedContactId` is the one key here
-        // that is not same-owner, so the join can reach another account's
-        // person after an import or a hand repair. `getContact` drops it.
-        promoted: {
-          select: {
-            id: true,
-            ownerId: true,
-            firstName: true,
-            lastName: true,
-            isPrivate: true,
-          },
-        },
-      },
-      orderBy: [{ name: "asc" }, { id: "asc" }],
-    },
     importantDates: { include: { type: true }, orderBy: { date: "asc" } },
     lifeEvents: {
       include: { type: true, participants: { include: { contact: true } } },
@@ -348,23 +332,7 @@ export const getContact = cache(
       // would not help here: without this the private debt is serialised into
       // the page payload even though the section never renders it.
       contact.debts = contact.debts.filter((debt) => !debt.isPrivate);
-      // Its own marker, and the person it was promoted into. Withholding only
-      // the link would leave the row still naming that person and still
-      // reading as tracked, which is the same leak the relationship filter
-      // above closes by dropping the row rather than the join.
-      contact.associates = contact.associates.filter(
-        (entry) => !entry.isPrivate && !entry.promoted?.isPrivate,
-      );
     }
-
-    // Unconditional, outside the lock block: the promotion pointer is reached
-    // through the one key here that the database does not hold to a single
-    // owner, so a foreign row is dropped for everybody, locked or not.
-    contact.associates = contact.associates.map((entry) =>
-      entry.promoted && entry.promoted.ownerId !== ownerId
-        ? { ...entry, promoted: null }
-        : entry,
-    );
     return contact;
   },
 );

@@ -28,6 +28,8 @@ interface Context {
   /** A same-owner life event and household, for the join tables. */
   lifeEventId: string;
   householdId: string;
+  /** A same-owner associate, for its link and note tables. */
+  associateId: string;
 }
 
 interface Case {
@@ -63,12 +65,29 @@ const CASES: Case[] = [
     count: (ownerId) => prisma.fact.count({ where: { ownerId } }),
   },
   {
-    name: "Associate",
+    name: "AssociateLink",
     create: (context, contactId) =>
-      prisma.associate.create({
-        data: { ownerId: context.ownerId, contactId, name: "Bob" },
+      prisma.associateLink.create({
+        data: { ownerId: context.ownerId, associateId: context.associateId, contactId },
       }),
-    count: (ownerId) => prisma.associate.count({ where: { ownerId } }),
+    count: (ownerId) => prisma.associateLink.count({ where: { ownerId } }),
+  },
+  {
+    // The note's source: optional, because a note heard from the associate
+    // directly names nobody.
+    name: "AssociateNote",
+    optional: true,
+    create: (context, contactId) =>
+      prisma.associateNote.create({
+        data: {
+          ownerId: context.ownerId,
+          associateId: context.associateId,
+          kind: "DETAIL",
+          content: "Into climbing",
+          heardFromContactId: contactId,
+        },
+      }),
+    count: (ownerId) => prisma.associateNote.count({ where: { ownerId } }),
   },
   {
     name: "ImportantDate",
@@ -286,6 +305,9 @@ describe.skipIf(!hasTestDatabase)("same-owner foreign keys", () => {
       }),
       prisma.household.create({ data: { ownerId: owner.id, name: "The flat" } }),
     ]);
+    const associate = await prisma.associate.create({
+      data: { ownerId: owner.id, name: "Bob" },
+    });
     mineId = mine.id;
     theirsId = theirs.id;
     context = {
@@ -294,6 +316,7 @@ describe.skipIf(!hasTestDatabase)("same-owner foreign keys", () => {
       siblingId: sibling.id,
       lifeEventId: lifeEvent.id,
       householdId: household.id,
+      associateId: associate.id,
       nextInteractionId: async () =>
         (
           await prisma.interaction.create({
@@ -338,7 +361,7 @@ describe.skipIf(!hasTestDatabase)("same-owner foreign keys", () => {
     await prisma.contact.delete({ where: { id: mineId } });
     for (const testCase of CASES) {
       const remaining = await testCase.count(context.ownerId);
-      // The optional three are cascaded too — `onDelete: Cascade` was the
+      // The optional ones are cascaded too — `onDelete: Cascade` was the
       // behaviour before these keys and the composite key keeps it — but they
       // still hold the detached rows written above.
       expect(remaining).toBe(testCase.optional ? 1 : 0);

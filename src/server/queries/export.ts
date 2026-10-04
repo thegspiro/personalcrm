@@ -33,7 +33,6 @@ const CONTACT_INCLUDE = {
   category: { select: { label: true } },
   tags: { include: { tag: { select: { name: true, slug: true, color: true } } } },
   flags: true,
-  associates: true,
   happenings: { include: { type: { select: { label: true } } } },
   meetingSource: { select: { label: true } },
   methods: { include: { type: { select: { slug: true, label: true } } } },
@@ -89,6 +88,7 @@ async function gatherWithin(prisma: Prisma.TransactionClient, ownerId: string) {
     relationships,
     households,
     familySuggestionDismissals,
+    associates,
     ideas,
     tasks,
     plans,
@@ -127,6 +127,15 @@ async function gatherWithin(prisma: Prisma.TransactionClient, ownerId: string) {
     // and it lives nowhere else. Leaving it out means a restore brings back
     // every suggestion they have already said no to.
     prisma.familySuggestionDismissal.findMany({ where: { ownerId } }),
+    // Account-level rather than nested under a contact: one associate can be
+    // in several contacts' lives, and nesting would write them out once per
+    // link. Each note keeps `heardFromContactId`, which is the whole reason
+    // the note is safe or unsafe to raise with a given friend.
+    prisma.associate.findMany({
+      where: { ownerId },
+      include: { links: true, notes: true },
+      orderBy: { createdAt: "asc" },
+    }),
     prisma.idea.findMany({ where: { ownerId } }),
     prisma.task.findMany({ where: { ownerId } }),
     prisma.plan.findMany({ where: { ownerId }, include: { category: { select: { label: true } } } }),
@@ -146,6 +155,7 @@ async function gatherWithin(prisma: Prisma.TransactionClient, ownerId: string) {
     relationships,
     households,
     familySuggestionDismissals,
+    associates,
     ideas,
     tasks,
     plans,
