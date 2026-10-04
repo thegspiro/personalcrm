@@ -16,6 +16,7 @@ import { findTermBySlug } from "@/server/taxonomy/queries";
 import { requireUnlocked } from "@/server/privacy/lock";
 import { resolveLocation } from "@/server/services/locations";
 import { closePlanAsInteraction } from "@/server/services/plans";
+import { sweepWithheldInteractionNotes } from "@/server/services/associates";
 import { readLoveLanguages } from "@/lib/love-languages";
 import { profileLinksSchema, type ProfileLink } from "@/lib/profile-links";
 import {
@@ -518,6 +519,9 @@ export async function deleteDateEntry(id: string): Promise<ActionResult> {
       { entity: "INTERACTION", entityIds: [existing.interactionId] },
       { entity: "DATE_ENTRY", entityIds: [id] },
     ]);
+    // The same sweep `deleteInteraction` makes, for the same reason: a note
+    // heard on a date the lock would hide must not outlive what hid it.
+    await sweepWithheldInteractionNotes(tx, ownerId, [existing.interactionId]);
     await tx.interaction.delete({ where: { id: existing.interactionId } });
     await recomputeContactActivity(tx, [existing.contactId]);
     await resequenceDateEntries(tx, existing.contactId);

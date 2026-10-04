@@ -52,12 +52,28 @@ describe("associate privacy where-fragment", () => {
 });
 
 describe("associate note privacy where-fragment", () => {
-  it("withholds a note heard from a private contact while locked", () => {
+  it("withholds a note heard from a private contact, or in a withheld conversation, while locked", () => {
     // "Alice told you" names Alice. A note heard from nobody in particular
-    // stays — its first member — or every direct note would vanish too.
+    // stays — the first member of each OR — or every direct note would vanish
+    // too. The conversation takes the interaction fragment whole, so a group
+    // dinner with a private friend at it is not read back through a note.
     expect(associateNotePrivacyWhere(LOCKED)).toEqual({
-      OR: [{ heardFromContactId: null }, { heardFrom: { isPrivate: false } }],
+      AND: [
+        { OR: [{ heardFromContactId: null }, { heardFrom: { isPrivate: false } }] },
+        {
+          OR: [
+            { sourceInteractionId: null },
+            { sourceInteraction: interactionPrivacyWhere(LOCKED) },
+          ],
+        },
+      ],
     });
+  });
+
+  it("ANDs its two conditions rather than spreading them", () => {
+    // Two OR keys in one object keep only the second, which would drop the
+    // heard-from rule without a type error.
+    expect(associateNotePrivacyWhere(LOCKED)).not.toHaveProperty("OR");
   });
 
   it("does not filter notes while unlocked or when the lock is off", () => {

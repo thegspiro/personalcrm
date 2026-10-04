@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -22,7 +23,8 @@ import { TermChips } from "@/components/form/term-select";
 import { ContactPicker } from "@/components/form/contact-picker";
 import { PlacePicker } from "@/components/form/place-picker";
 import { SENTIMENTS } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn, displayName } from "@/lib/utils";
+import { AssociateMentionsField } from "@/components/associates/mentions-field";
 import {
   loadInteractionForEdit,
   updateInteraction,
@@ -68,6 +70,8 @@ export function EditInteractionSheet({
   const [error, setError] = React.useState<string>();
   const [sentiment, setSentiment] = React.useState<number | null>(null);
   const [reachedOutBy, setReachedOutBy] = React.useState<ReachedOutBy | null>(null);
+  // Null until the picker reports, so the record's own participants stand in.
+  const [participantIds, setParticipantIds] = React.useState<string[] | null>(null);
 
   React.useEffect(() => {
     if (!open || !interactionId) return;
@@ -151,6 +155,7 @@ export function EditInteractionSheet({
                 contacts={record.contacts}
                 defaultSelected={record.contactIds}
                 required
+                onSelectionChange={setParticipantIds}
               />
 
               <ContactPicker
@@ -275,6 +280,42 @@ export function EditInteractionSheet({
                   ))}
                 </div>
               </div>
+
+              {record.associateNotes.length > 0 ? (
+                <div className="grid gap-1">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    Already noted from this
+                  </span>
+                  <ul className="grid gap-1">
+                    {record.associateNotes.map((note) => (
+                      <li key={note.id} className="min-w-0 break-words text-xs">
+                        <Link
+                          href={`/people/friends/${note.associate.id}`}
+                          className="font-medium underline-offset-2 hover:underline"
+                        >
+                          {note.associate.name}
+                        </Link>
+                        {" — "}
+                        {note.content}
+                        {note.heardFrom ? (
+                          <span className="text-muted-foreground"> (from {note.heardFrom})</span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                  <span className="text-[11px] text-muted-foreground">
+                    Correct these on the person&apos;s own page.
+                  </span>
+                </div>
+              ) : null}
+
+              <AssociateMentionsField
+                formId="edit"
+                participants={(participantIds ?? record.contactIds).flatMap((id) => {
+                  const person = record.contacts.find((contact) => contact.id === id);
+                  return person ? [{ id, name: displayName(person) }] : [];
+                })}
+              />
 
               <CollapsibleCustomFields fields={record.customFields} />
             </SheetBody>

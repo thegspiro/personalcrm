@@ -194,3 +194,112 @@ export async function mergeAssociateInto(
 
   return { ok: true };
 }
+
+/** One "they talked about…" line from the interaction form, already validated. */
+export interface InteractionAssociateMention {
+  /** An existing associate, or — with `name` instead — someone new. */
+  associateId?: string;
+  name?: string;
+  heardFromContactId: string;
+  content: string;
+}
+
+/** Thrown when an associate named in the form was promoted, unlinked or deleted meanwhile. */
+export class AssociateMentionStale extends Error {}
+
+/**
+ * Write the news heard in a logged conversation, inside the transaction that
+ * logs it.
+ *
+ * Each line becomes an update dated to the conversation, heard from the
+ * participant who said it, and pointing back at the interaction. A new name
+ * becomes an associate in that participant's life. Inside the same
+ * transaction as the interaction rather than after it, so a save that fails
+ * leaves neither, and a `transact` retry writes both again from scratch rather
+ * than a second copy of the notes.
+ *
+ * Every existing associate is locked unpromoted first — the lock
+ * `promoteAssociate` takes — and its link to the source re-checked under it:
+ * the action validated both before the transaction opened, and either can have
+ * changed since. Throws `AssociateMentionStale` rather than writing a note
+ * onto something that just became a person, or stopped being in this
+ * friend's life.
+ */
+export async function writeInteractionAssociateMentions(
+  tx: Tx,
+  ownerId: string,
+  interactionId: string,
+  date: Date,
+  mentions: InteractionAssociateMention[],
+): Promise<void> {
+  for (const mention of mentions) {
+    let associateId = mention.associateId;
+    if (associateId) {
+      const [locked] = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM Associate
+         WHERE id = ${associateId} AND ownerId = ${ownerId} AND promotedContactId IS NULL
+           FOR UPDATE`;
+      const linked = locked
+        ? await tx.associateLink.count({
+            where: { ownerId, associateId, contactId: mention.heardFromContactId },
+          })
+        : 0;
+      if (!linked) throw new AssociateMentionStale();
+    } else {
+      const created = await tx.associate.create({
+        data: {
+          ownerId,
+          name: mention.name!,
+          links: { create: { contactId: mention.heardFromContactId } },
+        },
+      });
+      associateId = created.id;
+    }
+
+    await tx.associateNote.create({
+      data: {
+        ownerId,
+        associateId,
+        kind: "UPDATE",
+        content: mention.content,
+        date,
+        precision: "DAY",
+        heardFromContactId: mention.heardFromContactId,
+        sourceInteractionId: interactionId,
+      },
+    });
+  }
+}
+
+/**
+ * Delete the notes heard in conversations the lock would withhold, before
+ * those conversations are deleted.
+ *
+ * The note's link to its conversation is `SET NULL`, so an ordinary deleted
+ * conversation leaves its notes, as asked. But a note from a private one —
+ * marked private, or with a private participant or mention — is hidden only
+ * *because* of that conversation, and `SET NULL` would leave it with nothing
+ * hiding it: the next closed lock would show it. So those go with it, the way
+ * a note heard from a deleted friend goes with them.
+ */
+export async function sweepWithheldInteractionNotes(
+  tx: Tx,
+  ownerId: string,
+  interactionIds: string[],
+): Promise<number> {
+  if (interactionIds.length === 0) return 0;
+  const { count } = await tx.associateNote.deleteMany({
+    where: {
+      ownerId,
+      sourceInteractionId: { in: interactionIds },
+      sourceInteraction: {
+        OR: [
+          { isPrivate: true },
+          { participants: { some: { contact: { isPrivate: true } } } },
+          { mentions: { some: { contact: { isPrivate: true } } } },
+        ],
+      },
+    },
+  });
+  return count;
+}
