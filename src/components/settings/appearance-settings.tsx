@@ -136,7 +136,11 @@ export function AppearanceSettings({
             htmlFor="defaultCadenceDays"
             hint="Only seeds the add-person form — nobody you've already added is changed."
           >
+            {/* Both selects here are keyed on their saved value: after the
+                action React resets the form, and a select resets to the
+                defaultValue it was mounted with, not the one just saved. */}
             <select
+              key={String(defaultCadenceDays ?? "")}
               id="defaultCadenceDays"
               name="defaultCadenceDays"
               defaultValue={String(defaultCadenceDays ?? "")}
@@ -156,6 +160,7 @@ export function AppearanceSettings({
             hint="Which column the calendar grid begins with."
           >
             <select
+              key={weekStartsOn === 1 ? 1 : 0}
               id="weekStartsOn"
               name="weekStartsOn"
               defaultValue={String(weekStartsOn === 1 ? 1 : 0)}

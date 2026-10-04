@@ -193,6 +193,10 @@ async function setWeekStart(page: Page, day: "Sunday" | "Monday") {
   await page.getByLabel("Weeks start on").selectOption({ label: day });
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("Saved")).toBeVisible();
+  // The select must keep the saved day once the form has reset after the
+  // action, rather than snapping back to the day it was mounted with.
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Weeks start on")).toHaveValue(day === "Monday" ? "1" : "0");
 }
 
 /** The grid's first column, as the popover on the dashboard draws it. */
