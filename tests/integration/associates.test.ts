@@ -59,6 +59,8 @@ const {
 } = await import("@/server/actions/details");
 const { deleteContact } = await import("@/server/actions/contacts");
 const {
+  askAboutForContact,
+  askAboutForContacts,
   associatesForContact,
   getAssociate,
   linkableAssociates,
@@ -657,6 +659,134 @@ describe.skipIf(!hasTestDatabase)("people in their life", () => {
       const before = await countPrivateRows(prisma, ownerId);
       await add();
       expect(await countPrivateRows(prisma, ownerId)).toBe(before);
+    });
+  });
+
+  describe("what to ask a friend about", () => {
+    async function update(associateId: string, content: string, date: string, source = aliceId) {
+      return note(associateId, { kind: "UPDATE", content, date, heardFromContactId: source });
+    }
+
+    it("offers only the news this friend told you, newest first", async () => {
+      // The whole point: what Carol told you, what Bob said himself, and a
+      // standing detail are none of them things to raise with Alice.
+      const id = await add();
+      await linkAssociate(form({ associateId: id, contactId: carolId }));
+      await update(id, "Started night shifts", "2026-09-12");
+      await update(id, "Got promoted", "2026-10-01");
+      await update(id, "Moving to Leeds", "2026-09-20", carolId);
+      await note(id, { kind: "UPDATE", content: "Told me himself", date: "2026-10-02" });
+      await note(id, { content: "Has two kids", heardFromContactId: aliceId });
+
+      const ask = await askAboutForContact(ownerId, aliceId);
+      expect(ask.items.map((item) => item.content)).toEqual(["Got promoted", "Started night shifts"]);
+      expect(ask.total).toBe(2);
+      expect(ask.items[0]).toMatchObject({
+        associate: { id, name: "Bob", href: `/people/friends/${id}` },
+        howTheyKnow: "Colleague",
+        date: { year: 2026, month: 10, day: 1 },
+        precision: "DAY",
+      });
+
+      expect((await askAboutForContact(ownerId, carolId)).items.map((item) => item.content)).toEqual([
+        "Moving to Leeds",
+      ]);
+    });
+
+    it("sorts by the date the news was as of, not by when it was typed", async () => {
+      const id = await add();
+      await update(id, "Newer news, typed first", "2026-10-01");
+      await update(id, "Older news, typed later", "2026-08-01");
+
+      expect((await askAboutForContact(ownerId, aliceId)).items.map((item) => item.content)).toEqual([
+        "Newer news, typed first",
+        "Older news, typed later",
+      ]);
+    });
+
+    it("shows the newest three and counts the rest", async () => {
+      const id = await add();
+      for (const [content, date] of [
+        ["One", "2026-01-01"],
+        ["Two", "2026-02-01"],
+        ["Three", "2026-03-01"],
+        ["Four", "2026-04-01"],
+      ]) {
+        await update(id, content, date);
+      }
+
+      const ask = await askAboutForContact(ownerId, aliceId);
+      expect(ask.items.map((item) => item.content)).toEqual(["Four", "Three", "Two"]);
+      expect(ask.total).toBe(4);
+    });
+
+    it("drops someone no longer in this friend's life", async () => {
+      const id = await add();
+      await linkAssociate(form({ associateId: id, contactId: carolId }));
+      await update(id, "Started night shifts", "2026-09-12");
+      await unlinkAssociate(id, aliceId);
+
+      expect(await askAboutForContact(ownerId, aliceId)).toEqual({ items: [], total: 0 });
+    });
+
+    it("withholds a private associate while locked, from the list and the count", async () => {
+      const shown = await add({ name: "Priya" });
+      const hidden = await add({ isPrivate: "true" });
+      await update(shown, "Visible news", "2026-09-01");
+      await update(hidden, "Hidden news", "2026-09-02");
+
+      expect((await askAboutForContact(ownerId, aliceId)).total).toBe(2);
+      lock();
+      const ask = await askAboutForContact(ownerId, aliceId);
+      expect(ask.items.map((item) => item.content)).toEqual(["Visible news"]);
+      expect(ask.total).toBe(1);
+    });
+
+    it("keeps an associate a private friend also knows, for the public friend who told you", async () => {
+      // The associate fragment and the link condition both carry a `links`
+      // key; spread side by side, one replaces the other. This is the case
+      // that shows which survived.
+      const id = await add();
+      await linkAssociate(form({ associateId: id, contactId: hiddenId }));
+      await update(id, "From Alice", "2026-09-01");
+      lock();
+
+      expect((await askAboutForContact(ownerId, aliceId)).items.map((item) => item.content)).toEqual([
+        "From Alice",
+      ]);
+    });
+
+    it("points at the person someone became once promoted", async () => {
+      const id = await add();
+      await update(id, "Started night shifts", "2026-09-12");
+      const person = await promoteAssociate(form({ id, firstName: "Bob", lastName: "Ellis", typeId: friendTypeId }));
+
+      const [item] = (await askAboutForContact(ownerId, aliceId)).items;
+      expect(item?.associate).toMatchObject({
+        name: "Bob Ellis",
+        href: `/people/${person.data!.contactId}`,
+      });
+    });
+
+    it("keeps the limit per friend when asked for several at once", async () => {
+      // One capped query for everyone would let a talkative friend's notes
+      // crowd out the rest.
+      const id = await add();
+      await linkAssociate(form({ associateId: id, contactId: carolId }));
+      for (const day of ["01", "02", "03", "04"]) await update(id, `Alice ${day}`, `2026-09-${day}`);
+      await update(id, "Carol's one", "2026-08-01", carolId);
+
+      const all = await askAboutForContacts(ownerId, [aliceId, carolId, aliceId]);
+      expect(all.size).toBe(2);
+      expect(all.get(aliceId)?.items).toHaveLength(3);
+      expect(all.get(carolId)?.items.map((item) => item.content)).toEqual(["Carol's one"]);
+    });
+
+    it("never reaches into another account", async () => {
+      const id = await add();
+      await update(id, "Started night shifts", "2026-09-12");
+
+      expect(await askAboutForContact(strangerId, aliceId)).toEqual({ items: [], total: 0 });
     });
   });
 

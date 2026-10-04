@@ -7,6 +7,7 @@ import { getUserContext } from "@/server/user/context";
 import { listPlaceSuggestions } from "@/server/queries/locations";
 import { listPipeline } from "@/server/queries/dating";
 import { listPlans } from "@/server/queries/plans";
+import { askAboutForContacts } from "@/server/queries/associates";
 import { originsFor } from "@/server/queries/origins";
 import { listTerms } from "@/server/taxonomy/queries";
 import { canSeeDating } from "@/server/privacy/filter";
@@ -67,6 +68,12 @@ export default async function DatingPage({
   // second view can fill the same page with finished ones, a silent cut would
   // be the wrong answer on either.
   const { items: plans, truncated: plansTruncated } = applyCap(planRows, PLAN_CAP);
+  // What to ask each person you have a meetup arranged with — only for
+  // planned rows, where there is a conversation coming to prepare for.
+  const askAbout = await askAboutForContacts(
+    user.id,
+    plans.flatMap((plan) => (plan.status === "PLANNED" && plan.contact ? [plan.contact.id] : [])),
+  );
   const today = calendarDateInTz(new Date(), timezone);
 
   // Everyone still in the pipeline, for the "who with?" picker.
@@ -143,6 +150,10 @@ export default async function DatingPage({
               }
             : null,
           contact: plan.contact,
+          askAbout:
+            plan.status === "PLANNED" && plan.contact
+              ? (askAbout.get(plan.contact.id) ?? null)
+              : null,
         }))}
         categories={planCategories}
         people={people}

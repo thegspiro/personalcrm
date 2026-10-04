@@ -174,6 +174,14 @@ copies every note onto the new person as a fact — including hidden ones — an
 note heard from a private contact becomes a **private** fact, so the copy is
 hidden exactly where the original was.
 
+"Ask … about", on a friend's profile and under a planned meetup on the plans
+lists, draws only on updates whose source *is* that friend, so it never
+offers what another friend confided. It takes the same associate and note
+fragments as every other read, its "See all" count included, and ANDs the
+associate fragment with its own "still in this friend's life" condition rather
+than spreading them side by side: both are `links` clauses, and in one object
+the second silently replaces the first.
+
 Creating an entry already marked private is refused while the lock is closed,
 as changing the marker is: it would land somewhere the writer cannot reach to
 undo it.
