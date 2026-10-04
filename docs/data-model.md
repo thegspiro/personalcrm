@@ -46,8 +46,9 @@ column, and the mismatch has nowhere to live.
 Every relation into `Contact` uses this shape — `Relationship` (both ends),
 `Fact`, `ImportantDate`, `LifeEvent`, `FamilySuggestionDismissal` (both ends),
 `Idea`, `Task`, `Happening`, `Gift`, `Debt`, `DietaryNeed`, `RomanticProfile`,
-`DateEntry`, `Plan`, `Flag`, `Associate` and `ContactTag` — along with
-`ContactTag` → `Tag` and `LocationAlias` → `Location`.
+`DateEntry`, `Plan`, `Flag`, `AssociateLink`, `AssociateNote` (its source)
+and `ContactTag` — along with `ContactTag` → `Tag`, `LocationAlias` →
+`Location`, and `AssociateLink` / `AssociateNote` → `Associate`.
 
 The four join tables that name a contact and something else —
 `InteractionParticipant`, `InteractionMention`, `LifeEventParticipant` and
@@ -72,7 +73,7 @@ and on the read every query that returns the place:
 `src/server/queries/timeline.ts`, where it is both searched and rendered, and
 `src/server/queries/dating.ts`, which reads a logged date's venue through its
 interaction. `Associate.promotedContactId` is compensated the same way, in
-`getContact` and `listAssociateGroups`. Prisma takes no `where` on a to-one
+every reader in `src/server/queries/associates.ts`. Prisma takes no `where` on a to-one
 `include`, so each of them selects the joined row's `ownerId` and drops a
 mismatch in the mapper rather than filtering in the query.
 
@@ -628,14 +629,17 @@ normal, 2 important), `isPrivate`, and `sourceInteractionId` → `Interaction`
 
 ### `Associate`
 
-Someone in a contact's life who is not tracked as a contact themselves — a
-colleague, a sibling's partner, the flatmate they keep mentioning. `contactId`
-(cascade), `name`, `howTheyKnow` (short free text, in the words used at the
-time), `notes`, and `isPrivate`.
+Someone in your contacts' lives who is not tracked as a contact themselves — a
+colleague, a sibling's partner, the flatmate they keep mentioning. `ownerId`,
+`name`, `isPrivate`, and `promotedContactId`. Owned by the account rather than
+by one contact, because the same colleague can be in two friends' lives: each
+friend is an `AssociateLink`, and what you know is `AssociateNote`.
 
 Deliberately not a `Contact` with a flag on it: these people have no cadence,
 no timeline and no profile, and giving them one turns every name mentioned in
-passing into someone you have failed to keep in touch with.
+passing into someone you have failed to keep in touch with. They do get a page
+of their own (`/people/friends/[id]`), because once one is shared between
+friends no single friend's page holds the whole picture.
 
 The name avoids `Acquaintance` deliberately: that is already a
 `CONTACT_CATEGORY` label, and being filed as an acquaintance is a different
@@ -644,9 +648,53 @@ fact from being someone a contact knows and you do not track.
 `promotedContactId` → `Contact` (`SET NULL`) is the whole of the "now tracked"
 state, set when an entry is turned into a real person. The entry is kept rather
 than consumed — it records what was written before that profile existed — and
-stops being editable in place instead. There is no `promotedAt` beside it,
-because `SET NULL` can revoke the pointer and a timestamp left behind would
-claim a promotion that no longer exists.
+stops being editable in place instead: no renaming, no new links, no new or
+corrected notes. Removing a note, a link or the whole entry is still allowed.
+There is no `promotedAt` beside it, because `SET NULL` can revoke the pointer
+and a timestamp left behind would claim a promotion that no longer exists.
+
+Two entries that turn out to be one person are folded together by
+`mergeAssociateInto` (`src/server/services/associates.ts`): links and notes move
+across, two links to the same friend become one, and the result is private if
+either was. Two entries promoted into *different* people are refused — that is
+a contact merge. Existing duplicates are never merged automatically; a shared
+first name is not evidence of a shared person.
+
+### `AssociateLink`
+
+One contact whose life an associate is in. `ownerId`, `associateId`,
+`contactId`, `howTheyKnow` (short free text, in the words used at the time),
+keyed on `(associateId, contactId)`, with same-owner keys to both sides.
+
+A join with a payload, because how Alice knows him and how Carol does are
+different sentences. Deleting the contact deletes the link; an associate left
+with no links at all is deleted by the contact's delete path
+(`sweepOrphanedAssociates`, called before the contact goes) rather than left
+behind as a note about a friend of nobody. Removing the last link by hand does
+the same.
+
+### `AssociateNote`
+
+Something you know about an associate. `ownerId`, `associateId`, `kind`
+(`DETAIL` — "has two kids" — or `UPDATE` — "started night shifts"), `content`,
+`date` + `precision` (an update's "as of", partial like every historical date;
+null on a detail), and `heardFromContactId`.
+
+`kind` is an enum rather than a taxonomy term because the code branches on it.
+`heardFromContactId` is what the feature exists for: on a friend's page a note
+is shown as something to raise only when that friend is its source. A note
+Alice told you is shown muted on Carol's page, never offered. Null means you
+did not hear it through a tracked contact — from the associate directly, or no
+longer known — and is muted on every friend's page.
+
+The source is a same-owner key with **CASCADE**, not `SET NULL`. Deleting the
+friend deletes what you heard from them — what deleting a contact always did to
+their associates' notes — where `SET NULL` would re-attribute it to nobody, and
+a note heard from a private friend would then show with the lock closed.
+
+A note has no `isPrivate`. It follows its associate's marker, and is withheld
+with the lock closed when its source is a private contact (see
+[privacy](privacy.md)).
 
 ### `ImportantDate`
 
@@ -1216,10 +1264,11 @@ nobody gave.
 | Deleting… | Takes with it | Leaves behind |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | A `User` | Everything they own, by cascade | — |
-| A `Contact` | Methods, addresses, tags, facts, dates, life events, happenings, gifts, debts, dietary needs, flags, ideas, plans, tasks, the people noted as being in their life, household memberships, relationships (both halves), participations, romantic profile, date entries, and its avatar file | `CustomFieldValue` rows — **swept explicitly** by the action |
+| A `Contact` | Methods, addresses, tags, facts, dates, life events, happenings, gifts, debts, dietary needs, flags, ideas, plans, tasks, their links to associates and every associate note heard from them, any associate left in no one else's life, household memberships, relationships (both halves), participations, romantic profile, date entries, and its avatar file | `CustomFieldValue` rows — **swept explicitly** by the action |
 | An `Interaction` | Participants, its `DateEntry` | `Fact.sourceInteractionId`, `Idea.usedInInteractionId` and `Plan.usedInInteractionId` set to null |
 | A `TaxonomyTerm` | `Relationship` rows of that type (cascade) — which is why deleting a term still in use is blocked; other references are `SET NULL` | The records themselves |
-| A promoted `Contact` | Nothing | The `Associate` it came from, with `promotedContactId` set to null — editable again, note intact |
+| A promoted `Contact` | Nothing | The `Associate` it came from, with `promotedContactId` set to null — editable again, links and notes intact |
+| An `Associate` | Its links and notes | Everyone it was linked to, and any `Contact` it was promoted into |
 | A `Session` | Nothing | The unlock state dies with it |
 
 ---
@@ -1259,6 +1308,7 @@ the `init-migrate` s6 oneshot).
 | `20260908120000_add_life_event_place` | Additive nullable `LifeEvent.location` and `LifeEvent.locationId`, its index, and the `SET NULL` foreign key to `Location`. Nothing to backfill and nothing dropped — both columns are null on every existing row, which reads exactly as "no place recorded". The foreign key names `Location(id)` rather than the same-owner composite, for the MariaDB reason above |
 | `20260911193014_add_postal_codes` | Adds `PostalCode` and `PostalCodeSource`, for postal codes imported from a GeoNames country file. Purely additive: two new tables, no existing column re-expressed and no enum modified, so there is nothing to backfill and nothing that can be lost. Neither table has an `ownerId` — they hold published reference data rather than anybody's records, the same reasoning `AppSetting` runs on |
 | `20260905153056_add_associates` | Adds `Associate` — the people in a contact's life who are not tracked themselves. Purely additive: one new table, no existing column re-expressed and no enum modified, so there is nothing to backfill and nothing that can be lost. `promotedContactId` is the third single-column key into `Contact`, for the `SET NULL` reason above |
+| `20261004120000_share_associates_and_add_notes` | Makes an associate shareable between contacts and gives it notes. Adds `AssociateLink` and `AssociateNote` (and the `AssociateNoteKind` enum), and drops `Associate.contactId`, `howTheyKnow` and `notes`. **Hand-edited**: backfills one link per existing entry carrying its wording, and one `DETAIL` note per non-blank `notes` heard from that same contact, *before* the drop — Prisma's own version drops all three columns and their data. Adds `Associate`'s `(ownerId, id)` key before dropping the index the owner foreign key relied on, which MariaDB otherwise refuses. Merges nothing. Ships a `down.sql`, which returns each entry to its earliest link and folds its notes into one, losing extra links and every note's source |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).

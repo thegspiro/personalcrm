@@ -267,6 +267,33 @@ describe.skipIf(!hasTestDatabase)("account export", () => {
     });
   });
 
+  it("carries an associate once, with every link and who each note came from", async () => {
+    // One associate can be in several contacts' lives, so they are written
+    // out at the top level rather than once per contact — and each note keeps
+    // its source, which is what makes it safe or unsafe to raise with a friend.
+    state.unlocked = true;
+    const alice = await addContact({ firstName: "Alice" });
+    const carol = await addContact({ firstName: "Carol" });
+    await prisma.associate.create({
+      data: {
+        ownerId: state.ownerId,
+        name: "Bob",
+        links: { create: [{ contactId: alice.id, howTheyKnow: "Colleague" }, { contactId: carol.id }] },
+        notes: { create: { kind: "DETAIL", content: "Climbs", heardFromContactId: carol.id } },
+      },
+    });
+
+    const parsed = JSON.parse((await exportAccount("json")).data!.content);
+    expect(parsed.schemaVersion).toBe(2);
+    expect(parsed.account.associates).toHaveLength(1);
+    expect(parsed.account.associates[0].links).toHaveLength(2);
+    expect(parsed.account.associates[0].notes[0]).toMatchObject({
+      content: "Climbs",
+      heardFromContactId: carol.id,
+    });
+    expect(parsed.account.contacts[0]).not.toHaveProperty("associates");
+  });
+
   it("puts one annual event in the calendar for a birthday, not two", async () => {
     // A contact with a canonical birthday keeps a legacy birthday-typed row in
     // storage, which lends it reminder settings and styling. Every other feed

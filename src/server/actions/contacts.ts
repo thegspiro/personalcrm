@@ -6,6 +6,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import { createLogger } from "@/server/log";
 import { recomputeContactActivity } from "@/server/services/contact-activity";
+import { sweepOrphanedAssociates } from "@/server/services/associates";
 import {
   customFieldFailure,
   deleteCustomFieldValues,
@@ -455,6 +456,9 @@ export async function deleteContact(id: string): Promise<ActionResult> {
       { entity: "INTERACTION", entityIds: interactions.map((row) => row.id) },
       { entity: "DATE_ENTRY", entityIds: dates.map((row) => row.id) },
     ]);
+    // Before the contact, while its links still exist to say which associates
+    // were in this person's life and no one else's.
+    await sweepOrphanedAssociates(tx, ownerId, [id]);
     await tx.contact.delete({ where: { id } });
   });
 

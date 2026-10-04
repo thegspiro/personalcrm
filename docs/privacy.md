@@ -137,20 +137,42 @@ supplies the live scope.
 ### What "private" applies to
 
 `isPrivate` exists on `Contact`, `Fact`, `Interaction`, `Debt` and
-`Associate`. Marking a contact private hides everything beneath them.
+`Associate`. Marking a contact private hides everything beneath them — and
+everything you heard from them.
 
-An `Associate` — someone in a contact's life who is not tracked themselves —
-is withheld for its own marker *and* for the person it hangs off, which is two
-fragments at every call site rather than one: `associatePrivacyWhere` beside
-`viaContactPrivacyWhere`. Either alone lets the other's rows through. The name
-is filtered out of people-search for the same reason a private fact's text is:
-finding someone by a name only a hidden note carries would answer "is something
-hidden here, and about whom" from a page the lock does not gate. A promotion
-link names a real person, so where the person it created is private the
-**whole entry** is withheld, not merely the link: the row still carries the
-name it was written under, and leaving it would say "there is someone called
-Bob, and he is tracked" — the same disclosure the relationship filter in
-`getContact` refuses by dropping the row rather than the join.
+An `Associate` — someone in your contacts' lives who is not tracked themselves
+— is withheld for three things, all in `associatePrivacyWhere`: its own marker;
+the person it was promoted into, if that person is private; and having **no
+link to a visible contact**. One known only through private friends is those
+friends' business, exactly as it was when an entry could only hang off one
+person. One known through a public *and* a private friend stays visible, and
+the private link is filtered off it by `viaContactPrivacyWhere` on the links —
+so neither the associate's page nor the public friend's "Also known to" line
+names the private friend. The fragment asks for *some* visible link, not that
+*every* link is visible: `every` would make the associate vanish from the
+public friend's page the moment a private friend also knew them, and that
+absence would itself be the disclosure.
+
+A promotion link names a real person, so where the person it created is
+private the **whole entry** is withheld, not merely the link: the row still
+carries the name it was written under, and leaving it would say "there is
+someone called Bob, and he is tracked" — the same disclosure the relationship
+filter in `getContact` refuses by dropping the row rather than the join. The
+name is filtered out of people-search for the same reason a private fact's text
+is: finding someone by a name only a hidden note carries would answer "is
+something hidden here, and about whom" from a page the lock does not gate.
+
+An `AssociateNote` has no marker of its own; it follows its associate's. But it
+names who you heard it from, and "Alice told you" names Alice — so
+`associateNotePrivacyWhere` withholds a note **heard from a private contact**,
+content and all, while the lock is closed. Every read of notes applies it,
+including the note count on the roll-up, because a count that grows on unlock
+is the disclosure. With the lock closed, an associate can be neither deleted
+nor have its last link removed while the lock hides any of its links or notes:
+the person deleting could not see what they were destroying. Promoting one
+copies every note onto the new person as a fact — including hidden ones — and a
+note heard from a private contact becomes a **private** fact, so the copy is
+hidden exactly where the original was.
 
 Creating an entry already marked private is refused while the lock is closed,
 as changing the marker is: it would land somewhere the writer cannot reach to

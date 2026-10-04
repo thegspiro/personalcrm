@@ -439,7 +439,8 @@ model Contact {
   duplicateDismissalsB    DuplicateDismissal[]        @relation("DuplicateDismissalB")
   relationsFrom           Relationship[]              @relation("RelationshipFrom")
   relationsTo             Relationship[]              @relation("RelationshipTo")
-  associates              Associate[]                 @relation("AssociateOf")
+  associateLinks          AssociateLink[]             @relation("AssociateLinks")
+  associateNotesHeard     AssociateNote[]             @relation("AssociateNoteSource")
   namedAsAssociate        Associate[]                 @relation("AssociatePromoted")
 
   /// Referenced by `ContactTag`'s composite key; see the note there.
@@ -723,14 +724,20 @@ model Fact {
   @@index([sourceInteractionId])
 }
 
-/// Someone in a contact's life who is not tracked as a Contact themselves — a
-/// colleague, a sibling's partner, the flatmate they keep mentioning.
+/// Someone in your contacts' lives who is not tracked as a Contact themselves —
+/// a colleague, a sibling's partner, the flatmate they keep mentioning.
 ///
 /// Deliberately not a Contact: these people have no cadence, no overdue state
 /// and no profile to fill in. They exist so a conversation can pick up where it
 /// left off. One occasionally turns out to be someone worth keeping track of,
 /// which is what `promotedContactId` records — the entry is kept rather than
 /// deleted, because nothing here is destroyed by a status change.
+///
+/// The person themselves, owned by the account rather than by one contact: the
+/// same colleague can be in two of your friends' lives, and each of them is an
+/// `AssociateLink`. What you know about them is `AssociateNote`, each one
+/// recording which friend told you — because what Alice told you about her
+/// colleague is not something Bob, who knows him from elsewhere, has heard.
 ///
 /// Named `Associate` rather than the more natural `Acquaintance` because that
 /// word is already a `CONTACT_CATEGORY` label: being filed as an acquaintance
@@ -739,15 +746,9 @@ model Fact {
 model Associate {
   id                String   @id @default(cuid())
   ownerId           String
-  contactId         String
   name              String   @db.VarChar(191)
-  /// How the contact knows them, in the words used at the time —
-  /// "colleague from the hospital". Free text rather than a taxonomy: the
-  /// useful phrasings are one-offs, and a term list would ask for vocabulary
-  /// to be curated for people who are not even being tracked.
-  howTheyKnow       String?  @db.VarChar(191)
-  notes             String?  @db.Text
-  /// Hidden everywhere until the privacy lock is opened.
+  /// Hidden everywhere until the privacy lock is opened. Covers every link and
+  /// note beneath it: neither carries a marker of its own.
   isPrivate         Boolean  @default(false)
   /// The Contact this entry became, once promoted.
   ///
@@ -765,13 +766,89 @@ model Associate {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  owner    User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  contact  Contact  @relation("AssociateOf", fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
-  promoted Contact? @relation("AssociatePromoted", fields: [promotedContactId], references: [id], onDelete: SetNull)
+  owner    User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  promoted Contact?        @relation("AssociatePromoted", fields: [promotedContactId], references: [id], onDelete: SetNull)
+  links    AssociateLink[]
+  notes    AssociateNote[]
 
-  @@index([ownerId, contactId])
-  @@index([contactId, name])
+  /// Referenced by `AssociateLink` and `AssociateNote`'s same-owner keys.
+  @@unique([ownerId, id])
+  @@index([ownerId, name])
   @@index([promotedContactId])
+}
+
+/// One contact whose life an associate is in.
+///
+/// A join with a payload rather than a bare pair: how Alice knows him and how
+/// Bob does are different sentences, and the one on each friend's page is the
+/// one that friend would recognise.
+///
+/// Deleting the contact deletes the link. An associate left with no links at
+/// all is swept by the contact's delete path rather than left behind, because
+/// it would be a note about a friend of nobody — see
+/// `src/server/services/associates.ts`.
+model AssociateLink {
+  ownerId     String
+  associateId String
+  contactId   String
+  /// How the contact knows them, in the words used at the time —
+  /// "colleague from the hospital". Free text rather than a taxonomy: the
+  /// useful phrasings are one-offs, and a term list would ask for vocabulary
+  /// to be curated for people who are not even being tracked.
+  howTheyKnow String?  @db.VarChar(191)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  associate Associate @relation(fields: [ownerId, associateId], references: [ownerId, id], onDelete: Cascade)
+  contact   Contact   @relation("AssociateLinks", fields: [ownerId, contactId], references: [ownerId, id], onDelete: Cascade)
+
+  @@id([associateId, contactId])
+  @@index([ownerId, contactId])
+  @@index([ownerId, associateId])
+}
+
+/// Whether a note is a standing detail or a dated piece of news.
+///
+/// An enum rather than a taxonomy term because the code branches on it: an
+/// update carries a date and is what a conversation prompt draws on, a detail
+/// carries neither.
+enum AssociateNoteKind {
+  /// Something that stays true — "has two kids", "vegetarian".
+  DETAIL
+  /// News as of a date — "started night shifts".
+  UPDATE
+}
+
+/// Something you know about an associate, and who you heard it from.
+///
+/// `heardFromContactId` is what keeps a conversation safe: on Bob's page, a
+/// note Alice told you is shown muted and never offered as something to ask
+/// Bob about. Null means you did not hear it through a tracked contact — from
+/// the associate directly, or you no longer know.
+///
+/// The source is a same-owner key with CASCADE, not SET NULL. Deleting the
+/// friend deletes what you heard from them — what deleting a contact always did
+/// to their associates' notes — and SET NULL would instead re-attribute it to
+/// nobody, at which point a note heard from a private contact would be shown
+/// with the lock closed.
+model AssociateNote {
+  id                 String            @id @default(cuid())
+  ownerId            String
+  associateId        String
+  kind               AssociateNoteKind
+  content            String            @db.Text
+  /// Set on an update, null on a detail. Partial, like every historical date.
+  date               DateTime?         @db.Date
+  precision          DatePrecision     @default(DAY)
+  heardFromContactId String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  associate Associate @relation(fields: [ownerId, associateId], references: [ownerId, id], onDelete: Cascade)
+  heardFrom Contact?  @relation("AssociateNoteSource", fields: [ownerId, heardFromContactId], references: [ownerId, id], onDelete: Cascade)
+
+  @@index([ownerId, associateId, kind])
+  @@index([ownerId, heardFromContactId])
 }
 
 enum DateRecurrence {

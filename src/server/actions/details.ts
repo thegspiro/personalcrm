@@ -11,6 +11,7 @@ import { resolveLocation } from "@/server/services/locations";
 // shape lives beside the provider table.
 import type { GeoCandidateView } from "@/server/geo/providers";
 import {
+  associateNotePrivacyWhere,
   associatePrivacyWhere,
   contactPrivacyWhere,
   debtPrivacyWhere,
@@ -19,9 +20,11 @@ import {
   privacyScope,
   viaContactPrivacyWhere,
   viaOptionalContactPrivacyWhere,
+  type PrivacyScope,
 } from "@/server/privacy/filter";
 import { calendarDateInTz, plainDateFromDb, plainDateKey, plainDateToDb } from "@/lib/dates";
-import { isValidPartialDateRange } from "@/lib/date-precision";
+import { formatPartialDate, isValidPartialDateRange } from "@/lib/date-precision";
+import { displayName } from "@/lib/utils";
 import {
   allergyCategoryOf,
   allergyStatusOf,
@@ -48,6 +51,7 @@ import {
 import { PLAN_MINUTE_MAX, parsePlanDuration, parsePlanMinute, planInstant } from "@/lib/plan-time";
 import { closePlanAsInteraction } from "@/server/services/plans";
 import { recomputeContactActivity } from "@/server/services/contact-activity";
+import { mergeAssociateInto } from "@/server/services/associates";
 import { findTermBySlug } from "@/server/taxonomy/queries";
 import {
   type ActionResult,
@@ -712,20 +716,43 @@ export async function deleteIdea(id: string): Promise<ActionResult> {
 // --- people in their life ---------------------------------------------------
 
 /**
- * Entries appear on the person's page and on the roll-up, and a promotion adds
- * someone to the people list, so the shared `touch` is not enough on its own.
+ * An associate shows on every linked contact's page, on its own page and on
+ * the roll-up, and a promotion adds someone to the people list, so the shared
+ * `touch` is not enough on its own.
  */
-function touchAssociate(contactId?: string | null) {
-  touch(contactId);
+function touchAssociate(associateId: string | null, contactIds: Array<string | null | undefined>) {
+  for (const contactId of new Set(contactIds)) touch(contactId);
   revalidatePath("/people");
   revalidatePath("/people/friends");
+  if (associateId) revalidatePath(`/people/friends/${associateId}`);
+}
+
+/** Every contact linked to an associate, visible or not — for revalidation only. */
+async function linkedContactIds(ownerId: string, associateId: string): Promise<string[]> {
+  const links = await prisma.associateLink.findMany({
+    where: { ownerId, associateId },
+    select: { contactId: true },
+  });
+  return links.map((link) => link.contactId);
 }
 
 const associateSchema = z.object({
   name: z.string().trim().min(1, "Give them a name.").max(191),
-  // Bounded to the column width so an over-long value comes back as a field
-  // error rather than a database rejection thrown out of the action.
-  howTheyKnow: z.string().trim().max(191).optional(),
+});
+
+// Bounded to the column width so an over-long value comes back as a field
+// error rather than a database rejection thrown out of the action.
+const howTheyKnowSchema = z.string().trim().max(191).optional();
+
+const associateNoteSchema = z.object({
+  content: z
+    .string()
+    .trim()
+    .min(1, "Write what you know.")
+    // Well inside `TEXT`'s 64 KiB even in four-byte characters, so the
+    // database never gets to reject it after validation said yes.
+    .max(10_000, "Keep it under 10,000 characters."),
+  kind: z.enum(["DETAIL", "UPDATE"]),
 });
 
 const promoteSchema = z.object({
@@ -733,6 +760,71 @@ const promoteSchema = z.object({
   lastName: z.string().trim().max(120).optional(),
 });
 
+const PROMOTED_READ_ONLY = "They're tracked as a person now — edit their profile.";
+
+/** Thrown inside a transaction when the associate was promoted or deleted underneath it. */
+class AssociateGone extends Error {}
+
+/**
+ * Lock an associate that is still a note rather than a person, or throw.
+ *
+ * Every write that adds to an associate goes through this, and promotion takes
+ * the same row lock: without it a note saved in one tab while another tab
+ * promotes would land on the entry after its notes had been copied across,
+ * and never reach the person it became.
+ */
+async function lockUnpromoted(tx: Prisma.TransactionClient, ownerId: string, id: string) {
+  const [row] = await tx.$queryRaw<{ id: string }[]>`
+    SELECT id FROM Associate
+     WHERE id = ${id} AND ownerId = ${ownerId} AND promotedContactId IS NULL
+       FOR UPDATE`;
+  if (!row) throw new AssociateGone();
+}
+
+/**
+ * Whether the lock is hiding anything an associate carries.
+ *
+ * Deleting an associate deletes its notes, including ones heard from a
+ * private friend, and with the lock closed those cannot be seen — so neither
+ * can the loss. A row you cannot read is not a row you may destroy.
+ */
+async function associateHasHidden(
+  ownerId: string,
+  associateId: string,
+  scope: PrivacyScope,
+): Promise<boolean> {
+  if (scope.unlocked) return false;
+  const [links, notes] = await Promise.all([
+    prisma.associateLink.count({
+      where: { ownerId, associateId, contact: { isPrivate: true } },
+    }),
+    prisma.associateNote.count({
+      where: { ownerId, associateId, heardFrom: { isPrivate: true } },
+    }),
+  ]);
+  return links + notes > 0;
+}
+
+/**
+ * The one associate this request may act on: yours, and visible under the
+ * lock. Read with the fields every caller needs.
+ */
+async function reachableAssociate(ownerId: string, id: string, scope: PrivacyScope) {
+  return prisma.associate.findFirst({
+    where: { id, ownerId, ...associatePrivacyWhere(scope) },
+    select: { id: true, name: true, isPrivate: true, promotedContactId: true },
+  });
+}
+
+/**
+ * Add someone to a contact's life — a new associate, or one already noted
+ * through someone else.
+ *
+ * With `associateId` the existing entry is linked rather than a second one
+ * written, which is what keeps one colleague shared by two friends one person.
+ * An optional first note goes on as a detail heard from this contact: it is
+ * being written on their page, so they are where it came from.
+ */
 export async function createAssociate(
   form: FormData,
 ): Promise<ActionResult<{ id: string }>> {
@@ -741,10 +833,55 @@ export async function createAssociate(
   if (!contactId) return fail("Contact not found.");
   if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
 
-  const parsed = associateSchema.safeParse({
-    name: str(form, "name") ?? "",
-    howTheyKnow: str(form, "howTheyKnow"),
-  });
+  const howTheyKnow = howTheyKnowSchema.safeParse(str(form, "howTheyKnow"));
+  if (!howTheyKnow.success) return fieldError("howTheyKnow", "Keep it under 191 characters.");
+
+  const noteText = str(form, "notes");
+  const note = noteText
+    ? associateNoteSchema.safeParse({ content: noteText, kind: "DETAIL" })
+    : null;
+  if (note && !note.success) return fieldError("notes", note.error.issues[0]?.message ?? "Invalid.");
+
+  const scope = await privacyScope();
+  const existingId = str(form, "associateId");
+
+  if (existingId) {
+    const existing = await reachableAssociate(ownerId, existingId, scope);
+    if (!existing) return fail("Not found.");
+    if (existing.promotedContactId) return fail(PROMOTED_READ_ONLY);
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        await lockUnpromoted(tx, ownerId, existingId);
+        await tx.associateLink.upsert({
+          where: { associateId_contactId: { associateId: existingId, contactId } },
+          create: { ownerId, associateId: existingId, contactId, howTheyKnow: howTheyKnow.data ?? null },
+          // Already linked: a stale form, most likely. Keep the wording that
+          // is there unless this one says something.
+          update: howTheyKnow.data ? { howTheyKnow: howTheyKnow.data } : {},
+        });
+        if (note?.success) {
+          await tx.associateNote.create({
+            data: {
+              ownerId,
+              associateId: existingId,
+              kind: "DETAIL",
+              content: note.data.content,
+              heardFromContactId: contactId,
+            },
+          });
+        }
+      });
+    } catch (error) {
+      if (error instanceof AssociateGone) return fail(PROMOTED_READ_ONLY);
+      throw error;
+    }
+
+    touchAssociate(existingId, [contactId, ...(await linkedContactIds(ownerId, existingId))]);
+    return ok({ id: existingId });
+  }
+
+  const parsed = associateSchema.safeParse({ name: str(form, "name") ?? "" });
   if (!parsed.success) return invalid(parsed.error);
 
   // The same refusal `privacyMarker` makes on the way in rather than only on
@@ -752,99 +889,482 @@ export async function createAssociate(
   // the writer cannot reach to undo it, and an edit that tried the identical
   // transition would have been rejected a moment later.
   const isPrivate = bool(form, "isPrivate");
-  if (isPrivate) {
-    const scope = await privacyScope();
-    if (scope.enabled && !scope.unlocked) {
-      return fail("Unlock privacy before adding a hidden entry.");
-    }
+  if (isPrivate && scope.enabled && !scope.unlocked) {
+    return fail("Unlock privacy before adding a hidden entry.");
   }
 
   const created = await prisma.associate.create({
     data: {
       ownerId,
-      contactId,
       name: parsed.data.name,
-      howTheyKnow: parsed.data.howTheyKnow ?? null,
-      notes: str(form, "notes") ?? null,
       isPrivate,
+      links: { create: { contactId, howTheyKnow: howTheyKnow.data ?? null } },
+      ...(note?.success
+        ? {
+            notes: {
+              create: {
+                kind: "DETAIL",
+                content: note.data.content,
+                heardFromContactId: contactId,
+              },
+            },
+          }
+        : {}),
     },
   });
 
-  touchAssociate(contactId);
+  touchAssociate(created.id, [contactId]);
   return ok({ id: created.id });
 }
 
+/**
+ * Correct an associate's name or privacy, and — when the edit comes from a
+ * contact's page, carrying `contactId` — how that contact knows them.
+ */
 export async function updateAssociate(form: FormData): Promise<ActionResult> {
   const { ownerId } = await owner();
   const id = str(form, "id");
   if (!id) return fail("Not found.");
 
-  // Scoped by both fragments as well as the owner: the entry carries its own
-  // marker and hangs off someone who may be private, and an id remembered from
-  // an unlocked session must not be a way back into either.
+  // Scoped by the fragment as well as the owner: an id remembered from an
+  // unlocked session must not be a way back into a hidden entry.
   const scope = await privacyScope();
-  const existing = await prisma.associate.findFirst({
-    where: {
-      id,
-      ownerId,
-      ...associatePrivacyWhere(scope),
-      ...viaContactPrivacyWhere(scope),
-    },
-    select: { contactId: true, isPrivate: true, promotedContactId: true },
-  });
+  const existing = await reachableAssociate(ownerId, id, scope);
   if (!existing) return fail("Not found.");
 
   // Once promoted the entry is a record of what was written at the time, not a
   // live note; the profile it produced is where this person is edited now.
-  if (existing.promotedContactId) {
-    return fail("They're tracked as a person now — edit their profile.");
-  }
+  if (existing.promotedContactId) return fail(PROMOTED_READ_ONLY);
 
-  const parsed = associateSchema.safeParse({
-    name: str(form, "name") ?? "",
-    howTheyKnow: str(form, "howTheyKnow"),
-  });
+  const parsed = associateSchema.safeParse({ name: str(form, "name") ?? "" });
   if (!parsed.success) return invalid(parsed.error);
+
+  const contactId = str(form, "contactId");
+  const howTheyKnow = howTheyKnowSchema.safeParse(str(form, "howTheyKnow"));
+  if (!howTheyKnow.success) return fieldError("howTheyKnow", "Keep it under 191 characters.");
+  if (contactId) {
+    const link = await prisma.associateLink.findFirst({
+      where: { ownerId, associateId: id, contactId, ...viaContactPrivacyWhere(scope) },
+      select: { contactId: true },
+    });
+    if (!link) return fail("Not found.");
+  }
 
   const marker = await privacyMarker(form, existing.isPrivate);
   if (!marker.ok) return fail(marker.error);
 
-  await prisma.associate.update({
-    where: { id },
-    data: {
-      name: parsed.data.name,
-      howTheyKnow: parsed.data.howTheyKnow ?? null,
-      notes: str(form, "notes") ?? null,
-      isPrivate: marker.isPrivate,
-    },
-  });
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockUnpromoted(tx, ownerId, id);
+      await tx.associate.update({
+        where: { id },
+        data: { name: parsed.data.name, isPrivate: marker.isPrivate },
+      });
+      if (contactId) {
+        await tx.associateLink.update({
+          where: { associateId_contactId: { associateId: id, contactId } },
+          data: { howTheyKnow: howTheyKnow.data ?? null },
+        });
+      }
+    });
+  } catch (error) {
+    if (error instanceof AssociateGone) return fail(PROMOTED_READ_ONLY);
+    throw error;
+  }
 
-  touchAssociate(existing.contactId);
+  touchAssociate(id, await linkedContactIds(ownerId, id));
+  return ok();
+}
+
+/** Put an associate already on file into another contact's life, from the associate's page. */
+export async function linkAssociate(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const associateId = str(form, "associateId");
+  const contactId = str(form, "contactId");
+  if (!associateId) return fail("Not found.");
+  if (!contactId) return fieldError("contactId", "Pick whose life they are in.");
+  if (!(await ownsContact(ownerId, contactId))) return fail("Contact not found.");
+
+  const howTheyKnow = howTheyKnowSchema.safeParse(str(form, "howTheyKnow"));
+  if (!howTheyKnow.success) return fieldError("howTheyKnow", "Keep it under 191 characters.");
+
+  const scope = await privacyScope();
+  const existing = await reachableAssociate(ownerId, associateId, scope);
+  if (!existing) return fail("Not found.");
+  if (existing.promotedContactId) return fail(PROMOTED_READ_ONLY);
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockUnpromoted(tx, ownerId, associateId);
+      await tx.associateLink.upsert({
+        where: { associateId_contactId: { associateId, contactId } },
+        create: { ownerId, associateId, contactId, howTheyKnow: howTheyKnow.data ?? null },
+        update: howTheyKnow.data ? { howTheyKnow: howTheyKnow.data } : {},
+      });
+    });
+  } catch (error) {
+    if (error instanceof AssociateGone) return fail(PROMOTED_READ_ONLY);
+    throw error;
+  }
+
+  touchAssociate(associateId, [contactId, ...(await linkedContactIds(ownerId, associateId))]);
   return ok();
 }
 
 /**
- * Removing the note. Allowed even once promoted — throwing away a note that
- * the profile now supersedes is not an edit of it, and it touches nothing
- * about the person it created.
+ * Correct how one contact knows an associate, from the associate's page.
+ *
+ * Its own action rather than `updateAssociate` with a contact id: that one
+ * reads the name and privacy marker from the form as well, and a form about
+ * one link that did not carry them would clear the name or flip the marker.
+ */
+export async function updateAssociateLink(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const associateId = str(form, "associateId");
+  const contactId = str(form, "contactId");
+  if (!associateId || !contactId) return fail("Not found.");
+
+  const howTheyKnow = howTheyKnowSchema.safeParse(str(form, "howTheyKnow"));
+  if (!howTheyKnow.success) return fieldError("howTheyKnow", "Keep it under 191 characters.");
+
+  const scope = await privacyScope();
+  const existing = await reachableAssociate(ownerId, associateId, scope);
+  if (!existing) return fail("Not found.");
+  if (existing.promotedContactId) return fail(PROMOTED_READ_ONLY);
+  const link = await prisma.associateLink.findFirst({
+    where: { ownerId, associateId, contactId, ...viaContactPrivacyWhere(scope) },
+    select: { contactId: true },
+  });
+  if (!link) return fail("Not found.");
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockUnpromoted(tx, ownerId, associateId);
+      await tx.associateLink.update({
+        where: { associateId_contactId: { associateId, contactId } },
+        data: { howTheyKnow: howTheyKnow.data ?? null },
+      });
+    });
+  } catch (error) {
+    if (error instanceof AssociateGone) return fail(PROMOTED_READ_ONLY);
+    throw error;
+  }
+
+  touchAssociate(associateId, [contactId]);
+  return ok();
+}
+
+/**
+ * Take an associate out of one contact's life.
+ *
+ * The notes stay — who told you something is still true after they stop being
+ * the reason you know the person. When this was the associate's last link,
+ * the associate goes too: it would otherwise be a note about a friend of
+ * nobody, shown nowhere and reachable from nothing. Allowed once promoted, as
+ * removing the note always was.
+ */
+export async function unlinkAssociate(
+  associateId: string,
+  contactId: string,
+): Promise<ActionResult<{ deleted: boolean }>> {
+  const { ownerId } = await owner();
+  const scope = await privacyScope();
+  const existing = await reachableAssociate(ownerId, associateId, scope);
+  if (!existing) return fail("Not found.");
+  const link = await prisma.associateLink.findFirst({
+    where: { ownerId, associateId, contactId, ...viaContactPrivacyWhere(scope) },
+    select: { contactId: true },
+  });
+  if (!link) return fail("Not found.");
+
+  const others = await linkedContactIds(ownerId, associateId);
+  const last = others.every((id) => id === contactId);
+  if (last && (await associateHasHidden(ownerId, associateId, scope))) {
+    return fail("Unlock privacy first — some of what you know about them is hidden.");
+  }
+
+  const deleted = await prisma.$transaction(async (tx) => {
+    await tx.associateLink.deleteMany({ where: { ownerId, associateId, contactId } });
+    // Re-checked inside the transaction rather than trusted from the read
+    // above: another tab may have linked them somewhere in between.
+    const remaining = await tx.associateLink.count({ where: { ownerId, associateId } });
+    if (remaining > 0) return false;
+    await tx.associate.deleteMany({ where: { ownerId, id: associateId } });
+    return true;
+  });
+
+  touchAssociate(associateId, others);
+  return ok({ deleted });
+}
+
+/**
+ * Delete an associate outright, every link and note with it.
+ *
+ * Allowed once promoted — throwing away a note that the profile now
+ * supersedes is not an edit of it, and it touches nothing about the person it
+ * created. Refused with the lock closed when the lock is hiding part of what
+ * would be destroyed.
  */
 export async function deleteAssociate(id: string): Promise<ActionResult> {
   const { ownerId } = await owner();
   const scope = await privacyScope();
-  const existing = await prisma.associate.findFirst({
+  const existing = await reachableAssociate(ownerId, id, scope);
+  if (!existing) return fail("Not found.");
+  if (await associateHasHidden(ownerId, id, scope)) {
+    return fail("Unlock privacy first — some of what you know about them is hidden.");
+  }
+
+  const contactIds = await linkedContactIds(ownerId, id);
+  await prisma.associate.deleteMany({ where: { ownerId, id } });
+  touchAssociate(id, contactIds);
+  return ok();
+}
+
+/**
+ * Read the note fields shared by adding and correcting one.
+ *
+ * `heardFromContactId` empty means "from them directly". Otherwise it has to
+ * be a visible contact linked to this associate — someone in whose life they
+ * are — except that an edit may keep the source it already has, so unlinking
+ * a friend later does not make every note they told you uneditable.
+ */
+async function associateNoteFields(
+  ownerId: string,
+  timezone: string,
+  form: FormData,
+  associateId: string,
+  scope: PrivacyScope,
+  currentSource: string | null,
+): Promise<
+  | {
+      ok: true;
+      data: {
+        kind: "DETAIL" | "UPDATE";
+        content: string;
+        date: Date | null;
+        precision: "DAY" | "MONTH" | "YEAR" | "MONTH_DAY";
+        heardFromContactId: string | null;
+      };
+    }
+  | { ok: false; result: ActionResult<never> }
+> {
+  const parsed = associateNoteSchema.safeParse({
+    content: str(form, "content") ?? "",
+    kind: str(form, "kind") ?? "DETAIL",
+  });
+  if (!parsed.success) return { ok: false, result: invalid(parsed.error) };
+
+  let date: Date | null = null;
+  let precision: "DAY" | "MONTH" | "YEAR" | "MONTH_DAY" = "DAY";
+  if (parsed.data.kind === "UPDATE") {
+    // An update is news as of a date. Left blank it is today — in the owner's
+    // timezone, not the server's, or an evening entry lands on tomorrow.
+    const when = partialDate(form, "date");
+    if (when) {
+      if (when.precision === "MONTH_DAY") {
+        return {
+          ok: false,
+          result: fieldError("date", "Give the year, even roughly — an update is news as of then."),
+        };
+      }
+      date = when.date;
+      precision = when.precision;
+    } else {
+      date = plainDateToDb(calendarDateInTz(new Date(), timezone));
+    }
+  }
+
+  const source = str(form, "heardFromContactId") ?? null;
+  if (source && source !== currentSource) {
+    const link = await prisma.associateLink.findFirst({
+      where: { ownerId, associateId, contactId: source, ...viaContactPrivacyWhere(scope) },
+      select: { contactId: true },
+    });
+    if (!link) {
+      return {
+        ok: false,
+        result: fieldError("heardFromContactId", "Pick someone whose life they are in."),
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    data: {
+      kind: parsed.data.kind,
+      content: parsed.data.content,
+      date,
+      precision,
+      heardFromContactId: source,
+    },
+  };
+}
+
+export async function createAssociateNote(
+  form: FormData,
+): Promise<ActionResult<{ id: string }>> {
+  const { ownerId, timezone } = await owner();
+  const associateId = str(form, "associateId");
+  if (!associateId) return fail("Not found.");
+
+  const scope = await privacyScope();
+  const existing = await reachableAssociate(ownerId, associateId, scope);
+  if (!existing) return fail("Not found.");
+  if (existing.promotedContactId) return fail(PROMOTED_READ_ONLY);
+
+  const fields = await associateNoteFields(ownerId, timezone, form, associateId, scope, null);
+  if (!fields.ok) return fields.result;
+
+  let id: string;
+  try {
+    id = await prisma.$transaction(async (tx) => {
+      await lockUnpromoted(tx, ownerId, associateId);
+      const created = await tx.associateNote.create({
+        data: { ownerId, associateId, ...fields.data },
+      });
+      return created.id;
+    });
+  } catch (error) {
+    if (error instanceof AssociateGone) return fail(PROMOTED_READ_ONLY);
+    throw error;
+  }
+
+  touchAssociate(associateId, await linkedContactIds(ownerId, associateId));
+  return ok({ id });
+}
+
+/** The note this request may act on: yours, on a visible associate, and visible itself. */
+async function reachableNote(ownerId: string, id: string, scope: PrivacyScope) {
+  return prisma.associateNote.findFirst({
     where: {
       id,
       ownerId,
-      ...associatePrivacyWhere(scope),
-      ...viaContactPrivacyWhere(scope),
+      ...associateNotePrivacyWhere(scope),
+      associate: associatePrivacyWhere(scope),
     },
-    select: { contactId: true },
+    select: {
+      associateId: true,
+      heardFromContactId: true,
+      associate: { select: { promotedContactId: true } },
+    },
   });
+}
+
+export async function updateAssociateNote(form: FormData): Promise<ActionResult> {
+  const { ownerId, timezone } = await owner();
+  const id = str(form, "id");
+  if (!id) return fail("Not found.");
+
+  const scope = await privacyScope();
+  const existing = await reachableNote(ownerId, id, scope);
+  if (!existing) return fail("Not found.");
+  if (existing.associate.promotedContactId) return fail(PROMOTED_READ_ONLY);
+
+  const fields = await associateNoteFields(
+    ownerId,
+    timezone,
+    form,
+    existing.associateId,
+    scope,
+    existing.heardFromContactId,
+  );
+  if (!fields.ok) return fields.result;
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockUnpromoted(tx, ownerId, existing.associateId);
+      await tx.associateNote.update({ where: { id }, data: fields.data });
+    });
+  } catch (error) {
+    if (error instanceof AssociateGone) return fail(PROMOTED_READ_ONLY);
+    throw error;
+  }
+
+  touchAssociate(existing.associateId, await linkedContactIds(ownerId, existing.associateId));
+  return ok();
+}
+
+/** Allowed once promoted, like deleting the entry itself. */
+export async function deleteAssociateNote(id: string): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const scope = await privacyScope();
+  const existing = await reachableNote(ownerId, id, scope);
   if (!existing) return fail("Not found.");
 
-  await prisma.associate.delete({ where: { id } });
-  touchAssociate(existing.contactId);
+  await prisma.associateNote.deleteMany({ where: { id, ownerId } });
+  touchAssociate(existing.associateId, await linkedContactIds(ownerId, existing.associateId));
   return ok();
+}
+
+/**
+ * "These are the same person": fold `mergeId` into `keepId`.
+ *
+ * The work is `mergeAssociateInto`; this is the gate. Both have to be visible
+ * — merging into something you cannot see would let a closed lock move a
+ * hidden entry's notes onto a visible one without ever showing you either.
+ */
+export async function mergeAssociates(form: FormData): Promise<ActionResult> {
+  const { ownerId } = await owner();
+  const keepId = str(form, "keepId");
+  const mergeId = str(form, "mergeId");
+  if (!keepId) return fail("Not found.");
+  if (!mergeId) return fieldError("mergeId", "Pick who they are the same person as.");
+  if (keepId === mergeId) return fieldError("mergeId", "That is this entry.");
+
+  const scope = await privacyScope();
+  const [keep, merge] = await Promise.all([
+    reachableAssociate(ownerId, keepId, scope),
+    reachableAssociate(ownerId, mergeId, scope),
+  ]);
+  if (!keep || !merge) return fail("Not found.");
+
+  // Read before the merge, because afterwards the dropped entry's links are
+  // the kept one's and its own page no longer exists.
+  const contactIds = [
+    ...(await linkedContactIds(ownerId, keepId)),
+    ...(await linkedContactIds(ownerId, mergeId)),
+  ];
+
+  let outcome: Awaited<ReturnType<typeof mergeAssociateInto>>;
+  try {
+    outcome = await prisma.$transaction((tx) => mergeAssociateInto(tx, ownerId, keepId, mergeId));
+  } catch (error) {
+    // Two tabs merging the same pair: the loser's rows moved or vanished
+    // under it. MariaDB 11 reports that as a refused write rather than an
+    // empty match; either way the committed state is the answer.
+    if (isConcurrentRowChange(error)) return fail("They were just changed. Reload and try again.");
+    throw error;
+  }
+  if (!outcome.ok) {
+    if (outcome.refusal === "both-promoted") {
+      return fail("Both are tracked as different people — merge those contacts instead.");
+    }
+    return fail("Not found.");
+  }
+
+  touchAssociate(keepId, contactIds);
+  revalidatePath(`/people/friends/${mergeId}`);
+  return ok();
+}
+
+/**
+ * The fact a promoted note becomes: its words, with the date an update
+ * carried and who it came from, so the profile keeps what made it safe or
+ * unsafe to raise.
+ */
+function noteAsFact(note: {
+  kind: "DETAIL" | "UPDATE";
+  content: string;
+  date: Date | null;
+  precision: "DAY" | "MONTH" | "YEAR" | "MONTH_DAY";
+  heardFrom: { firstName: string; lastName: string | null } | null;
+}): string {
+  const when =
+    note.kind === "UPDATE" && note.date
+      ? `${formatPartialDate(plainDateFromDb(note.date), note.precision, { short: true })}: `
+      : "";
+  const source = note.heardFrom ? ` (heard from ${displayName(note.heardFrom)})` : "";
+  return `${when}${note.content}${source}`;
 }
 
 /**
@@ -853,6 +1373,13 @@ export async function deleteAssociate(id: string): Promise<ActionResult> {
  * The entry is kept rather than consumed: it records what was written before
  * this person had a profile, and deleting it would be a status change that
  * destroys something. It stops being editable in place instead.
+ *
+ * Every note is copied onto the new person as a fact, each one still saying
+ * who it was heard from. A note heard from a private friend becomes a private
+ * fact, so the copy is hidden exactly where the original was. The
+ * relationship is written to `contactId` — the friend whose page this was
+ * done from, or picked on the associate's own page; with only one visible
+ * link, that one.
  *
  * Idempotent by construction. The claim is a compare-and-set on
  * `promotedContactId: null` inside the transaction, so a double submit — two
@@ -871,24 +1398,22 @@ export async function promoteAssociate(
 
   // Read before the transaction opens rather than inside it.
   const scope = await privacyScope();
-  const existing = await prisma.associate.findFirst({
-    where: {
-      id,
-      ownerId,
-      ...associatePrivacyWhere(scope),
-      ...viaContactPrivacyWhere(scope),
-    },
-    // Only what is needed before the transaction opens: whether this is
-    // reachable at all, whether it is already done, and whose page it is on.
-    // The note and both privacy markers are read again under a lock inside,
-    // because a value read here can be stale by the time it is used.
-    select: { contactId: true, promotedContactId: true },
-  });
+  const existing = await reachableAssociate(ownerId, id, scope);
   if (!existing) return fail("Not found.");
 
   // Already done — answer with the person that exists rather than an error.
   // A stale tab should land on them, not on a red toast.
   if (existing.promotedContactId) return ok({ contactId: existing.promotedContactId });
+
+  const visibleLinks = await prisma.associateLink.findMany({
+    where: { ownerId, associateId: id, ...viaContactPrivacyWhere(scope) },
+    select: { contactId: true },
+  });
+  const requested = str(form, "contactId");
+  const anchorId =
+    requested ?? (visibleLinks.length === 1 ? visibleLinks[0]!.contactId : undefined);
+  if (!anchorId) return fieldError("contactId", "Pick whose life they are in.");
+  if (!visibleLinks.some((link) => link.contactId === anchorId)) return fail("Not found.");
 
   const parsed = promoteSchema.safeParse({
     firstName: str(form, "firstName") ?? "",
@@ -909,18 +1434,20 @@ export async function promoteAssociate(
       // it is decided. A plain read inside a transaction is a non-locking
       // consistent read under MariaDB's default isolation, so the privacy read
       // taken above can already be stale by the time the row is claimed — and
-      // the answer to a stale read here is a public profile whose summary
-      // carries a note about someone now hidden. `FOR UPDATE` is a current
-      // read: it sees a committed change the snapshot would miss, and waits
-      // for a tab still making one. Same reason `createContactMethod` locks
-      // the contact before deciding a sort order.
-      const [locked] = await tx.$queryRaw<
-        { isPrivate: number; parentPrivate: number; notes: string | null }[]
-      >`SELECT a.isPrivate AS isPrivate, a.notes AS notes, c.isPrivate AS parentPrivate
+      // the answer to a stale read here is a public profile carrying facts
+      // about someone now hidden. `FOR UPDATE` is a current read: it sees a
+      // committed change the snapshot would miss, and waits for a tab still
+      // making one. The same lock is what `lockUnpromoted` takes, so a note
+      // being saved elsewhere either lands first and is copied, or waits and
+      // is refused.
+      const [locked] = await tx.$queryRaw<{ isPrivate: number; parentPrivate: number }[]>`
+        SELECT a.isPrivate AS isPrivate, c.isPrivate AS parentPrivate
           FROM Associate a
-          JOIN Contact c ON c.id = a.contactId
-         WHERE a.id = ${id} AND a.ownerId = ${ownerId} AND a.promotedContactId IS NULL
-         FOR UPDATE`;
+          JOIN AssociateLink l ON l.associateId = a.id AND l.ownerId = a.ownerId
+          JOIN Contact c ON c.id = l.contactId AND c.ownerId = l.ownerId
+         WHERE a.id = ${id} AND a.ownerId = ${ownerId} AND l.contactId = ${anchorId}
+           AND a.promotedContactId IS NULL
+           FOR UPDATE`;
       if (!locked) throw new AlreadyPromoted();
 
       // Derived from the locked read, never from the one taken before the
@@ -932,7 +1459,6 @@ export async function promoteAssociate(
           ownerId,
           firstName: parsed.data.firstName,
           lastName: parsed.data.lastName ?? null,
-          summary: locked.notes,
           isPrivate,
         },
       });
@@ -946,11 +1472,30 @@ export async function promoteAssociate(
       });
       if (claimed.count === 0) throw new AlreadyPromoted();
 
-      // `from` is the person whose page the entry lives on, matching what
+      // Every note, including any the lock is hiding: they are copied, not
+      // shown, and each copy carries the privacy its source demands.
+      const notes = await tx.associateNote.findMany({
+        where: { ownerId, associateId: id },
+        include: { heardFrom: { select: { firstName: true, lastName: true, isPrivate: true } } },
+        orderBy: [{ kind: "asc" }, { date: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+      });
+      if (notes.length > 0) {
+        await tx.fact.createMany({
+          data: notes.map((note) => ({
+            ownerId,
+            contactId: person.id,
+            content: noteAsFact(note),
+            importance: 1,
+            isPrivate: note.heardFrom?.isPrivate ?? false,
+          })),
+        });
+      }
+
+      // `from` is the person whose life they were in, matching what
       // "Connected people" means by "is their…", so the two forms agree.
       await writeRelationshipPair(tx, {
         ownerId,
-        fromContactId: existing.contactId,
+        fromContactId: anchorId,
         toContactId: person.id,
         type,
         notes: null,
@@ -977,7 +1522,7 @@ export async function promoteAssociate(
     throw error;
   }
 
-  touchAssociate(existing.contactId);
+  touchAssociate(id, await linkedContactIds(ownerId, id));
   touch(personId);
   return ok({ contactId: personId });
 }

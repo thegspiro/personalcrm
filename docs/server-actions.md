@@ -143,7 +143,8 @@ list, because a person missing from the form would be silently dropped on save.
 | Significant moments (`LifeEvent`) | `createLifeEvent`, `updateLifeEvent`, `deleteLifeEvent` |
 | Going on in their life (`Happening`) | `createHappening`, `updateHappening`, `acknowledgeHappening`, `deleteHappening` |
 | Ideas | `createIdea`, `updateIdea`, `setIdeaStatus`, `deleteIdea` |
-| People in their life (`Associate`) | `createAssociate`, `updateAssociate`, `promoteAssociate`, `deleteAssociate` |
+| People in their life (`Associate`) | `createAssociate`, `updateAssociate`, `linkAssociate`, `updateAssociateLink`, `unlinkAssociate`, `mergeAssociates`, `promoteAssociate`, `deleteAssociate` |
+| What you know about them (`AssociateNote`) | `createAssociateNote`, `updateAssociateNote`, `deleteAssociateNote` |
 | Plans | `createPlan`, `updatePlan`, `schedulePlan`, `completePlan`, `setPlanStatus`, `setPlanChecklistItem`, `deletePlan` |
 | Tasks | `createTask`, `updateTask`, `setTaskDone`, `deleteTask` |
 | Gifts | `createGift`, `updateGift`, `deleteGift` |
@@ -151,9 +152,28 @@ list, because a person missing from the form would be silently dropped on save.
 | Dietary needs | `createDietaryNeed`, `updateDietaryNeed`, `deleteDietaryNeed`, `updateAllergyStatus` |
 | Relationships | `createRelationship`, `updateRelationship`, `deleteRelationship` |
 
+`createAssociate` either writes a new associate or, given `associateId`, links
+one already noted through another contact — which is what keeps one colleague
+shared by two friends one row. An optional first note goes on as a detail heard
+from the contact whose page it was written on. `updateAssociate` reads the name
+and privacy marker from the form, and the wording of one link when it carries a
+`contactId`; `updateAssociateLink` changes only the wording, for the
+associate's own page, where a form about one link does not carry the name and
+would otherwise clear it. `unlinkAssociate` deletes the associate with its last
+link. A note's `heardFromContactId` must be a visible contact the associate is
+linked to — except that an edit may keep the source it already has.
+
+Every write that adds to an associate first takes its row lock through
+`lockUnpromoted`, the same lock `promoteAssociate` takes: a note saved in one
+tab while another promotes either lands first and is copied, or waits and is
+refused, rather than landing on the entry after the copy.
+
 `promoteAssociate` is the one action here that creates a `Contact`. It runs
-in a transaction that creates the person, claims the entry, and writes both
-halves of the reciprocal `Relationship` — sharing `writeRelationshipPair` with
+in a transaction that creates the person, claims the entry, copies every note
+onto the person as a fact (each still saying who it was heard from, private
+where its source is), and writes both halves of the reciprocal `Relationship`
+to the contact named by `contactId` — or to the only visible link, when there
+is one — sharing `writeRelationshipPair` with
 `createRelationship` so the second half cannot go missing on one path and not
 the other.
 
@@ -171,12 +191,15 @@ with 1020 (`ER_CHECKREAD`, "Record has changed since last read") and never
 returns a count at all. `isConcurrentRowChange` (`src/lib/db-errors.ts`)
 recognises the second; both then re-read the row and let its committed state
 decide the answer, rather than either branch guessing who won. Once the pointer is
-set the entry refuses `updateAssociate`: it is a record of what was written
-before the profile existed, and the profile is where that person is edited now.
-Deleting is still allowed, and takes nothing about the created person with it.
+set the entry refuses every edit and addition — renaming, linking, and adding
+or correcting a note: it is a record of what was written before the profile
+existed, and the profile is where that person is edited now. Deleting a note,
+a link or the entry is still allowed, and takes nothing about the created
+person with it.
 
-The new person inherits privacy from both the entry and the contact it hangs
-off, so promoting a note from behind the lock does not publish the name.
+The new person inherits privacy from both the entry and the contact the
+relationship is written to, so promoting a note from behind the lock does not
+publish the name.
 
 `ContactMethod` and `Address` carry no `ownerId` of their own, so these are the
 actions where the ownership check is indirect: each looks its row up through

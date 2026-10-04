@@ -128,6 +128,95 @@ test("the roll-up lists them under the person whose life they are in", async ({ 
   await expect(group.getByText("Now tracked")).toBeVisible();
 });
 
+test("someone in two friends' lives keeps what each friend told you apart", async ({ page }) => {
+  await ensureSignedIn(page);
+  const tag = suffix().replace(/[^a-z0-9]/gi, "");
+  const dana = `Dana${tag}`;
+  const friend = `Okafor${tag}`;
+
+  await page.goto(personUrl);
+  const people = section(page, "People in their life");
+  await people.getByRole("button", { name: "Add someone" }).click();
+  await people.getByLabel("Their name").fill(dana);
+  await people.getByLabel("How do they know them?").fill("Neighbour");
+  await people.getByLabel("Anything to remember?").fill("Training for a marathon.");
+  await people.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(people.getByText("Training for a marathon.")).toBeVisible();
+
+  // The same person, through a second friend: linked, not written twice.
+  const friendUrl = await createContact(page, friend);
+  const theirs = section(page, "People in their life");
+  await theirs.getByRole("button", { name: "Add someone" }).click();
+  await theirs
+    .getByLabel("Already noted through someone else?")
+    .selectOption({ label: `${dana} (${PERSON()})` });
+  // Picking an existing entry takes the name field away rather than ignoring it.
+  await expect(theirs.getByLabel("Their name")).toHaveCount(0);
+  await theirs.getByLabel("How do they know them?").fill("Book club");
+  await theirs.getByRole("button", { name: "Add", exact: true }).click();
+
+  // What the first friend told you is here, but set apart and attributed.
+  const elsewhere = theirs.getByText(/Heard elsewhere/).locator("..");
+  await expect(elsewhere.getByText("Training for a marathon.")).toBeVisible();
+  await expect(elsewhere.getByText(`from ${PERSON()}`)).toBeVisible();
+
+  // News from this friend defaults to coming from them.
+  await theirs.getByRole("button", { name: "Add a note" }).click();
+  await theirs.getByLabel("What do you know?").fill("Moving to Leeds in June.");
+  await theirs.getByRole("button", { name: "Save note" }).click();
+  await expect(theirs.getByText("Moving to Leeds in June.")).toBeVisible();
+  await expect(elsewhere.getByText("Moving to Leeds in June.")).toHaveCount(0);
+
+  // And on the first friend's page, the second friend's news is the muted one.
+  await page.goto(personUrl);
+  const back = section(page, "People in their life");
+  const backElsewhere = back.getByText(/Heard elsewhere/).locator("..");
+  await expect(backElsewhere.getByText("Moving to Leeds in June.")).toBeVisible();
+  await expect(backElsewhere.getByText(new RegExp(`from ${friend}`))).toBeVisible();
+
+  // Their own page holds both, and both friends.
+  await back.getByRole("link", { name: dana, exact: true }).click();
+  await expect(page.getByRole("heading", { name: dana, level: 2 })).toBeVisible();
+  const known = section(page, "What you know");
+  await expect(known.getByText("Training for a marathon.")).toBeVisible();
+  await expect(known.getByText("Moving to Leeds in June.")).toBeVisible();
+  const lives = section(page, "In whose life");
+  await expect(lives.getByRole("link", { name: PERSON(), exact: true })).toBeVisible();
+  await expect(lives.getByRole("link", { name: friend, exact: true })).toBeVisible();
+  expect(friendUrl).toContain("/people/");
+});
+
+test("two entries for one person can be merged on their page", async ({ page }) => {
+  await ensureSignedIn(page);
+  const tag = suffix().replace(/[^a-z0-9]/gi, "");
+  const name = `Merle${tag}`;
+
+  await page.goto(personUrl);
+  const people = section(page, "People in their life");
+  for (const note of ["Plays the cello.", "Has a new puppy."]) {
+    await people.getByRole("button", { name: "Add someone" }).click();
+    await people.getByLabel("Their name").fill(name);
+    await people.getByLabel("Anything to remember?").fill(note);
+    await people.getByRole("button", { name: "Add", exact: true }).click();
+    await expect(people.getByText(note)).toBeVisible();
+  }
+
+  await people.getByRole("link", { name, exact: true }).first().click();
+  await expect(page.getByRole("heading", { name, level: 2 })).toBeVisible();
+  const merging = section(page, "Same person as someone else?");
+  await merging.getByRole("button", { name: /Same person as someone else/ }).click();
+  await merging.getByLabel(`${name} is the same person as…`).selectOption({ label: `${name} (${PERSON()})` });
+  page.once("dialog", (dialog) => void dialog.accept());
+  await merging.getByRole("button", { name: "Merge", exact: true }).click();
+
+  const known = section(page, "What you know");
+  await expect(known.getByText("Plays the cello.")).toBeVisible();
+  await expect(known.getByText("Has a new puppy.")).toBeVisible();
+
+  await page.goto(personUrl);
+  await expect(section(page, "People in their life").getByRole("link", { name, exact: true })).toHaveCount(1);
+});
+
 test("a follow-up keeps its due date through an edit", async ({ page }) => {
   await ensureSignedIn(page);
   await page.goto(personUrl);

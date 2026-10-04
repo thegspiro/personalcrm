@@ -2,6 +2,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { recomputeContactActivity } from "./contact-activity";
 import { orderedPair } from "@/lib/duplicates";
+import { moveAssociateLinks } from "./associates";
 
 type Tx = Prisma.TransactionClient;
 
@@ -144,7 +145,7 @@ export async function mergeContacts(
   await moveInteractionLinks(tx, winnerId, loserId);
   await moveLifeEventParticipants(tx, winnerId, loserId);
   await moveHouseholdMemberships(tx, winnerId, loserId);
-  await moveAssociates(tx, winnerId, loserId);
+  await moveAssociates(tx, ownerId, winnerId, loserId);
   await moveRomanticProfile(tx, ownerId, winnerId, loserId);
   await moveDismissals(tx, ownerId, winnerId, loserId);
   await moveCustomFieldValues(tx, ownerId, winnerId, loserId);
@@ -327,25 +328,45 @@ async function moveHouseholdMemberships(
 }
 
 /**
- * Associates hang off a contact, and may also *point at* one.
+ * Associates are linked to contacts, name one as the source of each note, and
+ * may also *point at* one.
  *
- * The second is the one easily missed: an associate promoted into the losing
+ * The pointer is the one easily missed: an associate promoted into the losing
  * record still names it, and leaving that would set the link to null on delete
- * — quietly turning a tracked person back into a note.
+ * — quietly turning a tracked person back into a note. The note source is the
+ * other: it cascades, so a note heard from the loser that is not re-pointed is
+ * deleted with them.
  */
-async function moveAssociates(tx: Tx, winnerId: string, loserId: string): Promise<void> {
-  await tx.associate.updateMany({
-    where: { contactId: loserId },
-    data: { contactId: winnerId },
+async function moveAssociates(
+  tx: Tx,
+  ownerId: string,
+  winnerId: string,
+  loserId: string,
+): Promise<void> {
+  await moveAssociateLinks(tx, ownerId, loserId, winnerId);
+  await tx.associateNote.updateMany({
+    where: { ownerId, heardFromContactId: loserId },
+    data: { heardFromContactId: winnerId },
   });
   await tx.associate.updateMany({
-    where: { promotedContactId: loserId },
+    where: { ownerId, promotedContactId: loserId },
     data: { promotedContactId: winnerId },
   });
   // An associate of the survivor that was promoted into the survivor is a
-  // person listed as their own acquaintance.
+  // person listed as their own acquaintance. The link goes; an entry left in
+  // nobody else's life goes with it, as the whole entry did when it could only
+  // hang off one person.
+  const selfLinked = await tx.associateLink.findMany({
+    where: { ownerId, contactId: winnerId, associate: { promotedContactId: winnerId } },
+    select: { associateId: true },
+  });
+  if (selfLinked.length === 0) return;
+  const ids = selfLinked.map((link) => link.associateId);
+  await tx.associateLink.deleteMany({
+    where: { ownerId, contactId: winnerId, associateId: { in: ids } },
+  });
   await tx.associate.deleteMany({
-    where: { contactId: winnerId, promotedContactId: winnerId },
+    where: { ownerId, id: { in: ids }, links: { none: {} } },
   });
 }
 

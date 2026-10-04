@@ -27,8 +27,14 @@ export type ExportFormat = "json" | "csv" | "vcard" | "ics";
 
 const FORMATS = new Set<ExportFormat>(["json", "csv", "vcard", "ics"]);
 
-/** Version the document, so a future import knows what it is reading. */
-const SCHEMA_VERSION = 1;
+/**
+ * Version the document, so a future import knows what it is reading.
+ *
+ * Bumped when a shape moves rather than grows. 2: associates left
+ * `contacts[].associates` for a top-level `associates`, each with `links` and
+ * `notes`, because one associate can now be in several contacts' lives.
+ */
+const SCHEMA_VERSION = 2;
 
 /**
  * A birthday at its own accuracy, in the reduced forms ISO 8601 defines and
