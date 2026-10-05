@@ -61,7 +61,12 @@ import { readLoveLanguages } from "@/lib/love-languages";
 import { readProfileLinks } from "@/lib/profile-links";
 import { NearbyPlaces } from "@/components/locations/nearby-places";
 import { listContactHappenings } from "@/server/queries/happenings";
-import { associatesForContact, linkableAssociates } from "@/server/queries/associates";
+import {
+  askAboutForContact,
+  associatesForContact,
+  linkableAssociates,
+} from "@/server/queries/associates";
+import { AskAboutCard } from "@/components/associates/ask-about";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -119,6 +124,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     placeSuggestions,
     associates,
     linkable,
+    askAbout,
   ] = await Promise.all([
     listTermsByKind(user.id, [
       "INTERACTION_TYPE",
@@ -154,6 +160,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     listPlaceSuggestions(user.id, timezone),
     associatesForContact(user.id, id),
     linkableAssociates(user.id, id),
+    askAboutForContact(user.id, id),
   ]);
 
   // Measured from the person, not from home: standing on their page, "how far
@@ -290,6 +297,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
       <div className="grid min-w-0 gap-3">
         <UpcomingDatesWidget dates={upcomingDates} />
         <MilestonesSummary milestones={milestones} />
+        <AskAboutCard firstName={contact.firstName} askAbout={askAbout} />
         <SectionCard title="Timeline" icon="History" count={timeline.length}>
           {reciprocity.text ? (
             <div className="grid gap-0.5 px-1">

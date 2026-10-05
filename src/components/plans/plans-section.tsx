@@ -24,6 +24,8 @@ import { formatDistance, type Distance } from "@/lib/geo";
 import { formatMoney, termColorClasses } from "@/lib/format";
 import { plainDateKey, type PlainDate } from "@/lib/dates";
 import { clientRowId } from "@/lib/client-ids";
+import { AskAboutOnPlan } from "@/components/associates/ask-about";
+import type { AskAbout } from "@/server/queries/associates";
 import {
   readPlanChecklist,
   STARTER_PLAN_CHECKLIST,
@@ -91,6 +93,12 @@ export interface PlanItem {
    * either way. The distance is the part that needs both ends placed.
    */
   place?: { name: string; mapHref: string } | null;
+  /**
+   * What to ask the person this is with, on a planned meetup. Only the list
+   * pages fill it: on the person's own page the card at the top already says
+   * it, and repeating it under each plan would be the same lines twice.
+   */
+  askAbout?: AskAbout | null;
 }
 
 export interface PlanPerson {
@@ -804,6 +812,10 @@ export function PlansSection({
                   ticking={ticking}
                   onTick={(itemId, completed) => tick(plan.id, itemId, completed)}
                 />
+
+                {plan.status === "PLANNED" && plan.contact && plan.askAbout ? (
+                  <AskAboutOnPlan firstName={plan.contact.firstName} askAbout={plan.askAbout} />
+                ) : null}
 
                 {/* Closed rows get the same control under a truer name. It puts
                     the plan back on the list and drops its pointer at the

@@ -343,6 +343,118 @@ export async function linkableContacts(
   };
 }
 
+// --- things to ask a friend about -----------------------------------------
+
+export interface AskAboutItem {
+  noteId: string;
+  associate: PersonRef & {
+    /** Their own page, or the profile they became once promoted. */
+    href: string;
+  };
+  /** How this friend knows them, for "Dan (coworker)". */
+  howTheyKnow: string | null;
+  content: string;
+  date: PlainDate | null;
+  precision: DatePrecision;
+}
+
+export interface AskAbout {
+  /** Newest first, at most the limit asked for. */
+  items: AskAboutItem[];
+  /** How many there are in all, under the same filters, for "See all". */
+  total: number;
+}
+
+/**
+ * What to ask one friend about: the news *they* told you about the people in
+ * their life.
+ *
+ * Only updates, and only those whose source is this friend — a note heard
+ * from anyone else, or from the associate directly, is exactly what must not
+ * be raised with them. Only associates still in this friend's life: a
+ * colleague removed from it is not someone to ask after.
+ *
+ * Newest first by the date the news was as of, so a backdated note sorts
+ * where it belongs rather than by when it was typed. No staleness cut-off:
+ * the date is shown, and whether a month-old update is still worth raising is
+ * the reader's call.
+ *
+ * The associate's fragment and the link condition are ANDed, never spread
+ * side by side: both carry a `links` key, and the second would replace the
+ * first — the bug `linkableAssociates` had.
+ */
+export async function askAboutForContact(
+  ownerId: string,
+  contactId: string,
+  limit = 3,
+): Promise<AskAbout> {
+  const scope = await privacyScope();
+  const where = {
+    ownerId,
+    kind: "UPDATE" as const,
+    heardFromContactId: contactId,
+    ...associateNotePrivacyWhere(scope),
+    associate: {
+      AND: [associatePrivacyWhere(scope), { links: { some: { contactId } } }],
+    },
+  };
+  const [rows, total] = await Promise.all([
+    prisma.associateNote.findMany({
+      where,
+      include: {
+        associate: {
+          include: {
+            promoted: PROMOTED_SELECT,
+            links: { where: { contactId }, select: { howTheyKnow: true } },
+          },
+        },
+      },
+      orderBy: [{ date: "desc" }, { createdAt: "desc" }, { id: "asc" }],
+      take: limit,
+    }),
+    prisma.associateNote.count({ where }),
+  ]);
+
+  return {
+    total,
+    items: rows.map((row) => {
+      const base = toBase(row.associate, ownerId);
+      return {
+        noteId: row.id,
+        associate: {
+          id: base.id,
+          name: base.promoted?.name ?? base.name,
+          href: base.promoted ? `/people/${base.promoted.id}` : `/people/friends/${base.id}`,
+        },
+        howTheyKnow: row.associate.links[0]?.howTheyKnow ?? null,
+        content: row.content,
+        date: row.date ? plainDateFromDb(row.date) : null,
+        precision: row.precision,
+      };
+    }),
+  };
+}
+
+/**
+ * The same, for several friends at once — the plans list, where each planned
+ * meetup with someone carries what to ask them.
+ *
+ * One query per friend rather than one for all: the limit is per friend, and
+ * a single capped query would let one talkative friend's notes crowd out
+ * everyone else's. The callers pass the distinct people on a capped list.
+ */
+export async function askAboutForContacts(
+  ownerId: string,
+  contactIds: string[],
+  limit = 3,
+): Promise<Map<string, AskAbout>> {
+  const unique = [...new Set(contactIds)];
+  const results = await Promise.all(
+    unique.map((id) => askAboutForContact(ownerId, id, limit)),
+  );
+  return new Map(unique.map((id, index) => [id, results[index]!]));
+}
+
 // --- the roll-up ------------------------------------------------------------
 
 export interface AssociateEntry extends AssociateBase {
