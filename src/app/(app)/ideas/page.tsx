@@ -4,6 +4,7 @@ import { listPlaceSuggestions } from "@/server/queries/locations";
 import { prisma } from "@/server/db/client";
 import { listContactOptions } from "@/server/queries/contacts";
 import { listPlans } from "@/server/queries/plans";
+import { askAboutForContacts } from "@/server/queries/associates";
 import { listTerms } from "@/server/taxonomy/queries";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/nav/icon";
@@ -63,6 +64,12 @@ export default async function IdeasPage({
 
   const { items: ideas, truncated: ideasTruncated } = applyCap(ideaRows, IDEA_CAP);
   const { items: plans, truncated: plansTruncated } = applyCap(planRows, PLAN_CAP);
+  // What to ask each person you have a meetup arranged with — only for
+  // planned rows, where there is a conversation coming to prepare for.
+  const askAbout = await askAboutForContacts(
+    user.id,
+    plans.flatMap((plan) => (plan.status === "PLANNED" && plan.contact ? [plan.contact.id] : [])),
+  );
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
@@ -101,6 +108,10 @@ export default async function IdeasPage({
               }
             : null,
           contact: plan.contact,
+          askAbout:
+            plan.status === "PLANNED" && plan.contact
+              ? (askAbout.get(plan.contact.id) ?? null)
+              : null,
         }))}
         categories={planCategories}
         people={contacts.map((contact) => ({

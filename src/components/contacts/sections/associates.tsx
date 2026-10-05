@@ -202,6 +202,7 @@ export function AssociatesSection({
 
   return (
     <SectionCard
+      id="people-in-their-life"
       title="People in their life"
       icon="UsersRound"
       count={associates.length}

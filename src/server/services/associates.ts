@@ -194,3 +194,138 @@ export async function mergeAssociateInto(
 
   return { ok: true };
 }
+
+/** One "they talked about…" line from the interaction form, already validated. */
+export interface InteractionAssociateMention {
+  /** An existing associate, or — with `name` instead — someone new. */
+  associateId?: string;
+  name?: string;
+  heardFromContactId: string;
+  content: string;
+}
+
+/** Thrown when an associate named in the form was promoted, unlinked or deleted meanwhile. */
+export class AssociateMentionStale extends Error {}
+
+/**
+ * Lock every existing associate the lines name, still a note and still in the
+ * source's life, or throw `AssociateMentionStale`.
+ *
+ * **The first thing the transaction does**, before the interaction is written
+ * or its place resolved. From MariaDB 11.6.2 a locking read of a row that
+ * changed after the transaction's read snapshot was taken does not wait and
+ * see — it raises 1020 and rolls the whole transaction back. A snapshot is
+ * taken by the first plain read, so locking after `resolveLocation` turned a
+ * promotion landing mid-save into exactly that error. Taken first, there is no
+ * snapshot yet: the read waits for the promoting transaction, sees the
+ * committed promotion, and refuses cleanly. Found by CI, which runs 11; the
+ * development database is 10.11 and never raises it.
+ *
+ * The lock is the one `promoteAssociate` takes, so a promotion cannot begin
+ * once this holds it either. Ids are locked in a fixed order, so two saves
+ * naming the same people cannot each hold one the other is waiting for.
+ */
+export async function lockMentionedAssociates(
+  tx: Tx,
+  ownerId: string,
+  mentions: InteractionAssociateMention[],
+): Promise<void> {
+  const ids = [...new Set(mentions.flatMap((row) => (row.associateId ? [row.associateId] : [])))].sort();
+  for (const id of ids) {
+    const [locked] = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM Associate
+       WHERE id = ${id} AND ownerId = ${ownerId} AND promotedContactId IS NULL
+         FOR UPDATE`;
+    if (!locked) throw new AssociateMentionStale();
+  }
+  for (const row of mentions) {
+    if (!row.associateId) continue;
+    const linked = await tx.associateLink.count({
+      where: { ownerId, associateId: row.associateId, contactId: row.heardFromContactId },
+    });
+    if (!linked) throw new AssociateMentionStale();
+  }
+}
+
+/**
+ * Write the news heard in a logged conversation, inside the transaction that
+ * logs it.
+ *
+ * Each line becomes an update dated to the conversation, heard from the
+ * participant who said it, and pointing back at the interaction. A new name
+ * becomes an associate in that participant's life. Inside the same
+ * transaction as the interaction rather than after it, so a save that fails
+ * leaves neither, and a `transact` retry writes both again from scratch rather
+ * than a second copy of the notes.
+ *
+ * Expects `lockMentionedAssociates` to have run first in the same transaction;
+ * the action validated every id before the transaction opened, and that lock
+ * is what makes the check still true here.
+ */
+export async function writeInteractionAssociateMentions(
+  tx: Tx,
+  ownerId: string,
+  interactionId: string,
+  date: Date,
+  mentions: InteractionAssociateMention[],
+): Promise<void> {
+  for (const mention of mentions) {
+    let associateId = mention.associateId;
+    if (!associateId) {
+      const created = await tx.associate.create({
+        data: {
+          ownerId,
+          name: mention.name!,
+          links: { create: { contactId: mention.heardFromContactId } },
+        },
+      });
+      associateId = created.id;
+    }
+
+    await tx.associateNote.create({
+      data: {
+        ownerId,
+        associateId,
+        kind: "UPDATE",
+        content: mention.content,
+        date,
+        precision: "DAY",
+        heardFromContactId: mention.heardFromContactId,
+        sourceInteractionId: interactionId,
+      },
+    });
+  }
+}
+
+/**
+ * Delete the notes heard in conversations the lock would withhold, before
+ * those conversations are deleted.
+ *
+ * The note's link to its conversation is `SET NULL`, so an ordinary deleted
+ * conversation leaves its notes, as asked. But a note from a private one —
+ * marked private, or with a private participant or mention — is hidden only
+ * *because* of that conversation, and `SET NULL` would leave it with nothing
+ * hiding it: the next closed lock would show it. So those go with it, the way
+ * a note heard from a deleted friend goes with them.
+ */
+export async function sweepWithheldInteractionNotes(
+  tx: Tx,
+  ownerId: string,
+  interactionIds: string[],
+): Promise<number> {
+  if (interactionIds.length === 0) return 0;
+  const { count } = await tx.associateNote.deleteMany({
+    where: {
+      ownerId,
+      sourceInteractionId: { in: interactionIds },
+      sourceInteraction: {
+        OR: [
+          { isPrivate: true },
+          { participants: { some: { contact: { isPrivate: true } } } },
+          { mentions: { some: { contact: { isPrivate: true } } } },
+        ],
+      },
+    },
+  });
+  return count;
+}

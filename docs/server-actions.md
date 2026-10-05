@@ -113,7 +113,7 @@ private is refused while the lock is closed, before any byte is written.
 ### Interactions — `actions/interactions.ts`
 
 `createInteraction`, `updateInteraction`, `deleteInteraction`,
-`loadInteractionForEdit`.
+`loadInteractionForEdit`, `loadAssociateMentionOptions`.
 
 All three writes run `contact-activity` recomputation for every participant, so
 backdating and deletion cannot corrupt a cadence. `updateInteraction` recomputes
@@ -131,6 +131,32 @@ sheet opens rather than embedded in the timeline payload: a feed of a hundred
 rows should not ship a hundred contact pickers to the browser. It returns
 participants who are archived or currently hidden alongside the picker's own
 list, because a person missing from the form would be silently dropped on save.
+
+`createInteraction` and `updateInteraction` also read `associateMentions`: a
+JSON array of "they talked about…" lines, each an existing associate or a new
+name, who told you, and the news. It is parsed with a schema and bounded to 20
+lines, and each line is checked before anything is written — the source must
+be a participant and visible, an existing associate must be visible, not
+promoted, and in the source's life. Each becomes an `UPDATE` note dated to the
+conversation's day in the owner's timezone, heard from that participant and
+pointing back at the interaction; a new name becomes an associate in the
+source's life. They are written inside the interaction's own `transact`, so a
+refused line leaves no half-logged conversation, and each existing associate
+is locked unpromoted first — the lock `promoteAssociate` takes — so one
+promoted in between is refused rather than given a note after its notes were
+copied. On an edit the lines only add: notes already written are corrected on
+the associate's page. `loadInteractionForEdit` returns them, privacy-filtered,
+for the sheet to show.
+
+`loadAssociateMentionOptions` is the picker's read: the visible, unpromoted
+associates in each visible participant's life.
+
+`deleteInteraction` (and `deleteDateEntry`, which deletes through the
+interaction) first deletes the associate notes heard in a conversation the
+lock would withhold — marked private, or with a private participant or
+mention. Their link to the conversation is `SET NULL`, so an ordinary deleted
+conversation leaves its notes; a withheld one's notes would otherwise be left
+with nothing hiding them.
 
 ### Everything hanging off a contact — `actions/details.ts`
 

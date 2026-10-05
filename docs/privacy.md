@@ -174,6 +174,25 @@ copies every note onto the new person as a fact — including hidden ones — an
 note heard from a private contact becomes a **private** fact, so the copy is
 hidden exactly where the original was.
 
+"Ask … about", on a friend's profile and under a planned meetup on the plans
+lists, draws only on updates whose source *is* that friend, so it never
+offers what another friend confided. It takes the same associate and note
+fragments as every other read, its "See all" count included, and ANDs the
+associate fragment with its own "still in this friend's life" condition rather
+than spreading them side by side: both are `links` clauses, and in one object
+the second silently replaces the first.
+
+A note written while logging a conversation also carries that conversation,
+and `associateNotePrivacyWhere` takes `interactionPrivacyWhere` whole for it:
+a note heard in a conversation marked private, or one a private contact was at
+or was mentioned in, is withheld wherever the conversation is — even when an
+ordinary friend said it, because a group dinner with a private friend at it
+should not be read back through what someone else said there. Deleting such a
+conversation deletes those notes first; their link is `SET NULL`, and they
+would otherwise outlive the only thing hiding them. The form's sources must be
+participants who are visible: noting what a hidden contact said while the lock
+is closed is refused, as every hidden write is.
+
 Creating an entry already marked private is refused while the lock is closed,
 as changing the marker is: it would land somewhere the writer cannot reach to
 undo it.

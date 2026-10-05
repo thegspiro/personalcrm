@@ -591,12 +591,13 @@ model Interaction {
   /// `src/server/services/locations.ts`. See docs/data-model.md.
   place Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
-  participants    InteractionParticipant[]
-  mentions        InteractionMention[]
-  dateEntry       DateEntry?
-  sourcedFacts    Fact[]                   @relation("FactSource")
-  ideasUsed       Idea[]                   @relation("IdeaUsedIn")
-  plansCarriedOut Plan[]                   @relation("PlanCarriedOut")
+  participants          InteractionParticipant[]
+  mentions              InteractionMention[]
+  dateEntry             DateEntry?
+  sourcedFacts          Fact[]                   @relation("FactSource")
+  sourcedAssociateNotes AssociateNote[]          @relation("AssociateNoteInteraction")
+  ideasUsed             Idea[]                   @relation("IdeaUsedIn")
+  plansCarriedOut       Plan[]                   @relation("PlanCarriedOut")
 
   @@unique([ownerId, id])
   @@index([ownerId, occurredAt])
@@ -832,23 +833,33 @@ enum AssociateNoteKind {
 /// nobody, at which point a note heard from a private contact would be shown
 /// with the lock closed.
 model AssociateNote {
-  id                 String            @id @default(cuid())
-  ownerId            String
-  associateId        String
-  kind               AssociateNoteKind
-  content            String            @db.Text
+  id                  String            @id @default(cuid())
+  ownerId             String
+  associateId         String
+  kind                AssociateNoteKind
+  content             String            @db.Text
   /// Set on an update, null on a detail. Partial, like every historical date.
-  date               DateTime?         @db.Date
-  precision          DatePrecision     @default(DAY)
-  heardFromContactId String?
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
+  date                DateTime?         @db.Date
+  precision           DatePrecision     @default(DAY)
+  heardFromContactId  String?
+  /// The logged conversation this was heard in, when it was noted while
+  /// logging one. A single-column `SET NULL` key, like `Fact.sourceInteractionId`
+  /// and for the same MariaDB reason (`ownerId` is not nullable); the owner is
+  /// held by the action that writes it. Deleting an ordinary interaction keeps
+  /// the note. Deleting one the lock would withhold deletes the notes heard
+  /// in it first — see `deleteInteraction` — because `SET NULL` would
+  /// otherwise leave them with nothing hiding them.
+  sourceInteractionId String?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
 
-  associate Associate @relation(fields: [ownerId, associateId], references: [ownerId, id], onDelete: Cascade)
-  heardFrom Contact?  @relation("AssociateNoteSource", fields: [ownerId, heardFromContactId], references: [ownerId, id], onDelete: Cascade)
+  associate         Associate    @relation(fields: [ownerId, associateId], references: [ownerId, id], onDelete: Cascade)
+  heardFrom         Contact?     @relation("AssociateNoteSource", fields: [ownerId, heardFromContactId], references: [ownerId, id], onDelete: Cascade)
+  sourceInteraction Interaction? @relation("AssociateNoteInteraction", fields: [sourceInteractionId], references: [id], onDelete: SetNull)
 
   @@index([ownerId, associateId, kind])
   @@index([ownerId, heardFromContactId])
+  @@index([sourceInteractionId])
 }
 
 enum DateRecurrence {
