@@ -1216,7 +1216,16 @@ the end of that third local day, incomplete tasks due on or before it,
 occurrences whose own `reminderDaysBefore` policy would speak on any of the
 three days. A plan is listed by its day and not by its reminder policy: the
 digest is a summary of what is coming rather than a second copy of what was
-sent, so an evening with no reminders set is still in it. Each entry is labelled overdue, due today or upcoming
+sent, so an evening with no reminders set is still in it. A "Coming up"
+section then lists every important-date occurrence of the next
+`COMING_UP_DAYS` (14) days that the look-ahead did not already name, leaving
+out dates whose policy is "no reminders"; it is always a preview, so the cap
+trims it before anything owed. Only an important date recorded to the day
+(`DAY` or `MONTH_DAY`) is a source at all — for rows as for the canonical
+birthday — so a date stored as "June 2019" never reminds on its stand-in first
+of the month. A birthday recorded with its year (`DAY`) states the age reached,
+counted as the occurrence year minus the birth year so a 29 February birthday
+observed on the 28th is not a year short. Each entry is labelled overdue, due today or upcoming
 from its date, and carries whether its *reminder* is owed today or is being
 previewed. Those are not the same thing — a date warned about a week ahead is
 owed today for an occurrence still a week out — so the 20-entry cap ranks on

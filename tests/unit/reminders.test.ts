@@ -9,6 +9,8 @@ import {
   samePlanReminderPolicy,
 } from "@/lib/reminders";
 import {
+  COMING_UP_DAYS,
+  ageOn,
   cadenceMessage,
   dailyOccurrence,
   digestIsDue,
@@ -18,6 +20,7 @@ import {
   reminderDedupKey,
   scheduledPlanMessage,
   taskMessage,
+  type DigestItem,
 } from "@/lib/reminder-schedule";
 import type { PlainDate } from "@/lib/dates";
 
@@ -179,11 +182,11 @@ describe("reminder wording", () => {
       { kind: "PLAN", title: "Long walk", contactName: null, date: today },
     ], today).body).toBe([
       "Arranged",
-      "- Long walk (due today: 2026-09-02)",
-      "- Alamo — Robin (upcoming: 2026-09-04)",
+      "- Long walk (today)",
+      "- Alamo — Robin (in 2 days, 2026-09-04)",
       "",
       "Tasks",
-      "- Write card — Zoe (upcoming: 2026-09-03)",
+      "- Write card — Zoe (tomorrow, 2026-09-03)",
     ].join("\n"));
   });
 
@@ -195,14 +198,14 @@ describe("reminder wording", () => {
       { kind: "TASK", title: "Book table", contactName: null, date: today },
     ], today).body).toBe([
       "Important dates",
-      "- Birthday — Sam (upcoming: 2026-09-09)",
+      "- Birthday — Sam (in 7 days, 2026-09-09)",
       "",
       "Keep in touch",
-      "- Alex (overdue: 2026-09-01)",
+      "- Alex (1 day overdue)",
       "",
       "Tasks",
-      "- Book table (due today: 2026-09-02)",
-      "- Write card — Zoe (upcoming: 2026-09-03)",
+      "- Book table (due today)",
+      "- Write card — Zoe (tomorrow, 2026-09-03)",
     ].join("\n"));
   });
 
@@ -223,7 +226,7 @@ describe("reminder wording", () => {
       { kind: "CADENCE", contactName: "Overdue Person", date: { year: 2026, month: 8, day: 28 } },
     ], today, 2).body;
 
-    expect(body).toContain("Overdue Person (overdue: 2026-08-28)");
+    expect(body).toContain("Overdue Person (5 days overdue)");
     expect(body).toContain("… and 2 more items.");
     // Sections still render in group order, whichever entries survived.
     expect(body.indexOf("Important dates")).toBeLessThan(body.indexOf("Keep in touch"));
@@ -244,8 +247,67 @@ describe("reminder wording", () => {
       ...overdue,
     ], today, 3).body;
 
-    expect(body).toContain("Birthday — Sam (upcoming: 2026-09-09)");
+    expect(body).toContain("Birthday — Sam (in 7 days, 2026-09-09)");
     expect(body).toContain("… and 1 more item.");
+  });
+
+  it("says how overdue a cadence or a task is, in days", () => {
+    // The date it fell due only asked the reader to do the subtraction; the
+    // number is what decides whether it can wait another day.
+    expect(cadenceMessage("Alex", { year: 2026, month: 8, day: 21 }, today).body)
+      .toBe("Reaching out to Alex is 12 days overdue (due 2026-08-21).");
+    expect(cadenceMessage("Alex", { year: 2026, month: 9, day: 1 }, today).body)
+      .toBe("Reaching out to Alex is 1 day overdue (due 2026-09-01).");
+    expect(cadenceMessage("Alex", today, today).body).toBe("Reaching out to Alex is due today (due 2026-09-02).");
+    expect(taskMessage("Call the plumber", null, { year: 2026, month: 8, day: 30 }, today).body)
+      .toBe("Call the plumber is 3 days overdue (due 2026-08-30).");
+    expect(taskMessage("Write card", "Zoe", today, today).body).toBe("Write card for Zoe is due today (due 2026-09-02).");
+  });
+
+  it("says the age a birthday reaches, only when there is a year to count from", () => {
+    const sept9 = { year: 2026, month: 9, day: 9 };
+    expect(importantDateMessage("Birthday", "Sam", sept9, today, 40).body)
+      .toBe("Birthday for Sam is in 7 days (2026-09-09), turning 40.");
+    expect(importantDateMessage("Birthday", "Sam", { year: 2026, month: 9, day: 1 }, today, 40).body)
+      .toBe("Birthday for Sam was yesterday (2026-09-01), turned 40.");
+    expect(importantDateMessage("Birthday", "Sam", sept9, today).body)
+      .toBe("Birthday for Sam is in 7 days (2026-09-09).");
+    expect(digestMessage([
+      { kind: "IMPORTANT_DATE", label: "Birthday", contactName: "Sam", date: sept9, age: 40 },
+    ], today).body).toContain("- Birthday — Sam, turning 40 (in 7 days, 2026-09-09)");
+  });
+
+  it("counts an age from the birth year, so a leap-day birthday is not a year short", () => {
+    // Observed on 28 February in a common year. Counting whole years up to
+    // that day would make the person 25 on the day they turn 26.
+    expect(ageOn(2000, { year: 2026, month: 2, day: 28 })).toBe(26);
+    expect(ageOn(undefined, { year: 2026, month: 2, day: 28 })).toBeUndefined();
+    // A birth year at or after the occurrence is no age at all.
+    expect(ageOn(2026, { year: 2026, month: 5, day: 1 })).toBeUndefined();
+  });
+
+  it("closes the digest with what is coming up, and trims it before anything due", () => {
+    const comingUp = (day: number, name: string) => ({
+      kind: "UPCOMING_DATE" as const, label: "Birthday", contactName: name,
+      date: { year: 2026, month: 9, day }, preview: true,
+    });
+    const items: DigestItem[] = [
+      comingUp(12, "Kim"),
+      { kind: "CADENCE", contactName: "Alex", date: { year: 2026, month: 8, day: 30 } },
+      { ...comingUp(14, "Lee"), age: 30 },
+    ];
+    expect(digestMessage(items, today).body).toBe([
+      "Keep in touch",
+      "- Alex (3 days overdue)",
+      "",
+      `Coming up (next ${COMING_UP_DAYS} days)`,
+      "- Birthday — Kim (in 10 days, 2026-09-12)",
+      "- Birthday — Lee, turning 30 (in 12 days, 2026-09-14)",
+    ].join("\n"));
+    // Capped at one entry, the overdue person survives and the horizon goes.
+    const capped = digestMessage(items, today, 1).body;
+    expect(capped).toContain("Alex (3 days overdue)");
+    expect(capped).not.toContain("Coming up");
   });
 
   it("keeps a useful empty state without empty headings", () => {
@@ -261,8 +323,8 @@ describe("reminder wording", () => {
     }));
     expect(digestMessage(items, today, 2).body).toBe([
       "Tasks",
-      "- Task 1 — Person 1 (due today: 2026-09-02)",
-      "- Task 2 — Person 2 (due today: 2026-09-02)",
+      "- Task 1 — Person 1 (due today)",
+      "- Task 2 — Person 2 (due today)",
       "",
       "… and 2 more items.",
     ].join("\n"));
@@ -319,6 +381,17 @@ describe("reminder data", () => {
     expect(scheduledPlanMessage("Alamo", null, today, today, null).data.startsAt).toBeUndefined();
   });
 
+  it("carries an age only when the body states one", () => {
+    expect(importantDateMessage("Birthday", "Sam", today, today, 40).data.age).toBe(40);
+    expect("age" in importantDateMessage("Birthday", "Sam", today, today).data).toBe(false);
+    const { data } = digestMessage([
+      { kind: "UPCOMING_DATE", label: "Birthday", contactName: "Sam", date: { year: 2026, month: 9, day: 12 }, age: 40, preview: true },
+    ], today);
+    expect(data.items).toEqual([
+      { kind: "UPCOMING_DATE", label: "Birthday", age: 40, contactName: "Sam", date: "2026-09-12", timing: "upcoming", daysAway: 10 },
+    ]);
+  });
+
   it("lists only the digest entries the body printed", () => {
     const items = Array.from({ length: 4 }, (_, index) => ({
       kind: "TASK" as const,
@@ -330,8 +403,8 @@ describe("reminder data", () => {
     // The cap exists so a long digest does not overrun a push channel; sending
     // the dropped entries as fields would put the names back on the wire.
     expect(data.items).toEqual([
-      { kind: "TASK", title: "Task 1", contactName: "Person 1", date: "2026-09-02", timing: "due today" },
-      { kind: "TASK", title: "Task 2", contactName: "Person 2", date: "2026-09-02", timing: "due today" },
+      { kind: "TASK", title: "Task 1", contactName: "Person 1", date: "2026-09-02", timing: "due today", daysAway: 0 },
+      { kind: "TASK", title: "Task 2", contactName: "Person 2", date: "2026-09-02", timing: "due today", daysAway: 0 },
     ]);
     expect(data.hiddenItems).toBe(2);
     expect(JSON.stringify(data)).not.toContain("Person 3");
