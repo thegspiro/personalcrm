@@ -185,6 +185,13 @@ test("the daily digest can be switched off and given an hour", async ({ page }) 
   await digest.getByLabel("Send it after").selectOption("18");
   await digest.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+  // Before any reload. React resets a form once its action settles, and the
+  // select used to reset to the hour it was mounted with: the save landed
+  // but the page showed the old hour, and a second Save wrote it back. The
+  // button re-enables only after that reset, so checking then cannot pass on
+  // the value from before it.
+  await expect(digest.getByRole("button", { name: "Save" })).toBeEnabled();
+  await expect(digest.getByLabel("Send it after")).toHaveValue("18");
 
   await openReminderSettings(page);
   await expect(digest.getByLabel("Send a daily digest")).not.toBeChecked();

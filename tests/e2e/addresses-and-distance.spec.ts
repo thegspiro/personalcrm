@@ -47,10 +47,15 @@ test("set a home base and choose a unit", async ({ page }) => {
   // that genuinely fails still fails the test, here rather than four lines
   // later and saying so.
   await expect(page.getByText("Saved")).toBeVisible();
+  // Still kilometres once the form has reset after the action — the select
+  // used to snap back to the unit it was mounted with.
+  await expect(home.getByRole("button", { name: "Save" })).toBeEnabled();
+  await expect(home.getByLabel("Distances in")).toHaveValue("km");
 
   await page.goto("/settings");
   await page.getByRole("tab", { name: "Places" }).click();
   await expect(home.getByLabel("Latitude")).toHaveValue(/53\.8008/);
+  await expect(home.getByLabel("Distances in")).toHaveValue("km");
 });
 
 test("an address keeps its coordinates and offers a map link", async ({ page }) => {

@@ -170,7 +170,10 @@ export function HomeBaseSettings({
             />
           </Field>
           <Field label="Distances in" htmlFor="home-unit">
+            {/* Keyed on the saved unit: a select resets to the defaultValue it
+                was mounted with when React resets the form after saving. */}
             <select
+              key={distanceUnit}
               id="home-unit"
               name="distanceUnit"
               defaultValue={distanceUnit}

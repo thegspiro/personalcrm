@@ -231,7 +231,14 @@ function DigestSettings({ digest }: { digest: DigestPreference }) {
           hint={`In ${digest.timezone}, on the first hourly check past this time.`}
           error={errors.digestHour}
         >
+          {/* Keyed on the saved hour. React 19 resets a form once its action
+              returns, and a select resets to the defaultValue it was *mounted*
+              with — later props never reach it. So the save landed and the
+              control snapped back to the old hour, inviting a second Save that
+              wrote the old hour back. The refresh after saving brings the new
+              hour, and the key remounts the select showing it. */}
           <select
+            key={digest.hour}
             id="digestHour"
             name="digestHour"
             defaultValue={String(digest.hour)}
