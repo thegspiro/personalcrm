@@ -410,11 +410,12 @@ discovered:
 | | The contact's first and last name | `Dana Whitfield` |
 | | The occurrence date | `2026-09-14` |
 | | How far out it is | `in 7 days` |
+| | For a birthday recorded with its year, the age reached | `turning 40` |
 | Cadence | The contact's first and last name | `Dana Whitfield` |
-| | The date the cadence fell due | `2026-09-01` |
+| | The date the cadence fell due, and how many days ago | `12 days overdue (due 2026-09-01)` |
 | Task | The task's title | `Book the dentist` |
 | | The contact's name, if the task is for someone | `Dana Whitfield` |
-| | The due date | `2026-09-02` |
+| | The due date, and how many days ago | `3 days overdue (due 2026-09-02)` |
 | Scheduled plan | The plan's title | `Late showing at the Alamo` |
 | | The contact's name, if it is with someone | `Dana Whitfield` |
 | | The day it is on, and how far out that is | `is tomorrow (2026-09-03)` |
@@ -423,7 +424,9 @@ discovered:
 | | Keep-in-touch contact names | `Dana Whitfield` |
 | | Task titles and the contact name, when present | `Book the dentist — Dana Whitfield` |
 | | Plan titles and the contact name, when present | `Late showing at the Alamo — Dana Whitfield` |
-| | Each entry's date, and whether it is overdue, due today or upcoming | `(upcoming: 2026-09-04)` |
+| | Every important date in the next 14 days, under "Coming up" | `Birthday — Dana Whitfield (in 10 days, 2026-09-14)` |
+| | For a birthday recorded with its year, the age reached | `turning 40` |
+| | How overdue each cadence or task is, or how far off and on which day | `(12 days overdue)`, `(in 2 days, 2026-09-04)` |
 
 A plan sends nothing unless you have asked it to: reminders are off on every
 plan until a policy is set on it, and off on every plan that existed before the
@@ -441,12 +444,20 @@ than fit, the message reports only how many remain; it does not expose their
 names or titles. An empty digest says that nothing needs attention instead of
 including empty headings.
 
-The digest reaches two days further than any individual reminder does, so a
-name can appear there before that person's own reminder is owed. It is the same
-account, the same channels and the same lock — a contact hidden by the privacy
-lock is excluded from the look-ahead exactly as it is from the rest — but it is
-worth stating plainly: switching the digest on means names travel up to two
-days earlier than the reminder schedule alone would send them.
+The digest reaches further than any individual reminder does, so a name can
+appear there before that person's own reminder is owed: cadences, tasks and
+plans two days ahead, and every important date in the next fourteen — the
+"Coming up" section. It is the same account, the same channels and the same
+lock — a contact hidden by the privacy lock is excluded from both exactly as it
+is from the rest — but it is worth stating plainly: switching the digest on
+means a birthday and the name it belongs to travel up to two weeks before the
+reminder schedule alone would send them. A date whose reminders are switched
+off is left out of "Coming up", and so is a date recorded only to the month or
+the year, which has no day to name.
+
+An age is stated only for a birthday recorded with its year. Said alongside the
+date, it is the birth year by another name — which the message did not carry
+before — so it is worth knowing that it now does.
 
 That goes to whatever host the channel names, on the hour, with no preview and
 no confirmation step. A retry after a failure re-reads the record and sends

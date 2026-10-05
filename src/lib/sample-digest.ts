@@ -23,6 +23,10 @@ const SAMPLE_ITEMS: DigestItem[] = [
   { kind: "CADENCE", contactName: "Morgan Example", date: { year: 2030, month: 6, day: 15 } },
   { kind: "TASK", title: "Send a thank-you note", contactName: "Jordan Example", date: { year: 2030, month: 6, day: 15 } },
   { kind: "TASK", title: "Book a table for the reunion", contactName: null, date: { year: 2030, month: 6, day: 17 } },
+  {
+    kind: "UPCOMING_DATE", label: "Birthday", contactName: "Riley Example",
+    date: { year: 2030, month: 6, day: 25 }, age: 40, preview: true,
+  },
 ];
 
 const SAMPLE = digestMessage(SAMPLE_ITEMS, SAMPLE_TODAY);

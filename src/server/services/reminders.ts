@@ -7,6 +7,7 @@ import {
   comparePlainDates,
   diffPlainDays,
   endOfDayInTz,
+  nextOccurrence,
   plainDateFromDb,
   plainDateKey,
   plainDateToDb,
@@ -29,6 +30,8 @@ import {
   projectContactBirthday,
 } from "@/server/queries/birthdays";
 import {
+  COMING_UP_DAYS,
+  ageOn,
   cadenceMessage,
   dailyOccurrence,
   digestIsDue,
@@ -267,6 +270,12 @@ type DateSource = {
   anchor: PlainDate;
   recurrence: Recurrence;
   reminderDaysBefore: unknown;
+  /**
+   * The year of birth, for a birthday recorded to the day. Absent for every
+   * other date, and for a birthday whose year is unknown — `MONTH_DAY` stores
+   * a placeholder year, and an age counted from it would be invented.
+   */
+  birthYear?: number;
 };
 
 /**
@@ -279,7 +288,7 @@ type DateSource = {
 const REMINDABLE_PRECISION: ReadonlySet<DatePrecision> = new Set(["DAY", "MONTH_DAY"]);
 
 const IMPORTANT_DATE_SELECT = {
-  id: true, contactId: true, label: true, date: true, recurrence: true, reminderDaysBefore: true,
+  id: true, contactId: true, label: true, date: true, precision: true, recurrence: true, reminderDaysBefore: true,
   contact: { select: { firstName: true, lastName: true } },
   type: { select: { slug: true } },
 } as const;
@@ -301,6 +310,44 @@ function birthdaySource(
     // A legacy birthday row lends its offsets, exactly as it lends them to the
     // projection on screen, so an account that configured one keeps them.
     reminderDaysBefore: birthday.reminderDaysBefore,
+    ...(birthday.precision === "DAY" ? { birthYear: birthday.date.year } : {}),
+  };
+}
+
+/**
+ * An important-date row as a source, or null when it has no day to name.
+ *
+ * The same `REMINDABLE_PRECISION` gate the canonical birthday has always had.
+ * Rows never went through it: an anniversary saved as "June 2019" is stored
+ * as 2019-06-01 with `MONTH` precision, and the scheduler read that stored
+ * day as real — announcing "Anniversary is today" every first of June, a
+ * date nobody gave. Found while adding the "Coming up" section, which would
+ * have listed the same invented day.
+ */
+function importantDateSource(row: {
+  id: string;
+  contactId: string;
+  label: string;
+  date: Date;
+  precision: DatePrecision;
+  recurrence: Recurrence;
+  reminderDaysBefore: unknown;
+  contact: { firstName: string; lastName: string | null };
+  type: { slug: string } | null;
+}): DateSource | null {
+  if (!REMINDABLE_PRECISION.has(row.precision)) return null;
+  const anchor = plainDateFromDb(row.date);
+  return {
+    key: row.id,
+    contactId: row.contactId,
+    label: row.label,
+    contactName: personName(row.contact),
+    anchor,
+    recurrence: row.recurrence,
+    reminderDaysBefore: row.reminderDaysBefore,
+    // A legacy birthday row answers only when the contact has no canonical
+    // birthday; it carries its own precision, so the same rule applies.
+    ...(isBirthdayImportantDate(row) && row.precision === "DAY" ? { birthYear: anchor.year } : {}),
   };
 }
 
@@ -346,15 +393,8 @@ async function dateSourcesForUser(
     .filter((row): row is DateSource => row !== null);
   const dates = rows
     .filter((row) => !(canonical.has(row.contactId) && isBirthdayImportantDate(row)))
-    .map((row) => ({
-      key: row.id,
-      contactId: row.contactId,
-      label: row.label,
-      contactName: personName(row.contact),
-      anchor: plainDateFromDb(row.date),
-      recurrence: row.recurrence,
-      reminderDaysBefore: row.reminderDaysBefore,
-    }));
+    .map(importantDateSource)
+    .filter((source): source is DateSource => source !== null);
   return [...dates, ...birthdays];
 }
 
@@ -438,15 +478,7 @@ async function dateSourceById(
     });
     if (contact) return birthdaySource(contact, [row.id]);
   }
-  return {
-    key: row.id,
-    contactId: row.contactId,
-    label: row.label,
-    contactName: personName(row.contact),
-    anchor: plainDateFromDb(row.date),
-    recurrence: row.recurrence,
-    reminderDaysBefore: row.reminderDaysBefore,
-  };
+  return importantDateSource(row);
 }
 
 /**
@@ -540,10 +572,28 @@ async function digestItemsForUser(
         seen.add(key);
         items.push({
           kind: "IMPORTANT_DATE", label: date.label, contactName: date.contactName,
-          date: occurrence, preview: ahead > 0,
+          date: occurrence, age: ageOn(date.birthYear, occurrence), preview: ahead > 0,
         });
       }
     }
+  }
+  // "Coming up": every important date in the next two weeks that the section
+  // above did not already list — a birthday ten days out, under the default
+  // policy of a week before and on the day, is otherwise unmentioned until
+  // three days from now. A date whose reminders were switched off is left out:
+  // "no reminders" is an answer about this date, and a daily list of it would
+  // be one. The same visibility rules apply as above, since these are the same
+  // sources; nothing is read that the section above could not have shown.
+  const horizon = addPlainDays(schedule.today, COMING_UP_DAYS);
+  for (const date of dates) {
+    if (effectiveReminderDays(readReminderPolicy(date.reminderDaysBefore)).length === 0) continue;
+    const occurrence = nextOccurrence(date.anchor, schedule.today, date.recurrence);
+    if (!occurrence || comparePlainDates(occurrence, horizon) > 0) continue;
+    if (seen.has(`${date.key}\u0000${plainDateKey(occurrence)}`)) continue;
+    items.push({
+      kind: "UPCOMING_DATE", label: date.label, contactName: date.contactName,
+      date: occurrence, age: ageOn(date.birthYear, occurrence), preview: true,
+    });
   }
   for (const plan of plans) {
     if (plan.plannedFor) {
@@ -594,7 +644,9 @@ async function candidatesForUser(db: Db, user: ScheduledUser, now: Date): Promis
         occurrence: plainDateKey(occurrence),
         scheduledFor: plainDateToDb(occurrence),
         offsetDays: offset,
-        ...importantDateMessage(date.label, date.contactName, occurrence, schedule.today),
+        ...importantDateMessage(
+          date.label, date.contactName, occurrence, schedule.today, ageOn(date.birthYear, occurrence),
+        ),
       });
     }
   }
@@ -727,7 +779,9 @@ async function currentMessage(
       );
       if (!occurrence || plainDateKey(occurrence) !== plainDateKey(scheduled)) return null;
       if (diffPlainDays(schedule.today, occurrence) > log.offsetDays) return NOT_YET;
-      return importantDateMessage(date.label, date.contactName, occurrence, schedule.today);
+      return importantDateMessage(
+        date.label, date.contactName, occurrence, schedule.today, ageOn(date.birthYear, occurrence),
+      );
     }
     case "OVERDUE_CADENCE": {
       const contact = await db.contact.findFirst({

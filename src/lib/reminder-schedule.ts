@@ -45,6 +45,12 @@ export interface ReminderData {
   daysAway: number;
   /** Important dates only. */
   label?: string;
+  /**
+   * Birthdays whose year is known: the age reached on `date`. Already in the
+   * body as "turning 40"; absent when the year was never given, rather than
+   * worked out from a placeholder year.
+   */
+  age?: number;
   /** Tasks and plans only. */
   title?: string;
   /** Absent when the reminder is not about one particular person. */
@@ -67,10 +73,13 @@ export interface ReminderData {
 export interface ReminderDataItem {
   kind: DigestItem["kind"];
   label?: string;
+  age?: number;
   title?: string;
   contactName?: string;
   date: string;
   timing: DigestTiming;
+  /** Whole days from the digest's day to `date`; negative is overdue. */
+  daysAway: number;
 }
 
 export type DigestTiming = "overdue" | "due today" | "upcoming";
@@ -124,21 +133,65 @@ function relativeWhen(days: number): string {
   );
 }
 
+/**
+ * How far past due something is, in whole days, for the things that can be:
+ * a keep-in-touch cadence and a task. "12 days overdue" rather than the date
+ * it fell due — the date asks the reader to do the subtraction, and the number
+ * is what decides whether it can wait another day.
+ */
+function overdueWords(days: number): string {
+  const late = -days;
+  return late <= 0 ? "due today" : `${late} ${late === 1 ? "day" : "days"} overdue`;
+}
+
+/** "in 5 days", "tomorrow", "today" — for entries that have not happened yet. */
+function aheadWords(days: number): string {
+  return (
+    days === 0 ? "today"
+    : days === 1 ? "tomorrow"
+    : days > 1 ? `in ${days} days`
+    : days === -1 ? "yesterday"
+    : `${-days} days ago`
+  );
+}
+
+/**
+ * The age a birthday reaches on `occurrence`, or undefined when there is no
+ * year to count from.
+ *
+ * The occurrence's year minus the birth year, not `yearsBetween`: a 29
+ * February birthday is observed on the 28th in a common year, and counting
+ * whole years up to that day would make the person a year younger on the day
+ * they are being congratulated for getting older.
+ */
+export function ageOn(birthYear: number | undefined, occurrence: PlainDate): number | undefined {
+  if (birthYear === undefined) return undefined;
+  const age = occurrence.year - birthYear;
+  return age > 0 ? age : undefined;
+}
+
+function ageWords(age: number | undefined, days: number): string {
+  if (age === undefined) return "";
+  return days < 0 ? `, turned ${age}` : `, turning ${age}`;
+}
+
 export function importantDateMessage(
   label: string,
   person: string,
   occurrence: PlainDate,
   today: PlainDate,
+  age?: number,
 ): ReminderMessage {
   const days = diffPlainDays(today, occurrence);
   return {
     subject: `Reminder: ${label}`,
-    body: `${label} for ${person} ${relativeWhen(days)} (${plainDateKey(occurrence)}).`,
+    body: `${label} for ${person} ${relativeWhen(days)} (${plainDateKey(occurrence)})${ageWords(age, days)}.`,
     data: {
       policy: "IMPORTANT_DATE_OFFSET",
       date: plainDateKey(occurrence),
       daysAway: days,
       label,
+      ...(age !== undefined ? { age } : {}),
       contactName: person,
     },
   };
@@ -187,13 +240,14 @@ export function scheduledPlanMessage(
  * and the prose drift apart. Both callers already hold the owner's local day.
  */
 export function cadenceMessage(person: string, dueDay: PlainDate, today: PlainDate): ReminderMessage {
+  const days = diffPlainDays(today, dueDay);
   return {
     subject: `Time to reach out to ${person}`,
-    body: `${person}'s keep-in-touch cadence has been due since ${plainDateKey(dueDay)}.`,
+    body: `Reaching out to ${person} is ${overdueWords(days)} (due ${plainDateKey(dueDay)}).`,
     data: {
       policy: "OVERDUE_CADENCE",
       date: plainDateKey(dueDay),
-      daysAway: diffPlainDays(today, dueDay),
+      daysAway: days,
       contactName: person,
     },
   };
@@ -205,13 +259,14 @@ export function taskMessage(
   dueDay: PlainDate,
   today: PlainDate,
 ): ReminderMessage {
+  const days = diffPlainDays(today, dueDay);
   return {
     subject: `Task due: ${title}`,
-    body: `${title}${person ? ` for ${person}` : ""} was due ${plainDateKey(dueDay)}.`,
+    body: `${title}${person ? ` for ${person}` : ""} is ${overdueWords(days)} (due ${plainDateKey(dueDay)}).`,
     data: {
       policy: "INCOMPLETE_TASK_DUE",
       date: plainDateKey(dueDay),
-      daysAway: diffPlainDays(today, dueDay),
+      daysAway: days,
       title,
       ...(person ? { contactName: person } : {}),
     },
@@ -227,7 +282,14 @@ export function taskMessage(
  * Omitted means owed now, which is what every non-look-ahead caller wants.
  */
 export type DigestItem = { preview?: boolean } & (
-  | { kind: "IMPORTANT_DATE"; label: string; contactName: string; date: PlainDate }
+  | { kind: "IMPORTANT_DATE"; label: string; contactName: string; date: PlainDate; age?: number }
+  /**
+   * An important date inside the "Coming up" window that no reminder policy
+   * has reached yet. Its own kind rather than a flag on IMPORTANT_DATE so a
+   * reader of the fields can tell "a reminder is owed about this" from "this
+   * is on the horizon" — the two sections answer different questions.
+   */
+  | { kind: "UPCOMING_DATE"; label: string; contactName: string; date: PlainDate; age?: number }
   | { kind: "CADENCE"; contactName: string; date: PlainDate }
   | { kind: "TASK"; title: string; contactName: string | null; date: PlainDate }
   | { kind: "PLAN"; title: string; contactName: string | null; date: PlainDate }
@@ -236,6 +298,14 @@ export type DigestItem = { preview?: boolean } & (
 /** Kept deliberately small enough for the most restrictive supported push channel. */
 export const DIGEST_ENTRY_LIMIT = 20;
 
+/**
+ * How far ahead the digest's "Coming up" section looks for important dates.
+ *
+ * Two weeks: long enough to get a card in the post or book a table, short
+ * enough that a daily message is not mostly a list of the same far-off dates.
+ */
+export const COMING_UP_DAYS = 14;
+
 function digestTiming(item: DigestItem, today: PlainDate): DigestTiming {
   const days = diffPlainDays(today, item.date);
   return days < 0 ? "overdue" : days === 0 ? "due today" : "upcoming";
@@ -243,24 +313,43 @@ function digestTiming(item: DigestItem, today: PlainDate): DigestTiming {
 
 /** The same entry the body prints, in fields. Nothing here is new. */
 function digestDataItem(item: DigestItem, today: PlainDate): ReminderDataItem {
+  const dated = item.kind === "IMPORTANT_DATE" || item.kind === "UPCOMING_DATE";
   return {
     kind: item.kind,
-    ...(item.kind === "IMPORTANT_DATE" ? { label: item.label } : {}),
+    ...(dated ? { label: item.label } : {}),
+    ...(dated && item.age !== undefined ? { age: item.age } : {}),
     ...(item.kind === "TASK" || item.kind === "PLAN" ? { title: item.title } : {}),
     ...(item.contactName ? { contactName: item.contactName } : {}),
     date: plainDateKey(item.date),
     timing: digestTiming(item, today),
+    daysAway: diffPlainDays(today, item.date),
   };
 }
 
+/**
+ * One line of the digest.
+ *
+ * What is late says by how much — "12 days overdue" — and drops the date,
+ * which only asked the reader to work that out. What is still ahead keeps its
+ * date beside "in 5 days", because that is the line someone acts on by
+ * looking at a calendar.
+ */
 function digestEntry(item: DigestItem, today: PlainDate): string {
-  const timing = digestTiming(item, today);
-  const detail = item.kind === "IMPORTANT_DATE"
-    ? `${item.label} — ${item.contactName}`
+  const days = diffPlainDays(today, item.date);
+  const detail = item.kind === "IMPORTANT_DATE" || item.kind === "UPCOMING_DATE"
+    ? `${item.label} — ${item.contactName}${ageWords(item.age, days)}`
     : item.kind === "CADENCE"
       ? item.contactName
       : `${item.title}${item.contactName ? ` — ${item.contactName}` : ""}`;
-  return `- ${detail} (${timing}: ${plainDateKey(item.date)})`;
+  // Only a cadence or a task is *owed*, so only they are "due" or "overdue";
+  // an evening or a birthday is simply today.
+  const owed = item.kind === "CADENCE" || item.kind === "TASK";
+  const when = days > 0
+    ? `${aheadWords(days)}, ${plainDateKey(item.date)}`
+    : owed
+      ? overdueWords(days)
+      : aheadWords(days);
+  return `- ${detail} (${when})`;
 }
 
 /**
@@ -277,12 +366,15 @@ function digestEntry(item: DigestItem, today: PlainDate): string {
 export function digestMessage(items: DigestItem[], today: PlainDate, limit = DIGEST_ENTRY_LIMIT): ReminderMessage {
   // Plans lead: an evening you have actually arranged is the one thing in here
   // with a time and a person waiting on it.
-  const kindOrder: DigestItem["kind"][] = ["PLAN", "IMPORTANT_DATE", "CADENCE", "TASK"];
+  // "Coming up" closes the digest: it is the horizon, read after what needs
+  // doing. Every entry in it is a preview, so the cap trims it first.
+  const kindOrder: DigestItem["kind"][] = ["PLAN", "IMPORTANT_DATE", "CADENCE", "TASK", "UPCOMING_DATE"];
   const headings: Record<DigestItem["kind"], string> = {
     PLAN: "Arranged",
     IMPORTANT_DATE: "Important dates",
     CADENCE: "Keep in touch",
     TASK: "Tasks",
+    UPCOMING_DATE: `Coming up (next ${COMING_UP_DAYS} days)`,
   };
   const stillToCome = (item: DigestItem) => (item.preview ? 1 : 0);
   const sorted = [...items].sort((a, b) => {

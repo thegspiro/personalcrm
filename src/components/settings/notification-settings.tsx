@@ -208,8 +208,10 @@ function DigestSettings({ digest }: { digest: DigestPreference }) {
         One message a day to every channel, listing important dates, people you are due to
         reach out to, tasks that have fallen due, and anything you have arranged — plus
         anything the next two days would remind you about, which for a date set to warn you
-        a month ahead means the date itself may still be weeks away. It can contain their
-        names, titles, labels, and dates. Arranged evenings are listed by their day whether
+        a month ahead means the date itself may still be weeks away. It closes with every
+        important date in the next two weeks, and the age a birthday reaches when you
+        recorded the year. It can contain their names, titles, labels, and dates. Arranged
+        evenings are listed by their day whether
         or not that plan sends a reminder of its own, so switching the digest on is what
         starts plan titles travelling. The individual reminders above are sent either way,
         on their own schedule.

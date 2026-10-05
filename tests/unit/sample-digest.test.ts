@@ -26,17 +26,17 @@ describe("the sample digest", () => {
 
   it("is deterministic, so what one channel is sent is what every channel is sent", () => {
     expect(TEST_NOTIFICATION_BODY).toBe(TEST_NOTIFICATION_BODY);
-    expect(TEST_NOTIFICATION_BODY).toContain("2030-06-15");
+    expect(TEST_NOTIFICATION_BODY).toContain("2030-06-25");
   });
 
   it("exercises every section and every timing word a real digest can produce", () => {
     // The point of sending a sample is to see what a real digest will look like
     // on that channel. One that showed a single line would prove the transport
     // and nothing about the layout.
-    for (const heading of ["Important dates", "Keep in touch", "Tasks"]) {
+    for (const heading of ["Important dates", "Keep in touch", "Tasks", "Coming up (next 14 days)"]) {
       expect(TEST_NOTIFICATION_BODY).toContain(`${heading}\n-`);
     }
-    for (const timing of ["overdue:", "due today:", "upcoming:"]) {
+    for (const timing of ["(3 days overdue)", "(due today)", "(tomorrow, ", "(in 2 days, ", ", turning 40"]) {
       expect(TEST_NOTIFICATION_BODY).toContain(timing);
     }
   });
@@ -49,7 +49,7 @@ describe("the sample digest", () => {
     // and something reading this instead of reading them needs telling.
     expect(TEST_NOTIFICATION_DATA.sample).toBe(true);
     expect(TEST_NOTIFICATION_DATA.policy).toBe("DAILY_DIGEST");
-    expect(TEST_NOTIFICATION_DATA.items).toHaveLength(5);
+    expect(TEST_NOTIFICATION_DATA.items).toHaveLength(6);
     for (const item of TEST_NOTIFICATION_DATA.items ?? []) {
       if (item.contactName) expect(item.contactName).toMatch(/ Example$/);
       expect(item.date).toMatch(/^2030-06-\d\d$/);

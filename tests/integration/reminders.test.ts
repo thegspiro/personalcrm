@@ -517,8 +517,8 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     await processImportantDateReminders(new Date("2026-09-02T09:30:00Z"), { db: prisma, send });
     // The task itself, then the digest retry that now describes it.
     const bodies = send.mock.calls.slice(1).map((call) => call[2]);
-    expect(bodies).toContain("Call the plumber was due 2026-09-02.");
-    expect(bodies).toContain("Tasks\n- Call the plumber (due today: 2026-09-02)");
+    expect(bodies).toContain("Call the plumber is due today (due 2026-09-02).");
+    expect(bodies).toContain("Tasks\n- Call the plumber (due today)");
   });
 
   it("reminds about a birthday set on the contact form, with no ImportantDate row", async () => {
@@ -538,10 +538,10 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
 
     expect(send.mock.calls.map((call) => call[1])).toContain("Reminder: Birthday");
     const body = send.mock.calls.find((call) => call[1] === "Reminder: Birthday")?.[2];
-    expect(body).toBe("Birthday for Sam Jones is today (2026-09-02).");
+    expect(body).toBe("Birthday for Sam Jones is today (2026-09-02), turning 36.");
     // And it reaches the digest through the same source.
     const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest")?.[2] as string;
-    expect(digest).toContain("Birthday — Sam Jones (due today: 2026-09-02)");
+    expect(digest).toContain("Birthday — Sam Jones, turning 36 (today)");
     // Ledgered under the projection id, so it is not re-sent on the next pass.
     expect(await prisma.reminderLog.count({ where: { entityType: "IMPORTANT_DATE" } })).toBe(1);
     await processImportantDateReminders(new Date("2026-09-02T10:00:00Z"), { db: prisma, send });
@@ -595,7 +595,7 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
 
     await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
     expect(send.mock.calls.find((call) => call[1] === "Reminder: Birthday")?.[2])
-      .toBe("Birthday for Dana is today (2026-09-02).");
+      .toBe("Birthday for Dana is today (2026-09-02), turning 36.");
 
     // The stale row's own day passes without a word.
     send.mockClear();
@@ -865,8 +865,8 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
 
     const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest")?.[2] as string;
-    expect(digest).toContain("Tomorrow (upcoming: 2026-09-03)");
-    expect(digest).toContain("Due in two days (upcoming: 2026-09-04)");
+    expect(digest).toContain("Tomorrow (tomorrow, 2026-09-03)");
+    expect(digest).toContain("Due in two days (in 2 days, 2026-09-04)");
     // The window ends there. Day three is tomorrow's digest's business.
     expect(digest).not.toContain("Later");
     expect(digest).not.toContain("Due in three days");
@@ -900,7 +900,7 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
 
     // Named in the digest because tomorrow's reminder is inside the window …
     const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest")?.[2] as string;
-    expect(digest).toContain("Birthday — Sam (upcoming: 2026-09-10)");
+    expect(digest).toContain("Birthday — Sam (in 8 days, 2026-09-10)");
     // … and listed exactly once, though two of the three look-ahead days can
     // name the same occurrence when a policy has several offsets.
     expect(digest.match(/Birthday — Sam/g)).toHaveLength(1);
@@ -936,7 +936,7 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest")?.[2] as string;
     // Offset 1 makes it owed today for tomorrow's occurrence. It is not a
     // preview, so it survives the cap rather than being trimmed first.
-    expect(digest).toContain("Birthday — Sam (upcoming: 2026-09-03)");
+    expect(digest).toContain("Birthday — Sam (tomorrow, 2026-09-03)");
     expect(digest).toContain("more items.");
   });
 
@@ -1051,7 +1051,7 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     expect(send).toHaveBeenCalledTimes(1);
     await processImportantDateReminders(new Date(first.getTime() + 6 * 60_000), { db: prisma, send });
     expect(send).toHaveBeenCalledTimes(2);
-    expect(send.mock.calls[1][2]).toBe("Renew the passport was due 2026-09-02.");
+    expect(send.mock.calls[1][2]).toBe("Renew the passport is due today (due 2026-09-02).");
     expect(await prisma.reminderLog.count()).toBe(1);
     expect(await prisma.reminderLog.findFirst()).toMatchObject({ ok: true, attemptCount: 1, nextAttemptAt: null });
   });
@@ -1139,7 +1139,7 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     await prisma.task.update({ where: { id: task.id }, data: { completedAt: null } });
     await processImportantDateReminders(new Date("2026-09-02T11:00:00Z"), { db: prisma, send });
     expect(send).toHaveBeenCalledTimes(2);
-    expect(send.mock.calls[1][2]).toBe("Return the library books was due 2026-09-02.");
+    expect(send.mock.calls[1][2]).toBe("Return the library books is due today (due 2026-09-02).");
     expect(await prisma.reminderLog.count()).toBe(1);
     expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true, attemptCount: 2, error: null });
   });
@@ -1182,7 +1182,7 @@ describe.skipIf(!hasTestDatabase)("important-date delivery", () => {
     send.mockImplementation(async () => undefined);
     await processImportantDateReminders(new Date("2026-09-02T21:00:00Z"), { db: prisma, send });
     expect(send).toHaveBeenCalledTimes(2);
-    expect(send.mock.calls[1][2]).toBe("Alex's keep-in-touch cadence has been due since 2026-09-03.");
+    expect(send.mock.calls[1][2]).toBe("Reaching out to Alex is due today (due 2026-09-03).");
     expect(await prisma.reminderLog.count()).toBe(1);
     expect(await prisma.reminderLog.findFirstOrThrow()).toMatchObject({ ok: true, attemptCount: 2 });
   });
@@ -1655,6 +1655,92 @@ describe.skipIf(!hasTestDatabase)("scheduled-plan delivery", () => {
     await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
     const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest");
     expect(digest?.[2]).toContain("Arranged");
-    expect(digest?.[2]).toContain("- Alamo — Robin (upcoming: 2026-09-04)");
+    expect(digest?.[2]).toContain("- Alamo — Robin (in 2 days, 2026-09-04)");
+  });
+});
+
+/**
+ * What the messages say beyond the bare fact of being due: how far ahead the
+ * digest looks for dates, and which dates it may name at all.
+ */
+describe.skipIf(!hasTestDatabase)("reminder detail", () => {
+  beforeEach(reset);
+  afterAll(() => prisma.$disconnect());
+
+  it("lists every important date of the next two weeks under Coming up, and sends none of them", async () => {
+    const user = await createTestUser();
+    await prisma.user.update({ where: { id: user.id }, data: { privacyPinHash: "pin" } });
+    await prisma.userPreference.create({
+      data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8, privacyLockEnabled: true },
+    });
+    await prisma.notificationChannel.create({
+      data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } },
+    });
+    // Ten days out: past the reach of the default week-before reminder and of
+    // the two-day look-ahead, so before this section the digest never named it.
+    await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Kim", birthDate: new Date("1990-09-12T00:00:00Z"), birthDatePrecision: "DAY",
+    } });
+    // No year: the stored year is a placeholder, so there is no age to state.
+    await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Lee", birthDate: new Date("2000-09-14T00:00:00Z"), birthDatePrecision: "MONTH_DAY",
+    } });
+    const pat = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Pat" } });
+    await prisma.importantDate.createMany({ data: [
+      // Reminders switched off for this date: no daily mention either.
+      { ownerId: user.id, contactId: pat.id, label: "Quiet day", date: new Date("2015-09-08T00:00:00Z"), reminderDaysBefore: [] },
+      // Eighteen days out: beyond the window.
+      { ownerId: user.id, contactId: pat.id, label: "Far off", date: new Date("2020-09-20T00:00:00Z") },
+      // Fourteen days out: the last day inside it.
+      { ownerId: user.id, contactId: pat.id, label: "Anniversary", date: new Date("2015-09-16T00:00:00Z") },
+    ] });
+    // Private while the lock is on: never named, here or anywhere.
+    await prisma.contact.create({ data: {
+      ownerId: user.id, firstName: "Secret", isPrivate: true,
+      birthDate: new Date("1990-09-10T00:00:00Z"), birthDatePrecision: "DAY",
+    } });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    await processImportantDateReminders(new Date("2026-09-02T09:00:00Z"), { db: prisma, send });
+
+    const digest = send.mock.calls.find((call) => call[1] === "Your Personal CRM daily digest")?.[2] as string;
+    expect(digest).toBe([
+      "Coming up (next 14 days)",
+      "- Birthday — Kim, turning 36 (in 10 days, 2026-09-12)",
+      "- Birthday — Lee (in 12 days, 2026-09-14)",
+      "- Anniversary — Pat (in 14 days, 2026-09-16)",
+    ].join("\n"));
+    // The horizon is a summary, not a schedule: nothing in it was sent on its
+    // own, and nothing was ledgered, so each still arrives on its own day.
+    expect(send.mock.calls.map((call) => call[1])).toEqual(["Your Personal CRM daily digest"]);
+    expect(await prisma.reminderLog.count({ where: { entityType: { not: "DIGEST" } } })).toBe(0);
+  });
+
+  it("never reminds on the stand-in day of a date recorded only to the month", async () => {
+    // "June 2019" is stored as 2019-06-01 with MONTH precision. The scheduler
+    // used to read that first of the month as real and announce it, every year
+    // — a date nobody gave. A date recorded to the day, alongside, still fires.
+    const user = await createTestUser();
+    await prisma.userPreference.create({
+      data: { userId: user.id, timezone: "UTC", digestEnabled: true, digestHour: 8 },
+    });
+    await prisma.notificationChannel.create({
+      data: { ownerId: user.id, kind: "WEBHOOK", name: "Test", config: { url: "https://example.invalid" } },
+    });
+    const robin = await prisma.contact.create({ data: { ownerId: user.id, firstName: "Robin" } });
+    await prisma.importantDate.createMany({ data: [
+      { ownerId: user.id, contactId: robin.id, label: "Vague anniversary", date: new Date("2019-09-01T00:00:00Z"), precision: "MONTH" },
+      { ownerId: user.id, contactId: robin.id, label: "Vague milestone", date: new Date("2019-01-01T00:00:00Z"), precision: "YEAR" },
+      { ownerId: user.id, contactId: robin.id, label: "Exact anniversary", date: new Date("2019-09-01T00:00:00Z"), precision: "DAY" },
+    ] });
+    const send = vi.fn(async (_channel: unknown, _subject: string, _body: string): Promise<void> => undefined);
+
+    // A week before, and on the day: both offsets of the default policy.
+    await processImportantDateReminders(new Date("2026-08-25T09:00:00Z"), { db: prisma, send });
+    await processImportantDateReminders(new Date("2026-09-01T09:00:00Z"), { db: prisma, send });
+
+    const everything = send.mock.calls.map((call) => `${call[1]}\n${call[2]}`).join("\n");
+    expect(everything).not.toContain("Vague");
+    expect(send.mock.calls.filter((call) => call[1] === "Reminder: Exact anniversary")).toHaveLength(2);
   });
 });

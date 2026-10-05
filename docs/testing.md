@@ -96,7 +96,11 @@ the schema do, not things a mock can:
   never for a birthday with no known day — nor from the legacy row standing in
   for one — and never for a locked private or archived contact; that a digest lists
   timezone-local important dates, cadences and tasks two days ahead without
-  sending any of that look-ahead as a reminder early, names each occurrence
+  sending any of that look-ahead as a reminder early, lists every important
+  date of the next fourteen days under "Coming up" — never a switched-off,
+  locked-private or out-of-window one, and with an age only where the year is
+  known — never reminds on the stand-in day of a date recorded only to the
+  month or year, names each occurrence
   once however many offsets reach it, and is retried within its day with a
   freshly rebuilt list; that it waits for an hour moved later and is
   dropped after its day; that a process dying between the ledger insert and
