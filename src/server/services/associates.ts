@@ -208,6 +208,46 @@ export interface InteractionAssociateMention {
 export class AssociateMentionStale extends Error {}
 
 /**
+ * Lock every existing associate the lines name, still a note and still in the
+ * source's life, or throw `AssociateMentionStale`.
+ *
+ * **The first thing the transaction does**, before the interaction is written
+ * or its place resolved. From MariaDB 11.6.2 a locking read of a row that
+ * changed after the transaction's read snapshot was taken does not wait and
+ * see — it raises 1020 and rolls the whole transaction back. A snapshot is
+ * taken by the first plain read, so locking after `resolveLocation` turned a
+ * promotion landing mid-save into exactly that error. Taken first, there is no
+ * snapshot yet: the read waits for the promoting transaction, sees the
+ * committed promotion, and refuses cleanly. Found by CI, which runs 11; the
+ * development database is 10.11 and never raises it.
+ *
+ * The lock is the one `promoteAssociate` takes, so a promotion cannot begin
+ * once this holds it either. Ids are locked in a fixed order, so two saves
+ * naming the same people cannot each hold one the other is waiting for.
+ */
+export async function lockMentionedAssociates(
+  tx: Tx,
+  ownerId: string,
+  mentions: InteractionAssociateMention[],
+): Promise<void> {
+  const ids = [...new Set(mentions.flatMap((row) => (row.associateId ? [row.associateId] : [])))].sort();
+  for (const id of ids) {
+    const [locked] = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM Associate
+       WHERE id = ${id} AND ownerId = ${ownerId} AND promotedContactId IS NULL
+         FOR UPDATE`;
+    if (!locked) throw new AssociateMentionStale();
+  }
+  for (const row of mentions) {
+    if (!row.associateId) continue;
+    const linked = await tx.associateLink.count({
+      where: { ownerId, associateId: row.associateId, contactId: row.heardFromContactId },
+    });
+    if (!linked) throw new AssociateMentionStale();
+  }
+}
+
+/**
  * Write the news heard in a logged conversation, inside the transaction that
  * logs it.
  *
@@ -218,12 +258,9 @@ export class AssociateMentionStale extends Error {}
  * leaves neither, and a `transact` retry writes both again from scratch rather
  * than a second copy of the notes.
  *
- * Every existing associate is locked unpromoted first — the lock
- * `promoteAssociate` takes — and its link to the source re-checked under it:
- * the action validated both before the transaction opened, and either can have
- * changed since. Throws `AssociateMentionStale` rather than writing a note
- * onto something that just became a person, or stopped being in this
- * friend's life.
+ * Expects `lockMentionedAssociates` to have run first in the same transaction;
+ * the action validated every id before the transaction opened, and that lock
+ * is what makes the check still true here.
  */
 export async function writeInteractionAssociateMentions(
   tx: Tx,
@@ -234,18 +271,7 @@ export async function writeInteractionAssociateMentions(
 ): Promise<void> {
   for (const mention of mentions) {
     let associateId = mention.associateId;
-    if (associateId) {
-      const [locked] = await tx.$queryRaw<{ id: string }[]>`
-        SELECT id FROM Associate
-         WHERE id = ${associateId} AND ownerId = ${ownerId} AND promotedContactId IS NULL
-           FOR UPDATE`;
-      const linked = locked
-        ? await tx.associateLink.count({
-            where: { ownerId, associateId, contactId: mention.heardFromContactId },
-          })
-        : 0;
-      if (!linked) throw new AssociateMentionStale();
-    } else {
+    if (!associateId) {
       const created = await tx.associate.create({
         data: {
           ownerId,

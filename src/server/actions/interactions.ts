@@ -24,11 +24,13 @@ import {
 } from "@/server/privacy/filter";
 import {
   AssociateMentionStale,
+  lockMentionedAssociates,
   sweepWithheldInteractionNotes,
   writeInteractionAssociateMentions,
   type InteractionAssociateMention,
 } from "@/server/services/associates";
 import { calendarDateInTz, plainDateToDb } from "@/lib/dates";
+import { isConcurrentRowChange } from "@/lib/db-errors";
 import { displayName } from "@/lib/utils";
 import { listContactOptions } from "@/server/queries/contacts";
 import {
@@ -242,6 +244,8 @@ export async function createInteraction(
   let interaction: { id: string };
   try {
     interaction = await transact(async (tx) => {
+    // First, before any plain read takes a snapshot — see the function.
+    await lockMentionedAssociates(tx, ownerId, associateMentions.mentions);
     const place = await resolveLocation(tx, ownerId, str(form, "location"));
     const created = await tx.interaction.create({
       data: {
@@ -274,7 +278,12 @@ export async function createInteraction(
     return created;
     });
   } catch (error) {
-    if (error instanceof AssociateMentionStale) return fail(MENTION_STALE);
+    // 1020 as well: the lock comes first precisely so that it is not raised,
+    // but if a server still does, it means the same thing — someone named
+    // here changed under the save — and the save has been rolled back whole.
+    if (error instanceof AssociateMentionStale || isConcurrentRowChange(error)) {
+      return fail(MENTION_STALE);
+    }
     const failure = customFieldFailure(error);
     if (failure) return failure;
     throw error;
@@ -346,6 +355,8 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
 
   try {
     await transact(async (tx) => {
+      // First, before any plain read takes a snapshot — see the function.
+      await lockMentionedAssociates(tx, ownerId, associateMentions.mentions);
       const place = await resolveLocation(tx, ownerId, str(form, "location"));
       await tx.interaction.update({
         where: { id },
@@ -393,7 +404,12 @@ export async function updateInteraction(form: FormData): Promise<ActionResult> {
       }
     });
   } catch (error) {
-    if (error instanceof AssociateMentionStale) return fail(MENTION_STALE);
+    // 1020 as well: the lock comes first precisely so that it is not raised,
+    // but if a server still does, it means the same thing — someone named
+    // here changed under the save — and the save has been rolled back whole.
+    if (error instanceof AssociateMentionStale || isConcurrentRowChange(error)) {
+      return fail(MENTION_STALE);
+    }
     const failure = customFieldFailure(error);
     if (failure) return failure;
     throw error;
