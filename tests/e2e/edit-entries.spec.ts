@@ -233,6 +233,36 @@ test("a planned meetup carries what to ask them about", async ({ page }) => {
   await expect(listed.getByText("Training for a marathon.")).toHaveCount(0);
 });
 
+test("news heard over a logged conversation lands on that friend and the person", async ({ page }) => {
+  await ensureSignedIn(page);
+  const tag = suffix().replace(/[^a-z0-9]/gi, "");
+  const dana = `Dana${tag}`;
+  const title = `Lunch ${tag}`;
+
+  await page.goto(friendUrl);
+  await page.getByRole("button", { name: "Log interaction" }).click();
+  const sheet = page.getByRole("dialog");
+  await sheet.getByRole("button", { name: "Coffee", exact: true }).click();
+  await sheet.getByLabel("Title").fill(title);
+  await sheet.getByRole("button", { name: "Add someone they talked about" }).click();
+  // One person was there, so who told you is not asked: the people offered
+  // are the ones in their life.
+  await expect(sheet.getByLabel("Who told you?")).toHaveCount(0);
+  await sheet.getByLabel("About", { exact: true }).selectOption({ label: dana });
+  await sheet.getByLabel("What's new with them?").fill("Got a puppy named Biscuit.");
+  await sheet.getByRole("button", { name: "Log it" }).click();
+  await expect(sheet).toBeHidden();
+
+  const ask = page.getByRole("region", { name: `Ask ${friendName} about` });
+  await expect(ask.getByText("Got a puppy named Biscuit.")).toBeVisible();
+
+  await page.goto(personUrl);
+  await section(page, "People in their life").getByRole("link", { name: dana, exact: true }).click();
+  const known = section(page, "What you know");
+  await expect(known.getByText("Got a puppy named Biscuit.")).toBeVisible();
+  await expect(known.getByText(new RegExp(`at ${title}`))).toBeVisible();
+});
+
 test("two entries for one person can be merged on their page", async ({ page }) => {
   await ensureSignedIn(page);
   const tag = suffix().replace(/[^a-z0-9]/gi, "");

@@ -16,6 +16,7 @@ export interface NoteItem {
   date: PlainDate | null;
   precision: DatePrecision;
   heardFrom: { id: string; name: string } | null;
+  fromConversation?: { label: string } | null;
 }
 
 export interface PersonOption {
@@ -156,7 +157,13 @@ export function NoteText({
   muted?: boolean;
 }) {
   const date = noteDate(note);
-  const meta = [date, showSource ? noteSource(note) : null].filter(Boolean).join(" · ");
+  const meta = [
+    date,
+    showSource ? noteSource(note) : null,
+    note.fromConversation ? `at ${note.fromConversation.label}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <div className={cn("min-w-0", muted && "text-muted-foreground")}>
       <p className="whitespace-pre-line break-words text-sm">{note.content}</p>

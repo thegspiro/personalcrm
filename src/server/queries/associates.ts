@@ -39,6 +39,8 @@ export interface AssociateNoteView {
   precision: DatePrecision;
   /** Who told you. Null when you heard it from them directly, or no longer know. */
   heardFrom: PersonRef | null;
+  /** The logged conversation it came up in, when it was noted while logging one. */
+  fromConversation: { label: string } | null;
 }
 
 export interface AssociateLinkView {
@@ -100,10 +102,22 @@ function toBase(
   };
 }
 
+/**
+ * The conversation a note came from, with its owner: the key is single-column,
+ * so a restore can point it at another account's row, and `toNote` drops one.
+ */
+const CONVERSATION_SELECT = {
+  select: {
+    ownerId: true,
+    title: true,
+    type: { select: { label: true } },
+  },
+} as const;
+
 function noteInclude(scope: PrivacyScope) {
   return {
     where: associateNotePrivacyWhere(scope),
-    include: { heardFrom: PERSON_SELECT },
+    include: { heardFrom: PERSON_SELECT, sourceInteraction: CONVERSATION_SELECT },
     // Details first, then updates newest first; `createdAt` and `id` settle
     // ties so the list does not reshuffle between renders.
     orderBy: [
@@ -115,14 +129,26 @@ function noteInclude(scope: PrivacyScope) {
   };
 }
 
-function toNote(row: {
-  id: string;
-  kind: AssociateNoteKind;
-  content: string;
-  date: Date | null;
-  precision: DatePrecision;
-  heardFrom: { id: string; firstName: string; lastName: string | null } | null;
-}): AssociateNoteView {
+function toNote(
+  row: {
+    id: string;
+    kind: AssociateNoteKind;
+    content: string;
+    date: Date | null;
+    precision: DatePrecision;
+    heardFrom: { id: string; firstName: string; lastName: string | null } | null;
+    sourceInteraction: {
+      ownerId: string;
+      title: string | null;
+      type: { label: string } | null;
+    } | null;
+  },
+  ownerId: string,
+): AssociateNoteView {
+  const conversation =
+    row.sourceInteraction && row.sourceInteraction.ownerId === ownerId
+      ? row.sourceInteraction
+      : null;
   return {
     id: row.id,
     kind: row.kind,
@@ -130,6 +156,9 @@ function toNote(row: {
     date: row.date ? plainDateFromDb(row.date) : null,
     precision: row.precision,
     heardFrom: row.heardFrom ? { id: row.heardFrom.id, name: displayName(row.heardFrom) } : null,
+    fromConversation: conversation
+      ? { label: conversation.title ?? conversation.type?.label ?? "a logged conversation" }
+      : null,
   };
 }
 
@@ -187,7 +216,7 @@ export async function associatesForContact(
   });
 
   return links.map((link) => {
-    const notes = link.associate.notes.map(toNote);
+    const notes = link.associate.notes.map((note) => toNote(note, ownerId));
     return {
       ...toBase(link.associate, ownerId),
       howTheyKnow: link.howTheyKnow,
@@ -265,7 +294,7 @@ export async function getAssociate(
       contact: { id: link.contact.id, name: displayName(link.contact) },
       howTheyKnow: link.howTheyKnow,
     })),
-    notes: row.notes.map(toNote),
+    notes: row.notes.map((note) => toNote(note, ownerId)),
   };
 }
 

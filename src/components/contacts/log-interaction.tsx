@@ -27,6 +27,8 @@ import { PlacePicker, type PlaceSuggestion } from "@/components/form/place-picke
 import { SENTIMENTS } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { createInteraction } from "@/server/actions/interactions";
+import { AssociateMentionsField } from "@/components/associates/mentions-field";
+import { displayName } from "@/lib/utils";
 
 type ReachedOutBy = "ME" | "THEM" | "MUTUAL";
 
@@ -79,6 +81,12 @@ export function LogInteractionSheet({
   // save — and an uncontrolled input is cleared by it for free, where a
   // controlled one would need its own listener to stay in step.
   const locationRef = React.useRef<HTMLInputElement>(null);
+  // Who was there, as the picker reports it, so the people they talked about
+  // can be looked up for exactly them.
+  const [participantIds, setParticipantIds] = React.useState<string[]>(defaultContactIds);
+  // Bumped on every open and every save, to remount the mentions field empty:
+  // its rows are state, which the form's `reset()` cannot reach.
+  const [mentionsKey, setMentionsKey] = React.useState(0);
 
   React.useEffect(() => {
     if (open) formRef.current?.reset();
@@ -100,6 +108,7 @@ export function LogInteractionSheet({
     setSentiment(null);
     setReachedOutBy(null);
     formRef.current?.reset();
+    setMentionsKey((key) => key + 1);
     toast.success("Logged");
     onOpenChange(false);
     onLogged?.();
@@ -130,6 +139,7 @@ export function LogInteractionSheet({
               contacts={contacts}
               defaultSelected={defaultContactIds}
               required
+              onSelectionChange={setParticipantIds}
             />
 
             <ContactPicker
@@ -222,6 +232,15 @@ export function LogInteractionSheet({
                 ))}
               </div>
             </div>
+
+            <AssociateMentionsField
+              key={`${open}-${mentionsKey}`}
+              formId="log"
+              participants={participantIds.flatMap((id) => {
+                const person = contacts.find((contact) => contact.id === id);
+                return person ? [{ id, name: displayName(person) }] : [];
+              })}
+            />
 
             <CollapsibleCustomFields fields={customFields} />
           </SheetBody>

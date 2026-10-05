@@ -1476,18 +1476,48 @@ export async function promoteAssociate(
       // shown, and each copy carries the privacy its source demands.
       const notes = await tx.associateNote.findMany({
         where: { ownerId, associateId: id },
-        include: { heardFrom: { select: { firstName: true, lastName: true, isPrivate: true } } },
+        include: {
+          heardFrom: { select: { firstName: true, lastName: true, isPrivate: true } },
+          // Enough to say whether the lock would hide the conversation:
+          // `interactionPrivacyWhere`'s three conditions, read rather than
+          // queried because each note needs its own answer.
+          sourceInteraction: {
+            select: {
+              id: true,
+              ownerId: true,
+              isPrivate: true,
+              participants: { select: { contact: { select: { isPrivate: true } } } },
+              mentions: { select: { contact: { select: { isPrivate: true } } } },
+            },
+          },
+        },
         orderBy: [{ kind: "asc" }, { date: "asc" }, { createdAt: "asc" }, { id: "asc" }],
       });
       if (notes.length > 0) {
         await tx.fact.createMany({
-          data: notes.map((note) => ({
-            ownerId,
-            contactId: person.id,
-            content: noteAsFact(note),
-            importance: 1,
-            isPrivate: note.heardFrom?.isPrivate ?? false,
-          })),
+          data: notes.map((note) => {
+            // The conversation's key is single-column, so a foreign one is
+            // possible after a restore; it is neither linked nor trusted.
+            const source =
+              note.sourceInteraction && note.sourceInteraction.ownerId === ownerId
+                ? note.sourceInteraction
+                : null;
+            const withheldConversation =
+              source !== null &&
+              (source.isPrivate ||
+                source.participants.some((row) => row.contact.isPrivate) ||
+                source.mentions.some((row) => row.contact.isPrivate));
+            return {
+              ownerId,
+              contactId: person.id,
+              content: noteAsFact(note),
+              importance: 1,
+              // Hidden exactly where the note was: heard from a private
+              // friend, or in a conversation the lock withholds.
+              isPrivate: (note.heardFrom?.isPrivate ?? false) || withheldConversation,
+              sourceInteractionId: source?.id ?? null,
+            };
+          }),
         });
       }
 

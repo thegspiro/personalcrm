@@ -182,6 +182,17 @@ associate fragment with its own "still in this friend's life" condition rather
 than spreading them side by side: both are `links` clauses, and in one object
 the second silently replaces the first.
 
+A note written while logging a conversation also carries that conversation,
+and `associateNotePrivacyWhere` takes `interactionPrivacyWhere` whole for it:
+a note heard in a conversation marked private, or one a private contact was at
+or was mentioned in, is withheld wherever the conversation is — even when an
+ordinary friend said it, because a group dinner with a private friend at it
+should not be read back through what someone else said there. Deleting such a
+conversation deletes those notes first; their link is `SET NULL`, and they
+would otherwise outlive the only thing hiding them. The form's sources must be
+participants who are visible: noting what a hidden contact said while the lock
+is closed is refused, as every hidden write is.
+
 Creating an entry already marked private is refused while the lock is closed,
 as changing the marker is: it would land somewhere the writer cannot reach to
 undo it.

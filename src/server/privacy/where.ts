@@ -71,14 +71,31 @@ export function associatePrivacyWhere(
  * from a private contact is withheld with the lock closed, content and all:
  * what a private friend confided is theirs, whoever it is about.
  *
- * Built only inside the locked branch, for the same reason as the `OR` above.
+ * The conversation it was heard in is the second condition, and it takes
+ * `interactionPrivacyWhere` whole: a note from a conversation marked private,
+ * or from one where any participant or mention is private, is withheld for
+ * exactly the reason the conversation is. Spelling out only the marker would
+ * let a group dinner with a private friend at it be read back through what
+ * someone else said there.
+ *
+ * Both members are `OR`s, so they are ANDed rather than spread — two `OR`
+ * keys in one object keep only the second. Built only inside the locked
+ * branch, for the same reason as the `OR` above.
  */
 export function associateNotePrivacyWhere(
   scope: PrivacyScope,
 ): Prisma.AssociateNoteWhereInput {
   if (scope.unlocked) return {};
   return {
-    OR: [{ heardFromContactId: null }, { heardFrom: { isPrivate: false } }],
+    AND: [
+      { OR: [{ heardFromContactId: null }, { heardFrom: { isPrivate: false } }] },
+      {
+        OR: [
+          { sourceInteractionId: null },
+          { sourceInteraction: interactionPrivacyWhere(scope) },
+        ],
+      },
+    ],
   };
 }
 

@@ -692,8 +692,17 @@ friend deletes what you heard from them — what deleting a contact always did t
 their associates' notes — where `SET NULL` would re-attribute it to nobody, and
 a note heard from a private friend would then show with the lock closed.
 
+`sourceInteractionId` → `Interaction` (`SET NULL`) records the logged
+conversation a note was heard in, for notes written while logging one. A
+single-column key, like `Fact.sourceInteractionId`, for the usual `SET NULL`
+reason; its readers check the owner. Deleting an ordinary conversation keeps
+its notes. Deleting one the lock would withhold deletes them first
+(`sweepWithheldInteractionNotes`), because they were hidden only by that
+conversation and `SET NULL` would leave them with nothing hiding them.
+
 A note has no `isPrivate`. It follows its associate's marker, and is withheld
-with the lock closed when its source is a private contact (see
+with the lock closed when its source is a private contact, or when the
+conversation it was heard in is one the lock withholds (see
 [privacy](privacy.md)).
 
 ### `ImportantDate`
@@ -1265,7 +1274,7 @@ nobody gave.
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | A `User` | Everything they own, by cascade | — |
 | A `Contact` | Methods, addresses, tags, facts, dates, life events, happenings, gifts, debts, dietary needs, flags, ideas, plans, tasks, their links to associates and every associate note heard from them, any associate left in no one else's life, household memberships, relationships (both halves), participations, romantic profile, date entries, and its avatar file | `CustomFieldValue` rows — **swept explicitly** by the action |
-| An `Interaction` | Participants, its `DateEntry` | `Fact.sourceInteractionId`, `Idea.usedInInteractionId` and `Plan.usedInInteractionId` set to null |
+| An `Interaction` | Participants, its `DateEntry`, and — when the lock would withhold it — the associate notes heard in it (swept by the action) | `Fact.sourceInteractionId`, `Idea.usedInInteractionId`, `Plan.usedInInteractionId` and an ordinary conversation's `AssociateNote.sourceInteractionId` set to null |
 | A `TaxonomyTerm` | `Relationship` rows of that type (cascade) — which is why deleting a term still in use is blocked; other references are `SET NULL` | The records themselves |
 | A promoted `Contact` | Nothing | The `Associate` it came from, with `promotedContactId` set to null — editable again, links and notes intact |
 | An `Associate` | Its links and notes | Everyone it was linked to, and any `Contact` it was promoted into |
@@ -1309,6 +1318,7 @@ the `init-migrate` s6 oneshot).
 | `20260911193014_add_postal_codes` | Adds `PostalCode` and `PostalCodeSource`, for postal codes imported from a GeoNames country file. Purely additive: two new tables, no existing column re-expressed and no enum modified, so there is nothing to backfill and nothing that can be lost. Neither table has an `ownerId` — they hold published reference data rather than anybody's records, the same reasoning `AppSetting` runs on |
 | `20260905153056_add_associates` | Adds `Associate` — the people in a contact's life who are not tracked themselves. Purely additive: one new table, no existing column re-expressed and no enum modified, so there is nothing to backfill and nothing that can be lost. `promotedContactId` is the third single-column key into `Contact`, for the `SET NULL` reason above |
 | `20261004120000_share_associates_and_add_notes` | Makes an associate shareable between contacts and gives it notes. Adds `AssociateLink` and `AssociateNote` (and the `AssociateNoteKind` enum), and drops `Associate.contactId`, `howTheyKnow` and `notes`. **Hand-edited**: backfills one link per existing entry carrying its wording, and one `DETAIL` note per non-blank `notes` heard from that same contact, *before* the drop — Prisma's own version drops all three columns and their data. Adds `Associate`'s `(ownerId, id)` key before dropping the index the owner foreign key relied on, which MariaDB otherwise refuses. Merges nothing. Ships a `down.sql`, which returns each entry to its earliest link and folds its notes into one, losing extra links and every note's source |
+| `20261005120000_add_associate_note_source_interaction` | Adds `AssociateNote.sourceInteractionId` → `Interaction` (`SET NULL`), with its index. Purely additive: nothing is backfilled, since no earlier note was recorded against a conversation. Ships a `down.sql` |
 
 Writing a migration that changes the meaning of existing data — not just its
 shape — is covered in [CONTRIBUTING.md](../CONTRIBUTING.md#migrations).
